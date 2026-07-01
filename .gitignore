@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Ambientes virtuais
+.venv/
+venv/
+
+# Segredos — NUNCA commitar o .env real
+.env
+.env.*
+!.env.example
+
+# Caches de qualidade/teste
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# SO / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Pasta de referência do projeto antigo — adaptar sob demanda, não versionar
+preview claude rules/
+
+# Config pessoal do Claude Code
+.claude/settings.local.json
