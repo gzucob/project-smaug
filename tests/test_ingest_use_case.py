@@ -2,7 +2,11 @@
 
 from smaug.ingestion.application.ingest import IngestPortfolioUseCase, OutcomeStatus
 from smaug.ingestion.domain.events import RawIngestionStored
-from smaug.shared.errors import BrapiAuthError, BrapiNotFoundError
+from smaug.shared.errors import (
+    BrapiAuthError,
+    BrapiForbiddenError,
+    BrapiNotFoundError,
+)
 from smaug.shared.events import EventBus
 from tests.fakes import FakeDataSource, FakeRawIngestionRepository, no_sleep
 
@@ -36,6 +40,21 @@ async def test_should_skip_module_on_404_and_keep_going() -> None:
     outcomes = await use_case.execute(["PETR4"])
 
     assert outcomes[0].status is OutcomeStatus.SKIPPED
+    assert outcomes[1].status is OutcomeStatus.STORED
+    assert len(repo.items) == 1
+
+
+async def test_should_skip_module_on_403_plan_restriction_and_keep_going() -> None:
+    source = FakeDataSource(errors={("BBAS3", "m1"): BrapiForbiddenError("plan")})
+    repo = FakeRawIngestionRepository()
+
+    use_case = IngestPortfolioUseCase(
+        source, repo, EventBus(), ["m1", "m2"], delay_seconds=0, sleep=no_sleep
+    )
+    outcomes = await use_case.execute(["BBAS3"])
+
+    assert outcomes[0].status is OutcomeStatus.SKIPPED
+    assert outcomes[0].http_status == 403
     assert outcomes[1].status is OutcomeStatus.STORED
     assert len(repo.items) == 1
 

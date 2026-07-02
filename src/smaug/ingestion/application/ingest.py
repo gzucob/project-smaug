@@ -3,8 +3,8 @@
 Orchestration only. It owns no HTTP and no Mongo details — it talks to the
 brapi client and to the repository *interface*, and publishes a domain event
 on the shared bus. Resilience follows plan §5.1: 401 stops the run, plan/rate
-limits stop the run, 404 skips the call, and any single failure never takes
-the other tickers down with it.
+limits stop the run, 404 (unknown) and 403 (plan-restricted) skip the call, and
+any single failure never takes the other tickers down with it.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from smaug.ingestion.domain.repositories import RawIngestionRepository
 from smaug.shared.errors import (
     BrapiAuthError,
     BrapiError,
+    BrapiForbiddenError,
     BrapiNotFoundError,
     BrapiRateLimitError,
 )
@@ -103,11 +104,13 @@ class IngestPortfolioUseCase:
                     FetchOutcome(ticker, module, OutcomeStatus.ABORTED, None, str(exc))
                 )
                 return True
-            except BrapiNotFoundError as exc:
+            except (BrapiNotFoundError, BrapiForbiddenError) as exc:
                 # Skip just this call; keep collecting the others.
+                # 404 = ticker/module unknown; 403 = ticker needs a higher plan.
+                code = 403 if isinstance(exc, BrapiForbiddenError) else 404
                 logger.info("Skipping %s/%s: %s", ticker, module, exc)
                 outcomes.append(
-                    FetchOutcome(ticker, module, OutcomeStatus.SKIPPED, 404, str(exc))
+                    FetchOutcome(ticker, module, OutcomeStatus.SKIPPED, code, str(exc))
                 )
             except BrapiError as exc:
                 # Unexpected, but isolated: record and move on.

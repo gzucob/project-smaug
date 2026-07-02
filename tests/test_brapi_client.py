@@ -6,6 +6,7 @@ import pytest
 from smaug.ingestion.infrastructure.brapi_client import BrapiClient
 from smaug.shared.errors import (
     BrapiAuthError,
+    BrapiForbiddenError,
     BrapiNotFoundError,
     BrapiRateLimitError,
     BrapiUnexpectedStatusError,
@@ -55,6 +56,7 @@ async def test_should_use_dividends_flag_when_module_is_dividends() -> None:
         (401, BrapiAuthError),
         (402, BrapiRateLimitError),
         (429, BrapiRateLimitError),
+        (403, BrapiForbiddenError),
         (404, BrapiNotFoundError),
         (500, BrapiUnexpectedStatusError),
     ],

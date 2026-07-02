@@ -15,6 +15,7 @@ import httpx
 from smaug.ingestion.domain.ports import RawFetchResult
 from smaug.shared.errors import (
     BrapiAuthError,
+    BrapiForbiddenError,
     BrapiNotFoundError,
     BrapiRateLimitError,
     BrapiUnexpectedStatusError,
@@ -67,6 +68,10 @@ class BrapiClient:
             raise BrapiAuthError(f"401 Unauthorized for {where}: check BRAPI_TOKEN")
         if status in (httpx.codes.PAYMENT_REQUIRED, httpx.codes.TOO_MANY_REQUESTS):
             raise BrapiRateLimitError(f"{status} plan/rate limit hit at {where}")
+        if status == httpx.codes.FORBIDDEN:
+            raise BrapiForbiddenError(
+                f"403 forbidden for {where}: plan-restricted (upgrade required)"
+            )
         if status == httpx.codes.NOT_FOUND:
             raise BrapiNotFoundError(f"404 not found for {where}")
         raise BrapiUnexpectedStatusError(

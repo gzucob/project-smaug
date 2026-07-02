@@ -27,6 +27,10 @@ class BrapiNotFoundError(BrapiError):
     """Ticker or module not found (HTTP 404). Skip this call, keep going."""
 
 
+class BrapiForbiddenError(BrapiError):
+    """Ticker requires a higher brapi plan (HTTP 403). Skip this call."""
+
+
 class BrapiUnexpectedStatusError(BrapiError):
     """Any other non-success HTTP status we did not plan for."""
 
