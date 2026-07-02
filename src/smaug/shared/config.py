@@ -1,0 +1,57 @@
+"""Application settings, loaded from environment / ``.env``.
+
+Single source of truth for secrets and knobs. The brapi token lives only
+here (via env), never hardcoded — the repo is public.
+"""
+
+from __future__ import annotations
+
+from pydantic import Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Default brapi modules to collect. Names are configurable via ``BRAPI_MODULES``
+# (comma-separated) so they can be corrected against the live docs without a
+# code change. "dividends" is a pseudo-module: the client requests it via the
+# ``dividends=true`` flag instead of the ``modules=`` param.
+DEFAULT_BRAPI_MODULES: tuple[str, ...] = (
+    "balanceSheetHistoryQuarterly",
+    "incomeStatementHistoryQuarterly",
+    "cashflowHistoryQuarterly",
+    "defaultKeyStatistics",
+    "financialData",
+    "dividends",
+)
+
+
+class Settings(BaseSettings):
+    """Environment-backed configuration."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # ---- brapi ----
+    brapi_token: SecretStr = Field(default=SecretStr(""))
+    brapi_base_url: str = Field(default="https://brapi.dev/api")
+    brapi_modules: tuple[str, ...] = Field(default=DEFAULT_BRAPI_MODULES)
+
+    # ---- MongoDB ----
+    mongo_uri: str = Field(default="mongodb://localhost:27017")
+    mongo_db: str = Field(default="smaug")
+
+    # ---- Collection ----
+    request_delay_seconds: float = Field(default=2.0)
+
+    def require_token(self) -> str:
+        """Return the raw token, failing loudly if it is empty."""
+        token = self.brapi_token.get_secret_value()
+        if not token:
+            raise ValueError("BRAPI_TOKEN is empty. Set it in .env before collecting.")
+        return token
+
+
+def get_settings() -> Settings:
+    """Build a fresh Settings instance (composition-root helper)."""
+    return Settings()
