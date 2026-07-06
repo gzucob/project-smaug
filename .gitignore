@@ -15,6 +15,7 @@ venv/
 !.env.example
 
 # Caches de qualidade/teste
+.cache/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

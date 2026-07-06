@@ -1,0 +1,41 @@
+{
+  "results": [
+    {
+      "symbol": "PETR4",
+      "incomeStatementHistoryQuarterly": {
+        "incomeStatementHistory": [
+          {
+            "endDate": "2024-12-31",
+            "totalRevenue": 120000,
+            "netIncome": 30000,
+            "ebitda": 50000,
+            "grossProfit": 60000
+          },
+          {
+            "endDate": "2024-09-30",
+            "totalRevenue": 118000,
+            "netIncome": 28000,
+            "ebitda": 48000,
+            "grossProfit": 58000
+          },
+          {
+            "endDate": "2024-06-30",
+            "totalRevenue": 115000,
+            "netIncome": 27000,
+            "ebitda": 47000,
+            "grossProfit": 57000
+          },
+          {
+            "endDate": "2024-03-31",
+            "totalRevenue": 110000,
+            "netIncome": 26000,
+            "ebitda": 46000,
+            "grossProfit": 55000
+          }
+        ]
+      }
+    }
+  ],
+  "requestedAt": "2026-07-02T12:00:00.000Z",
+  "took": "18ms"
+}

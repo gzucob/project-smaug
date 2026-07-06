@@ -11,6 +11,7 @@ dependencies = [
     "pydantic-settings>=2.7",
     "httpx>=0.28",
     "typer>=0.15",
+    "pycvm>=0.4",
 ]
 
 [dependency-groups]
@@ -37,6 +38,10 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "PT"]
 
+[tool.ruff.lint.per-file-ignores]
+# Typer relies on function calls (typer.Option(...)) in argument defaults.
+"src/smaug/entrypoints/cli.py" = ["B008"]
+
 [tool.mypy]
 python_version = "3.13"
 strict = true
@@ -44,6 +49,11 @@ warn_unreachable = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 plugins = ["pydantic.mypy"]
+
+# pycvm ships no py.typed marker, so it has no type stubs.
+[[tool.mypy.overrides]]
+module = ["cvm.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
