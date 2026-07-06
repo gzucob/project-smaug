@@ -17,6 +17,10 @@ def configure_logging(level: int = logging.INFO) -> None:
         format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    # httpx logs each request line at INFO — and that line includes the full URL,
+    # i.e. the ``?token=`` query param. The repo is public and the token must
+    # never be printed (CLAUDE.md), so keep httpx quiet below WARNING.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     _CONFIGURED = True
 
 
