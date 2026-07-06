@@ -48,25 +48,27 @@ limite de plano param a coleta; 404 pula a chamada).
 A ingestão tem **duas fontes alternáveis por config**, ambas plugadas na mesma
 porta `RawDataSource` — trocar é mudar uma linha no `.env`, sem reescrever código:
 
-- `INGESTION_SOURCE=cvm` (**padrão**) — dados abertos da CVM. Cobre a carteira
-  inteira, inclusive bancos e seguradoras. **Ainda é esqueleto**: rodar `ingest`
-  nesta fonte falha com uma mensagem clara pedindo `INGESTION_SOURCE=brapi`.
-- `INGESTION_SOURCE=brapi` — API da brapi. Funcional hoje; no plano gratuito só
-  PETR4/VALE3 retornam (as demais dão 403 e são puladas). Requer `BRAPI_TOKEN`.
+- `INGESTION_SOURCE=cvm` (**padrão**) — dados abertos da CVM. Baixa o ZIP anual
+  do ITR (`CVM_YEAR`, default 2024), parseia com a `pycvm` e espelha os
+  statements crus (`BPA`/`BPP`/`DRE`/`DFC`). Cobre a carteira inteira, inclusive
+  bancos e seguradoras (no formato regulado deles). Não requer token. O mapa
+  ticker → código CVM vive em `portfolio/domain/cvm_codes.py`.
+- `INGESTION_SOURCE=brapi` — API da brapi. No plano gratuito só PETR4/VALE3
+  retornam (as demais dão 403 e são puladas). Requer `BRAPI_TOKEN`.
 
 ## Estrutura
 
 ```
 src/smaug/
-├── ingestion/     # busca na brapi + persistência do espelho cru
-├── portfolio/     # mapa ticker -> setor (referência)
+├── ingestion/     # fontes (brapi | CVM) + persistência do espelho cru
+├── portfolio/     # mapas de referência: ticker -> setor, ticker -> código CVM
 ├── shared/        # config, conexão Mongo, EventBus
 └── entrypoints/   # CLI
 ```
 
 ## Status
 
-✅ **Fase 1 implementada** — cliente brapi, persistência do espelho cru
-(append-only), EventBus in-process, CLI de coleta e relatório de completude
-com verificação setorial. Falta a **coleta real** das 9 ações (rodar com o
-token) e a inspeção do relatório para confirmar a fundação da Fase 2.
+✅ **Fase 1 implementada** — duas fontes alternáveis por config (CVM e brapi)
+sob a mesma porta, persistência do espelho cru (append-only), EventBus
+in-process, CLI de coleta e relatório de completude. A fonte CVM já coleta as
+9 ações de fato (bancos e seguradoras inclusos), sem custo nem token.

@@ -11,6 +11,7 @@ dependencies = [
     "pydantic-settings>=2.7",
     "httpx>=0.28",
     "typer>=0.15",
+    "pycvm>=0.4",
 ]
 
 [dependency-groups]
@@ -48,6 +49,11 @@ warn_unreachable = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 plugins = ["pydantic.mypy"]
+
+# pycvm ships no py.typed marker, so it has no type stubs.
+[[tool.mypy.overrides]]
+module = ["cvm.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

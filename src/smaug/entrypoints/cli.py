@@ -26,6 +26,7 @@ from smaug.ingestion.domain.ports import RawDataSource
 from smaug.ingestion.infrastructure.brapi_client import BrapiClient
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource
 from smaug.ingestion.infrastructure.repositories import BeanieRawIngestionRepository
+from smaug.portfolio.domain.cvm_codes import TICKER_TO_CVM_CODE
 from smaug.portfolio.domain.sectors import portfolio_tickers
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
@@ -73,7 +74,12 @@ def _build_data_source(settings: Settings, http: httpx.AsyncClient) -> RawDataSo
     """
     if settings.ingestion_source == "brapi":
         return BrapiClient(settings.brapi_base_url, settings.require_token(), http)
-    return CvmDataSource()
+    return CvmDataSource(
+        http,
+        TICKER_TO_CVM_CODE,
+        year=settings.cvm_year,
+        cache_dir=settings.cvm_cache_dir,
+    )
 
 
 async def _run_ingest(tickers: tuple[str, ...]) -> int:

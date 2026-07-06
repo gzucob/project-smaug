@@ -54,6 +54,11 @@ class Settings(BaseSettings):
 
     # ---- CVM ----
     cvm_modules: tuple[str, ...] = Field(default=DEFAULT_CVM_MODULES)
+    # Year of the ITR (quarterly) file to mirror. 2024 is verified good; bump
+    # via ``CVM_YEAR`` once a newer year is published in full.
+    cvm_year: int = Field(default=2024)
+    # Where the downloaded/sanitized CVM ZIPs are cached (gitignored).
+    cvm_cache_dir: str = Field(default=".cache/cvm")
 
     # ---- MongoDB ----
     mongo_uri: str = Field(default="mongodb://localhost:27017")
