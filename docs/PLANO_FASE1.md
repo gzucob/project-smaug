@@ -1,8 +1,70 @@
-# Plano de Implementação — Fase 1 (Ingestão brapi) · project-smaug
+# Plano de Implementação — Fase 1 (Ingestão: CVM + brapi) · project-smaug
 
-> Documento de plano fechado nesta sessão. É a fonte de verdade do **como** da
-> Fase 1. Os critérios do **o quê / porquê** vivem em
+> Documento de plano fechado na sessão de planejamento. É a fonte de verdade do
+> **como** da Fase 1. Os critérios do **o quê / porquê** vivem em
 > `docs/preview_fase1_criterios_implementacao.md`.
+>
+> ⚠️ A **seção 0** abaixo registra o que mudou entre o plano e a implementação
+> (o pivô de brapi para CVM). As seções 1–11 preservam o plano original.
+
+---
+
+## 0. Atualização pós-implementação (o que mudou vs. o plano)
+
+O plano original previa **brapi como fonte única**. Na prática, o **plano gratuito
+da brapi não cobre a carteira**: só PETR4/VALE3 retornam; bancos e seguradoras dão
+`403` (restrição de plano). Decisão: **CVM (dados.cvm.gov.br) como fonte primária**,
+com o **brapi mantido como alternativa alternável por config** — para não reescrever
+código no dia em que o plano pago for assinado.
+
+**O "seam" (troca sem reescrita):** ambas as fontes implementam a mesma porta
+`RawDataSource` (`ingestion/domain/ports.py`). A fonte ativa é escolhida por
+`INGESTION_SOURCE` (`cvm` padrão | `brapi`) no `.env`. `RawIngestion.source` marca
+cada registro, então as duas convivem no mesmo `raw_ingestions`.
+
+**CVM — como funciona:** baixa o ZIP anual do ITR (`CVM_YEAR`, default 2024), cacheia
+em `.cache/` (gitignored), **esvazia os membros DMPL** (o parser da `pycvm` quebra
+neles), parseia com `pycvm` e espelha as contas cruas de **BPA/BPP/DRE/DFC** (código,
+nome, valor `Decimal`), **sem cálculo**. Cobre a carteira inteira, de graça, sem token.
+Bancos e seguradoras vêm no formato regulado deles.
+
+**Módulos por fonte:**
+- **brapi:** `balanceSheetHistoryQuarterly`, `incomeStatementHistoryQuarterly`,
+  `cashflowHistoryQuarterly`, `defaultKeyStatistics`, `financialData`, `dividends`.
+- **CVM:** `BPA`, `BPP`, `DRE`, `DFC`.
+
+**Mapa ticker → código CVM** (novo dado de referência em
+`portfolio/domain/cvm_codes.py`), verificado contra os nomes reais no ITR 2024:
+
+| Ticker | CVM | Empresa |
+|---|---|---|
+| PETR4 | 9512 | Petrobras |
+| VALE3 | 4170 | Vale |
+| SAPR11 | 18627 | Sanepar |
+| TAEE11 | 20257 | Taesa |
+| WEGE3 | 5410 | WEG |
+| BBAS3 | 1023 | Banco do Brasil |
+| BBDC4 | 906 | Bradesco |
+| BBSE3 | 23159 | BB Seguridade |
+| CXSE3 | 23795 | Caixa Seguridade |
+
+**Relatório ciente da fonte:** um `ReportProfile` por fonte. brapi conta trimestres e
+checa campos; CVM conta **contas** e checa **âncoras setoriais** por código/nome
+(âncoras validadas no ITR 2024; ver seção 6).
+
+**Descobertas da Fase 1:**
+- **brapi grátis não cobre a carteira** — só PETR4/VALE3; o resto dá `403`
+  (plan-restricted, tratado como *skip*, não erro).
+- **CXSE3 (Caixa Seguridade) declara como holding**, não no formato seguradora: a
+  DRE 3.01 é "Receita de Venda", não "Atividades Seguradoras". O relatório setorial
+  sinaliza "Receita de seguros" **ausente** — descoberta, não bug.
+- **Patrimônio Líquido tem código diferente por setor** na CVM (banco `2.07`,
+  demais `2.03`) → o relatório casa PL por **nome**, receita por **código** (`3.01`).
+- **`pycvm` não é tipada** (override de mypy p/ `cvm.*`) e seu parser de DMPL quebra
+  no ITR 2024 real (`KeyError: 'Patrimônio Líquido'`) — contornado esvaziando o DMPL.
+
+**Segurança:** corrigido um vazamento — o `httpx` logava a URL de requisição com
+`?token=`; o logger do `httpx` foi silenciado abaixo de `WARNING`.
 
 ---
 
@@ -169,13 +231,13 @@ ticker**:
 
 ## 9. Definição de "pronto" para a Fase 1
 
-- [ ] 9 ações coletadas com token, com tratamento de falha por ticker.
-- [ ] Dado cru persistido com ticker, data de consulta, fonte e módulo.
-- [ ] Re-rodar a coleta é seguro e não corrompe o histórico.
-- [ ] Relatório de completude por ticker, incl. verificação setorial.
-- [ ] Confirmado por inspeção real que os campos da Fase 2 estão presentes — ou
-      documentado qual falta e em qual ticker.
-- [ ] Token fora do código; dependências fixadas; log de coleta existente.
+- [x] 9 ações coletadas (via CVM, sem token), com tratamento de falha por ticker.
+- [x] Dado cru persistido com ticker, data de consulta, fonte e módulo.
+- [x] Re-rodar a coleta é seguro e não corrompe o histórico (append-only).
+- [x] Relatório de completude por ticker, incl. verificação setorial (por fonte).
+- [x] Confirmado por inspeção real que os dados setoriais estão presentes — e a
+      única lacuna (CXSE3 declara como holding) está documentada na seção 0.
+- [x] Token fora do código e fora dos logs; dependências fixadas; log de coleta.
 
 ---
 
