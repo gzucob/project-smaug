@@ -66,6 +66,74 @@ async def test_should_verify_bank_specific_fields_across_modules() -> None:
     assert ticker_report.sector_check.missing_fields == ()
 
 
+async def test_cvm_report_counts_accounts_and_checks_bank_anchors() -> None:
+    repo = FakeRawIngestionRepository()
+    await repo.add(
+        make_snapshot(
+            "BBAS3",
+            "BPA",
+            {"accounts": [{"code": "1", "name": "Ativo Total"}, {"code": "1.01"}]},
+        )
+    )
+    await repo.add(
+        make_snapshot(
+            "BBAS3",
+            "BPP",
+            {"accounts": [{"code": "2.07", "name": "Patrimônio Líquido Consolidado"}]},
+        )
+    )
+    await repo.add(
+        make_snapshot(
+            "BBAS3",
+            "DRE",
+            {
+                "accounts": [
+                    {"code": "3.01", "name": "Receitas de Intermediação Financeira"},
+                    {"code": "3.07", "name": "Lucro das Operações Continuadas"},
+                ]
+            },
+        )
+    )
+
+    report = await CompletenessReportUseCase(
+        repo, ["BPA", "BPP", "DRE", "DFC"], source="cvm"
+    ).execute(["BBAS3"])
+
+    assert report.depth_label == "accounts"
+    ticker_report = report.tickers[0]
+    assert ticker_report.max_quarters == 2  # BPA/DRE each carry two accounts
+
+    presence = {m.module: m.present for m in ticker_report.modules}
+    assert presence["DFC"] is False  # never collected -> a discovery
+
+    present = set(ticker_report.sector_check.present_fields)
+    assert present == {
+        "Ativo Total",
+        "Patrimônio Líquido",
+        "Resultado do período",
+        "Receita de intermediação",
+    }
+
+
+async def test_cvm_report_flags_holding_insurer_missing_seguros() -> None:
+    # Caixa Seguridade files as a holding (commercial layout), not as an insurer.
+    repo = FakeRawIngestionRepository()
+    await repo.add(
+        make_snapshot(
+            "CXSE3",
+            "DRE",
+            {"accounts": [{"code": "3.01", "name": "Receita de Venda de Bens"}]},
+        )
+    )
+
+    report = await CompletenessReportUseCase(
+        repo, ["BPA", "BPP", "DRE", "DFC"], source="cvm"
+    ).execute(["CXSE3"])
+
+    missing = report.tickers[0].sector_check.missing_fields
+    assert "Receita de seguros" in missing
+
+
 async def test_should_read_latest_snapshot_when_multiple_revisions_exist() -> None:
     repo = FakeRawIngestionRepository()
     await repo.add(

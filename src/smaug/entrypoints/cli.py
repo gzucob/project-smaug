@@ -110,6 +110,7 @@ async def _run_report(tickers: tuple[str, ...]) -> None:
         use_case = CompletenessReportUseCase(
             repository=BeanieRawIngestionRepository(),
             modules=settings.active_modules,
+            source=settings.ingestion_source,
         )
         completeness = await use_case.execute(tickers)
     finally:
@@ -140,11 +141,11 @@ def format_report(report: CompletenessReport) -> str:
     """Render the completeness report as readable text (plan §6)."""
     lines: list[str] = ["", "=== Completeness report ==="]
     for ticker_report in report.tickers:
-        lines.extend(_format_ticker(ticker_report))
+        lines.extend(_format_ticker(ticker_report, report.depth_label))
     return "\n".join(lines)
 
 
-def _format_ticker(ticker_report: TickerReport) -> list[str]:
+def _format_ticker(ticker_report: TickerReport, depth_label: str) -> list[str]:
     collected = (
         ticker_report.last_collected_at.isoformat()
         if ticker_report.last_collected_at is not None
@@ -153,16 +154,16 @@ def _format_ticker(ticker_report: TickerReport) -> list[str]:
     lines = [
         "",
         f"{ticker_report.ticker} [{ticker_report.sector.value}] "
-        f"— max quarters: {ticker_report.max_quarters} — collected: {collected}",
+        f"— max {depth_label}: {ticker_report.max_quarters} — collected: {collected}",
     ]
     for module in ticker_report.modules:
         mark = "OK " if module.present else "-- "
-        lines.append(f"  {mark} {module.module:<32} quarters={module.quarters}")
+        lines.append(f"  {mark} {module.module:<32} {depth_label}={module.quarters}")
     check = ticker_report.sector_check
     present = ", ".join(check.present_fields) or "(none)"
     missing = ", ".join(check.missing_fields) or "(none)"
-    lines.append(f"  sector fields present: {present}")
-    lines.append(f"  sector fields MISSING: {missing}")
+    lines.append(f"  sector signals present: {present}")
+    lines.append(f"  sector signals MISSING: {missing}")
     return lines
 
 
