@@ -6,8 +6,15 @@ here (via env), never hardcoded — the repo is public.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# The active raw data source. Only one is active per run (``INGESTION_SOURCE``),
+# but both implement the same ``RawDataSource`` port, so switching is a config
+# change — never a rewrite. brapi is kept for the day the paid plan is bought.
+IngestionSource = Literal["brapi", "cvm"]
 
 # Default brapi modules to collect. Names are configurable via ``BRAPI_MODULES``
 # (comma-separated) so they can be corrected against the live docs without a
@@ -22,6 +29,11 @@ DEFAULT_BRAPI_MODULES: tuple[str, ...] = (
     "dividends",
 )
 
+# Default CVM "modules" — the regulated statement types, not brapi module names.
+# BPA/BPP = balance sheet (assets / liabilities+equity), DRE = income,
+# DFC = cash flow. Configurable via ``CVM_MODULES``.
+DEFAULT_CVM_MODULES: tuple[str, ...] = ("BPA", "BPP", "DRE", "DFC")
+
 
 class Settings(BaseSettings):
     """Environment-backed configuration."""
@@ -32,10 +44,16 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # ---- Active source ----
+    ingestion_source: IngestionSource = Field(default="cvm")
+
     # ---- brapi ----
     brapi_token: SecretStr = Field(default=SecretStr(""))
     brapi_base_url: str = Field(default="https://brapi.dev/api")
     brapi_modules: tuple[str, ...] = Field(default=DEFAULT_BRAPI_MODULES)
+
+    # ---- CVM ----
+    cvm_modules: tuple[str, ...] = Field(default=DEFAULT_CVM_MODULES)
 
     # ---- MongoDB ----
     mongo_uri: str = Field(default="mongodb://localhost:27017")
@@ -43,6 +61,13 @@ class Settings(BaseSettings):
 
     # ---- Collection ----
     request_delay_seconds: float = Field(default=2.0)
+
+    @property
+    def active_modules(self) -> tuple[str, ...]:
+        """Modules for the currently selected source (brapi vs CVM names)."""
+        if self.ingestion_source == "cvm":
+            return self.cvm_modules
+        return self.brapi_modules
 
     def require_token(self) -> str:
         """Return the raw token, failing loudly if it is empty."""

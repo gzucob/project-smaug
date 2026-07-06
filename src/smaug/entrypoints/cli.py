@@ -22,15 +22,17 @@ from smaug.ingestion.application.report import (
     CompletenessReportUseCase,
     TickerReport,
 )
+from smaug.ingestion.domain.ports import RawDataSource
 from smaug.ingestion.infrastructure.brapi_client import BrapiClient
+from smaug.ingestion.infrastructure.cvm_source import CvmDataSource
 from smaug.ingestion.infrastructure.repositories import BeanieRawIngestionRepository
 from smaug.portfolio.domain.sectors import portfolio_tickers
-from smaug.shared.config import get_settings
+from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
 from smaug.shared.events import EventBus
 from smaug.shared.logging import get_logger
 
-app = typer.Typer(help="smaug — faithful brapi ingestion (Phase 1).")
+app = typer.Typer(help="smaug — faithful fundamental-data ingestion (Phase 1).")
 logger = get_logger("smaug.cli")
 
 _FAILED_STATUSES = frozenset({OutcomeStatus.ERROR, OutcomeStatus.ABORTED})
@@ -42,9 +44,13 @@ def ingest(
         None, "--ticker", "-t", help="Ticker to collect (repeatable). Default: all."
     ),
 ) -> None:
-    """Collect the configured brapi modules and store the raw mirror."""
+    """Collect the configured modules for the active source and store the mirror."""
     tickers = tuple(ticker) if ticker else portfolio_tickers()
-    exit_code = asyncio.run(_run_ingest(tickers))
+    try:
+        exit_code = asyncio.run(_run_ingest(tickers))
+    except NotImplementedError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
     raise typer.Exit(code=exit_code)
 
 
@@ -59,17 +65,28 @@ def report(
     asyncio.run(_run_report(tickers))
 
 
+def _build_data_source(settings: Settings, http: httpx.AsyncClient) -> RawDataSource:
+    """Pick the active raw source from config — the brapi/CVM swap seam.
+
+    Both implement ``RawDataSource``, so the use case never knows which one it
+    got. The token is only required (and only exists) for brapi.
+    """
+    if settings.ingestion_source == "brapi":
+        return BrapiClient(settings.brapi_base_url, settings.require_token(), http)
+    return CvmDataSource()
+
+
 async def _run_ingest(tickers: tuple[str, ...]) -> int:
     settings = get_settings()
-    token = settings.require_token()
     client = await init_database(settings)
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
             use_case = IngestPortfolioUseCase(
-                client=BrapiClient(settings.brapi_base_url, token, http),
+                client=_build_data_source(settings, http),
                 repository=BeanieRawIngestionRepository(),
                 event_bus=EventBus(),
-                modules=settings.brapi_modules,
+                modules=settings.active_modules,
+                source=settings.ingestion_source,
                 delay_seconds=settings.request_delay_seconds,
             )
             outcomes = await use_case.execute(tickers)
@@ -86,7 +103,7 @@ async def _run_report(tickers: tuple[str, ...]) -> None:
     try:
         use_case = CompletenessReportUseCase(
             repository=BeanieRawIngestionRepository(),
-            modules=settings.brapi_modules,
+            modules=settings.active_modules,
         )
         completeness = await use_case.execute(tickers)
     finally:

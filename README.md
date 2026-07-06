@@ -43,6 +43,17 @@ o histórico de revisões. O token vai só no `.env`; nunca é persistido nem
 aparece no relatório. Falha em um ticker/módulo não derruba os demais (401 e
 limite de plano param a coleta; 404 pula a chamada).
 
+### Fonte de dados (`INGESTION_SOURCE`)
+
+A ingestão tem **duas fontes alternáveis por config**, ambas plugadas na mesma
+porta `RawDataSource` — trocar é mudar uma linha no `.env`, sem reescrever código:
+
+- `INGESTION_SOURCE=cvm` (**padrão**) — dados abertos da CVM. Cobre a carteira
+  inteira, inclusive bancos e seguradoras. **Ainda é esqueleto**: rodar `ingest`
+  nesta fonte falha com uma mensagem clara pedindo `INGESTION_SOURCE=brapi`.
+- `INGESTION_SOURCE=brapi` — API da brapi. Funcional hoje; no plano gratuito só
+  PETR4/VALE3 retornam (as demais dão 403 e são puladas). Requer `BRAPI_TOKEN`.
+
 ## Estrutura
 
 ```
