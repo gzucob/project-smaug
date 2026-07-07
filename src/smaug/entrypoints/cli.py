@@ -86,6 +86,7 @@ def _build_data_source(settings: Settings, http: httpx.AsyncClient) -> RawDataSo
         TICKER_TO_CVM_CODE,
         year=settings.cvm_year,
         cache_dir=settings.cvm_cache_dir,
+        document=settings.cvm_document,
     )
 
 
@@ -226,9 +227,14 @@ def format_analysis(analyses: list[TickerAnalysis]) -> str:
     lines: list[str] = ["", "=== Analysis ==="]
     for a in analyses:
         i = a.indicators
+        basis = (
+            f" ({a.price_basis}, nominal {_num(a.price_nominal)})"
+            if a.price_basis is not None
+            else ""
+        )
         lines.append(
             f"\n{a.ticker} [{a.sector.value}] — ref {a.reference_date} "
-            f"— price {_num(a.price)}"
+            f"— price {_num(a.price)}{basis}"
         )
         lines.append(
             f"  ROE {_pct(i.roe)}  ROA {_pct(i.roa)}  net margin {_pct(i.net_margin)}"

@@ -11,12 +11,13 @@ most tickers, so ``dividends_12m`` stays ``None`` (DY then computes as ``None``)
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
 
-from smaug.analysis.domain.financials import MarketData
+from smaug.analysis.domain.financials import MarketData, YearPrices
 from smaug.ingestion.infrastructure.brapi_client import BrapiClient
 
 
@@ -27,6 +28,10 @@ def _dec(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except (InvalidOperation, ValueError):
         return None
+
+
+def _avg(values: list[Decimal]) -> Decimal | None:
+    return sum(values, Decimal(0)) / Decimal(len(values)) if values else None
 
 
 class BrapiPriceProvider:
@@ -54,3 +59,36 @@ class BrapiPriceProvider:
             shares=_dec(quote.get("sharesOutstanding")),
             dividends_12m=None,
         )
+
+    async def year_prices(self, ticker: str, year: int) -> YearPrices:
+        """Average nominal (``close``) and adjusted (``adjustedClose``) over ``year``.
+
+        Uses the free-plan daily history (``range=5y``), which covers recent
+        closed years. Days outside ``year`` are ignored; a year with no data
+        yields ``YearPrices()`` (both ``None``) and the multiples degrade to null.
+        """
+        url = f"{self._base_url}/quote/{ticker}"
+        response = await self._http.get(
+            url,
+            params={"token": self._token, "range": "5y", "interval": "1d"},
+        )
+        BrapiClient._raise_for_status(response, ticker, "quote")
+
+        results = response.json().get("results") or []
+        if not results:
+            return YearPrices()
+        history = results[0].get("historicalDataPrice") or []
+
+        closes: list[Decimal] = []
+        adjusted: list[Decimal] = []
+        for point in history:
+            stamp = point.get("date")
+            if stamp is None or datetime.fromtimestamp(stamp, UTC).year != year:
+                continue
+            close = _dec(point.get("close"))
+            if close is not None:
+                closes.append(close)
+            adj = _dec(point.get("adjustedClose"))
+            if adj is not None:
+                adjusted.append(adj)
+        return YearPrices(nominal_avg=_avg(closes), adjusted_avg=_avg(adjusted))

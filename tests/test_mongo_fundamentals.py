@@ -1,10 +1,13 @@
 """CVM account mapping -> StandardizedFinancials (pure, no Mongo)."""
 
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
-from smaug.analysis.infrastructure.mongo_fundamentals import standardize
+from smaug.analysis.infrastructure.mongo_fundamentals import (
+    MongoFundamentalsReader,
+    standardize,
+)
 from smaug.portfolio.domain.sectors import Sector
 
 
@@ -95,3 +98,41 @@ def test_standardize_bank_pulls_core_and_leaves_rest_none() -> None:
     assert f.total_debt is None
     assert f.current_assets is None
     assert f.ebitda is None
+
+
+class _FakeCursor:
+    def __init__(self, docs: list[dict[str, Any]]) -> None:
+        self._docs = docs
+
+    async def to_list(self, _length: int | None) -> list[dict[str, Any]]:
+        return self._docs
+
+
+class _FakeCollection:
+    def __init__(self, docs: list[dict[str, Any]]) -> None:
+        self._docs = docs
+
+    def find(self, _filter: dict[str, Any]) -> _FakeCursor:
+        return _FakeCursor(self._docs)
+
+
+def _doc(module: str, ref: str, accounts: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "payload": {"reference_date": ref, "accounts": accounts},
+        "module": module,
+        "fetched_at": datetime(2026, 7, 2, tzinfo=UTC),
+    }
+
+
+async def test_history_keeps_only_closed_year_periods() -> None:
+    # A Q3 (September) ITR period and a December (DFP) closed year coexist; the
+    # historical reader must yield only the closed year.
+    docs = [
+        _doc("DRE", "2024-09-30", [_acc("3.01", "Receita", "100")]),
+        _doc("DRE", "2024-12-31", [_acc("3.01", "Receita", "400")]),
+    ]
+
+    history = await MongoFundamentalsReader(_FakeCollection(docs)).history("PETR4")
+
+    assert [f.reference_date for f in history] == [date(2024, 12, 31)]
+    assert history[0].revenue == Decimal("400")

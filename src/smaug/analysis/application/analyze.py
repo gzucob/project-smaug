@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from smaug.analysis.domain.calculator import compute
 from smaug.analysis.domain.entities import TickerAnalysis
@@ -26,6 +27,9 @@ from smaug.shared.logging import get_logger
 logger = get_logger(__name__)
 
 Clock = Callable[[], datetime]
+
+# How the closed-year multiples are priced: the year's dividend-adjusted average.
+_PRICE_BASIS = "adjusted_year_avg"
 
 
 def _utc_now() -> datetime:
@@ -63,14 +67,9 @@ class AnalyzePortfolioUseCase:
             return None
         current = history[-1]
         previous = _prior_year(history, current)
+        year = current.reference_date.year
 
-        try:
-            market = await self._price_provider.get(ticker)
-        except BrapiError as exc:
-            logger.warning(
-                "No price for %s (%s); market multiples will be null", ticker, exc
-            )
-            market = MarketData()
+        market, nominal_avg = await self._market_for_year(ticker, year)
 
         analysis = TickerAnalysis(
             ticker=ticker,
@@ -79,10 +78,47 @@ class AnalyzePortfolioUseCase:
             computed_at=self._clock(),
             indicators=compute(current, previous, market),
             price=market.price,
+            price_nominal=nominal_avg,
+            price_basis=_PRICE_BASIS if market.price is not None else None,
         )
         await self._repository.save(analysis)
         logger.info("Analyzed %s (ref %s)", ticker, current.reference_date)
         return analysis
+
+    async def _market_for_year(
+        self, ticker: str, year: int
+    ) -> tuple[MarketData, Decimal | None]:
+        """Price the closed-year multiples on the year's dividend-adjusted average.
+
+        P/E and P/B scale linearly with price, so repricing the *current* market
+        cap onto the year's adjusted basis — ``current_cap × adjusted_avg /
+        current_price`` — gives the historical multiple without needing a
+        historical share count. A price failure degrades to null market multiples
+        while keeping the accounting indicators. Returns the market inputs plus
+        the year's nominal average (stored for reference, not used in multiples).
+        """
+        try:
+            quote = await self._price_provider.get(ticker)
+            prices = await self._price_provider.year_prices(ticker, year)
+        except BrapiError as exc:
+            logger.warning(
+                "No price for %s (%s); market multiples will be null", ticker, exc
+            )
+            return MarketData(), None
+
+        adjusted = prices.adjusted_avg
+        effective_cap: Decimal | None = None
+        if (
+            adjusted is not None
+            and quote.market_cap is not None
+            and quote.price is not None
+            and quote.price != 0
+        ):
+            effective_cap = quote.market_cap * adjusted / quote.price
+        market = MarketData(
+            price=adjusted, market_cap=effective_cap, shares=quote.shares
+        )
+        return market, prices.nominal_avg
 
 
 def _prior_year(

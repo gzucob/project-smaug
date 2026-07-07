@@ -10,7 +10,11 @@ from __future__ import annotations
 from typing import Protocol
 
 from smaug.analysis.domain.entities import TickerAnalysis
-from smaug.analysis.domain.financials import MarketData, StandardizedFinancials
+from smaug.analysis.domain.financials import (
+    MarketData,
+    StandardizedFinancials,
+    YearPrices,
+)
 
 
 class FundamentalsReader(Protocol):
@@ -23,6 +27,10 @@ class PriceProvider(Protocol):
     """Provides current market data (price, market cap) for a ticker."""
 
     async def get(self, ticker: str) -> MarketData: ...
+
+    async def year_prices(self, ticker: str, year: int) -> YearPrices:
+        """Average nominal and dividend-adjusted price over ``year``."""
+        ...
 
 
 class AnalysisRepository(Protocol):

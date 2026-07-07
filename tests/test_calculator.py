@@ -56,6 +56,25 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.ev_ebitda == Decimal("8.4375")  # (12000 + 1500) / 1600
 
 
+def test_closed_year_leaves_annualization_a_no_op() -> None:
+    # A December reference date is a full 12-month period, so annualizing (×12/12)
+    # must leave the flows untouched — this is what makes the DFP closed-year view
+    # correct without any calculator change.
+    closed = StandardizedFinancials(
+        reference_date=date(2024, 12, 31),
+        sector=Sector.COMMODITY,
+        equity=Decimal(6000),
+        net_income=Decimal(1200),  # already annual: must NOT be scaled up
+        revenue=Decimal(4000),
+    )
+
+    ind = compute(closed, None, MarketData(market_cap=Decimal(12000)))
+
+    assert ind.roe == Decimal("0.2")  # 1200 / 6000, no 12/12 inflation
+    assert ind.net_margin == Decimal("0.3")  # 1200 / 4000
+    assert ind.pe == Decimal(10)  # 12000 / 1200
+
+
 def test_bank_skips_inapplicable_indicators() -> None:
     bank = StandardizedFinancials(
         reference_date=_Q3,

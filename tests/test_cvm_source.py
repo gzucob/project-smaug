@@ -72,6 +72,23 @@ def test_to_payload_mirrors_raw_accounts_without_math() -> None:
     assert payload["accounts"][0]["name"] == "Ativo Total"
 
 
+async def test_dfp_document_targets_the_annual_file_and_url(tmp_path: Path) -> None:
+    async with httpx.AsyncClient() as http:
+        itr = CvmDataSource(http, {"PETR4": "9512"}, year=2024, cache_dir=str(tmp_path))
+        dfp = CvmDataSource(
+            http,
+            {"PETR4": "9512"},
+            year=2024,
+            cache_dir=str(tmp_path),
+            document="DFP",
+        )
+
+    assert itr._zip_name == "itr_cia_aberta_2024.zip"  # default stays ITR
+    assert itr._base_url.endswith("DOC/ITR/DADOS")
+    assert dfp._zip_name == "dfp_cia_aberta_2024.zip"
+    assert dfp._base_url.endswith("DOC/DFP/DADOS")
+
+
 async def test_fetch_skips_unmapped_ticker_without_touching_network(
     tmp_path: Path,
 ) -> None:

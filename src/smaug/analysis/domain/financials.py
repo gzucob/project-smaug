@@ -44,3 +44,16 @@ class MarketData:
     market_cap: Decimal | None = None
     shares: Decimal | None = None
     dividends_12m: Decimal | None = None  # total paid over trailing 12 months
+
+
+@dataclass(frozen=True)
+class YearPrices:
+    """Average share price over one calendar year, both bases.
+
+    ``nominal_avg`` is the mean of daily closes; ``adjusted_avg`` is the mean of
+    dividend-adjusted closes (the total-return series the platforms price
+    historical multiples on). For heavy payers the two diverge a lot.
+    """
+
+    nominal_avg: Decimal | None = None
+    adjusted_avg: Decimal | None = None
