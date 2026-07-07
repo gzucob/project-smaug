@@ -19,6 +19,8 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         reference_date=analysis.reference_date,
         computed_at=analysis.computed_at,
         price=analysis.price,
+        price_nominal=analysis.price_nominal,
+        price_basis=analysis.price_basis,
         roe=i.roe,
         roa=i.roa,
         net_margin=i.net_margin,
@@ -43,6 +45,8 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
         reference_date=row.reference_date,
         computed_at=row.computed_at,
         price=row.price,
+        price_nominal=row.price_nominal,
+        price_basis=row.price_basis,
         indicators=Indicators(
             roe=row.roe,
             roa=row.roa,

@@ -54,8 +54,11 @@ class Settings(BaseSettings):
 
     # ---- CVM ----
     cvm_modules: tuple[str, ...] = Field(default=DEFAULT_CVM_MODULES)
-    # Year of the ITR (quarterly) file to mirror. 2024 is verified good; bump
-    # via ``CVM_YEAR`` once a newer year is published in full.
+    # Which CVM document to mirror: DFP = annual closed year (default, used by the
+    # historical analysis view), ITR = quarterly. Same statements, different file.
+    cvm_document: Literal["ITR", "DFP"] = Field(default="DFP")
+    # Year of the CVM file to mirror. 2024 is verified good; bump via ``CVM_YEAR``
+    # once a newer year is published in full.
     cvm_year: int = Field(default=2024)
     # Where the downloaded/sanitized CVM ZIPs are cached (gitignored).
     cvm_cache_dir: str = Field(default=".cache/cvm")

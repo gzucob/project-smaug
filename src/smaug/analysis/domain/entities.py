@@ -19,4 +19,6 @@ class TickerAnalysis:
     reference_date: date  # CVM period the fundamentals came from
     computed_at: datetime
     indicators: Indicators
-    price: Decimal | None = None  # brapi price used for the market multiples
+    price: Decimal | None = None  # price used for the market multiples
+    price_nominal: Decimal | None = None  # same period, nominal (unadjusted) basis
+    price_basis: str | None = None  # how ``price`` was derived (e.g. adjusted_year_avg)

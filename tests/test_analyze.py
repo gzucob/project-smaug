@@ -5,7 +5,11 @@ from decimal import Decimal
 
 from smaug.analysis.application.analyze import AnalyzePortfolioUseCase
 from smaug.analysis.domain.entities import TickerAnalysis
-from smaug.analysis.domain.financials import MarketData, StandardizedFinancials
+from smaug.analysis.domain.financials import (
+    MarketData,
+    StandardizedFinancials,
+    YearPrices,
+)
 from smaug.portfolio.domain.sectors import Sector
 from smaug.shared.errors import BrapiForbiddenError
 
@@ -20,15 +24,25 @@ class FakeReader:
 
 class FakePrice:
     def __init__(
-        self, data: MarketData | None = None, error: Exception | None = None
+        self,
+        data: MarketData | None = None,
+        *,
+        year: YearPrices | None = None,
+        error: Exception | None = None,
     ) -> None:
         self._data = data
+        self._year = year
         self._error = error
 
     async def get(self, ticker: str) -> MarketData:
         if self._error is not None:
             raise self._error
         return self._data or MarketData()
+
+    async def year_prices(self, ticker: str, year: int) -> YearPrices:
+        if self._error is not None:
+            raise self._error
+        return self._year or YearPrices()
 
 
 class FakeRepo:
@@ -54,19 +68,47 @@ def _petr4() -> StandardizedFinancials:
     )
 
 
-async def test_analyze_computes_and_saves() -> None:
+async def test_analyze_prices_multiples_on_year_adjusted_average() -> None:
     repo = FakeRepo()
     use_case = AnalyzePortfolioUseCase(
         FakeReader({"PETR4": [_petr4()]}),
-        FakePrice(MarketData(price=Decimal(10), market_cap=Decimal(12000))),
+        FakePrice(
+            MarketData(price=Decimal(10), market_cap=Decimal(12000)),
+            year=YearPrices(nominal_avg=Decimal(8), adjusted_avg=Decimal(6)),
+        ),
         repo,
     )
 
     out = await use_case.execute(["PETR4"])
 
     assert len(out) == 1
-    assert repo.saved[0].indicators.roe == Decimal("0.2")  # 1200 / 6000
-    assert out[0].price == Decimal(10)
+    saved = repo.saved[0]
+    assert saved.indicators.roe == Decimal("0.2")  # annualized 1200 / 6000
+    # Multiples are repriced onto the year's adjusted average: the current cap
+    # 12000 at price 10 becomes an effective cap of 12000 * 6 / 10 = 7200.
+    assert saved.price == Decimal(6)  # adjusted-year average is the basis used
+    assert saved.price_nominal == Decimal(8)
+    assert saved.price_basis == "adjusted_year_avg"
+    assert saved.indicators.pe == Decimal(6)  # 7200 / 1200
+    assert saved.indicators.pb == Decimal("1.2")  # 7200 / 6000
+
+
+async def test_analyze_nulls_multiples_when_year_price_missing() -> None:
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"PETR4": [_petr4()]}),
+        # Current quote is available, but the year has no adjusted average.
+        FakePrice(MarketData(price=Decimal(10), market_cap=Decimal(12000))),
+        repo,
+    )
+
+    await use_case.execute(["PETR4"])
+
+    saved = repo.saved[0]
+    assert saved.indicators.roe == Decimal("0.2")  # accounting indicator survives
+    assert saved.indicators.pe is None  # no adjusted basis -> no market multiple
+    assert saved.price is None
+    assert saved.price_basis is None
 
 
 async def test_analyze_skips_ticker_without_fundamentals() -> None:
