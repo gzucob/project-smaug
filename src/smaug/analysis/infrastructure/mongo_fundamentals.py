@@ -88,14 +88,33 @@ def _accounts(by_module: Mapping[str, Any], module: str) -> Accounts:
     return accounts if isinstance(accounts, list) else []
 
 
+def _scale(by_module: Mapping[str, Any], module: str) -> Decimal:
+    """CVM figures are reported in ``currency_size`` units (usually thousands).
+
+    Scaling to absolute reais here is what keeps the market multiples honest —
+    brapi's market cap is in reais, so mixing the two unscaled inflates P/E,
+    P/B and EV/EBITDA by ~1000x.
+    """
+    payload = by_module.get(module)
+    if isinstance(payload, Mapping):
+        size = payload.get("currency_size")
+        if isinstance(size, int) and size > 0:
+            return Decimal(size)
+    return Decimal(1)
+
+
+def _mul(value: Decimal | None, scale: Decimal) -> Decimal | None:
+    return None if value is None else value * scale
+
+
 def standardize(
     by_module: Mapping[str, Any], sector: Sector, reference_date: date
 ) -> StandardizedFinancials:
     """Build one period's ``StandardizedFinancials`` from its CVM statements."""
-    bpa = _accounts(by_module, "BPA")
-    bpp = _accounts(by_module, "BPP")
-    dre = _accounts(by_module, "DRE")
-    dfc = _accounts(by_module, "DFC")
+    bpa, bpa_s = _accounts(by_module, "BPA"), _scale(by_module, "BPA")
+    bpp, bpp_s = _accounts(by_module, "BPP"), _scale(by_module, "BPP")
+    dre, dre_s = _accounts(by_module, "DRE"), _scale(by_module, "DRE")
+    dfc, dfc_s = _accounts(by_module, "DFC"), _scale(by_module, "DFC")
 
     net_income: Decimal | None = None
     for name in _NET_INCOME_NAMES:
@@ -103,9 +122,10 @@ def standardize(
         if net_income is not None:
             break
 
-    total_assets = _by_code(bpa, "1")
-    equity = _by_name(bpp, "patrimonio liquido")
-    revenue = _by_code(dre, "3.01")
+    total_assets = _mul(_by_code(bpa, "1"), bpa_s)
+    equity = _mul(_by_name(bpp, "patrimonio liquido"), bpp_s)
+    net_income = _mul(net_income, dre_s)
+    revenue = _mul(_by_code(dre, "3.01"), dre_s)
 
     if sector.is_financial:
         return StandardizedFinancials(
@@ -117,8 +137,8 @@ def standardize(
             revenue=revenue,
         )
 
-    ebit = _by_code(dre, "3.05")  # Resultado Antes do Resultado Financeiro/Tributos
-    dep_amort = _by_name(dfc, "depreciacao")  # add-back in the cash-flow statement
+    ebit = _mul(_by_code(dre, "3.05"), dre_s)  # before financial result/taxes
+    dep_amort = _mul(_by_name(dfc, "depreciacao"), dfc_s)  # cash-flow add-back
     ebitda = (
         _sum(ebit, dep_amort) if ebit is not None and dep_amort is not None else None
     )
@@ -129,14 +149,16 @@ def standardize(
         equity=equity,
         net_income=net_income,
         revenue=revenue,
-        gross_profit=_by_code(dre, "3.03"),
+        gross_profit=_mul(_by_code(dre, "3.03"), dre_s),
         ebit=ebit,
         ebitda=ebitda,
         dep_amort=dep_amort,
-        cash=_by_code(bpa, "1.01.01"),
-        current_assets=_by_code(bpa, "1.01"),
-        current_liabilities=_by_code(bpp, "2.01"),
-        total_debt=_sum(_by_code(bpp, "2.01.04"), _by_code(bpp, "2.02.01")),
+        cash=_mul(_by_code(bpa, "1.01.01"), bpa_s),
+        current_assets=_mul(_by_code(bpa, "1.01"), bpa_s),
+        current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),
+        total_debt=_mul(
+            _sum(_by_code(bpp, "2.01.04"), _by_code(bpp, "2.02.01")), bpp_s
+        ),
     )
 
 

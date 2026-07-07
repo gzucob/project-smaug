@@ -56,6 +56,18 @@ def test_standardize_nonfinancial_pulls_every_line() -> None:
     assert f.total_debt == Decimal("200")  # 50 + 150
 
 
+def test_standardize_applies_currency_size_to_absolute_reais() -> None:
+    # CVM reports in thousands; the mapper must scale to keep market ratios sane.
+    by_module = {
+        "BPA": {
+            "currency_size": 1000,
+            "accounts": [_acc("1", "Ativo Total", "5")],
+        }
+    }
+    f = standardize(by_module, Sector.COMMODITY, date(2024, 9, 30))
+    assert f.total_assets == Decimal("5000")
+
+
 def test_standardize_bank_pulls_core_and_leaves_rest_none() -> None:
     by_module = {
         "BPA": {

@@ -8,5 +8,19 @@ services:
     volumes:
       - smaug-mongo-data:/data/db
 
+  postgres:
+    image: postgres:17
+    container_name: smaug-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: smaug
+      POSTGRES_PASSWORD: smaug
+      POSTGRES_DB: smaug
+    ports:
+      - "5432:5432"
+    volumes:
+      - smaug-postgres-data:/var/lib/postgresql/data
+
 volumes:
   smaug-mongo-data:
+  smaug-postgres-data:

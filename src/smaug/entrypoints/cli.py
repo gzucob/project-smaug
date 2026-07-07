@@ -8,10 +8,16 @@ dependencies and call the use cases (plan §3.1 / CLAUDE.md).
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal
 
 import httpx
 import typer
 
+from smaug.analysis.application.analyze import AnalyzePortfolioUseCase
+from smaug.analysis.domain.entities import TickerAnalysis
+from smaug.analysis.infrastructure.brapi_price import BrapiPriceProvider
+from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsReader
+from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
 from smaug.ingestion.application.ingest import (
     FetchOutcome,
     IngestPortfolioUseCase,
@@ -32,8 +38,9 @@ from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
 from smaug.shared.events import EventBus
 from smaug.shared.logging import get_logger
+from smaug.shared.sql_db import create_engine, create_session_factory
 
-app = typer.Typer(help="smaug — faithful fundamental-data ingestion (Phase 1).")
+app = typer.Typer(help="smaug — CVM/brapi ingestion and indicator analysis.")
 logger = get_logger("smaug.cli")
 
 _FAILED_STATUSES = frozenset({OutcomeStatus.ERROR, OutcomeStatus.ABORTED})
@@ -119,6 +126,45 @@ async def _run_report(tickers: tuple[str, ...]) -> None:
     print(format_report(completeness))
 
 
+@app.command()
+def analyze(
+    ticker: list[str] | None = typer.Option(
+        None, "--ticker", "-t", help="Ticker to analyze (repeatable). Default: all."
+    ),
+) -> None:
+    """Compute the fundamental + market indicators and store them in Postgres."""
+    tickers = tuple(ticker) if ticker else portfolio_tickers()
+    exit_code = asyncio.run(_run_analyze(tickers))
+    raise typer.Exit(code=exit_code)
+
+
+async def _run_analyze(tickers: tuple[str, ...]) -> int:
+    settings = get_settings()
+    mongo = await init_database(settings)
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            use_case = AnalyzePortfolioUseCase(
+                reader=MongoFundamentalsReader(
+                    mongo[settings.mongo_db]["raw_ingestions"]
+                ),
+                price_provider=BrapiPriceProvider(
+                    settings.brapi_base_url,
+                    settings.brapi_token.get_secret_value(),
+                    http,
+                ),
+                repository=SqlAlchemyAnalysisRepository(session_factory),
+            )
+            analyses = await use_case.execute(tickers)
+    finally:
+        await mongo.close()
+        await engine.dispose()
+
+    print(format_analysis(analyses))
+    return 0
+
+
 def _format_collection_log(outcomes: list[FetchOutcome]) -> str:
     """Human-readable collection log (plan §5.1)."""
     counts: dict[OutcomeStatus, int] = {}
@@ -165,6 +211,40 @@ def _format_ticker(ticker_report: TickerReport, depth_label: str) -> list[str]:
     lines.append(f"  sector signals present: {present}")
     lines.append(f"  sector signals MISSING: {missing}")
     return lines
+
+
+def _num(value: Decimal | None) -> str:
+    return "n/a" if value is None else f"{value:.2f}"
+
+
+def _pct(value: Decimal | None) -> str:
+    return "n/a" if value is None else f"{value * 100:.1f}%"
+
+
+def format_analysis(analyses: list[TickerAnalysis]) -> str:
+    """Render the computed indicators as readable text."""
+    lines: list[str] = ["", "=== Analysis ==="]
+    for a in analyses:
+        i = a.indicators
+        lines.append(
+            f"\n{a.ticker} [{a.sector.value}] — ref {a.reference_date} "
+            f"— price {_num(a.price)}"
+        )
+        lines.append(
+            f"  ROE {_pct(i.roe)}  ROA {_pct(i.roa)}  net margin {_pct(i.net_margin)}"
+            f"  gross {_pct(i.gross_margin)}  EBITDA mgn {_pct(i.ebitda_margin)}"
+        )
+        lines.append(
+            f"  P/L {_num(i.pe)}  P/VP {_num(i.pb)}  EV/EBITDA {_num(i.ev_ebitda)}"
+            f"  DY {_pct(i.dividend_yield)}"
+        )
+        lines.append(
+            f"  net debt/EBITDA {_num(i.net_debt_to_ebitda)}"
+            f"  current {_num(i.current_ratio)}"
+            f"  rev growth {_pct(i.revenue_growth)}"
+            f"  NI growth {_pct(i.net_income_growth)}"
+        )
+    return "\n".join(lines)
 
 
 def main() -> None:
