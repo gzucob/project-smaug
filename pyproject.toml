@@ -17,6 +17,9 @@ dependencies = [
     "alembic>=1.14",
 ]
 
+[project.scripts]
+smaug = "smaug.entrypoints.cli:main"
+
 [dependency-groups]
 dev = [
     "mypy>=1.14",
