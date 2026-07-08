@@ -11,11 +11,15 @@ divergence, a modelling decision), add a dated entry here. A `SessionStart` hook
 Reference run: `analyze` on **PETR4** and **BBAS3**, CVM mirror through the
 2025 closed year (DFP), TTM view priced on the current nominal quote.
 
+**F1–F5 resolved** in the "controllers-basis indicators" change. After it,
+PETR4: DY 8.6%, net debt 348.4→333.4 bn, ND/EBITDA 1.51→1.45; BBAS3: ROE
+8.7→7.2% (controllers), P/L 6.7→8.2, DY 5.9%. F6 remains open.
+
 ---
 
 ## F1 — DFC is filed year-to-date while the DRE is filed as isolated quarters
 
-**Status:** latent bug (not yet biting the current numbers).
+**Status:** FIXED — DFC flows now isolate on `dfc_period_start`.
 
 The income statement (DRE) in the ITR mirror comes as **isolated 3-month
 quarters** (`period_start` = Apr 1 for Q2, Jul 1 for Q3). The cash-flow
@@ -47,7 +51,7 @@ a prerequisite for sourcing dividends from the DFC (see F5).
 
 ## F2 — The primary net-income name match is dead; a silent fallback is used
 
-**Status:** latent bug.
+**Status:** FIXED — net income now targets the controllers' line directly.
 
 `mongo_fundamentals._NET_INCOME_NAMES` tries first
 `"lucro/prejuizo consolidado do periodo"`. The real CVM label is
@@ -66,7 +70,7 @@ controllers' line directly.
 
 ## F3 — Equity / net income use the consolidated figure (incl. minority)
 
-**Status:** divergence from reference platforms; material for BBAS3.
+**Status:** FIXED — equity and net income now use the controllers' share.
 
 The mapper pulls consolidated equity (2.03 for a normal company, 2.07 for a
 bank) and consolidated net income — both **including** the non-controlling
@@ -98,7 +102,7 @@ net margin line up with the platforms.
 
 ## F4 — Net-debt cash is too narrow (excludes short-term investments)
 
-**Status:** divergence from reference platforms.
+**Status:** FIXED — cash now includes 1.01.02.
 
 `net_debt = total_debt − cash`, but `cash` is only 1.01.01 (Caixa e
 Equivalentes). Platforms also count 1.01.02 (short-term financial investments).
@@ -116,7 +120,7 @@ this only affects non-financials.)
 
 ## F5 — Dividend Yield is not computed, but the data exists in the DFC
 
-**Status:** missing feature.
+**Status:** FIXED — DY sourced from DFC dividends/JCP paid to controllers.
 
 `brapi_price` hard-codes `dividends_12m = None` (the free brapi plan does not
 expose trailing dividends), so `dividend_yield` is always null. However, the CVM
