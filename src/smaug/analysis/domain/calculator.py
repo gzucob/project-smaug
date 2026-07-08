@@ -99,6 +99,6 @@ def compute(
         net_income_growth=_growth(f.net_income, prev_net_income),
         pe=_div(market.market_cap, annual_net_income),
         pb=_div(market.market_cap, f.equity),
-        dividend_yield=_div(market.dividends_12m, market.market_cap),
+        dividend_yield=_div(f.dividends_paid, market.market_cap),
         ev_ebitda=None if is_financial else _div(enterprise_value, annual_ebitda),
     )

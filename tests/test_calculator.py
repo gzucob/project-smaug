@@ -24,6 +24,7 @@ def _nonfinancial() -> StandardizedFinancials:
         current_assets=Decimal(4000),
         current_liabilities=Decimal(2000),
         total_debt=Decimal(2000),
+        dividends_paid=Decimal(600),  # trailing payout, used for DY
     )
 
 
@@ -34,9 +35,7 @@ def test_nonfinancial_computes_all_indicators() -> None:
         revenue=Decimal(2400),
         net_income=Decimal(750),
     )
-    market = MarketData(
-        price=Decimal(12), market_cap=Decimal(12000), dividends_12m=Decimal(600)
-    )
+    market = MarketData(price=Decimal(12), market_cap=Decimal(12000))
 
     ind = compute(_nonfinancial(), previous, market)
 

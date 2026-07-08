@@ -16,6 +16,11 @@ normalised to an isolated quarter using its own span (``period_start`` →
 ``reference_date``): a ~3-month span is already isolated; a longer span is
 year-to-date and becomes ``YTDₙ − YTDₙ₋₁``. When the span is unknown the value is
 taken as already isolated (the observed pycvm behaviour).
+
+The catch: the DRE and the DFC do not share a period basis. In the real CVM
+files the DRE arrives as isolated quarters while the DFC is always year-to-date,
+so DFC-sourced flows (D&A and dividends) are isolated on the DFC's own span
+(``dfc_period_start``), separately from the DRE flows.
 """
 
 from __future__ import annotations
@@ -25,8 +30,12 @@ from decimal import Decimal
 
 from smaug.analysis.domain.financials import StandardizedFinancials
 
-# Income-statement flows summed over the window; EBITDA is recomposed from EBIT+D&A.
-_FLOW_FIELDS = ("revenue", "net_income", "ebit", "gross_profit", "dep_amort")
+# Flows summed over the window; EBITDA is recomposed from EBIT+D&A. DRE flows are
+# isolated on the DRE span, DFC flows (D&A, dividends) on the DFC span — the two
+# statements use different period bases in the CVM files.
+_DRE_FLOW_FIELDS = ("revenue", "net_income", "ebit", "gross_profit")
+_DFC_FLOW_FIELDS = ("dep_amort", "dividends_paid")
+_FLOW_FIELDS = _DRE_FLOW_FIELDS + _DFC_FLOW_FIELDS
 _TTM_QUARTERS = 4
 _ISOLATED_SPAN_MONTHS = 3
 
@@ -58,9 +67,11 @@ def _isolate_year(
     isolated: dict[date, Flows] = {}
     running: Flows = dict.fromkeys(_FLOW_FIELDS, Decimal(0))
     for period in periods:
-        span = _months(period.period_start, period.reference_date)
+        dre_span = _months(period.period_start, period.reference_date)
+        dfc_span = _months(period.dfc_period_start, period.reference_date)
         flows: Flows = {}
         for name in _FLOW_FIELDS:
+            span = dfc_span if name in _DFC_FLOW_FIELDS else dre_span
             value = getattr(period, name)
             if span is not None and span > _ISOLATED_SPAN_MONTHS:
                 # Year-to-date: isolate against the running cumulative, then
@@ -135,6 +146,7 @@ def build_ttm(
         reference_date=end,
         sector=latest.sector,
         period_start=period_start,
+        dfc_period_start=period_start,  # the TTM flows are already isolated+summed
         total_assets=stock_source.total_assets,
         equity=stock_source.equity,
         net_income=summed["net_income"],
@@ -147,4 +159,5 @@ def build_ttm(
         current_assets=stock_source.current_assets,
         current_liabilities=stock_source.current_liabilities,
         total_debt=stock_source.total_debt,
+        dividends_paid=summed["dividends_paid"],
     )

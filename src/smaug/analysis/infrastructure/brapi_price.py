@@ -5,8 +5,10 @@ quote. brapi's basic ``GET /quote/{ticker}`` (price + market cap) is available o
 the free plan for the whole portfolio — unlike the fundamental modules that 403.
 The token is required here and kept out of any persisted metadata.
 
-Dividend yield needs trailing dividends, which the free plan does not expose for
-most tickers, so ``dividends_12m`` stays ``None`` (DY then computes as ``None``).
+Dividend yield does not come from here: the free plan does not expose trailing
+dividends, so the trailing payout is sourced from the CVM cash-flow statement
+instead (see ``mongo_fundamentals``). This provider supplies only price/market
+cap.
 """
 
 from __future__ import annotations
@@ -57,7 +59,6 @@ class BrapiPriceProvider:
             price=_dec(quote.get("regularMarketPrice")),
             market_cap=_dec(quote.get("marketCap")),
             shares=_dec(quote.get("sharesOutstanding")),
-            dividends_12m=None,
         )
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:
