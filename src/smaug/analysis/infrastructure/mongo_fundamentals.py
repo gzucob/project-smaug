@@ -25,6 +25,11 @@ from smaug.portfolio.domain.sectors import Sector, sector_of
 
 _STATEMENTS = ("BPA", "BPP", "DRE", "DFC")
 
+# Closed-year (historical) view: keep only annual periods. In Brazil the annual
+# DFP closes on 31-Dec, while the ITRs are Q1–Q3 (never December), so the month
+# alone distinguishes a closed year without depending on pycvm's document enum.
+_CLOSED_YEAR_MONTH = 12
+
 # DRE bottom line, in priority order (name varies by sector).
 _NET_INCOME_NAMES = (
     "lucro/prejuizo consolidado do periodo",
@@ -193,7 +198,10 @@ class MongoFundamentalsReader:
                 latest_fetch[key] = fetched
                 by_period.setdefault(ref, {})[module] = payload
 
-        return [
-            standardize(modules, sector, date.fromisoformat(ref))
-            for ref, modules in sorted(by_period.items())
-        ]
+        periods: list[StandardizedFinancials] = []
+        for ref, modules in sorted(by_period.items()):
+            reference_date = date.fromisoformat(ref)
+            if reference_date.month != _CLOSED_YEAR_MONTH:
+                continue
+            periods.append(standardize(modules, sector, reference_date))
+        return periods

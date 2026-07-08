@@ -21,7 +21,7 @@ import asyncio
 import zipfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -32,6 +32,20 @@ from smaug.shared.logging import get_logger
 logger = get_logger(__name__)
 
 CVM_ITR_BASE_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/ITR/DADOS"
+CVM_DFP_BASE_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS"
+
+# document kind -> (base URL, file-name prefix). ITR = quarterly (YTD periods),
+# DFP = annual closed year (single 12-month period). pycvm's DFPITRFile parses
+# both; only the URL and file name differ.
+CvmDocument = Literal["ITR", "DFP"]
+_DOCUMENT_BASE_URL: dict[str, str] = {
+    "ITR": CVM_ITR_BASE_URL,
+    "DFP": CVM_DFP_BASE_URL,
+}
+_DOCUMENT_PREFIX: dict[str, str] = {
+    "ITR": "itr_cia_aberta",
+    "DFP": "dfp_cia_aberta",
+}
 
 # module (config) -> attribute on pycvm's StatementCollection.
 _MODULE_TO_ATTR: dict[str, str] = {
@@ -72,15 +86,22 @@ class CvmDataSource:
         *,
         year: int,
         cache_dir: str,
-        base_url: str = CVM_ITR_BASE_URL,
+        document: CvmDocument = "ITR",
+        base_url: str | None = None,
     ) -> None:
         self._http = http_client
         self._ticker_to_code = dict(ticker_to_code)
         self._year = year
         self._cache_dir = Path(cache_dir)
-        self._base_url = base_url.rstrip("/")
+        self._document = document
+        self._prefix = _DOCUMENT_PREFIX[document]
+        self._base_url = (base_url or _DOCUMENT_BASE_URL[document]).rstrip("/")
         self._index: dict[str, Any] | None = None
         self._lock = asyncio.Lock()
+
+    @property
+    def _zip_name(self) -> str:
+        return f"{self._prefix}_{self._year}.zip"
 
     async def fetch(self, ticker: str, module: str) -> RawFetchResult:
         """Return the raw statement for ``ticker``/``module`` (BPA/BPP/DRE/DFC)."""
@@ -107,7 +128,7 @@ class CvmDataSource:
             module=module,
             request={
                 "source": "cvm",
-                "file": f"itr_cia_aberta_{self._year}.zip",
+                "file": self._zip_name,
                 "cvm_code": code,
                 "statement": module,
                 "balance_type": balance_type,
@@ -125,8 +146,8 @@ class CvmDataSource:
             if cached is not None:
                 return cached
             self._cache_dir.mkdir(parents=True, exist_ok=True)
-            raw = self._cache_dir / f"itr_cia_aberta_{self._year}.zip"
-            sanitized = self._cache_dir / f"itr_cia_aberta_{self._year}.sanitized.zip"
+            raw = self._cache_dir / self._zip_name
+            sanitized = self._cache_dir / f"{self._prefix}_{self._year}.sanitized.zip"
             if not raw.exists():
                 await self._download(raw)
             if not sanitized.exists():
@@ -134,7 +155,8 @@ class CvmDataSource:
             index = await asyncio.to_thread(self._build_index, sanitized)
             self._index = index
             logger.info(
-                "Loaded CVM %s: %d of %d portfolio companies found",
+                "Loaded CVM %s %s: %d of %d portfolio companies found",
+                self._document,
                 self._year,
                 len(index),
                 len(set(self._ticker_to_code.values())),
@@ -142,8 +164,8 @@ class CvmDataSource:
             return index
 
     async def _download(self, dst: Path) -> None:
-        url = f"{self._base_url}/itr_cia_aberta_{self._year}.zip"
-        logger.info("Downloading CVM ITR %s from %s", self._year, url)
+        url = f"{self._base_url}/{self._zip_name}"
+        logger.info("Downloading CVM %s %s from %s", self._document, self._year, url)
         response = await self._http.get(url, timeout=180.0)
         response.raise_for_status()
         dst.write_bytes(response.content)
