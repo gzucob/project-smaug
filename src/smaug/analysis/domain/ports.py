@@ -24,8 +24,9 @@ class FundamentalsReader(Protocol):
         """ITR quarterly periods (oldest→newest); the TTM window is built from these."""
         ...
 
-    async def annual(self, ticker: str) -> StandardizedFinancials | None:
-        """The most recent annual DFP (closed year), used to derive the missing Q4."""
+    async def annuals(self, ticker: str) -> list[StandardizedFinancials]:
+        """Closed-year DFPs (oldest→newest): the latest derives the missing Q4, and
+        the prior year is the year-over-year growth base."""
         ...
 
 

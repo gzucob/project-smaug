@@ -15,14 +15,20 @@ def _q(
     net_income: Decimal | None = None,
     equity: Decimal | None = None,
     period_start: date | None = None,
+    dep_amort: Decimal | None = None,
+    dividends_paid: Decimal | None = None,
+    dfc_period_start: date | None = None,
 ) -> StandardizedFinancials:
     return StandardizedFinancials(
         reference_date=end,
         sector=Sector.COMMODITY,
         period_start=period_start,
+        dfc_period_start=dfc_period_start,
         revenue=revenue,
         net_income=net_income,
         equity=equity,
+        dep_amort=dep_amort,
+        dividends_paid=dividends_paid,
     )
 
 
@@ -67,6 +73,54 @@ def test_ttm_normalizes_ytd_quarters_and_derives_q4_from_annual() -> None:
     assert ttm.revenue == Decimal(500)
     assert ttm.reference_date == date(2025, 12, 31)  # window ends on the closed year
     assert ttm.equity == Decimal(8000)  # stock from the annual (latest balance)
+
+
+def test_ttm_isolates_dfc_flows_on_their_own_year_to_date_span() -> None:
+    # The DRE is isolated quarters but the DFC is year-to-date, so D&A and
+    # dividends must isolate on the DFC span, independent of the DRE span.
+    jan = date(2025, 1, 1)
+    quarters = [
+        _q(  # DRE Q1 isolated; DFC YTD 3m
+            date(2025, 3, 31),
+            revenue=Decimal(100),
+            period_start=jan,
+            dep_amort=Decimal(10),
+            dividends_paid=Decimal(0),
+            dfc_period_start=jan,
+        ),
+        _q(  # DRE Q2 isolated (Apr-Jun); DFC YTD 6m
+            date(2025, 6, 30),
+            revenue=Decimal(110),
+            period_start=date(2025, 4, 1),
+            dep_amort=Decimal(25),
+            dividends_paid=Decimal(40),
+            dfc_period_start=jan,
+        ),
+        _q(  # DRE Q3 isolated (Jul-Sep); DFC YTD 9m
+            date(2025, 9, 30),
+            revenue=Decimal(120),
+            period_start=date(2025, 7, 1),
+            dep_amort=Decimal(45),
+            dividends_paid=Decimal(40),
+            dfc_period_start=jan,
+        ),
+    ]
+    annual = _q(
+        date(2025, 12, 31),
+        revenue=Decimal(500),
+        dep_amort=Decimal(70),
+        dividends_paid=Decimal(60),
+        equity=Decimal(8000),
+    )
+
+    ttm = build_ttm(quarters, annual)
+
+    assert ttm is not None
+    assert ttm.revenue == Decimal(500)  # DRE: 100+110+120 + Q4(170)
+    # DFC isolated: 10, 15, 20, and Q4 D&A = 70 - 45 = 25 -> full year 70.
+    assert ttm.dep_amort == Decimal(70)
+    # DFC isolated: 0, 40, 0, and Q4 dividends = 60 - 40 = 20 -> full year 60.
+    assert ttm.dividends_paid == Decimal(60)
 
 
 def test_ttm_returns_none_with_fewer_than_four_quarters() -> None:

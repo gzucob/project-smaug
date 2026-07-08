@@ -15,6 +15,7 @@ Sempre reafirme a stack antes de propor arquitetura ou dependências.
 - O código é a verdade do comportamento implementado.
 - `docs/PLANO_FASE1.md` — o "como" da Fase 1.
 - `docs/preview_fase1_criterios_implementacao.md` — o "o quê / porquê".
+- `docs/FINDINGS_INDICATORS.md` — achados de fidelidade dos indicadores (Fase 2).
 - `.claude/RULES/` — regras duráveis de engenharia.
 
 ## Índice de regras

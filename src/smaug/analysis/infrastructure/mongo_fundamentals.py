@@ -30,8 +30,10 @@ _STATEMENTS = ("BPA", "BPP", "DRE", "DFC")
 # alone distinguishes a closed year without depending on pycvm's document enum.
 _CLOSED_YEAR_MONTH = 12
 
-# DRE bottom line, in priority order (name varies by sector).
-_NET_INCOME_NAMES = (
+# Consolidated DRE bottom line, in priority order (label varies by sector). Used
+# only as a fallback when the controllers' line is absent — see ``_net_income``.
+_NET_INCOME_TOTAL_NAMES = (
+    "lucro ou prejuizo liquido consolidado do periodo",
     "lucro/prejuizo consolidado do periodo",
     "resultado liquido das operacoes continuadas",
     "lucro ou prejuizo das operacoes continuadas",
@@ -75,6 +77,79 @@ def _by_name(accounts: Accounts, needle: str) -> Decimal | None:
     return None
 
 
+def _controllers_share(
+    accounts: Accounts,
+    *,
+    controllers: str,
+    total: Decimal | None,
+    minority: str,
+) -> Decimal | None:
+    """The controlling shareholders' slice of a consolidated figure.
+
+    Platforms report the controllers' equity/earnings, not the consolidated
+    total that still carries the minority interest. The split is exposed in two
+    shapes: an explicit "attributed to the controller" line (banks), or a
+    consolidated total plus a "non-controlling" sub-line (most companies). Prefer
+    the explicit line; else ``total − minority``; else the total unchanged (no
+    split filed → the total already is the controllers' figure).
+    """
+    explicit = _by_name(accounts, controllers)
+    if explicit is not None:
+        return explicit
+    minority_value = _by_name(accounts, minority)
+    if total is not None and minority_value is not None:
+        return total - minority_value
+    return total
+
+
+def _net_income(dre: Accounts) -> Decimal | None:
+    """Net income attributable to the controlling shareholders (DRE)."""
+    total: Decimal | None = None
+    for name in _NET_INCOME_TOTAL_NAMES:
+        total = _by_name(dre, name)
+        if total is not None:
+            break
+    return _controllers_share(
+        dre,
+        controllers="socios da empresa controladora",
+        total=total,
+        minority="socios nao controladores",
+    )
+
+
+def _equity(bpp: Accounts) -> Decimal | None:
+    """Equity attributable to the controlling shareholders (BPP)."""
+    return _controllers_share(
+        bpp,
+        controllers="atribuido ao controlador",
+        total=_by_name(bpp, "patrimonio liquido"),
+        minority="nao controladores",
+    )
+
+
+def _dividends_paid(dfc: Accounts) -> Decimal | None:
+    """Dividends + interest-on-equity (JCP) paid to controlling shareholders.
+
+    Financing-section cash outflows whose label mentions a dividend or JCP
+    (``capital proprio``) and "pago", excluding the non-controlling line.
+    Returned positive (the DFC records them as negative outflows); ``None`` when
+    no such line exists, so DY degrades to null rather than zero.
+    """
+    total = Decimal(0)
+    found = False
+    for account in dfc:
+        name = _fold(str(account.get("name", "")))
+        if "pag" not in name or "nao control" in name:
+            continue
+        if "dividendo" not in name and "capital proprio" not in name:
+            continue
+        value = _dec(account.get("quantity"))
+        if value is not None:
+            total += abs(value)
+            found = True
+    return total if found else None
+
+
 def _sum(*values: Decimal | None) -> Decimal | None:
     total = Decimal(0)
     present = False
@@ -94,9 +169,9 @@ def _iso_date(raw: Any) -> date | None:
         return None
 
 
-def _period_start(by_module: Mapping[str, Any]) -> date | None:
-    """Start of the income-statement period (the flow span), read from the DRE."""
-    payload = by_module.get("DRE")
+def _period_start(by_module: Mapping[str, Any], module: str) -> date | None:
+    """Start of a statement's flow period (its ``period_start_date``)."""
+    payload = by_module.get(module)
     if isinstance(payload, Mapping):
         return _iso_date(payload.get("period_start_date"))
     return None
@@ -133,32 +208,30 @@ def standardize(
     by_module: Mapping[str, Any], sector: Sector, reference_date: date
 ) -> StandardizedFinancials:
     """Build one period's ``StandardizedFinancials`` from its CVM statements."""
-    period_start = _period_start(by_module)
+    period_start = _period_start(by_module, "DRE")
+    dfc_period_start = _period_start(by_module, "DFC")
     bpa, bpa_s = _accounts(by_module, "BPA"), _scale(by_module, "BPA")
     bpp, bpp_s = _accounts(by_module, "BPP"), _scale(by_module, "BPP")
     dre, dre_s = _accounts(by_module, "DRE"), _scale(by_module, "DRE")
     dfc, dfc_s = _accounts(by_module, "DFC"), _scale(by_module, "DFC")
 
-    net_income: Decimal | None = None
-    for name in _NET_INCOME_NAMES:
-        net_income = _by_name(dre, name)
-        if net_income is not None:
-            break
-
     total_assets = _mul(_by_code(bpa, "1"), bpa_s)
-    equity = _mul(_by_name(bpp, "patrimonio liquido"), bpp_s)
-    net_income = _mul(net_income, dre_s)
+    equity = _mul(_equity(bpp), bpp_s)
+    net_income = _mul(_net_income(dre), dre_s)
     revenue = _mul(_by_code(dre, "3.01"), dre_s)
+    dividends_paid = _mul(_dividends_paid(dfc), dfc_s)
 
     if sector.is_financial:
         return StandardizedFinancials(
             reference_date=reference_date,
             sector=sector,
             period_start=period_start,
+            dfc_period_start=dfc_period_start,
             total_assets=total_assets,
             equity=equity,
             net_income=net_income,
             revenue=revenue,
+            dividends_paid=dividends_paid,
         )
 
     ebit = _mul(_by_code(dre, "3.05"), dre_s)  # before financial result/taxes
@@ -166,10 +239,14 @@ def standardize(
     ebitda = (
         _sum(ebit, dep_amort) if ebit is not None and dep_amort is not None else None
     )
+    # Cash for net debt = cash & equivalents (1.01.01) + short-term financial
+    # investments (1.01.02), matching how the platforms measure liquidity.
+    cash = _mul(_sum(_by_code(bpa, "1.01.01"), _by_code(bpa, "1.01.02")), bpa_s)
     return StandardizedFinancials(
         reference_date=reference_date,
         sector=sector,
         period_start=period_start,
+        dfc_period_start=dfc_period_start,
         total_assets=total_assets,
         equity=equity,
         net_income=net_income,
@@ -178,12 +255,13 @@ def standardize(
         ebit=ebit,
         ebitda=ebitda,
         dep_amort=dep_amort,
-        cash=_mul(_by_code(bpa, "1.01.01"), bpa_s),
+        cash=cash,
         current_assets=_mul(_by_code(bpa, "1.01"), bpa_s),
         current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),
         total_debt=_mul(
             _sum(_by_code(bpp, "2.01.04"), _by_code(bpp, "2.02.01")), bpp_s
         ),
+        dividends_paid=dividends_paid,
     )
 
 
@@ -204,9 +282,13 @@ class MongoFundamentalsReader:
         """ITR quarterly periods (oldest→newest) — the raw material for the TTM."""
         return [f for dt, f in await self._load(ticker) if not _is_annual(dt, f)]
 
+    async def annuals(self, ticker: str) -> list[StandardizedFinancials]:
+        """Annual DFPs (closed years), oldest→newest."""
+        return [f for dt, f in await self._load(ticker) if _is_annual(dt, f)]
+
     async def annual(self, ticker: str) -> StandardizedFinancials | None:
         """The most recent annual DFP (closed year), for the Q4 derivation."""
-        annuals = [f for dt, f in await self._load(ticker) if _is_annual(dt, f)]
+        annuals = await self.annuals(ticker)
         return annuals[-1] if annuals else None
 
     async def _load(

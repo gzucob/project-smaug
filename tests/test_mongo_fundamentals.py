@@ -100,6 +100,95 @@ def test_standardize_bank_pulls_core_and_leaves_rest_none() -> None:
     assert f.ebitda is None
 
 
+def test_standardize_takes_controllers_share_wide_cash_and_dividends() -> None:
+    # A normal company exposes the split as consolidated total + a minority
+    # sub-line; controllers = total - minority. Cash adds 1.01.02, and dividends
+    # come from the DFC financing outflows (minority line excluded).
+    by_module = {
+        "BPA": {
+            "accounts": [
+                _acc("1", "Ativo Total", "10000"),
+                _acc("1.01", "Ativo Circulante", "4000"),
+                _acc("1.01.01", "Caixa e Equivalentes de Caixa", "300"),
+                _acc("1.01.02", "Aplicações Financeiras", "200"),
+            ]
+        },
+        "BPP": {
+            "accounts": [
+                _acc("2.01", "Passivo Circulante", "2000"),
+                _acc("2.03", "Patrimônio Líquido Consolidado", "1000"),
+                _acc("2.03.09", "Participação dos Acionistas Não Controladores", "100"),
+            ]
+        },
+        "DRE": {
+            "accounts": [
+                _acc("3.01", "Receita de Venda de Bens e/ou Serviços", "900"),
+                _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "200"),
+                _acc("3.11.01", "Atribuído a Sócios da Empresa Controladora", "180"),
+                _acc("3.11.02", "Atribuído a Sócios Não Controladores", "20"),
+            ]
+        },
+        "DFC": {
+            "period_start_date": "2025-01-01",
+            "accounts": [
+                _acc("6.03.05", "Dividendos pagos aos controladores", "-50"),
+                _acc("6.03.06", "Dividendos pagos aos não controladores", "-5"),
+            ],
+        },
+    }
+
+    f = standardize(by_module, Sector.COMMODITY, date(2025, 12, 31))
+
+    assert f.equity == Decimal("900")  # 1000 consolidated - 100 minority
+    assert f.net_income == Decimal("180")  # explicit controllers line
+    assert f.cash == Decimal("500")  # 1.01.01 + 1.01.02
+    assert f.dividends_paid == Decimal("50")  # abs, minority line excluded
+    assert f.dfc_period_start == date(2025, 1, 1)
+
+
+def test_standardize_bank_uses_explicit_controllers_line() -> None:
+    # Banks file an explicit "attributed to the controller" line for both equity
+    # and net income; the mapper must prefer it over the consolidated total.
+    by_module = {
+        "BPA": {"accounts": [_acc("1", "Ativo Total", "9000")]},
+        "BPP": {
+            "accounts": [
+                _acc("2.07", "Patrimônio Líquido Consolidado", "2000"),
+                _acc("2.07.01", "Patrimônio Líquido Atribuído ao Controlador", "1900"),
+                _acc(
+                    "2.07.02",
+                    "Patrimônio Líquido Atribuído aos Não Controladores",
+                    "100",
+                ),
+            ]
+        },
+        "DRE": {
+            "accounts": [
+                _acc("3.01", "Receitas de Intermediação Financeira", "500"),
+                _acc("3.11", "Lucro ou Prejuízo Líquido Consolidado do Período", "300"),
+                _acc("3.11.01", "Atribuído aos Sócios da Empresa Controladora", "250"),
+                _acc("3.11.02", "Atribuído aos Sócios não Controladores", "50"),
+            ]
+        },
+        "DFC": {
+            "accounts": [
+                _acc(
+                    "6.03.04",
+                    "Dividendos ou juros sobre o capital próprio pagos aos "
+                    "acionistas controladores",
+                    "-30",
+                ),
+            ]
+        },
+    }
+
+    f = standardize(by_module, Sector.BANK, date(2025, 12, 31))
+
+    assert f.equity == Decimal("1900")  # explicit controller line, not 2000
+    assert f.net_income == Decimal("250")  # explicit controller line, not 300
+    assert f.dividends_paid == Decimal("30")  # dividends + JCP paid to controllers
+
+
 class _FakeCursor:
     def __init__(self, docs: list[dict[str, Any]]) -> None:
         self._docs = docs
