@@ -27,8 +27,10 @@ async def test_should_return_payload_and_hide_token_when_status_ok() -> None:
 
     async with _mock_client(handler) as http:
         client = BrapiClient("https://brapi.dev/api", "SECRET", http)
-        result = await client.fetch("PETR4", "incomeStatementHistoryQuarterly")
+        results = await client.fetch("PETR4", "incomeStatementHistoryQuarterly")
 
+    assert len(results) == 1  # brapi always yields a single period
+    result = results[0]
     assert result.http_status == 200
     assert result.payload["results"][0]["symbol"] == "PETR4"
     # The secret must never reach the persisted audit metadata.

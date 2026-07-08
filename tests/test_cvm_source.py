@@ -99,3 +99,48 @@ async def test_fetch_skips_unmapped_ticker_without_touching_network(
         source._index = {}  # pretend the file is already loaded (empty)
         with pytest.raises(BrapiNotFoundError):
             await source.fetch("PETR4", "BPA")  # PETR4 not in the injected map
+
+
+def _fake_itr_doc(ref: date) -> SimpleNamespace:
+    """A minimal pycvm-shaped ITR document carrying one BPA account."""
+    statement = SimpleNamespace(
+        accounts=[
+            SimpleNamespace(
+                code="1", name="Ativo Total", quantity=Decimal("1"), level=1
+            )
+        ],
+        currency="BRL",
+        currency_size=1000,
+        period_start_date=date(ref.year, 1, 1),
+        period_end_date=ref,
+    )
+    collection = SimpleNamespace(bpa=statement)
+    return SimpleNamespace(
+        cvm_code="9512",
+        company_name="PETROLEO BRASILEIRO S.A. PETROBRAS",
+        type=SimpleNamespace(name="ITR"),
+        reference_date=ref,
+        consolidated=SimpleNamespace(last=collection),
+        individual=None,
+    )
+
+
+async def test_fetch_returns_one_result_per_filed_quarter(tmp_path: Path) -> None:
+    # The ITR file carries Q1/Q2/Q3 as separate documents; fetch must surface all
+    # three (this is exactly what the TTM needs — the earlier code kept only Q3).
+    quarters = [date(2025, 3, 31), date(2025, 6, 30), date(2025, 9, 30)]
+    async with httpx.AsyncClient() as http:
+        source = CvmDataSource(
+            http, {"PETR4": "9512"}, year=2025, cache_dir=str(tmp_path)
+        )
+        source._index = {"9512": [_fake_itr_doc(ref) for ref in quarters]}
+        results = await source.fetch("PETR4", "BPA")
+
+    assert [r.payload["reference_date"] for r in results] == [
+        "2025-03-31",
+        "2025-06-30",
+        "2025-09-30",
+    ]
+    assert all(
+        r.request["reference_date"] == r.payload["reference_date"] for r in results
+    )
