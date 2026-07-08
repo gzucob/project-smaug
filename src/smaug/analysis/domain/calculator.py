@@ -14,13 +14,27 @@ No I/O, no framework — just arithmetic over ``StandardizedFinancials`` and
 
 from __future__ import annotations
 
-from datetime import date
 from decimal import Decimal
 
 from smaug.analysis.domain.financials import MarketData, StandardizedFinancials
 from smaug.analysis.domain.indicators import Indicators
 
 _MONTHS_IN_YEAR = Decimal(12)
+
+
+def _period_months(financials: StandardizedFinancials) -> int:
+    """Length of the flow period in months.
+
+    Prefer the explicit ``period_start``..``reference_date`` span (a TTM window and
+    a closed year are both 12 → annualization is a no-op). Fall back to the
+    reference month for a bare year-to-date ITR (Q3 = 9 months), which is what the
+    figure defaults to when no start date was captured.
+    """
+    start = financials.period_start
+    if start is None:
+        return financials.reference_date.month
+    end = financials.reference_date
+    return (end.year - start.year) * 12 + (end.month - start.month) + 1
 
 
 def _div(numerator: Decimal | None, denominator: Decimal | None) -> Decimal | None:
@@ -35,8 +49,10 @@ def _growth(current: Decimal | None, previous: Decimal | None) -> Decimal | None
     return (current - previous) / abs(previous)
 
 
-def _annualized(value: Decimal | None, reference_date: date) -> Decimal | None:
-    months = reference_date.month  # YTD accumulation ends in this month
+def _annualized(
+    value: Decimal | None, financials: StandardizedFinancials
+) -> Decimal | None:
+    months = _period_months(financials)
     if value is None or months == 0:
         return None
     return value * _MONTHS_IN_YEAR / Decimal(months)
@@ -56,8 +72,8 @@ def compute(
     """Compute all applicable indicators for one ticker/period."""
     f = current
     is_financial = f.sector.is_financial
-    annual_net_income = _annualized(f.net_income, f.reference_date)
-    annual_ebitda = _annualized(f.ebitda, f.reference_date)
+    annual_net_income = _annualized(f.net_income, f)
+    annual_ebitda = _annualized(f.ebitda, f)
 
     net_debt = None if is_financial else _net_debt(f)
     enterprise_value = (

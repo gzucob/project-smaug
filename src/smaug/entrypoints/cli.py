@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from decimal import Decimal
+from typing import cast
 
 import httpx
 import typer
@@ -30,7 +31,7 @@ from smaug.ingestion.application.report import (
 )
 from smaug.ingestion.domain.ports import RawDataSource
 from smaug.ingestion.infrastructure.brapi_client import BrapiClient
-from smaug.ingestion.infrastructure.cvm_source import CvmDataSource
+from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, CvmDocument
 from smaug.ingestion.infrastructure.repositories import BeanieRawIngestionRepository
 from smaug.portfolio.domain.cvm_codes import TICKER_TO_CVM_CODE
 from smaug.portfolio.domain.sectors import portfolio_tickers
@@ -51,11 +52,17 @@ def ingest(
     ticker: list[str] | None = typer.Option(
         None, "--ticker", "-t", help="Ticker to collect (repeatable). Default: all."
     ),
+    document: str | None = typer.Option(
+        None, "--document", help="CVM document: ITR or DFP (overrides config)."
+    ),
+    year: int | None = typer.Option(
+        None, "--year", help="CVM file year to mirror (overrides config)."
+    ),
 ) -> None:
     """Collect the configured modules for the active source and store the mirror."""
     tickers = tuple(ticker) if ticker else portfolio_tickers()
     try:
-        exit_code = asyncio.run(_run_ingest(tickers))
+        exit_code = asyncio.run(_run_ingest(tickers, document=document, year=year))
     except NotImplementedError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
@@ -73,30 +80,42 @@ def report(
     asyncio.run(_run_report(tickers))
 
 
-def _build_data_source(settings: Settings, http: httpx.AsyncClient) -> RawDataSource:
+def _build_data_source(
+    settings: Settings,
+    http: httpx.AsyncClient,
+    *,
+    document: str | None = None,
+    year: int | None = None,
+) -> RawDataSource:
     """Pick the active raw source from config — the brapi/CVM swap seam.
 
     Both implement ``RawDataSource``, so the use case never knows which one it
-    got. The token is only required (and only exists) for brapi.
+    got. The token is only required (and only exists) for brapi. ``document``/
+    ``year`` override the config for one run (e.g. to pull several CVM files).
     """
     if settings.ingestion_source == "brapi":
         return BrapiClient(settings.brapi_base_url, settings.require_token(), http)
+    doc = (document or settings.cvm_document).upper()
+    if doc not in ("ITR", "DFP"):
+        raise typer.BadParameter("--document must be ITR or DFP")
     return CvmDataSource(
         http,
         TICKER_TO_CVM_CODE,
-        year=settings.cvm_year,
+        year=year or settings.cvm_year,
         cache_dir=settings.cvm_cache_dir,
-        document=settings.cvm_document,
+        document=cast(CvmDocument, doc),
     )
 
 
-async def _run_ingest(tickers: tuple[str, ...]) -> int:
+async def _run_ingest(
+    tickers: tuple[str, ...], *, document: str | None = None, year: int | None = None
+) -> int:
     settings = get_settings()
     client = await init_database(settings)
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
             use_case = IngestPortfolioUseCase(
-                client=_build_data_source(settings, http),
+                client=_build_data_source(settings, http, document=document, year=year),
                 repository=BeanieRawIngestionRepository(),
                 event_bus=EventBus(),
                 modules=settings.active_modules,
