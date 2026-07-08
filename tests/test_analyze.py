@@ -72,7 +72,10 @@ class FakeRepo:
         return None
 
     async def all_latest(self) -> list[TickerAnalysis]:
-        return list(self.saved)
+        return [a for a in self.saved if a.view == "ttm_live"]
+
+    async def history(self, ticker: str) -> list[TickerAnalysis]:
+        return [a for a in self.saved if a.ticker == ticker and a.view == "closed_year"]
 
 
 def _quarters(
@@ -160,6 +163,65 @@ async def test_analyze_computes_growth_against_prior_year_annual() -> None:
     ind = repo.saved[0].indicators
     assert ind.revenue_growth == Decimal("0.25")  # (4000 - 3200) / 3200
     assert ind.net_income_growth == Decimal("0.2")  # (1200 - 1000) / 1000
+
+
+async def test_analyze_produces_ttm_and_closed_year_views() -> None:
+    # A full TTM window plus two ingested DFPs (2024, 2025). The TTM is priced on
+    # the current nominal quote; each closed year is priced on its dividend-
+    # adjusted average, repricing the current market cap onto that basis.
+    repo = FakeRepo()
+    quarters = _quarters(
+        Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(6000)
+    )
+    annual_2024 = StandardizedFinancials(
+        reference_date=date(2024, 12, 31),
+        sector=Sector.COMMODITY,
+        period_start=date(2024, 1, 1),
+        net_income=Decimal(500),
+        equity=Decimal(3000),
+        revenue=Decimal(4000),
+    )
+    annual_2025 = StandardizedFinancials(
+        reference_date=date(2025, 12, 31),
+        sector=Sector.COMMODITY,
+        period_start=date(2025, 1, 1),
+        net_income=Decimal(600),
+        equity=Decimal(3600),
+        revenue=Decimal(5000),
+    )
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"PETR4": quarters}, annuals={"PETR4": [annual_2024, annual_2025]}),
+        FakePrice(
+            MarketData(price=Decimal(10), market_cap=Decimal(12000)),
+            year=YearPrices(nominal_avg=Decimal(8), adjusted_avg=Decimal(6)),
+        ),
+        repo,
+    )
+
+    out = await use_case.execute(["PETR4"])
+
+    # TTM + two closed years, TTM saved first.
+    assert len(out) == 3
+    assert out[0].view == "ttm_live"
+    views = {(a.view, a.reference_date): a for a in out}
+
+    ttm = views[("ttm_live", date(2026, 3, 31))]
+    assert ttm.price_basis == "ttm_current_nominal"
+    assert ttm.price == Decimal(10)  # current nominal quote
+
+    y2025 = views[("closed_year", date(2025, 12, 31))]
+    assert y2025.price_basis == "adjusted_year_avg"
+    assert y2025.price == Decimal(6)  # adjusted average
+    assert y2025.price_nominal == Decimal(8)  # nominal average
+    # effective cap = 12000 * 6 / 10 = 7200 → P/E = 7200/600 = 12, P/VP = 7200/3600 = 2
+    assert y2025.indicators.pe == Decimal(12)
+    assert y2025.indicators.pb == Decimal(2)
+    # YoY vs the 2024 DFP: net income (600 - 500) / 500 = 0.2.
+    assert y2025.indicators.net_income_growth == Decimal("0.2")
+
+    # The oldest closed year has no prior DFP → growth degrades to null.
+    y2024 = views[("closed_year", date(2024, 12, 31))]
+    assert y2024.indicators.net_income_growth is None
 
 
 async def test_analyze_skips_when_fewer_than_four_quarters() -> None:

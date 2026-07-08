@@ -153,6 +153,38 @@ growth 200.8% off a depressed 2024 base.
 
 ---
 
+## F7 — Closed-year multiples now use the annual DFP, not an annualized quarter (2026-07-08)
+
+**Status:** MODELLING DECISION — Stage 4 (two views side by side).
+
+`analyze` now emits both views per ticker: the live TTM **and** one closed-year
+row per ingested DFP, tagged by a `view` discriminator (`ttm_live` /
+`closed_year`). The closed-year row reuses the PR #8 pricing trick — reprice the
+current market cap onto the year's dividend-adjusted average
+(`current_cap × adjusted_avg / current_price`) — but the **net-income basis
+changed**: PR #8 computed the historical multiple from the *latest ITR quarter
+annualized*, whereas Stage 4 uses the **true annual DFP** figure (12-month, no
+annualization, controllers' share).
+
+Evidence — PETR4 FY2024 closed year, verified end-to-end:
+
+| Figure | Value | Reference |
+|---|---|---|
+| Adjusted-average price | R$ 30.48 | matches AUVP basis exactly |
+| Nominal-average price | R$ 38.20 | stored for reference |
+| P/L (closed year) | **11.00** | AUVP ≈ 11.44 |
+| P/VP | 1.10 | AUVP ≈ 1.14 |
+
+The residual P/L gap (11.00 vs 11.44, ~4%) is the net-income basis: the actual
+annual DFP earnings attributed to controllers vs PR #8's annualized-quarter
+proxy. The DFP figure is the intended, more faithful basis for a *closed year*,
+so this is a deliberate improvement, not a regression. Note the closed-year DY
+uses that year's dividends over the repriced cap, so PETR4 2024's extraordinary
+payout shows a very high DY (~24.9%) — expected for that year, but flagged as a
+number to sanity-check against the platforms when more years are ingested.
+
+---
+
 ## Serving layer — verified faithful
 
 The path calculator → Postgres → FastAPI is a 1:1 passthrough: full `Decimal`

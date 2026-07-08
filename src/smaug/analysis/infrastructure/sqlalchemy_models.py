@@ -26,6 +26,7 @@ class TickerAnalysisRow(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     ticker: Mapped[str] = mapped_column(String(12), index=True)
+    view: Mapped[str] = mapped_column(String(16), index=True)  # ttm_live | closed_year
     sector: Mapped[str] = mapped_column(String(20))
     reference_date: Mapped[date] = mapped_column(Date)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
