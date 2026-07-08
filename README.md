@@ -1,29 +1,37 @@
 # project-smaug
 
 Ferramenta pessoal de análise da carteira de ações. **Fase 1: ingestão fiel e
-auditável** dos dados fundamentais via API [brapi](https://brapi.dev),
-persistidos em MongoDB como um espelho cru — sem cálculo, sem interpretação.
+auditável** dos dados fundamentais (CVM/brapi), persistidos em MongoDB como um
+espelho cru — sem cálculo, sem interpretação. **Fase 2: análise** — indicadores
+fundamentalistas e de mercado derivados do espelho, persistidos em PostgreSQL e
+servidos por uma API de leitura. Ambas já estão implementadas — veja
+[Status](#status).
 
-> A Fase 2 (análise por critérios) é escopo futuro e **não** vive aqui ainda.
+> A fase seguinte (análise qualitativa por critérios/IA — "tese azedando")
+> ainda **não** foi implementada.
 
 ## Stack
 
 - Python 3.13 · [uv](https://docs.astral.sh/uv/)
-- FastAPI (esqueleto do sistema) · o gatilho da Fase 1 é **CLI**
-- MongoDB (Docker) + Beanie (ODM tipado)
+- Fase 1: MongoDB (Docker) + Beanie (ODM tipado) · `pycvm` para o parsing dos
+  arquivos da CVM. Gatilho é **CLI** (`smaug.ingest`, `smaug.report`).
+- Fase 2: PostgreSQL + SQLAlchemy + Alembic (dados derivados). Gatilho de
+  cálculo é **CLI** (`smaug.analyze`); FastAPI (`smaug.entrypoints.api`) só lê
+  o que já foi persistido — não recalcula nada por request.
 - mypy strict · ruff · pytest
 
 ## Documentação
 
 - Plano da Fase 1 — [`docs/PLANO_FASE1.md`](docs/PLANO_FASE1.md)
 - Critérios da Fase 1 — [`docs/preview_fase1_criterios_implementacao.md`](docs/preview_fase1_criterios_implementacao.md)
+- Achados de fidelidade dos indicadores (Fase 2) — [`docs/FINDINGS_INDICATORS.md`](docs/FINDINGS_INDICATORS.md)
 
 ## Setup local
 
 ```bash
 uv sync                 # dependências + venv (baixa o Python 3.13)
-cp .env.example .env    # preencha o BRAPI_TOKEN
-docker compose up -d    # sobe o MongoDB
+cp .env.example .env    # preencha o BRAPI_TOKEN (só necessário se INGESTION_SOURCE=brapi)
+docker compose up -d    # sobe Mongo (Fase 1) + Postgres (Fase 2)
 ```
 
 ## Uso (Fase 1)

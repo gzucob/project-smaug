@@ -1,40 +1,43 @@
-# Regras de Issue
+# Issue Rules
 
-Uma issue sem prefixo ou sem os labels obrigatórios é considerada incompleta.
+An issue without a prefix or without the required labels is considered
+incomplete.
 
-## Título
-`[NAMESPACE-NN] título curto no imperativo (até 72 chars)`
+## Title
+`[NAMESPACE-NN] short imperative title (up to 72 chars)`
 
-- `NAMESPACE`: código da tabela abaixo. `NN`: sequência de dois dígitos.
-- Título em inglês, no imperativo.
+- `NAMESPACE`: code from the table below. `NN`: two-digit sequence.
+- Title in English, imperative mood.
 
 ### Namespaces
-| Namespace | Área |
+| Namespace | Area |
 |---|---|
-| `ING` | Ingestão — cliente brapi, coleta, persistência do espelho |
-| `PORT` | Portfólio — mapa ticker → setor |
-| `CORE` | Shared — config, conexão Mongo, EventBus, erros |
-| `INFRA` | Docker, dependências, configuração do repositório |
-| `DX` | Ferramentas, experiência de dev local |
-| `TEST` | Testes, cobertura, CI |
-| `DOCS` | Documentação |
-| `SEC` | Segurança — segredos, token, exposição |
+| `ING` | Ingestion — brapi client, collection, mirror persistence |
+| `ANL` | Analysis — indicator calculation, PostgreSQL persistence, read API |
+| `PORT` | Portfolio — ticker → sector map |
+| `CORE` | Shared — config, Mongo connection, EventBus, errors |
+| `INFRA` | Docker, dependencies, repository configuration |
+| `DX` | Tooling, local dev experience |
+| `TEST` | Tests, coverage, CI |
+| `DOCS` | Documentation |
+| `SEC` | Security — secrets, token, exposure |
 
-## Labels obrigatórios (os três)
-- area: `area: ingestion`, `area: portfolio`, `area: core`, `area: infra`,
-  `area: docs`, `area: testing`
+## Required labels (all three)
+- area: `area: ingestion`, `area: analysis`, `area: portfolio`, `area: core`,
+  `area: infra`, `area: docs`, `area: testing`
 - priority: `priority: high`, `priority: medium`, `priority: low`
 - type: `type: feature`, `type: bug`, `type: tech-debt`, `type: security`,
   `type: docs`, `type: chore`
 
-Uma issue pode ter mais de um `area:`; `priority` e `type` são únicos.
+An issue may have more than one `area:`; `priority` and `type` are
+single-value.
 
-## Corpo
+## Body
 ```
-## Contexto
-## Melhoria / Correção
-## Notas de implementação (opcional)
+## Context
+## Improvement / Fix
+## Implementation Notes (optional)
 ```
 
-## Fechamento
-No corpo do PR: `Closes #NN` (o GitHub fecha a issue ao mergear).
+## Closing
+In the PR body: `Closes #NN` (GitHub closes the issue on merge).

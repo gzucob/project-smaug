@@ -1,32 +1,31 @@
-# Regras de Commit, Push e PR
+# Commit, Push, and PR Rules
 
-## Gate de qualidade (antes de cada commit)
+## Quality gate (before every commit)
 ```bash
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src
 uv run pytest
 ```
-Tudo verde antes de commitar. Se o `ruff` estiver bloqueado localmente pela
-Smart App Control do Windows, o CI no GitHub cobre — mas resolva o bloqueio
-quando puder.
+Everything green before committing. If `ruff` is locally blocked by Windows
+Smart App Control, GitHub CI covers it — but resolve the block when you can.
 
 ## Commit
-- Mensagens em inglês, no imperativo, estilo conventional
+- Messages in English, imperative mood, conventional style
   (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`).
-- Um commit = uma unidade lógica de trabalho.
+- One commit = one logical unit of work.
 
-## Push e PR
-- `main` é protegida: nada de push direto. Toda mudança vai por branch + PR.
-- No primeiro push da branch, abra o PR (draft se ainda em andamento):
+## Push and PR
+- `main` is protected: no direct push. Every change goes through branch + PR.
+- On the branch's first push, open the PR (draft if still in progress):
   ```bash
   git push -u origin <branch>
   gh pr create --base main --head <branch> --title "..." --body "..."
   ```
-- Faça push a cada commit — o CI roda por PR/push.
-- Se o CI falhar: corrija na mesma branch.
+- Push after every commit — CI runs per PR/push.
+- If CI fails: fix it on the same branch.
 - Merge: squash (`gh pr merge --squash --delete-branch`).
 
-## Idioma
-Código, comentários, commits e PRs em inglês. Português só na documentação e em
-texto para usuário.
+## Language
+Code, comments, commits, and PRs in English. Portuguese only in documentation
+and user-facing text.
