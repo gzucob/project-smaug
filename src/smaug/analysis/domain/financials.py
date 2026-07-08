@@ -22,10 +22,15 @@ class StandardizedFinancials:
 
     reference_date: date  # end of the period (DRE/DFC span, or balance instant)
     sector: Sector
-    period_start: date | None = None  # start of the flow period, when known
+    period_start: date | None = None  # start of the DRE flow period, when known
+    # Start of the DFC flow period. Tracked separately because the CVM cash-flow
+    # statement is filed year-to-date even when the DRE comes as isolated
+    # quarters — so DFC-sourced flows (D&A, dividends) must be isolated on their
+    # own span, not the DRE's.
+    dfc_period_start: date | None = None
     total_assets: Decimal | None = None
-    equity: Decimal | None = None
-    net_income: Decimal | None = None
+    equity: Decimal | None = None  # attributable to controlling shareholders
+    net_income: Decimal | None = None  # attributable to controlling shareholders
     revenue: Decimal | None = None
     gross_profit: Decimal | None = None
     ebit: Decimal | None = None
@@ -35,6 +40,7 @@ class StandardizedFinancials:
     current_assets: Decimal | None = None
     current_liabilities: Decimal | None = None
     total_debt: Decimal | None = None
+    dividends_paid: Decimal | None = None  # dividends + JCP paid to controllers
 
 
 @dataclass(frozen=True)
@@ -44,7 +50,6 @@ class MarketData:
     price: Decimal | None = None
     market_cap: Decimal | None = None
     shares: Decimal | None = None
-    dividends_12m: Decimal | None = None  # total paid over trailing 12 months
 
 
 @dataclass(frozen=True)
