@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
@@ -96,48 +97,59 @@ class CvmDataSource:
         self._document = document
         self._prefix = _DOCUMENT_PREFIX[document]
         self._base_url = (base_url or _DOCUMENT_BASE_URL[document]).rstrip("/")
-        self._index: dict[str, Any] | None = None
+        self._index: dict[str, list[Any]] | None = None
         self._lock = asyncio.Lock()
 
     @property
     def _zip_name(self) -> str:
         return f"{self._prefix}_{self._year}.zip"
 
-    async def fetch(self, ticker: str, module: str) -> RawFetchResult:
-        """Return the raw statement for ``ticker``/``module`` (BPA/BPP/DRE/DFC)."""
+    async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
+        """Return the raw statement for ``ticker``/``module`` (BPA/BPP/DRE/DFC).
+
+        One result per filed period: the ITR file carries Q1/Q2/Q3, so a normal
+        year yields three results here (the DFP file yields one). Periods where
+        this module is absent are skipped; if none carry it, we raise 404.
+        """
         index = await self._ensure_loaded()
 
         code = self._ticker_to_code.get(ticker)
         if code is None:
             raise BrapiNotFoundError(f"no CVM code mapped for {ticker}")
-        doc = index.get(code)
-        if doc is None:
+        docs = index.get(code)
+        if not docs:
             raise BrapiNotFoundError(
                 f"no CVM {self._year} filing for {ticker} ({code})"
             )
 
-        balance_type, collection = self._pick_collection(doc)
-        if collection is None:
-            raise BrapiNotFoundError(f"no statements for {ticker} ({code})")
-        statement = self._statement_for(collection, module)
-        if statement is None or not getattr(statement, "accounts", None):
+        results: list[RawFetchResult] = []
+        for doc in docs:
+            balance_type, collection = self._pick_collection(doc)
+            if collection is None:
+                continue
+            statement = self._statement_for(collection, module)
+            if statement is None or not getattr(statement, "accounts", None):
+                continue
+            results.append(
+                RawFetchResult(
+                    module=module,
+                    request={
+                        "source": "cvm",
+                        "file": self._zip_name,
+                        "cvm_code": code,
+                        "statement": module,
+                        "balance_type": balance_type,
+                        "reference_date": doc.reference_date.isoformat(),
+                    },
+                    http_status=200,
+                    payload=self._to_payload(doc, module, balance_type, statement),
+                )
+            )
+        if not results:
             raise BrapiNotFoundError(f"no {module} for {ticker} ({code})")
+        return results
 
-        payload = self._to_payload(doc, module, balance_type, statement)
-        return RawFetchResult(
-            module=module,
-            request={
-                "source": "cvm",
-                "file": self._zip_name,
-                "cvm_code": code,
-                "statement": module,
-                "balance_type": balance_type,
-            },
-            http_status=200,
-            payload=payload,
-        )
-
-    async def _ensure_loaded(self) -> dict[str, Any]:
+    async def _ensure_loaded(self) -> dict[str, list[Any]]:
         cached = self._index
         if cached is not None:
             return cached
@@ -155,11 +167,12 @@ class CvmDataSource:
             index = await asyncio.to_thread(self._build_index, sanitized)
             self._index = index
             logger.info(
-                "Loaded CVM %s %s: %d of %d portfolio companies found",
+                "Loaded CVM %s %s: %d of %d portfolio companies found (%d periods)",
                 self._document,
                 self._year,
                 len(index),
                 len(set(self._ticker_to_code.values())),
+                sum(len(docs) for docs in index.values()),
             )
             return index
 
@@ -170,19 +183,26 @@ class CvmDataSource:
         response.raise_for_status()
         dst.write_bytes(response.content)
 
-    def _build_index(self, sanitized: Path) -> dict[str, Any]:
-        """Index the latest filing per wanted CVM code (sync; runs in a thread)."""
+    def _build_index(self, sanitized: Path) -> dict[str, list[Any]]:
+        """Index every filed period per wanted CVM code (sync; runs in a thread).
+
+        The ITR file holds each company's Q1/Q2/Q3 as separate documents; the
+        TTM needs all of them, so we keep one document per distinct
+        ``reference_date`` (a later filing of the same period wins — amendments)
+        and return them oldest-first.
+        """
         from cvm import DFPITRFile
 
         wanted = set(self._ticker_to_code.values())
-        index: dict[str, Any] = {}
+        by_code: dict[str, dict[date, Any]] = {}
         for doc in DFPITRFile(str(sanitized)):
             if doc.cvm_code not in wanted:
                 continue
-            current = index.get(doc.cvm_code)
-            if current is None or doc.reference_date > current.reference_date:
-                index[doc.cvm_code] = doc
-        return index
+            by_code.setdefault(doc.cvm_code, {})[doc.reference_date] = doc
+        return {
+            code: [by_date[ref] for ref in sorted(by_date)]
+            for code, by_date in by_code.items()
+        }
 
     @staticmethod
     def _pick_collection(doc: Any) -> tuple[str, Any]:
@@ -204,6 +224,7 @@ class CvmDataSource:
     def _to_payload(
         doc: Any, module: str, balance_type: str, statement: Any
     ) -> dict[str, Any]:
+        period_start = getattr(statement, "period_start_date", None)
         period_end = getattr(statement, "period_end_date", None)
         currency = getattr(statement, "currency", None)
         return {
@@ -215,6 +236,9 @@ class CvmDataSource:
             "balance_type": balance_type,
             "currency": None if currency is None else str(currency),
             "currency_size": getattr(statement, "currency_size", None),
+            "period_start_date": (
+                None if period_start is None else period_start.isoformat()
+            ),
             "period_end_date": None if period_end is None else period_end.isoformat(),
             "accounts": [
                 {

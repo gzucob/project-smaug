@@ -20,8 +20,9 @@ from smaug.portfolio.domain.sectors import Sector
 class StandardizedFinancials:
     """One period's normalized accounts for a ticker."""
 
-    reference_date: date
+    reference_date: date  # end of the period (DRE/DFC span, or balance instant)
     sector: Sector
+    period_start: date | None = None  # start of the flow period, when known
     total_assets: Decimal | None = None
     equity: Decimal | None = None
     net_income: Decimal | None = None
