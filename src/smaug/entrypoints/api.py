@@ -1,0 +1,85 @@
+"""FastAPI read API for the computed indicators (Phase 2 delivery).
+
+Serves the latest persisted analysis per ticker as JSON — the surface the
+front-end will consume. This is the composition root for the read side: it wires
+the Postgres repository and maps domain entities to Pydantic response models.
+Computation/persistence is the ``analyze`` CLI command; this only reads.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+from decimal import Decimal
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+from smaug.analysis.domain.entities import TickerAnalysis
+from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
+from smaug.shared.config import get_settings
+from smaug.shared.sql_db import create_engine, create_session_factory
+
+_settings = get_settings()
+_repository = SqlAlchemyAnalysisRepository(
+    create_session_factory(create_engine(_settings))
+)
+
+app = FastAPI(title="smaug — análise fundamentalista", version="0.1.0")
+
+
+class IndicatorsResponse(BaseModel):
+    """The computed indicators (null = not applicable / input missing)."""
+
+    roe: Decimal | None
+    roa: Decimal | None
+    net_margin: Decimal | None
+    gross_margin: Decimal | None
+    ebitda_margin: Decimal | None
+    net_debt: Decimal | None
+    net_debt_to_ebitda: Decimal | None
+    current_ratio: Decimal | None
+    revenue_growth: Decimal | None
+    net_income_growth: Decimal | None
+    pe: Decimal | None
+    pb: Decimal | None
+    dividend_yield: Decimal | None
+    ev_ebitda: Decimal | None
+
+
+class AnalysisResponse(BaseModel):
+    """One ticker's analysis: provenance + indicators."""
+
+    ticker: str
+    sector: str
+    reference_date: date
+    computed_at: datetime
+    price: Decimal | None
+    indicators: IndicatorsResponse
+
+
+def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
+    return AnalysisResponse(
+        ticker=analysis.ticker,
+        sector=analysis.sector.value,
+        reference_date=analysis.reference_date,
+        computed_at=analysis.computed_at,
+        price=analysis.price,
+        indicators=IndicatorsResponse.model_validate(
+            analysis.indicators, from_attributes=True
+        ),
+    )
+
+
+@app.get("/analysis", response_model=list[AnalysisResponse])
+async def list_analysis() -> list[AnalysisResponse]:
+    """Latest analysis for every ticker that has one."""
+    return [_to_response(a) for a in await _repository.all_latest()]
+
+
+@app.get("/analysis/{ticker}", response_model=AnalysisResponse)
+async def get_analysis(ticker: str) -> AnalysisResponse:
+    """Latest analysis for one ticker (404 if never computed)."""
+    analysis = await _repository.latest(ticker.upper())
+    if analysis is None:
+        raise HTTPException(status_code=404, detail=f"No analysis for {ticker}")
+    return _to_response(analysis)

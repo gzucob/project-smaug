@@ -60,9 +60,14 @@ class Settings(BaseSettings):
     # Where the downloaded/sanitized CVM ZIPs are cached (gitignored).
     cvm_cache_dir: str = Field(default=".cache/cvm")
 
-    # ---- MongoDB ----
+    # ---- MongoDB (Phase 1 raw mirror) ----
     mongo_uri: str = Field(default="mongodb://localhost:27017")
     mongo_db: str = Field(default="smaug")
+
+    # ---- PostgreSQL (Phase 2 derived indicators) ----
+    postgres_uri: str = Field(
+        default="postgresql+asyncpg://smaug:smaug@localhost:5432/smaug"
+    )
 
     # ---- Collection ----
     request_delay_seconds: float = Field(default=2.0)
