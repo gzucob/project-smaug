@@ -85,6 +85,23 @@ def _sum(*values: Decimal | None) -> Decimal | None:
     return total if present else None
 
 
+def _iso_date(raw: Any) -> date | None:
+    if not isinstance(raw, str):
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _period_start(by_module: Mapping[str, Any]) -> date | None:
+    """Start of the income-statement period (the flow span), read from the DRE."""
+    payload = by_module.get("DRE")
+    if isinstance(payload, Mapping):
+        return _iso_date(payload.get("period_start_date"))
+    return None
+
+
 def _accounts(by_module: Mapping[str, Any], module: str) -> Accounts:
     payload = by_module.get(module)
     if not isinstance(payload, Mapping):
@@ -116,6 +133,7 @@ def standardize(
     by_module: Mapping[str, Any], sector: Sector, reference_date: date
 ) -> StandardizedFinancials:
     """Build one period's ``StandardizedFinancials`` from its CVM statements."""
+    period_start = _period_start(by_module)
     bpa, bpa_s = _accounts(by_module, "BPA"), _scale(by_module, "BPA")
     bpp, bpp_s = _accounts(by_module, "BPP"), _scale(by_module, "BPP")
     dre, dre_s = _accounts(by_module, "DRE"), _scale(by_module, "DRE")
@@ -136,6 +154,7 @@ def standardize(
         return StandardizedFinancials(
             reference_date=reference_date,
             sector=sector,
+            period_start=period_start,
             total_assets=total_assets,
             equity=equity,
             net_income=net_income,
@@ -150,6 +169,7 @@ def standardize(
     return StandardizedFinancials(
         reference_date=reference_date,
         sector=sector,
+        period_start=period_start,
         total_assets=total_assets,
         equity=equity,
         net_income=net_income,
@@ -167,18 +187,37 @@ def standardize(
     )
 
 
+def _is_annual(doc_type: str | None, financials: StandardizedFinancials) -> bool:
+    """A closed year: the DFP document, or (lacking the tag) a December period."""
+    if doc_type is not None:
+        return doc_type.upper() == "DFP"
+    return financials.reference_date.month == _CLOSED_YEAR_MONTH
+
+
 class MongoFundamentalsReader:
-    """Reads the CVM mirror and yields standardized financials (oldest→newest)."""
+    """Reads the CVM mirror: ITR quarters (history) and the annual DFP (annual)."""
 
     def __init__(self, collection: RawCollection) -> None:
         self._collection = collection
 
     async def history(self, ticker: str) -> list[StandardizedFinancials]:
+        """ITR quarterly periods (oldest→newest) — the raw material for the TTM."""
+        return [f for dt, f in await self._load(ticker) if not _is_annual(dt, f)]
+
+    async def annual(self, ticker: str) -> StandardizedFinancials | None:
+        """The most recent annual DFP (closed year), for the Q4 derivation."""
+        annuals = [f for dt, f in await self._load(ticker) if _is_annual(dt, f)]
+        return annuals[-1] if annuals else None
+
+    async def _load(
+        self, ticker: str
+    ) -> list[tuple[str | None, StandardizedFinancials]]:
         cursor = self._collection.find({"source": "cvm", "ticker": ticker})
         docs: list[Mapping[str, Any]] = await cursor.to_list(None)
         sector = sector_of(ticker)
 
         by_period: dict[str, dict[str, Any]] = {}
+        doc_type: dict[str, str | None] = {}
         latest_fetch: dict[tuple[str, str], datetime] = {}
         for doc in docs:
             payload = doc.get("payload")
@@ -197,11 +236,11 @@ class MongoFundamentalsReader:
             if key not in latest_fetch or fetched > latest_fetch[key]:
                 latest_fetch[key] = fetched
                 by_period.setdefault(ref, {})[module] = payload
+                tag = payload.get("document_type")
+                if isinstance(tag, str):
+                    doc_type[ref] = tag
 
-        periods: list[StandardizedFinancials] = []
-        for ref, modules in sorted(by_period.items()):
-            reference_date = date.fromisoformat(ref)
-            if reference_date.month != _CLOSED_YEAR_MONTH:
-                continue
-            periods.append(standardize(modules, sector, reference_date))
-        return periods
+        return [
+            (doc_type.get(ref), standardize(modules, sector, date.fromisoformat(ref)))
+            for ref, modules in sorted(by_period.items())
+        ]

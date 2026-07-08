@@ -116,23 +116,55 @@ class _FakeCollection:
         return _FakeCursor(self._docs)
 
 
-def _doc(module: str, ref: str, accounts: list[dict[str, Any]]) -> dict[str, Any]:
+def _doc(
+    module: str,
+    ref: str,
+    accounts: list[dict[str, Any]],
+    *,
+    document_type: str | None = None,
+    period_start: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"reference_date": ref, "accounts": accounts}
+    if document_type is not None:
+        payload["document_type"] = document_type
+    if period_start is not None:
+        payload["period_start_date"] = period_start
     return {
-        "payload": {"reference_date": ref, "accounts": accounts},
+        "payload": payload,
         "module": module,
         "fetched_at": datetime(2026, 7, 2, tzinfo=UTC),
     }
 
 
-async def test_history_keeps_only_closed_year_periods() -> None:
-    # A Q3 (September) ITR period and a December (DFP) closed year coexist; the
-    # historical reader must yield only the closed year.
-    docs = [
-        _doc("DRE", "2024-09-30", [_acc("3.01", "Receita", "100")]),
-        _doc("DRE", "2024-12-31", [_acc("3.01", "Receita", "400")]),
-    ]
+async def test_history_returns_quarters_and_annual_returns_the_dfp() -> None:
+    # An ITR quarter (September) and the annual DFP (December) coexist. history()
+    # serves the quarters (raw material for the TTM); annual() serves the DFP.
+    reader = MongoFundamentalsReader(
+        _FakeCollection(
+            [
+                _doc(
+                    "DRE",
+                    "2024-09-30",
+                    [_acc("3.01", "Receita", "100")],
+                    document_type="ITR",
+                    period_start="2024-07-01",
+                ),
+                _doc(
+                    "DRE",
+                    "2024-12-31",
+                    [_acc("3.01", "Receita", "400")],
+                    document_type="DFP",
+                ),
+            ]
+        )
+    )
 
-    history = await MongoFundamentalsReader(_FakeCollection(docs)).history("PETR4")
+    history = await reader.history("PETR4")
+    annual = await reader.annual("PETR4")
 
-    assert [f.reference_date for f in history] == [date(2024, 12, 31)]
-    assert history[0].revenue == Decimal("400")
+    assert [f.reference_date for f in history] == [date(2024, 9, 30)]
+    assert history[0].revenue == Decimal("100")
+    assert history[0].period_start == date(2024, 7, 1)  # read from the payload
+    assert annual is not None
+    assert annual.reference_date == date(2024, 12, 31)
+    assert annual.revenue == Decimal("400")

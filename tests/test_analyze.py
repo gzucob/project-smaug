@@ -1,4 +1,4 @@
-"""Analysis use case: compute+save, skip on no data, degrade on price failure."""
+"""Analysis use case: build the TTM, price it nominally, skip/degrade gracefully."""
 
 from datetime import date
 from decimal import Decimal
@@ -13,13 +13,29 @@ from smaug.analysis.domain.financials import (
 from smaug.portfolio.domain.sectors import Sector
 from smaug.shared.errors import BrapiForbiddenError
 
+# Four consecutive quarter-ends: the TTM window Jul/2025–Mar/2026.
+_QUARTER_ENDS = (
+    date(2025, 6, 30),
+    date(2025, 9, 30),
+    date(2025, 12, 31),
+    date(2026, 3, 31),
+)
+
 
 class FakeReader:
-    def __init__(self, history: dict[str, list[StandardizedFinancials]]) -> None:
+    def __init__(
+        self,
+        history: dict[str, list[StandardizedFinancials]],
+        annual: dict[str, StandardizedFinancials] | None = None,
+    ) -> None:
         self._history = history
+        self._annual = annual or {}
 
     async def history(self, ticker: str) -> list[StandardizedFinancials]:
         return self._history.get(ticker, [])
+
+    async def annual(self, ticker: str) -> StandardizedFinancials | None:
+        return self._annual.get(ticker)
 
 
 class FakePrice:
@@ -59,23 +75,36 @@ class FakeRepo:
         return list(self.saved)
 
 
-def _petr4() -> StandardizedFinancials:
-    return StandardizedFinancials(
-        reference_date=date(2024, 9, 30),
-        sector=Sector.COMMODITY,
-        equity=Decimal(6000),
-        net_income=Decimal(900),  # annualized -> 1200
-    )
+def _quarters(
+    sector: Sector,
+    *,
+    net_income: Decimal,
+    equity: Decimal | None = None,
+    ends: tuple[date, ...] = _QUARTER_ENDS,
+) -> list[StandardizedFinancials]:
+    """Isolated quarters (no ``period_start`` → taken as already isolated)."""
+    return [
+        StandardizedFinancials(
+            reference_date=end,
+            sector=sector,
+            net_income=net_income,
+            equity=equity,
+        )
+        for end in ends
+    ]
 
 
-async def test_analyze_prices_multiples_on_year_adjusted_average() -> None:
+async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
     repo = FakeRepo()
     use_case = AnalyzePortfolioUseCase(
-        FakeReader({"PETR4": [_petr4()]}),
-        FakePrice(
-            MarketData(price=Decimal(10), market_cap=Decimal(12000)),
-            year=YearPrices(nominal_avg=Decimal(8), adjusted_avg=Decimal(6)),
+        FakeReader(
+            {
+                "PETR4": _quarters(
+                    Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(6000)
+                )
+            }
         ),
+        FakePrice(MarketData(price=Decimal(10), market_cap=Decimal(12000))),
         repo,
     )
 
@@ -83,32 +112,22 @@ async def test_analyze_prices_multiples_on_year_adjusted_average() -> None:
 
     assert len(out) == 1
     saved = repo.saved[0]
-    assert saved.indicators.roe == Decimal("0.2")  # annualized 1200 / 6000
-    # Multiples are repriced onto the year's adjusted average: the current cap
-    # 12000 at price 10 becomes an effective cap of 12000 * 6 / 10 = 7200.
-    assert saved.price == Decimal(6)  # adjusted-year average is the basis used
-    assert saved.price_nominal == Decimal(8)
-    assert saved.price_basis == "adjusted_year_avg"
-    assert saved.indicators.pe == Decimal(6)  # 7200 / 1200
-    assert saved.indicators.pb == Decimal("1.2")  # 7200 / 6000
+    # TTM net income = 4 * 300 = 1200 over 12 months → no annualization.
+    assert saved.reference_date == date(2026, 3, 31)
+    assert saved.indicators.roe == Decimal("0.2")  # 1200 / 6000
+    assert saved.price == Decimal(10)  # current nominal quote
+    assert saved.price_nominal == Decimal(10)
+    assert saved.price_basis == "ttm_current_nominal"
+    assert saved.indicators.pe == Decimal(10)  # 12000 / 1200
+    assert saved.indicators.pb == Decimal(2)  # 12000 / 6000
 
 
-async def test_analyze_nulls_multiples_when_year_price_missing() -> None:
-    repo = FakeRepo()
+async def test_analyze_skips_when_fewer_than_four_quarters() -> None:
+    two = _quarters(Sector.COMMODITY, net_income=Decimal(300))[:2]
     use_case = AnalyzePortfolioUseCase(
-        FakeReader({"PETR4": [_petr4()]}),
-        # Current quote is available, but the year has no adjusted average.
-        FakePrice(MarketData(price=Decimal(10), market_cap=Decimal(12000))),
-        repo,
+        FakeReader({"PETR4": two}), FakePrice(), FakeRepo()
     )
-
-    await use_case.execute(["PETR4"])
-
-    saved = repo.saved[0]
-    assert saved.indicators.roe == Decimal("0.2")  # accounting indicator survives
-    assert saved.indicators.pe is None  # no adjusted basis -> no market multiple
-    assert saved.price is None
-    assert saved.price_basis is None
+    assert await use_case.execute(["PETR4"]) == []
 
 
 async def test_analyze_skips_ticker_without_fundamentals() -> None:
@@ -117,14 +136,14 @@ async def test_analyze_skips_ticker_without_fundamentals() -> None:
 
 
 async def test_analyze_degrades_when_price_unavailable() -> None:
-    bank = StandardizedFinancials(
-        reference_date=date(2024, 9, 30),
-        sector=Sector.BANK,
-        equity=Decimal(8000),
-        net_income=Decimal(600),  # annualized -> 800
-    )
     use_case = AnalyzePortfolioUseCase(
-        FakeReader({"BBAS3": [bank]}),
+        FakeReader(
+            {
+                "BBAS3": _quarters(
+                    Sector.BANK, net_income=Decimal(200), equity=Decimal(8000)
+                )
+            }
+        ),
         FakePrice(error=BrapiForbiddenError("403")),
         FakeRepo(),
     )
@@ -132,6 +151,6 @@ async def test_analyze_degrades_when_price_unavailable() -> None:
     out = await use_case.execute(["BBAS3"])
 
     assert len(out) == 1
-    assert out[0].indicators.roe == Decimal("0.1")  # fundamentals still computed
+    assert out[0].indicators.roe == Decimal("0.1")  # 800 / 8000, fundamentals survive
     assert out[0].indicators.pe is None  # no price -> no market multiple
     assert out[0].price is None

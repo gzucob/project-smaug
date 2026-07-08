@@ -18,9 +18,15 @@ from smaug.analysis.domain.financials import (
 
 
 class FundamentalsReader(Protocol):
-    """Reads the standardized financial history (oldest→newest) for a ticker."""
+    """Reads standardized financials for a ticker: ITR quarters and the annual DFP."""
 
-    async def history(self, ticker: str) -> list[StandardizedFinancials]: ...
+    async def history(self, ticker: str) -> list[StandardizedFinancials]:
+        """ITR quarterly periods (oldest→newest); the TTM window is built from these."""
+        ...
+
+    async def annual(self, ticker: str) -> StandardizedFinancials | None:
+        """The most recent annual DFP (closed year), used to derive the missing Q4."""
+        ...
 
 
 class PriceProvider(Protocol):

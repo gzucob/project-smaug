@@ -204,6 +204,7 @@ class CvmDataSource:
     def _to_payload(
         doc: Any, module: str, balance_type: str, statement: Any
     ) -> dict[str, Any]:
+        period_start = getattr(statement, "period_start_date", None)
         period_end = getattr(statement, "period_end_date", None)
         currency = getattr(statement, "currency", None)
         return {
@@ -215,6 +216,9 @@ class CvmDataSource:
             "balance_type": balance_type,
             "currency": None if currency is None else str(currency),
             "currency_size": getattr(statement, "currency_size", None),
+            "period_start_date": (
+                None if period_start is None else period_start.isoformat()
+            ),
             "period_end_date": None if period_end is None else period_end.isoformat(),
             "accounts": [
                 {
