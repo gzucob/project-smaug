@@ -252,7 +252,7 @@ def format_analysis(analyses: list[TickerAnalysis]) -> str:
             else ""
         )
         lines.append(
-            f"\n{a.ticker} [{a.sector.value}] — ref {a.reference_date} "
+            f"\n{a.ticker} [{a.sector.value}] {a.view} — ref {a.reference_date} "
             f"— price {_num(a.price)}{basis}"
         )
         lines.append(

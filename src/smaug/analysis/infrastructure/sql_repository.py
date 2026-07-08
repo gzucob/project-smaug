@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import date
+from typing import cast
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from smaug.analysis.domain.entities import TickerAnalysis
+from smaug.analysis.domain.entities import (
+    VIEW_CLOSED_YEAR,
+    VIEW_TTM,
+    AnalysisView,
+    TickerAnalysis,
+)
 from smaug.analysis.domain.indicators import Indicators
 from smaug.analysis.infrastructure.sqlalchemy_models import TickerAnalysisRow
 from smaug.portfolio.domain.sectors import Sector
@@ -15,6 +23,7 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
     i = analysis.indicators
     return TickerAnalysisRow(
         ticker=analysis.ticker,
+        view=analysis.view,
         sector=analysis.sector.value,
         reference_date=analysis.reference_date,
         computed_at=analysis.computed_at,
@@ -47,6 +56,7 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
         price=row.price,
         price_nominal=row.price_nominal,
         price_basis=row.price_basis,
+        view=cast(AnalysisView, row.view),
         indicators=Indicators(
             roe=row.roe,
             roa=row.roa,
@@ -80,7 +90,10 @@ class SqlAlchemyAnalysisRepository:
     async def latest(self, ticker: str) -> TickerAnalysis | None:
         stmt = (
             select(TickerAnalysisRow)
-            .where(TickerAnalysisRow.ticker == ticker)
+            .where(
+                TickerAnalysisRow.ticker == ticker,
+                TickerAnalysisRow.view == VIEW_TTM,
+            )
             .order_by(TickerAnalysisRow.computed_at.desc())
             .limit(1)
         )
@@ -89,7 +102,11 @@ class SqlAlchemyAnalysisRepository:
         return _to_entity(row) if row is not None else None
 
     async def all_latest(self) -> list[TickerAnalysis]:
-        stmt = select(TickerAnalysisRow).order_by(TickerAnalysisRow.computed_at.desc())
+        stmt = (
+            select(TickerAnalysisRow)
+            .where(TickerAnalysisRow.view == VIEW_TTM)
+            .order_by(TickerAnalysisRow.computed_at.desc())
+        )
         async with self._session_factory() as session:
             rows = (await session.execute(stmt)).scalars().all()
         seen: set[str] = set()
@@ -99,3 +116,23 @@ class SqlAlchemyAnalysisRepository:
                 seen.add(row.ticker)
                 latest.append(_to_entity(row))
         return latest
+
+    async def history(self, ticker: str) -> list[TickerAnalysis]:
+        """Latest computation per closed fiscal year, oldest → newest."""
+        stmt = (
+            select(TickerAnalysisRow)
+            .where(
+                TickerAnalysisRow.ticker == ticker,
+                TickerAnalysisRow.view == VIEW_CLOSED_YEAR,
+            )
+            .order_by(TickerAnalysisRow.computed_at.desc())
+        )
+        async with self._session_factory() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+        seen: set[date] = set()
+        by_year: list[TickerAnalysis] = []
+        for row in rows:  # newest computation first → keep the first per year
+            if row.reference_date not in seen:
+                seen.add(row.reference_date)
+                by_year.append(_to_entity(row))
+        return sorted(by_year, key=lambda a: a.reference_date)

@@ -47,9 +47,10 @@ class IndicatorsResponse(BaseModel):
 
 
 class AnalysisResponse(BaseModel):
-    """One ticker's analysis: provenance + indicators."""
+    """One ticker's analysis for a single view: provenance + indicators."""
 
     ticker: str
+    view: str
     sector: str
     reference_date: date
     computed_at: datetime
@@ -59,9 +60,18 @@ class AnalysisResponse(BaseModel):
     indicators: IndicatorsResponse
 
 
+class TickerViewsResponse(BaseModel):
+    """Both perspectives for one ticker: the live TTM plus the closed-year history."""
+
+    ticker: str
+    ttm: AnalysisResponse | None
+    history: list[AnalysisResponse]  # closed years, oldest → newest
+
+
 def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
     return AnalysisResponse(
         ticker=analysis.ticker,
+        view=analysis.view,
         sector=analysis.sector.value,
         reference_date=analysis.reference_date,
         computed_at=analysis.computed_at,
@@ -80,10 +90,19 @@ async def list_analysis() -> list[AnalysisResponse]:
     return [_to_response(a) for a in await _repository.all_latest()]
 
 
-@app.get("/analysis/{ticker}", response_model=AnalysisResponse)
-async def get_analysis(ticker: str) -> AnalysisResponse:
-    """Latest analysis for one ticker (404 if never computed)."""
-    analysis = await _repository.latest(ticker.upper())
-    if analysis is None:
+@app.get("/analysis/{ticker}", response_model=TickerViewsResponse)
+async def get_analysis(ticker: str) -> TickerViewsResponse:
+    """Both views for one ticker: the live TTM plus the closed-year history.
+
+    404 only when the ticker has neither a TTM nor any closed year computed.
+    """
+    symbol = ticker.upper()
+    ttm = await _repository.latest(symbol)
+    history = await _repository.history(symbol)
+    if ttm is None and not history:
         raise HTTPException(status_code=404, detail=f"No analysis for {ticker}")
-    return _to_response(analysis)
+    return TickerViewsResponse(
+        ticker=symbol,
+        ttm=_to_response(ttm) if ttm is not None else None,
+        history=[_to_response(a) for a in history],
+    )
