@@ -26,16 +26,16 @@ class FakeReader:
     def __init__(
         self,
         history: dict[str, list[StandardizedFinancials]],
-        annual: dict[str, StandardizedFinancials] | None = None,
+        annuals: dict[str, list[StandardizedFinancials]] | None = None,
     ) -> None:
         self._history = history
-        self._annual = annual or {}
+        self._annuals = annuals or {}
 
     async def history(self, ticker: str) -> list[StandardizedFinancials]:
         return self._history.get(ticker, [])
 
-    async def annual(self, ticker: str) -> StandardizedFinancials | None:
-        return self._annual.get(ticker)
+    async def annuals(self, ticker: str) -> list[StandardizedFinancials]:
+        return self._annuals.get(ticker, [])
 
 
 class FakePrice:
@@ -120,6 +120,46 @@ async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
     assert saved.price_basis == "ttm_current_nominal"
     assert saved.indicators.pe == Decimal(10)  # 12000 / 1200
     assert saved.indicators.pb == Decimal(2)  # 12000 / 6000
+
+
+async def test_analyze_computes_growth_against_prior_year_annual() -> None:
+    # TTM window ends 2026-06-30 (year 2026); the prior closed year (2025 DFP) is
+    # the year-over-year growth base. Only two quarters fall in 2025, so build_ttm
+    # does not treat the annual as a Q4 source — it stays the growth comparator.
+    ends = (
+        date(2025, 9, 30),
+        date(2025, 12, 31),
+        date(2026, 3, 31),
+        date(2026, 6, 30),
+    )
+    quarters = [
+        StandardizedFinancials(
+            reference_date=end,
+            sector=Sector.COMMODITY,
+            revenue=Decimal(1000),
+            net_income=Decimal(300),
+            equity=Decimal(6000),
+        )
+        for end in ends
+    ]
+    prior = StandardizedFinancials(
+        reference_date=date(2025, 12, 31),
+        sector=Sector.COMMODITY,
+        revenue=Decimal(3200),
+        net_income=Decimal(1000),
+    )
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"PETR4": quarters}, annuals={"PETR4": [prior]}),
+        FakePrice(MarketData(price=Decimal(10), market_cap=Decimal(12000))),
+        repo,
+    )
+
+    await use_case.execute(["PETR4"])
+
+    ind = repo.saved[0].indicators
+    assert ind.revenue_growth == Decimal("0.25")  # (4000 - 3200) / 3200
+    assert ind.net_income_growth == Decimal("0.2")  # (1200 - 1000) / 1000
 
 
 async def test_analyze_skips_when_fewer_than_four_quarters() -> None:

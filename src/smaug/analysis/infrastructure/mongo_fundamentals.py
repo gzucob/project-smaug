@@ -282,9 +282,13 @@ class MongoFundamentalsReader:
         """ITR quarterly periods (oldest→newest) — the raw material for the TTM."""
         return [f for dt, f in await self._load(ticker) if not _is_annual(dt, f)]
 
+    async def annuals(self, ticker: str) -> list[StandardizedFinancials]:
+        """Annual DFPs (closed years), oldest→newest."""
+        return [f for dt, f in await self._load(ticker) if _is_annual(dt, f)]
+
     async def annual(self, ticker: str) -> StandardizedFinancials | None:
         """The most recent annual DFP (closed year), for the Q4 derivation."""
-        annuals = [f for dt, f in await self._load(ticker) if _is_annual(dt, f)]
+        annuals = await self.annuals(ticker)
         return annuals[-1] if annuals else None
 
     async def _load(
