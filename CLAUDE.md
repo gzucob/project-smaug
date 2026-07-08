@@ -1,38 +1,56 @@
 # project-smaug
 
-Ferramenta pessoal de análise da carteira de ações. Fase 1: ingestão fiel dos
-dados fundamentais da brapi em MongoDB (espelho cru, sem cálculo). A Fase 2
-(análise por critérios) é escopo futuro e não vive aqui ainda.
+Personal stock portfolio analysis tool. Phase 1: faithful ingestion of
+fundamental data (brapi/CVM) into MongoDB (raw mirror, no calculation). Phase 2:
+analysis — fundamental + market indicators derived and persisted in
+PostgreSQL, served by a read API. Both phases are already implemented (see
+`src/smaug/analysis/` and the PR history).
 
 ## Stack
-- Python 3.13 · uv · FastAPI (esqueleto; o gatilho da Fase 1 é CLI)
-- MongoDB (Docker) + Beanie · mypy strict · ruff · pytest
-- PostgreSQL + SQLAlchemy + Alembic: deferidos para a Fase 2 (dados derivados)
+- Python 3.13 · uv · mypy strict · ruff · pytest
+- Phase 1 (ingestion, raw mirror): MongoDB (Docker) + Beanie. Trigger is CLI
+  (`smaug.ingest`, `smaug.report`), not the API.
+- Phase 2 (analysis, derived data): PostgreSQL + SQLAlchemy + Alembic
+  (migrations in `alembic/versions/`). The calculation trigger is CLI
+  (`smaug.analyze`); FastAPI (`smaug.entrypoints.api`) serves already-persisted
+  results — it's a read API, not a write one.
+- brapi: price source (current price + dividend-adjusted series) used by
+  Phase 2 regardless of the ingestion source; also an alternative ingestion
+  source (`INGESTION_SOURCE=brapi`), limited on the free plan.
 
-Sempre reafirme a stack antes de propor arquitetura ou dependências.
+Always restate the stack before proposing architecture or dependencies.
 
-## Fonte de verdade
-- O código é a verdade do comportamento implementado.
-- `docs/PLANO_FASE1.md` — o "como" da Fase 1.
-- `docs/preview_fase1_criterios_implementacao.md` — o "o quê / porquê".
-- `docs/FINDINGS_INDICATORS.md` — achados de fidelidade dos indicadores (Fase 2).
-- `.claude/RULES/` — regras duráveis de engenharia.
+## Source of Truth
+- The code is the source of truth for implemented behavior.
+- `docs/PLANO_FASE1.md` — the "how" of Phase 1.
+- `docs/preview_fase1_criterios_implementacao.md` — the "what/why".
+- `docs/FINDINGS_INDICATORS.md` — indicator fidelity findings (Phase 2).
+- `.claude/RULES/` — durable engineering rules.
 
-## Índice de regras
-| Arquivo | Cobre |
+## Rules Index
+| File | Covers |
 |---|---|
-| `.claude/RULES/RULES_BRANCHES.md` | Branch, squash-merge, fluxo a partir da main |
-| `.claude/RULES/RULES_ISSUES.md` | Formato `[NAMESPACE-NN]`, labels area/priority/type |
-| `.claude/RULES/RULES_GIT_WORKFLOW.md` | Gate de qualidade, commit, push, PR |
+| `.claude/RULES/RULES_BRANCHES.md` | Branching, squash-merge, workflow from main |
+| `.claude/RULES/RULES_ISSUES.md` | `[NAMESPACE-NN]` format, area/priority/type labels |
+| `.claude/RULES/RULES_GIT_WORKFLOW.md` | Quality gate, commit, push, PR |
+| `.claude/RULES/RULES_LAYERS.md` | Bounded contexts, domain→application→infra→entrypoints hierarchy, EventBus |
+| `.claude/RULES/RULES_ENTITIES.md` | Frozen entities, Beanie/SQLAlchemy models, API DTOs |
+| `.claude/RULES/RULES_REPOSITORIES.md` | Protocol pattern for ports/repositories, infra conversion |
+| `.claude/RULES/RULES_TYPING.md` | mypy strict, `X \| None`, docstring style, Ruff |
+| `.claude/RULES/RULES_TESTING.md` | Test layout, naming convention, battery selection |
 
-## Arquitetura (DDD Lite)
-Contextos isolados sob `src/smaug/`: `ingestion`, `portfolio`, `shared`,
-`entrypoints`. Camadas: domain → application → infrastructure → entrypoints.
-Comunicação entre contextos só por eventos (EventBus in-process).
+## Architecture (DDD Lite)
+Isolated contexts under `src/smaug/`: `ingestion`, `analysis`, `portfolio`,
+`shared`, `entrypoints`. Layers: domain → application → infrastructure →
+entrypoints. Cross-context communication only via events (in-process EventBus).
+Details in `.claude/RULES/RULES_LAYERS.md`.
 
-## O que NÃO fazer
-- Não fazer push direto na `main` — sempre branch + PR + squash.
-- Não commitar segredos — token da brapi só no `.env` (ignorado). Repo é público.
-- Não escrever lógica de negócio em entrypoints (CLI/API) — eles chamam casos de uso.
-- Não colocar cálculo/indicador na Fase 1 (isso é Fase 2).
-- Código, commits e PRs em inglês.
+## What NOT to Do
+- Don't push directly to `main` — always branch + PR + squash.
+- Don't commit secrets — the brapi token only lives in `.env` (gitignored). The repo is public.
+- Don't write business logic in entrypoints (CLI/API) — they call use cases.
+- Don't put calculation/indicator logic in the `ingestion` context — that's
+  `analysis`'s job (ingestion stays a raw mirror, with no interpretation).
+- Don't turn the API (`entrypoints/api.py`) into a write surface —
+  calculation and persistence remain exclusive to the `analyze` command (CLI).
+- Code, commits, and PRs in English.

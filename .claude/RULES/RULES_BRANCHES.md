@@ -1,30 +1,31 @@
-# Regras de Branch
+# Branch Rules
 
-## Padrão
-- Branch default: `main` — protegida: merge só via PR + squash, sem push direto.
-- Branches de trabalho usam um prefixo:
-  - `feat/<escopo>`, `fix/<escopo>`, `refactor/<escopo>`, `test/<escopo>`,
-    `chore/<escopo>`, `docs/<escopo>`
-- Escopo em kebab-case, curto e técnico. Preferir < 40 caracteres.
+## Default
+- Default branch: `main` — protected: merge only via PR + squash, no direct push.
+- Working branches use a prefix:
+  - `feat/<scope>`, `fix/<scope>`, `refactor/<scope>`, `test/<scope>`,
+    `chore/<scope>`, `docs/<scope>`
+- Scope in kebab-case, short and technical. Prefer under 40 characters.
 
-## Uso
-- Uma branch por unidade lógica de trabalho.
-- Sempre criar a branch a partir de uma `main` atualizada:
+## Usage
+- One branch per logical unit of work.
+- Always create the branch from an up-to-date `main`:
   ```bash
   git checkout main
   git pull
-  git checkout -b <prefixo>/<escopo>
+  git checkout -b <prefix>/<scope>
   ```
-- Se a tarefa mistura assuntos não relacionados, quebre antes de implementar.
+- If the task mixes unrelated concerns, split it before implementing.
 
 ## Merge
-- Todo merge para `main` é squash-merge (política do repositório no GitHub).
-- Commits iterativos da branch são achatados — só o commit final do PR entra na
-  `main`.
-- Após o merge: a branch remota é apagada automaticamente; apague a local:
-  `git checkout main && git pull && git branch -d <branch>`.
-- Se o CI falhar na branch: corrija na mesma branch — não abra outra branch/PR.
+- Every merge to `main` is a squash-merge (GitHub repository policy).
+- Iterative commits on the branch are squashed away — only the PR's final
+  commit lands on `main`.
+- After the merge: the remote branch is auto-deleted; delete the local one
+  too: `git checkout main && git pull && git branch -d <branch>`.
+- If CI fails on the branch: fix it on the same branch — don't open another
+  branch/PR.
 
-## Idioma
-Mensagens de commit e títulos/corpos de PR em inglês. PT-BR só na documentação
-e em texto para usuário.
+## Language
+Commit messages and PR titles/bodies in English. PT-BR only in documentation
+and user-facing text.
