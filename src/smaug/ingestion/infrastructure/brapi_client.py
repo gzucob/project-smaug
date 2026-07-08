@@ -10,6 +10,8 @@ repo is public and that metadata gets persisted.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
@@ -35,8 +37,12 @@ class BrapiClient:
         self._token = token
         self._http = http_client
 
-    async def fetch(self, ticker: str, module: str) -> RawFetchResult:
-        """Fetch one ``module`` for ``ticker``. Raises typed errors on failure."""
+    async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
+        """Fetch one ``module`` for ``ticker``. Raises typed errors on failure.
+
+        brapi answers with a single payload, so the sequence always has one item
+        (the port allows several — see ``RawDataSource`` — for the CVM quarters).
+        """
         url = f"{self._base_url}/quote/{ticker}"
         # Token goes on the wire but is kept out of the audit metadata.
         query = {"token": self._token, **self._module_params(module)}
@@ -45,12 +51,14 @@ class BrapiClient:
         response = await self._http.get(url, params=query)
         self._raise_for_status(response, ticker, module)
 
-        return RawFetchResult(
-            module=module,
-            request={"url": url, "params": audit_params},
-            http_status=response.status_code,
-            payload=response.json(),
-        )
+        return [
+            RawFetchResult(
+                module=module,
+                request={"url": url, "params": audit_params},
+                http_status=response.status_code,
+                payload=response.json(),
+            )
+        ]
 
     @staticmethod
     def _module_params(module: str) -> dict[str, str]:

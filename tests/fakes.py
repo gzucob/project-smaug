@@ -82,16 +82,18 @@ class FakeDataSource:
         self._payloads = payloads or {}
         self.calls: list[tuple[str, str]] = []
 
-    async def fetch(self, ticker: str, module: str) -> RawFetchResult:
+    async def fetch(self, ticker: str, module: str) -> list[RawFetchResult]:
         self.calls.append((ticker, module))
         if (ticker, module) in self._errors:
             raise self._errors[(ticker, module)]
         payload = self._payloads.get(
             (ticker, module), {"results": [{"symbol": ticker}]}
         )
-        return RawFetchResult(
-            module=module,
-            request={"params": {"modules": module}},
-            http_status=200,
-            payload=payload,
-        )
+        return [
+            RawFetchResult(
+                module=module,
+                request={"params": {"modules": module}},
+                http_status=200,
+                payload=payload,
+            )
+        ]

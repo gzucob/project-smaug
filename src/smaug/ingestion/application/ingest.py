@@ -124,26 +124,32 @@ class IngestPortfolioUseCase:
         return False
 
     async def _fetch_and_store(self, ticker: str, module: str) -> FetchOutcome:
-        response = await self._client.fetch(ticker, module)
-        ingestion = RawIngestion(
-            ticker=ticker,
-            source=self._source,
-            module=module,
-            fetched_at=self._clock(),
-            request=response.request,
-            http_status=response.http_status,
-            payload=response.payload,
-        )
-        stored = await self._repository.add(ingestion)
-        self._event_bus.publish(
-            RawIngestionStored(
-                ticker=stored.ticker,
-                module=stored.module,
-                fetched_at=stored.fetched_at,
-                http_status=stored.http_status,
+        # One source call may return several periods (CVM ITR = Q1/Q2/Q3); each
+        # is a distinct filing and gets its own stored document and event.
+        responses = await self._client.fetch(ticker, module)
+        last_status: int | None = None
+        for response in responses:
+            ingestion = RawIngestion(
+                ticker=ticker,
+                source=self._source,
+                module=module,
+                fetched_at=self._clock(),
+                request=response.request,
+                http_status=response.http_status,
+                payload=response.payload,
             )
-        )
-        logger.info("Stored %s/%s (HTTP %s)", ticker, module, response.http_status)
+            stored = await self._repository.add(ingestion)
+            self._event_bus.publish(
+                RawIngestionStored(
+                    ticker=stored.ticker,
+                    module=stored.module,
+                    fetched_at=stored.fetched_at,
+                    http_status=stored.http_status,
+                )
+            )
+            last_status = response.http_status
+        count = len(responses)
+        logger.info("Stored %s/%s: %d period(s)", ticker, module, count)
         return FetchOutcome(
-            ticker, module, OutcomeStatus.STORED, response.http_status, "ok"
+            ticker, module, OutcomeStatus.STORED, last_status, f"{count} period(s)"
         )
