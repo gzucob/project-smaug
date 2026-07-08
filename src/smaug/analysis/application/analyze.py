@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 
 from smaug.analysis.domain.calculator import compute
 from smaug.analysis.domain.entities import TickerAnalysis
-from smaug.analysis.domain.financials import MarketData
+from smaug.analysis.domain.financials import MarketData, StandardizedFinancials
 from smaug.analysis.domain.ports import (
     AnalysisRepository,
     FundamentalsReader,
@@ -34,6 +34,22 @@ _PRICE_BASIS = "ttm_current_nominal"
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _prior_year_annual(
+    annuals: list[StandardizedFinancials], year: int
+) -> StandardizedFinancials | None:
+    """The closed-year DFP one year before ``year`` — the YoY growth base.
+
+    Revenue/net-income growth compare the current 12-month TTM against the prior
+    closed year. When the TTM ends in December this is a clean year-over-year;
+    for a mid-year rolling window it is the nearest available comparable. Returns
+    ``None`` when that year was not ingested, so growth degrades to null.
+    """
+    for annual in annuals:
+        if annual.reference_date.year == year - 1:
+            return annual
+    return None
 
 
 class AnalyzePortfolioUseCase:
@@ -62,11 +78,12 @@ class AnalyzePortfolioUseCase:
 
     async def _analyze_ticker(self, ticker: str) -> TickerAnalysis | None:
         quarters = await self._reader.history(ticker)
-        annual = await self._reader.annual(ticker)
-        current = build_ttm(quarters, annual)
+        annuals = await self._reader.annuals(ticker)
+        current = build_ttm(quarters, annuals[-1] if annuals else None)
         if current is None:
             logger.warning("No TTM fundamentals for %s; skipping", ticker)
             return None
+        previous = _prior_year_annual(annuals, current.reference_date.year)
 
         try:
             market = await self._price_provider.get(ticker)
@@ -81,7 +98,7 @@ class AnalyzePortfolioUseCase:
             sector=sector_of(ticker),
             reference_date=current.reference_date,
             computed_at=self._clock(),
-            indicators=compute(current, None, market),
+            indicators=compute(current, previous, market),
             price=market.price,
             price_nominal=market.price,
             price_basis=_PRICE_BASIS if market.price is not None else None,

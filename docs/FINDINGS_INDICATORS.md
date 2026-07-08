@@ -11,9 +11,10 @@ divergence, a modelling decision), add a dated entry here. A `SessionStart` hook
 Reference run: `analyze` on **PETR4** and **BBAS3**, CVM mirror through the
 2025 closed year (DFP), TTM view priced on the current nominal quote.
 
-**F1–F5 resolved** in the "controllers-basis indicators" change. After it,
-PETR4: DY 8.6%, net debt 348.4→333.4 bn, ND/EBITDA 1.51→1.45; BBAS3: ROE
-8.7→7.2% (controllers), P/L 6.7→8.2, DY 5.9%. F6 remains open.
+**All findings (F1–F6) resolved.** After the change — PETR4: DY 8.6%, net debt
+348.4→333.4 bn, ND/EBITDA 1.51→1.45, revenue/NI growth now populated; BBAS3: ROE
+8.7→7.2% (controllers), P/L 6.7→8.2, DY 5.9% (growth null until its 2024 DFP is
+ingested).
 
 ---
 
@@ -139,11 +140,16 @@ DY = trailing-12m dividends / market cap.
 
 ## F6 — Revenue / net-income growth are never computed
 
-**Status:** minor gap.
+**Status:** FIXED — growth compares the TTM against the prior closed year (DFP).
 
-`analyze` calls `compute(current, None, market)` with `previous=None`, so
-`revenue_growth` and `net_income_growth` are always null even though `_growth`
-is implemented correctly. Wiring a prior comparable period would populate them.
+`analyze` used to call `compute(current, None, market)` with `previous=None`, so
+`revenue_growth` and `net_income_growth` were always null even though `_growth`
+is implemented correctly. Now the use case reads all annual DFPs and passes the
+year-before the TTM's end year as the comparison base (clean YoY when the TTM
+ends in December). It degrades to null when that prior year was not ingested —
+e.g. BBAS3, whose 2024 DFP is not in the mirror yet (data follow-up: ingest it).
+PETR4 (with the 2024 DFP present) reports revenue growth 1.4%, net-income
+growth 200.8% off a depressed 2024 base.
 
 ---
 
