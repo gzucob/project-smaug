@@ -227,9 +227,34 @@ and `dividends_paid` come from). Modelling choices worth recording:
   reconstruct. `dividends` is the same DFC-sourced figure that backs `payout`
   and the DY.
 
-No reference-run cross-check against the platforms has been done for the new
-indicators yet — a follow-up should verify ROIC, FCF and the per-share figures
-for PETR4/BBAS3 against AUVP/Investidor10 and record the deltas here.
+A runtime verification run (2026-07-09) confirmed the new indicators flow
+end-to-end (migration 0004 applied, `analyze` re-run for PETR4/BBAS3, read API +
+front-end) — most populated correctly; see **F9** for the two remaining data
+gaps. No AUVP/Investidor10 delta cross-check has been done yet — verifying ROIC,
+FCF and the per-share figures against the platforms remains the open follow-up.
+
+---
+
+## F9 — Runtime verification of PR #19: LPA/VPA null + closed-year FCL gap (2026-07-09)
+
+**Status:** DATA GAP — tracked in issue #22 (`[ANL-01]`).
+
+PR #19 was exercised end-to-end (migration 0004, `analyze` for PETR4/BBAS3, API
+and front-end). Most new indicators populated correctly — e.g. PETR4 TTM: ROIC
+12.3%, EBIT margin 28.9%, PSR 1.05, payout 37.4%, FCL R$ 85.8 bn, FCF yield
+16.4%; revenue / net income / dividends charted across 2021–2025. Two gaps
+remain, both in the *data*, not the formulas:
+
+- **LPA (`eps`) and VPA (`bvps`) are null for every ticker and view.** brapi's
+  free-plan quote returns `marketCap` but not `sharesOutstanding`, so
+  `MarketData.shares` is `None` and the per-share formulas degrade to null. Fix
+  (issue #22): derive `shares = market_cap / price` (exact, since market cap ≡
+  price × shares) as a fallback in `BrapiPriceProvider`. This mirrors F5 (DY was
+  also missing from brapi and had to be sourced elsewhere).
+- **Closed-year FCL is null for some years** ("série insuficiente" in the year
+  chart), because `_capex` (DFC `6.02.*` PP&E/intangible outflows) doesn't match
+  the label/code in some older DFP filings. TTM FCL is fine. Verify the capex
+  match against multi-year DFPs (noted as related in #22).
 
 ---
 
