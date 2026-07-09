@@ -5,6 +5,10 @@
  * (a loss) drops below the line. Positive bars take the sector accent; negative
  * bars take the "down" colour. Missing years render as a faint stub. The value
  * label sits at the bar's outer end; the year sits under the baseline.
+ *
+ * `ghostLast` marks the trailing bar as a non-comparable period (a TTM window
+ * next to closed years): it is drawn hollow, with a dashed outline, so it reads
+ * as "same series, different basis" rather than as one more exercise.
  */
 const VIEW_W = 320;
 const VIEW_H = 168;
@@ -17,11 +21,13 @@ export function YearBars({
   values,
   color,
   format,
+  ghostLast = false,
 }: {
   labels: string[];
   values: (number | null)[];
   color: string;
   format: (n: number) => string;
+  ghostLast?: boolean;
 }) {
   const present = values.filter((v): v is number => v !== null);
   if (present.length < 1) {
@@ -91,9 +97,32 @@ export function YearBars({
         const h = Math.max(1, Math.abs(y - baseY));
         const barColor = positive ? color : "var(--color-down)";
         const labelY = positive ? top - 6 : baseY + h + 12;
+        const ghost = ghostLast && i === values.length - 1;
         return (
           <g key={i}>
-            <rect x={x} y={top} width={barW} height={h} rx={2} fill={barColor} opacity={0.85} />
+            <rect
+              x={x}
+              y={top}
+              width={barW}
+              height={h}
+              rx={2}
+              fill={barColor}
+              opacity={ghost ? 0.18 : 0.85}
+            />
+            {ghost && (
+              <rect
+                x={x}
+                y={top}
+                width={barW}
+                height={h}
+                rx={2}
+                fill="none"
+                stroke={barColor}
+                strokeWidth={1}
+                strokeDasharray="3 2"
+                opacity={0.9}
+              />
+            )}
             <text
               x={cx}
               y={labelY}
@@ -108,7 +137,7 @@ export function YearBars({
               x={cx}
               y={VIEW_H - 6}
               textAnchor="middle"
-              fill="var(--color-ink-500)"
+              fill={ghost ? "var(--color-ink-400)" : "var(--color-ink-500)"}
               fontSize={11}
             >
               {year}

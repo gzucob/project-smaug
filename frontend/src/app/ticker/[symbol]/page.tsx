@@ -43,7 +43,7 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
   const headlinePrice = ttm?.price ?? latestClosed?.price ?? null;
 
   return (
-    <div className="mx-auto max-w-6xl px-5 py-12">
+    <div className="mx-auto max-w-[1600px] px-5 py-12">
       {/* --------------------------------------------------------- hero --- */}
       <div className="mb-3">
         <Link href="/portfolio" className="text-xs text-ink-500 transition-colors hover:text-gold-300">
@@ -72,15 +72,22 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
           Duas visões
           <span className="h-px flex-1 bg-gradient-to-r from-gold-500/30 to-transparent" />
         </h2>
-        <div className="grid gap-5 lg:grid-cols-2">
+        {/* Stacked, not side-by-side: at full width each grid fits four indicator
+            columns, leaving room for the per-cell chart/info affordances. */}
+        <div className="flex flex-col gap-5">
           {ttm && (
             <div className="rise" style={{ animationDelay: "160ms" }}>
-              <ViewPanel analysis={ttm} primary />
+              <ViewPanel analysis={ttm} history={history} ttm={ttm} primary />
             </div>
           )}
           {latestClosed && (
             <div className="rise" style={{ animationDelay: "240ms" }}>
-              <ViewPanel analysis={latestClosed} primary={!ttm} />
+              <ViewPanel
+                analysis={latestClosed}
+                history={history}
+                ttm={ttm}
+                primary={!ttm}
+              />
             </div>
           )}
         </div>

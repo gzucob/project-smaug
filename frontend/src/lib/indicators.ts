@@ -73,3 +73,7 @@ export const INDICATOR_GROUPS: IndicatorGroup[] = [
 export function specsByGroup(group: IndicatorGroup): IndicatorSpec[] {
   return INDICATORS.filter((s) => s.group === group);
 }
+
+export function specByKey(key: IndicatorKey): IndicatorSpec | undefined {
+  return INDICATORS.find((s) => s.key === key);
+}
