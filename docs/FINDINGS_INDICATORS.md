@@ -291,6 +291,66 @@ matching `formula` (and `caveat`) entry.** The `naSectors` field mirrors the
 
 ---
 
+## F11 — A bank's `n/d` has three different causes, and the UI conflates them (2026-07-09)
+
+**Status:** OPEN — tracked in issue #30 (`[ANL-07]`); blocks #33 (`[WEB-03]`).
+
+BBAS3's ticker page renders ~37 `n/d` cells. Surfaced when the question was
+asked directly: *the reference platforms compute several of these for banks —
+why don't we?* Reading the code, the nulls turn out to come from three
+unrelated places, and nothing distinguishes them downstream.
+
+### Cause 1 — deliberate domain judgement
+
+`calculator.py` guards on `sector.is_financial` and returns `None` for `roic`,
+`gross_margin`, `ebit_margin`, `ebitda_margin`, `net_debt`,
+`net_debt_to_ebitda`, `debt_to_equity`, `current_ratio`, `price_to_ebit`,
+`price_to_working_capital` and `ev_ebitda`. Some of these are genuinely
+meaningless — deposits are a bank's raw material, not borrowing, so net debt
+does not exist as a concept. **This cause is correct and should stay.**
+
+### Cause 2 — a mapping gap of our own (the real finding)
+
+`mongo_fundamentals.standardize()` **early-returns** at line 247:
+
+```python
+if sector.is_financial:
+    return StandardizedFinancials(
+        reference_date=..., sector=..., period_start=..., dfc_period_start=...,
+        total_assets=..., equity=..., net_income=..., revenue=...,
+        dividends_paid=...,
+    )
+```
+
+For a bank or an insurer only **five** accounts are ever read. `ebit`,
+`gross_profit`, `ebitda`, `dep_amort`, `cash`, `current_assets`,
+`current_liabilities`, `total_debt`, `cfo` and `capex` are never fetched — the
+lines below the early return are unreachable for those sectors.
+
+Consequence: `fcf`, `price_to_fcf` and `fcf_yield` are **not** guarded by
+`is_financial` in the calculator, yet they read `n/d` for every bank — purely
+because `cfo` and `capex` are `None`. The indicator looks "not applicable" when
+it is in fact "not implemented".
+
+### Cause 3 — an incomplete price source
+
+`shares` is `None` (brapi's free plan), so `eps` and `bvps` are `n/d` for every
+ticker of every sector. See F9 and issue #22.
+
+### Why this matters beyond the calculator
+
+The three causes are indistinguishable in `Indicators`, in the API and in the
+UI: all three are `Decimal | None`, and the front-end prints the same `n/d`.
+Any feature that **hides nulls** — which is what the reference platforms do,
+and what #33 proposes — would silently hide cause 2, making Smaug look complete
+exactly where it is least complete. The reason for a null has to reach the
+presentation layer before any of it can be collapsed.
+
+Note the constraint from the `Indicators` docstring: the reason must **not** be
+smuggled into the value as a sentinel. It needs its own channel.
+
+---
+
 ## Serving layer — verified faithful
 
 The path calculator → Postgres → FastAPI is a 1:1 passthrough: full `Decimal`
