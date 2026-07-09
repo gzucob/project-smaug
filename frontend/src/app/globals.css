@@ -1,0 +1,174 @@
+@import "tailwindcss";
+
+/*
+  Smaug — minimalist design system.
+  A flat, warm near-black surface. No background atmosphere: the vivid metal
+  (gold) and gemstone hues are reserved strictly for details — badges, accents,
+  data marks and values — so color always means something.
+*/
+
+@theme {
+  /* --- Vault (warm near-black surfaces) --- */
+  --color-vault-950: #0a0806;
+  --color-vault-900: #100c09;
+  --color-vault-850: #15100b;
+  --color-vault-800: #1c150f;
+  --color-vault-700: #2a1f16;
+  --color-vault-600: #3a2c1f;
+  --color-vault-500: #4d3b29;
+
+  /* --- Ink (warm parchment text) --- */
+  --color-ink-50: #f8f2e6;
+  --color-ink-200: #e8dcc6;
+  --color-ink-400: #bdac90;
+  --color-ink-500: #9a8867;
+  --color-ink-600: #6f6047;
+
+  /* --- Gold / ember (primary metal + heat) --- */
+  --color-gold-300: #ffe08a;
+  --color-gold-400: #ffcb52;
+  --color-gold-500: #f5a623;
+  --color-gold-600: #d4841a;
+  --color-ember-400: #ff8a4c;
+  --color-ember-500: #ff6a2b;
+  --color-ember-600: #e8481a;
+
+  /* --- Gemstones: one vivid hue per sector --- */
+  --color-gem-azure: #4ea8ff; /* bank */
+  --color-gem-violet: #b06bff; /* insurer */
+  --color-gem-jade: #2fd6a0; /* utility */
+  --color-gem-gold: #f5b31f; /* commodity */
+  --color-gem-coral: #ff6a5f; /* industry */
+
+  /* --- Signal (up / down) --- */
+  --color-up: #37d99a;
+  --color-down: #ff5d6c;
+
+  /* --- Fonts (wired to next/font in layout.tsx) --- */
+  --font-brand: var(--font-geist), system-ui, sans-serif;
+  --font-display: var(--font-newsreader), Georgia, serif;
+  --font-body: var(--font-geist), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+/* ---------------------------------------------------------------- base --- */
+
+:root {
+  color-scheme: dark;
+}
+
+/* Default border tint stays neutral; vivid color is applied per-detail only. */
+* {
+  border-color: color-mix(in oklab, var(--color-ink-400) 8%, transparent);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--color-vault-950);
+  color: var(--color-ink-200);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  min-height: 100dvh;
+}
+
+/* ------------------------------------------------------------ utilities --- */
+
+/* Molten-gold gradient text — reserved for the wordmark and hero accents. */
+.text-gold-molten {
+  background: linear-gradient(
+    100deg,
+    var(--color-gold-300),
+    var(--color-gold-500) 50%,
+    var(--color-ember-500)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Flat vault panel — the primary card surface. Minimal: solid fill, hairline. */
+.panel {
+  background: var(--color-vault-900);
+  border: 1px solid color-mix(in oklab, var(--color-ink-400) 9%, transparent);
+  border-radius: 0.85rem;
+}
+
+.panel-hover {
+  transition:
+    transform 0.25s ease,
+    border-color 0.25s ease;
+}
+.panel-hover:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in oklab, var(--color-gold-500) 28%, transparent);
+}
+
+/* Thin divider. */
+.hairline {
+  height: 1px;
+  background: color-mix(in oklab, var(--color-ink-400) 12%, transparent);
+}
+
+/* Tabular figures for all numeric data. */
+.nums {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* --------------------------------------------------------- animations --- */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rise {
+  opacity: 0;
+  animation: rise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .rise {
+    opacity: 1;
+  }
+}
+
+/* ---------------------------------------------------------- scrollbar --- */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-vault-950);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-vault-600);
+  border-radius: 999px;
+  border: 3px solid var(--color-vault-950);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-gold-600);
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-gold-500) 40%, transparent);
+  color: var(--color-ink-50);
+}
