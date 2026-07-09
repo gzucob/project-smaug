@@ -13,11 +13,10 @@ import type { ReactNode } from "react";
 import { FiBarChart2, FiInfo } from "react-icons/fi";
 import { IndicatorDetail } from "@/components/IndicatorDetail";
 import type { IndicatorSeries } from "@/components/IndicatorDetail";
-import { signOf, toNum, yearOf } from "@/lib/format";
+import { LAST_12M_SHORT, signOf, toNum, yearOf } from "@/lib/format";
 import { indicatorDoc } from "@/lib/indicator-docs";
-import { INDICATOR_GROUPS, specByKey, specsByGroup } from "@/lib/indicators";
+import { INDICATOR_GROUPS, groupColor, specByKey, specsByGroup } from "@/lib/indicators";
 import type { IndicatorSpec } from "@/lib/indicators";
-import { sectorColor } from "@/lib/sectors";
 import type { Analysis, IndicatorKey, Indicators } from "@/lib/types";
 
 export function IndicatorGrid({
@@ -31,14 +30,13 @@ export function IndicatorGrid({
   history: Analysis[];
   ttm: Analysis | null;
 }) {
-  const accent = sectorColor(sector);
   const [openKey, setOpenKey] = useState<IndicatorKey | null>(null);
 
   const seriesFor = (key: IndicatorKey): IndicatorSeries => {
     const labels = history.map((h) => yearOf(h.reference_date));
     const values = history.map((h) => toNum(h.indicators[key]));
     if (ttm) {
-      labels.push("TTM");
+      labels.push(LAST_12M_SHORT);
       values.push(toNum(ttm.indicators[key]));
     }
     return { labels, values, ghostLast: ttm !== null };
@@ -48,32 +46,38 @@ export function IndicatorGrid({
 
   return (
     <div className="flex flex-col gap-6">
-      {INDICATOR_GROUPS.map((group) => (
-        <section key={group}>
-          <h4 className="mb-3 flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-ink-500">
-            <span className="h-px w-4" style={{ backgroundColor: accent }} />
-            {group}
-          </h4>
-          <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-3 xl:grid-cols-4">
-            {specsByGroup(group).map((spec) => (
-              <IndicatorCell
-                key={spec.key}
-                spec={spec}
-                indicators={indicators}
-                accent={accent}
-                onOpen={() => setOpenKey(spec.key)}
-              />
-            ))}
-          </div>
-        </section>
-      ))}
+      {INDICATOR_GROUPS.map((group) => {
+        const accent = groupColor(group);
+        return (
+          <section key={group}>
+            <h4
+              className="mb-3 flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-[0.18em]"
+              style={{ color: accent }}
+            >
+              <span className="h-px w-4" style={{ backgroundColor: accent }} />
+              {group}
+            </h4>
+            <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-3 xl:grid-cols-4">
+              {specsByGroup(group).map((spec) => (
+                <IndicatorCell
+                  key={spec.key}
+                  spec={spec}
+                  indicators={indicators}
+                  accent={accent}
+                  onOpen={() => setOpenKey(spec.key)}
+                />
+              ))}
+            </div>
+          </section>
+        );
+      })}
 
       {openKey && openSpec && (
         <IndicatorDetail
           spec={openSpec}
           doc={indicatorDoc(openKey)}
           series={seriesFor(openKey)}
-          accent={accent}
+          accent={groupColor(openSpec.group)}
           sector={sector}
           onClose={() => setOpenKey(null)}
         />

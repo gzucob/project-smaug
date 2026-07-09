@@ -32,8 +32,8 @@ export default function HomePage() {
           style={{ animationDelay: "220ms" }}
         >
           O dragão que guarda a sua carteira. Cada ação é uma joia do tesouro —
-          avaliada em <em className="text-gold-300 not-italic">duas visões</em>: o
-          TTM ao vivo e o histórico de anos fechados.
+          avaliada em <em className="text-gold-300 not-italic">duas visões</em>: os
+          últimos 12 meses e o histórico de anos fechados.
         </p>
 
         <div className="rise mt-9 w-full max-w-md" style={{ animationDelay: "300ms" }}>
@@ -65,7 +65,7 @@ export default function HomePage() {
         <Feature
           delay={440}
           title="Duas visões"
-          body="TTM ao vivo (últimos 12 meses, preço atual) lado a lado com o histórico de anos fechados. Comparação honesta entre o agora e a trajetória."
+          body="Os últimos 12 meses, ao preço atual, lado a lado com o histórico de anos fechados. Comparação honesta entre o agora e a trajetória."
           accent="var(--color-ember-500)"
           glyph="◐"
         />

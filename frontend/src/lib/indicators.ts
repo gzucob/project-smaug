@@ -70,6 +70,27 @@ export const INDICATOR_GROUPS: IndicatorGroup[] = [
   "Fluxo de caixa",
 ];
 
+/**
+ * One pastel per group, so a cell's family is readable at a glance.
+ *
+ * This is a second colour encoding alongside the gemstone-per-sector one: the
+ * sector still owns the badge and the annual charts, while inside the grid the
+ * hue answers "what kind of indicator is this", which is the question a reader
+ * actually has when scanning 29 cells.
+ */
+const GROUP_COLOR_VARS: Record<IndicatorGroup, string> = {
+  Rentabilidade: "--color-pastel-mint",
+  "Por ação": "--color-pastel-sky",
+  Crescimento: "--color-pastel-amber",
+  "Alavancagem & Liquidez": "--color-pastel-rose",
+  "Múltiplos de mercado": "--color-pastel-lilac",
+  "Fluxo de caixa": "--color-pastel-aqua",
+};
+
+export function groupColor(group: IndicatorGroup): string {
+  return `var(${GROUP_COLOR_VARS[group]})`;
+}
+
 export function specsByGroup(group: IndicatorGroup): IndicatorSpec[] {
   return INDICATORS.filter((s) => s.group === group);
 }

@@ -80,7 +80,9 @@ export function IndicatorDetail({
             <span className="mt-1.5 h-8 w-[3px] rounded-full" style={{ backgroundColor: accent }} />
             <div>
               <h3 className="font-display text-2xl text-ink-50">{spec.label}</h3>
-              <p className="mt-0.5 text-xs text-ink-500">{spec.group}</p>
+              <p className="mt-0.5 text-xs" style={{ color: accent }}>
+                {spec.group}
+              </p>
             </div>
           </div>
           <button
@@ -121,7 +123,7 @@ export function IndicatorDetail({
               </div>
               {series.ghostLast && (
                 <p className="mt-2 text-[0.68rem] text-ink-600">
-                  A barra tracejada é a janela TTM (últimos 12 meses), não um exercício fechado.
+                  A barra tracejada são os últimos 12 meses, não um exercício fechado.
                 </p>
               )}
             </>

@@ -600,7 +600,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "No histórico de anos fechados o denominador é o preço médio ajustado por proventos daquele exercício; no TTM é o preço nominal atual. Ver docs/FINDINGS_INDICATORS.md.",
+      "No histórico de anos fechados o denominador é o preço médio ajustado por proventos daquele exercício; nos últimos 12 meses é o preço nominal atual. Ver docs/FINDINGS_INDICATORS.md.",
   },
   ev_ebitda: {
     formula: "(Valor de mercado + Dívida líquida) ÷ EBITDA anualizado",

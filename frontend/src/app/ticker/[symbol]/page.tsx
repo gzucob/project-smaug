@@ -37,7 +37,13 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
   const reference: Analysis | null = ttm ?? latestClosed;
 
   if (!reference) {
-    return <VaultOffline title="Sem dados" message="Ticker sem TTM nem anos fechados." showBackHome />;
+    return (
+      <VaultOffline
+        title="Sem dados"
+        message="Ticker sem os últimos 12 meses nem anos fechados."
+        showBackHome
+      />
+    );
   }
 
   const headlinePrice = ttm?.price ?? latestClosed?.price ?? null;
@@ -93,7 +99,8 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
         </div>
         {!ttm && (
           <p className="mt-4 text-sm text-ink-500">
-            Sem TTM ao vivo para este ticker — exibindo apenas o histórico de anos fechados.
+            Sem os últimos 12 meses para este ticker — exibindo apenas o histórico de anos
+            fechados.
           </p>
         )}
       </section>
@@ -105,10 +112,17 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
             Evolução anual
             <span className="text-sm font-normal text-ink-500">
               {yearOf(history[0].reference_date)}–{yearOf(history[history.length - 1].reference_date)}
+              {ttm && " · últimos 12 meses"}
             </span>
             <span className="h-px flex-1 bg-gradient-to-r from-gold-500/30 to-transparent" />
           </h2>
-          <HistoryCharts history={history} sector={reference.sector} />
+          <HistoryCharts history={history} sector={reference.sector} ttm={ttm} />
+          {ttm && (
+            <p className="mt-3 text-xs text-ink-600">
+              A última barra, tracejada, são os últimos 12 meses — uma janela móvel, não um
+              exercício fechado.
+            </p>
+          )}
         </section>
       )}
 
