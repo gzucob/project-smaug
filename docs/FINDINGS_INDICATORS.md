@@ -258,6 +258,39 @@ remain, both in the *data*, not the formulas:
 
 ---
 
+## F10 — ROE/ROA divide by the closing balance, not the period average (2026-07-09)
+
+**Status:** OPEN QUESTION — no divergence measured yet.
+
+Surfaced while writing the per-indicator reference docs for the front-end
+(`frontend/src/lib/indicator-docs.ts`), which forced every formula to be stated
+exactly as `calculator.py` computes it.
+
+`roe = annualized net income / f.equity` and `roa = annualized net income /
+f.total_assets` both use the **closing** balance of the period. A stock taken at
+a single instant is being compared against a flow earned across the whole
+period. Where equity moved a lot during the year (large issuance, buyback,
+or the dividend payment itself), the average balance would be the more faithful
+denominator, and some references compute it that way.
+
+This has **not** been checked against AUVP / Investidor10 for our tickers — it
+is recorded as a known modelling choice, not as a confirmed error. Measuring it
+needs the opening balance (the prior year's DFP), which
+`StandardizedFinancials` already reaches for via `_prior_year_annual`.
+
+The same reasoning applies to `asset_turnover` (annualized revenue over closing
+total assets).
+
+### Maintenance hazard introduced by the docs
+
+`indicator-docs.ts` now states each formula in prose, in a second place, in
+another language. It is documentation of `calculator.py`, and nothing enforces
+the correspondence. **When a formula changes in `calculator.py`, update the
+matching `formula` (and `caveat`) entry.** The `naSectors` field mirrors the
+`is_financial` guards in the same file.
+
+---
+
 ## Serving layer — verified faithful
 
 The path calculator → Postgres → FastAPI is a 1:1 passthrough: full `Decimal`

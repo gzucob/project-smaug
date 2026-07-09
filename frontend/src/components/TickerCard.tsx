@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { multiple, pct, price, yearOf } from "@/lib/format";
+import { LAST_12M_SHORT, multiple, pct, price, yearOf } from "@/lib/format";
 import { sectorColor, sectorMeta } from "@/lib/sectors";
 import type { Analysis } from "@/lib/types";
 
@@ -38,7 +38,7 @@ export function TickerCard({ ticker, sector, analysis }: { ticker: string; secto
           </div>
         </div>
         <span className="nums rounded-md border border-white/8 px-2 py-0.5 text-[0.62rem] font-medium tracking-wide text-ink-500">
-          {analysis.view === "ttm_live" ? "TTM" : yearOf(analysis.reference_date)}
+          {analysis.view === "ttm_live" ? LAST_12M_SHORT : yearOf(analysis.reference_date)}
         </span>
       </div>
 

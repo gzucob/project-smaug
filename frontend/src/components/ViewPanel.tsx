@@ -3,8 +3,24 @@ import { ViewBadge } from "@/components/ViewBadge";
 import { dateTime, monthYear, price, toNum, yearOf } from "@/lib/format";
 import type { Analysis } from "@/lib/types";
 
-/** One perspective of a ticker: provenance header + full indicator grid. */
-export function ViewPanel({ analysis, primary = false }: { analysis: Analysis; primary?: boolean }) {
+/**
+ * One perspective of a ticker: provenance header + full indicator grid.
+ *
+ * `history` and `ttm` are threaded through untouched: the grid's per-indicator
+ * drill-down charts the whole series, which is a property of the ticker rather
+ * than of the view being displayed here.
+ */
+export function ViewPanel({
+  analysis,
+  history,
+  ttm,
+  primary = false,
+}: {
+  analysis: Analysis;
+  history: Analysis[];
+  ttm: Analysis | null;
+  primary?: boolean;
+}) {
   const isTtm = analysis.view === "ttm_live";
   const priceMain = toNum(analysis.price);
   const priceNom = toNum(analysis.price_nominal);
@@ -36,7 +52,12 @@ export function ViewPanel({ analysis, primary = false }: { analysis: Analysis; p
 
       <div className="hairline" />
 
-      <IndicatorGrid indicators={analysis.indicators} sector={analysis.sector} />
+      <IndicatorGrid
+        indicators={analysis.indicators}
+        sector={analysis.sector}
+        history={history}
+        ttm={ttm}
+      />
 
       <footer className="mt-1 text-[0.64rem] text-ink-600">
         Calculado em {dateTime(analysis.computed_at)}

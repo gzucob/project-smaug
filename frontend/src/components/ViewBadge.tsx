@@ -7,7 +7,7 @@ export function ViewBadge({ view, year }: { view: string; year?: string }) {
         className="h-1.5 w-1.5 rounded-full"
         style={{ backgroundColor: live ? "var(--color-gold-500)" : "var(--color-ink-500)" }}
       />
-      {live ? "TTM · 12 meses" : `Exercício ${year ?? ""}`.trim()}
+      {live ? "Últimos 12 meses" : `Exercício ${year ?? ""}`.trim()}
     </span>
   );
 }

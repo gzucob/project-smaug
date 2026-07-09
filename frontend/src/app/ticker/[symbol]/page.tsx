@@ -37,13 +37,19 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
   const reference: Analysis | null = ttm ?? latestClosed;
 
   if (!reference) {
-    return <VaultOffline title="Sem dados" message="Ticker sem TTM nem anos fechados." showBackHome />;
+    return (
+      <VaultOffline
+        title="Sem dados"
+        message="Ticker sem os últimos 12 meses nem anos fechados."
+        showBackHome
+      />
+    );
   }
 
   const headlinePrice = ttm?.price ?? latestClosed?.price ?? null;
 
   return (
-    <div className="mx-auto max-w-6xl px-5 py-12">
+    <div className="mx-auto max-w-[1600px] px-5 py-12">
       {/* --------------------------------------------------------- hero --- */}
       <div className="mb-3">
         <Link href="/portfolio" className="text-xs text-ink-500 transition-colors hover:text-gold-300">
@@ -72,21 +78,29 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
           Duas visões
           <span className="h-px flex-1 bg-gradient-to-r from-gold-500/30 to-transparent" />
         </h2>
-        <div className="grid gap-5 lg:grid-cols-2">
+        {/* Stacked, not side-by-side: at full width each grid fits four indicator
+            columns, leaving room for the per-cell chart/info affordances. */}
+        <div className="flex flex-col gap-5">
           {ttm && (
             <div className="rise" style={{ animationDelay: "160ms" }}>
-              <ViewPanel analysis={ttm} primary />
+              <ViewPanel analysis={ttm} history={history} ttm={ttm} primary />
             </div>
           )}
           {latestClosed && (
             <div className="rise" style={{ animationDelay: "240ms" }}>
-              <ViewPanel analysis={latestClosed} primary={!ttm} />
+              <ViewPanel
+                analysis={latestClosed}
+                history={history}
+                ttm={ttm}
+                primary={!ttm}
+              />
             </div>
           )}
         </div>
         {!ttm && (
           <p className="mt-4 text-sm text-ink-500">
-            Sem TTM ao vivo para este ticker — exibindo apenas o histórico de anos fechados.
+            Sem os últimos 12 meses para este ticker — exibindo apenas o histórico de anos
+            fechados.
           </p>
         )}
       </section>
@@ -98,10 +112,17 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
             Evolução anual
             <span className="text-sm font-normal text-ink-500">
               {yearOf(history[0].reference_date)}–{yearOf(history[history.length - 1].reference_date)}
+              {ttm && " · últimos 12 meses"}
             </span>
             <span className="h-px flex-1 bg-gradient-to-r from-gold-500/30 to-transparent" />
           </h2>
-          <HistoryCharts history={history} sector={reference.sector} />
+          <HistoryCharts history={history} sector={reference.sector} ttm={ttm} />
+          {ttm && (
+            <p className="mt-3 text-xs text-ink-600">
+              A última barra, tracejada, são os últimos 12 meses — uma janela móvel, não um
+              exercício fechado.
+            </p>
+          )}
         </section>
       )}
 

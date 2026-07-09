@@ -97,3 +97,10 @@ export function dateTime(iso: string): string {
 }
 
 export const DASH = EN_DASH;
+
+/**
+ * Axis label for the trailing-twelve-months bar. Deliberately short: it has to
+ * fit one bar slot, where the full "Últimos 12 meses" would overrun its
+ * neighbours. The long form belongs in prose next to the chart.
+ */
+export const LAST_12M_SHORT = "12 meses";

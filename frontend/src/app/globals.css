@@ -40,6 +40,17 @@
   --color-gem-gold: #f5b31f; /* commodity */
   --color-gem-coral: #ff6a5f; /* industry */
 
+  /* --- Pastels: one muted hue per indicator group --------------------------
+     Lower chroma than the gemstones on purpose: these tint dozens of small
+     cells at once, so they classify without competing with the sector colour
+     or with the values themselves. */
+  --color-pastel-mint: #9fdcbb; /* Rentabilidade */
+  --color-pastel-sky: #a6c6ef; /* Por ação */
+  --color-pastel-amber: #f0cf9c; /* Crescimento */
+  --color-pastel-rose: #efa8a4; /* Alavancagem & Liquidez */
+  --color-pastel-lilac: #c3b1e8; /* Múltiplos de mercado */
+  --color-pastel-aqua: #9ed4d8; /* Fluxo de caixa */
+
   /* --- Signal (up / down) --- */
   --color-up: #37d99a;
   --color-down: #ff5d6c;
