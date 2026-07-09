@@ -38,6 +38,7 @@ Always restate the stack before proposing architecture or dependencies.
 | `.claude/RULES/RULES_REPOSITORIES.md` | Protocol pattern for ports/repositories, infra conversion |
 | `.claude/RULES/RULES_TYPING.md` | mypy strict, `X \| None`, docstring style, Ruff |
 | `.claude/RULES/RULES_TESTING.md` | Test layout, naming convention, battery selection |
+| `.claude/RULES/RULES_FRONTEND.md` | Next.js front-end: stack, "Smaug" design system, data boundary, dev workflow |
 
 ## Architecture (DDD Lite)
 Isolated contexts under `src/smaug/`: `ingestion`, `analysis`, `portfolio`,
