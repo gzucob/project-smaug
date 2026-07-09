@@ -150,6 +150,29 @@ def _dividends_paid(dfc: Accounts) -> Decimal | None:
     return total if found else None
 
 
+def _capex(dfc: Accounts) -> Decimal | None:
+    """Cash spent on PP&E and intangibles (DFC investing section, 6.02.*).
+
+    Sums the outflows (negative amounts) whose label mentions ``imobilizado`` or
+    ``intangivel``. Disposals (positive inflows, e.g. "alienação de imobilizado")
+    are ignored — this is gross capex, the cash-out leg of free cash flow.
+    Returned positive; ``None`` when no such line exists, so FCF degrades to null.
+    """
+    total = Decimal(0)
+    found = False
+    for account in dfc:
+        if not str(account.get("code", "")).startswith("6.02"):
+            continue
+        name = _fold(str(account.get("name", "")))
+        if "imob" not in name and "intangiv" not in name:
+            continue
+        value = _dec(account.get("quantity"))
+        if value is not None and value < 0:
+            total += -value
+            found = True
+    return total if found else None
+
+
 def _sum(*values: Decimal | None) -> Decimal | None:
     total = Decimal(0)
     present = False
@@ -262,6 +285,8 @@ def standardize(
             _sum(_by_code(bpp, "2.01.04"), _by_code(bpp, "2.02.01")), bpp_s
         ),
         dividends_paid=dividends_paid,
+        cfo=_mul(_by_code(dfc, "6.01"), dfc_s),  # net operating cash flow
+        capex=_mul(_capex(dfc), dfc_s),
     )
 
 

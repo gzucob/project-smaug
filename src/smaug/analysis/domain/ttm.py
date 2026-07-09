@@ -34,7 +34,7 @@ from smaug.analysis.domain.financials import StandardizedFinancials
 # isolated on the DRE span, DFC flows (D&A, dividends) on the DFC span — the two
 # statements use different period bases in the CVM files.
 _DRE_FLOW_FIELDS = ("revenue", "net_income", "ebit", "gross_profit")
-_DFC_FLOW_FIELDS = ("dep_amort", "dividends_paid")
+_DFC_FLOW_FIELDS = ("dep_amort", "dividends_paid", "cfo", "capex")
 _FLOW_FIELDS = _DRE_FLOW_FIELDS + _DFC_FLOW_FIELDS
 _TTM_QUARTERS = 4
 _ISOLATED_SPAN_MONTHS = 3
@@ -160,4 +160,6 @@ def build_ttm(
         current_liabilities=stock_source.current_liabilities,
         total_debt=stock_source.total_debt,
         dividends_paid=summed["dividends_paid"],
+        cfo=summed["cfo"],
+        capex=summed["capex"],
     )

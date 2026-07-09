@@ -185,6 +185,47 @@ number to sanity-check against the platforms when more years are ingested.
 
 ---
 
+## F8 — Extended indicator set: per-share, extra multiples, ROIC and FCF (2026-07-08)
+
+**Status:** MODELLING DECISION — new indicators added without new ingestion.
+
+The indicator set grew from 14 to 29 to approach the coverage of AUVP /
+Investidor10. Every new indicator is derived from the accounts already mirrored
+— **no new ingestion was needed**, including the free-cash-flow family, because
+the whole DFC (cash-flow statement) is already stored (it is where `dep_amort`
+and `dividends_paid` come from). Modelling choices worth recording:
+
+- **Per share (LPA/`eps`, VPA/`bvps`)** use brapi's current `sharesOutstanding`.
+  For the **closed-year** view this is the *current* share count applied to a
+  past year's earnings/equity, not the period-end count (we do not have a
+  historical share series). Absolute LPA/VPA for old years are therefore
+  approximate; the *multiples* (P/L, P/VP) stay faithful because they reprice the
+  market cap, not the share count. Flag to revisit if a historical share count
+  becomes available.
+- **ROIC** uses NOPAT = annualized EBIT × (1 − 0.34), a flat statutory rate
+  (IRPJ 25% + CSLL 9%) rather than each company's effective rate — a deliberate
+  simplification matching how the platforms present it. Invested capital =
+  controllers' equity + net financial debt. Financials return null (net debt is
+  not defined for them).
+- **Capex** is extracted from the DFC investing section (codes `6.02.*`) as the
+  **outflows** (negative amounts) whose label mentions `imobilizado` or
+  `intangível`; disposals (positive inflows) are ignored. This is *gross* capex.
+  `fcf = CFO − capex`, annualized like the other flows and isolated on the DFC
+  span in the TTM (same mechanism as F1). Null when either leg is missing, so FCF
+  degrades rather than misleads.
+- **P/working-capital** (`price_to_working_capital`) can go negative when current
+  liabilities exceed current assets — that is meaningful (Graham's basis), not a
+  bug, so it is left signed.
+- **Payout** = trailing dividends paid / net income over the *same* period basis
+  (both trailing-12m in the TTM, both annual in a closed year); not annualized,
+  since numerator and denominator share the span.
+
+No reference-run cross-check against the platforms has been done for the new
+indicators yet — a follow-up should verify ROIC, FCF and the per-share figures
+for PETR4/BBAS3 against AUVP/Investidor10 and record the deltas here.
+
+---
+
 ## Serving layer — verified faithful
 
 The path calculator → Postgres → FastAPI is a 1:1 passthrough: full `Decimal`

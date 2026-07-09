@@ -17,6 +17,8 @@ def _q(
     period_start: date | None = None,
     dep_amort: Decimal | None = None,
     dividends_paid: Decimal | None = None,
+    cfo: Decimal | None = None,
+    capex: Decimal | None = None,
     dfc_period_start: date | None = None,
 ) -> StandardizedFinancials:
     return StandardizedFinancials(
@@ -29,6 +31,8 @@ def _q(
         equity=equity,
         dep_amort=dep_amort,
         dividends_paid=dividends_paid,
+        cfo=cfo,
+        capex=capex,
     )
 
 
@@ -86,6 +90,8 @@ def test_ttm_isolates_dfc_flows_on_their_own_year_to_date_span() -> None:
             period_start=jan,
             dep_amort=Decimal(10),
             dividends_paid=Decimal(0),
+            cfo=Decimal(30),
+            capex=Decimal(12),
             dfc_period_start=jan,
         ),
         _q(  # DRE Q2 isolated (Apr-Jun); DFC YTD 6m
@@ -94,6 +100,8 @@ def test_ttm_isolates_dfc_flows_on_their_own_year_to_date_span() -> None:
             period_start=date(2025, 4, 1),
             dep_amort=Decimal(25),
             dividends_paid=Decimal(40),
+            cfo=Decimal(70),
+            capex=Decimal(30),
             dfc_period_start=jan,
         ),
         _q(  # DRE Q3 isolated (Jul-Sep); DFC YTD 9m
@@ -102,6 +110,8 @@ def test_ttm_isolates_dfc_flows_on_their_own_year_to_date_span() -> None:
             period_start=date(2025, 7, 1),
             dep_amort=Decimal(45),
             dividends_paid=Decimal(40),
+            cfo=Decimal(120),
+            capex=Decimal(50),
             dfc_period_start=jan,
         ),
     ]
@@ -110,6 +120,8 @@ def test_ttm_isolates_dfc_flows_on_their_own_year_to_date_span() -> None:
         revenue=Decimal(500),
         dep_amort=Decimal(70),
         dividends_paid=Decimal(60),
+        cfo=Decimal(200),
+        capex=Decimal(80),
         equity=Decimal(8000),
     )
 
@@ -121,6 +133,10 @@ def test_ttm_isolates_dfc_flows_on_their_own_year_to_date_span() -> None:
     assert ttm.dep_amort == Decimal(70)
     # DFC isolated: 0, 40, 0, and Q4 dividends = 60 - 40 = 20 -> full year 60.
     assert ttm.dividends_paid == Decimal(60)
+    # CFO isolated on the DFC span: 30, 40, 50, Q4 = 200 - 120 = 80 -> full year 200.
+    assert ttm.cfo == Decimal(200)
+    # Capex isolated: 12, 18, 20, Q4 = 80 - 50 = 30 -> full year 80.
+    assert ttm.capex == Decimal(80)
 
 
 def test_ttm_returns_none_with_fewer_than_four_quarters() -> None:

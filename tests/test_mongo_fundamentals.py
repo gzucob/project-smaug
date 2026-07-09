@@ -40,7 +40,17 @@ def test_standardize_nonfinancial_pulls_every_line() -> None:
                 _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "120"),
             ]
         },
-        "DFC": {"accounts": [_acc("6.01.01.04", "Depreciação e amortização", "80")]},
+        "DFC": {
+            "accounts": [
+                _acc("6.01", "Caixa Líquido Atividades Operacionais", "500"),
+                _acc("6.01.01.04", "Depreciação e amortização", "80"),
+                _acc("6.02", "Caixa Líquido Atividades de Investimento", "-260"),
+                _acc("6.02.01", "Aquisição de Imobilizado", "-150"),
+                _acc("6.02.02", "Aquisição de Intangível", "-40"),
+                _acc("6.02.03", "Alienação de Imobilizado", "30"),  # inflow: ignored
+                _acc("6.02.04", "Aplicações Financeiras", "-100"),  # not capex
+            ]
+        },
     }
 
     f = standardize(by_module, Sector.COMMODITY, date(2024, 9, 30))
@@ -57,6 +67,8 @@ def test_standardize_nonfinancial_pulls_every_line() -> None:
     assert f.current_assets == Decimal("400")
     assert f.current_liabilities == Decimal("200")
     assert f.total_debt == Decimal("200")  # 50 + 150
+    assert f.cfo == Decimal("500")  # operating cash flow (6.01)
+    assert f.capex == Decimal("190")  # 150 + 40 PP&E/intangible outflows only
 
 
 def test_standardize_applies_currency_size_to_absolute_reais() -> None:
