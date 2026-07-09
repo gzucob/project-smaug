@@ -66,7 +66,7 @@ function IndicatorCell({
       <div className="nums mt-1 text-lg font-semibold leading-tight" style={{ color: valueColor }}>
         {text}
       </div>
-      {missing && <div className="text-[0.6rem] text-ink-600">n/a p/ setor</div>}
+      {missing && <div className="text-[0.6rem] text-ink-600">n/d</div>}
     </div>
   );
 }
