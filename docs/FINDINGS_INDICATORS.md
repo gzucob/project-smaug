@@ -202,6 +202,10 @@ and `dividends_paid` come from). Modelling choices worth recording:
   approximate; the *multiples* (P/L, P/VP) stay faithful because they reprice the
   market cap, not the share count. Flag to revisit if a historical share count
   becomes available.
+  > **Superseded by F12 (2026-07-09).** The historical share count *is*
+  > available — CVM's FRE publishes it per year — so each view now divides by
+  > the count filed for its own fiscal year. The approximation described above
+  > no longer applies.
 - **ROIC** uses NOPAT = annualized EBIT × (1 − 0.34), a flat statutory rate
   (IRPJ 25% + CSLL 9%) rather than each company's effective rate — a deliberate
   simplification matching how the platforms present it. Invested capital =
@@ -237,7 +241,9 @@ FCF and the per-share figures against the platforms remains the open follow-up.
 
 ## F9 — Runtime verification of PR #19: LPA/VPA null + closed-year FCL gap (2026-07-09)
 
-**Status:** DATA GAP — tracked in issue #22 (`[ANL-01]`).
+**Status:** LPA/VPA RESOLVED by F12 (the fix is not the one proposed below —
+`market_cap / price` turned out to be biased). The closed-year FCL gap is still
+open.
 
 PR #19 was exercised end-to-end (migration 0004, `analyze` for PETR4/BBAS3, API
 and front-end). Most new indicators populated correctly — e.g. PETR4 TTM: ROIC
@@ -288,6 +294,77 @@ another language. It is documentation of `calculator.py`, and nothing enforces
 the correspondence. **When a formula changes in `calculator.py`, update the
 matching `formula` (and `caveat`) entry.** The `naSectors` field mirrors the
 `is_financial` guards in the same file.
+
+---
+
+## F12 — brapi's market cap is company-wide, so `cap / price` cannot yield a share count (2026-07-09)
+
+**Status:** RESOLVED — share counts now come from CVM's FRE (issue #22).
+
+Issue #22 proposed deriving the missing share count as `market_cap / price`,
+calling it "exact, since market cap ≡ price × shares". Probing the live brapi
+quote disproved the premise: **brapi returns the same company-wide `marketCap`
+for every class of a company's shares.** PETR3 and PETR4 both report
+R$ 539,240,668,702.99, at prices of R$ 43.53 and R$ 39.21 — dividing that one
+cap by each price yields 12.39 bn and 13.75 bn shares, and neither is the real
+12.89 bn. The identity only holds for a single-class ticker.
+
+Measured bias against the counts CVM actually has on file:
+
+| Ticker | `cap / price` | CVM filed (2025) | Error |
+|---|---|---|---|
+| PETR4 | 13.75 bn | 12.89 bn | +6.7% (understates LPA/VPA) |
+| BBDC4 | 9.74 bn | 10.59 bn | −8.0% (overstates LPA/VPA) |
+| VALE3 | 4.14 bn | 4.44 bn | −6.7% |
+
+**The multiples were never affected**: `pe = cap / net_income` and
+`pb = cap / equity` are computed from the market cap directly and never touch
+`shares` (`calculator.py`). Only the absolute per-share values were at risk.
+
+### Where the share count actually lives
+
+Not in the statements. BPA/BPP/DRE/DFC carry no share-count account, so no
+amount of remapping would have found it. CVM publishes it in the **FRE**
+(*Formulário de Referência*), a yearly ZIP whose
+`fre_cia_aberta_capital_social_*.csv` lists each company's capital. The
+`Capital Integralizado` (paid-in) row is the one that reflects shares in
+existence; the file also carries `Capital Emitido` / `Capital Subscrito`, which
+differ and must be ignored.
+
+Consequences, all now implemented:
+
+- The FRE is keyed by **CNPJ**, not the `CD_CVM` the statements use — hence the
+  second map in `portfolio/domain/cvm_codes.py`, cross-checked against CVM's
+  `cad_cia_aberta.csv` registry.
+- pycvm's `FREFile` cannot read the modern files (`BadDocument: unknown document
+  type 'FRE WEB'`), so `cvm_capital.py` reads the CSV member directly. This is
+  the second pycvm quirk in this codebase, after the DMPL crash.
+- One ZIP **per year** (2021–2026) means a real historical series, so each
+  closed-year view now divides by the count filed *for that year*. This retires
+  the F8 approximation. The series is visibly right: PETR4 goes 13.04 bn
+  (2021–23) → 12.89 bn after the cancellations; VALE3 5.00 → 4.44 bn.
+- The DRE *does* carry a reported LPA per class (`3.99.01.01` ON /
+  `3.99.01.02` PN), which would be even more faithful. It was rejected as the
+  primary source because coverage is uneven: **BBAS3 files it as zero** and
+  **VALE3 files its value in the PN slot** despite having only ON shares.
+
+### Known residue
+
+- **Units (SAPR11, TAEE11) keep `eps`/`bvps` null.** A unit is a bundle of
+  shares (SAPR11 = 1 ON + 2 PN — its filed counts are exactly 1:2), so the quoted
+  price is the bundle's while CVM counts the underlying shares. Dividing by the
+  share count would produce a figure that does not line up with the price.
+  Tracked separately; see `portfolio/domain/share_classes.py`.
+- **BBAS3 filed `0` shares for 2023** and **VALE3 has no 2023/2024 FRE** in the
+  mirror. `MongoSharesReader` drops non-positive counts and falls back to the
+  nearest *earlier* year, so those views use an adjacent year's count.
+- **Counts are as filed, not split-adjusted.** BBAS3 shows 2.87 bn through 2022
+  and 5.73 bn from 2024 (the 2:1 bonus). A closed-year LPA chart therefore has a
+  genuine step at the split — faithful to what was reported that year, but not
+  what a split-adjusted platform series shows.
+- brapi's `cap / price` survives as a **fallback** in `BrapiPriceProvider` for a
+  ticker with no FRE row at all. It is biased as measured above; the fallback is
+  logged when used.
 
 ---
 

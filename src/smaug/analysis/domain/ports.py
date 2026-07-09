@@ -7,6 +7,7 @@ the composition root wires them.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Protocol
 
 from smaug.analysis.domain.entities import TickerAnalysis
@@ -37,6 +38,14 @@ class PriceProvider(Protocol):
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:
         """Average nominal and dividend-adjusted price over ``year``."""
+        ...
+
+
+class SharesReader(Protocol):
+    """Reads the share count a company had filed for a given fiscal year."""
+
+    async def outstanding(self, ticker: str, year: int) -> Decimal | None:
+        """Total shares as of ``year``, or the nearest earlier year on file."""
         ...
 
 
