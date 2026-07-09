@@ -46,6 +46,9 @@ export interface Indicators {
   fcf: Decimalish;
   price_to_fcf: Decimalish;
   fcf_yield: Decimalish;
+  revenue: Decimalish;
+  net_income: Decimalish;
+  dividends: Decimalish;
 }
 
 export type IndicatorKey = keyof Indicators;
