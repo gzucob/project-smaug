@@ -17,14 +17,17 @@ def _nonfinancial() -> StandardizedFinancials:
         total_assets=Decimal(12000),
         equity=Decimal(6000),
         net_income=Decimal(900),  # annualized -> 1200
-        revenue=Decimal(3000),
+        revenue=Decimal(3000),  # annualized -> 4000
         gross_profit=Decimal(1500),
+        ebit=Decimal(900),  # annualized -> 1200
         ebitda=Decimal(1200),  # annualized -> 1600
         cash=Decimal(500),
         current_assets=Decimal(4000),
         current_liabilities=Decimal(2000),
         total_debt=Decimal(2000),
         dividends_paid=Decimal(600),  # trailing payout, used for DY
+        cfo=Decimal(1000),
+        capex=Decimal(100),  # FCF period = 900 -> annualized 1200
     )
 
 
@@ -35,24 +38,45 @@ def test_nonfinancial_computes_all_indicators() -> None:
         revenue=Decimal(2400),
         net_income=Decimal(750),
     )
-    market = MarketData(price=Decimal(12), market_cap=Decimal(12000))
+    market = MarketData(
+        price=Decimal(12), market_cap=Decimal(12000), shares=Decimal(600)
+    )
 
     ind = compute(_nonfinancial(), previous, market)
 
     assert ind.roe == Decimal("0.2")  # annualized 1200 / 6000
     assert ind.roa == Decimal("0.1")  # 1200 / 12000
+    assert ind.roic == Decimal("0.1056")  # 1200·(1-0.34) / (6000 + 1500)
     assert ind.net_margin == Decimal("0.3")  # 900 / 3000 (period ratio)
     assert ind.gross_margin == Decimal("0.5")
+    assert ind.ebit_margin == Decimal("0.3")  # 900 / 3000 (period ratio)
     assert ind.ebitda_margin == Decimal("0.4")
+    assert ind.asset_turnover == Decimal(4000) / Decimal(12000)  # annual rev / assets
+    assert ind.eps == Decimal(2)  # annualized 1200 / 600 shares
+    assert ind.bvps == Decimal(10)  # 6000 / 600 shares
     assert ind.net_debt == Decimal(1500)  # 2000 - 500
     assert ind.net_debt_to_ebitda == Decimal("0.9375")  # 1500 / 1600
+    assert ind.debt_to_equity == Decimal(2000) / Decimal(6000)  # gross debt / equity
+    assert ind.liabilities_to_assets == Decimal("0.5")  # (12000 - 6000) / 12000
     assert ind.current_ratio == Decimal(2)
     assert ind.revenue_growth == Decimal("0.25")
     assert ind.net_income_growth == Decimal("0.2")
     assert ind.pe == Decimal(10)  # 12000 / 1200
     assert ind.pb == Decimal(2)  # 12000 / 6000
+    assert ind.psr == Decimal(3)  # 12000 / 4000 annual revenue
+    assert ind.price_to_assets == Decimal(1)  # 12000 / 12000
+    assert ind.price_to_ebit == Decimal(10)  # 12000 / 1200 annual EBIT
+    assert ind.price_to_working_capital == Decimal(6)  # 12000 / (4000 - 2000)
+    assert ind.payout == Decimal(600) / Decimal(900)  # dividends / net income
     assert ind.dividend_yield == Decimal("0.05")  # 600 / 12000
     assert ind.ev_ebitda == Decimal("8.4375")  # (12000 + 1500) / 1600
+    assert ind.fcf == Decimal(1200)  # annualized (1000 - 100)
+    assert ind.price_to_fcf == Decimal(10)  # 12000 / 1200
+    assert ind.fcf_yield == Decimal("0.1")  # 1200 / 12000
+    # Headline financials passed through unchanged (the period's own figure).
+    assert ind.revenue == Decimal(3000)
+    assert ind.net_income == Decimal(900)
+    assert ind.dividends == Decimal(600)
 
 
 def test_closed_year_leaves_annualization_a_no_op() -> None:
@@ -98,5 +122,12 @@ def test_bank_skips_inapplicable_indicators() -> None:
     assert ind.ev_ebitda is None
     assert ind.ebitda_margin is None
     assert ind.gross_margin is None
+    assert ind.roic is None
+    assert ind.ebit_margin is None
+    assert ind.debt_to_equity is None
+    assert ind.price_to_ebit is None
+    assert ind.price_to_working_capital is None
+    assert ind.fcf is None
+    assert ind.price_to_fcf is None
     # No prior period -> no growth
     assert ind.revenue_growth is None

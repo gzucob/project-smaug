@@ -32,18 +32,36 @@ class IndicatorsResponse(BaseModel):
 
     roe: Decimal | None
     roa: Decimal | None
+    roic: Decimal | None
     net_margin: Decimal | None
     gross_margin: Decimal | None
+    ebit_margin: Decimal | None
     ebitda_margin: Decimal | None
+    asset_turnover: Decimal | None
+    eps: Decimal | None
+    bvps: Decimal | None
     net_debt: Decimal | None
     net_debt_to_ebitda: Decimal | None
+    debt_to_equity: Decimal | None
+    liabilities_to_assets: Decimal | None
     current_ratio: Decimal | None
     revenue_growth: Decimal | None
     net_income_growth: Decimal | None
     pe: Decimal | None
     pb: Decimal | None
+    psr: Decimal | None
+    price_to_assets: Decimal | None
+    price_to_ebit: Decimal | None
+    price_to_working_capital: Decimal | None
+    payout: Decimal | None
     dividend_yield: Decimal | None
     ev_ebitda: Decimal | None
+    fcf: Decimal | None
+    price_to_fcf: Decimal | None
+    fcf_yield: Decimal | None
+    revenue: Decimal | None
+    net_income: Decimal | None
+    dividends: Decimal | None
 
 
 class AnalysisResponse(BaseModel):

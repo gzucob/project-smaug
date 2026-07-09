@@ -185,6 +185,79 @@ number to sanity-check against the platforms when more years are ingested.
 
 ---
 
+## F8 — Extended indicator set: per-share, extra multiples, ROIC and FCF (2026-07-08)
+
+**Status:** MODELLING DECISION — new indicators added without new ingestion.
+
+The indicator set grew from 14 to 29 to approach the coverage of AUVP /
+Investidor10. Every new indicator is derived from the accounts already mirrored
+— **no new ingestion was needed**, including the free-cash-flow family, because
+the whole DFC (cash-flow statement) is already stored (it is where `dep_amort`
+and `dividends_paid` come from). Modelling choices worth recording:
+
+- **Per share (LPA/`eps`, VPA/`bvps`)** use brapi's current `sharesOutstanding`.
+  For the **closed-year** view this is the *current* share count applied to a
+  past year's earnings/equity, not the period-end count (we do not have a
+  historical share series). Absolute LPA/VPA for old years are therefore
+  approximate; the *multiples* (P/L, P/VP) stay faithful because they reprice the
+  market cap, not the share count. Flag to revisit if a historical share count
+  becomes available.
+- **ROIC** uses NOPAT = annualized EBIT × (1 − 0.34), a flat statutory rate
+  (IRPJ 25% + CSLL 9%) rather than each company's effective rate — a deliberate
+  simplification matching how the platforms present it. Invested capital =
+  controllers' equity + net financial debt. Financials return null (net debt is
+  not defined for them).
+- **Capex** is extracted from the DFC investing section (codes `6.02.*`) as the
+  **outflows** (negative amounts) whose label mentions `imobilizado` or
+  `intangível`; disposals (positive inflows) are ignored. This is *gross* capex.
+  `fcf = CFO − capex`, annualized like the other flows and isolated on the DFC
+  span in the TTM (same mechanism as F1). Null when either leg is missing, so FCF
+  degrades rather than misleads.
+- **P/working-capital** (`price_to_working_capital`) can go negative when current
+  liabilities exceed current assets — that is meaningful (Graham's basis), not a
+  bug, so it is left signed.
+- **Payout** = trailing dividends paid / net income over the *same* period basis
+  (both trailing-12m in the TTM, both annual in a closed year); not annualized,
+  since numerator and denominator share the span.
+- **Headline financials** (`revenue`, `net_income`, `dividends`) are persisted
+  alongside the ratios — the period's own absolute figure in reais (TTM sum or
+  annual DFP), *not* annualized. They are not "indicators" but are stored on the
+  same row (like `net_debt`/`fcf`) so the front-end can chart the per-year
+  evolution of revenue/earnings/dividends, which the ratios alone cannot
+  reconstruct. `dividends` is the same DFC-sourced figure that backs `payout`
+  and the DY.
+
+A runtime verification run (2026-07-09) confirmed the new indicators flow
+end-to-end (migration 0004 applied, `analyze` re-run for PETR4/BBAS3, read API +
+front-end) — most populated correctly; see **F9** for the two remaining data
+gaps. No AUVP/Investidor10 delta cross-check has been done yet — verifying ROIC,
+FCF and the per-share figures against the platforms remains the open follow-up.
+
+---
+
+## F9 — Runtime verification of PR #19: LPA/VPA null + closed-year FCL gap (2026-07-09)
+
+**Status:** DATA GAP — tracked in issue #22 (`[ANL-01]`).
+
+PR #19 was exercised end-to-end (migration 0004, `analyze` for PETR4/BBAS3, API
+and front-end). Most new indicators populated correctly — e.g. PETR4 TTM: ROIC
+12.3%, EBIT margin 28.9%, PSR 1.05, payout 37.4%, FCL R$ 85.8 bn, FCF yield
+16.4%; revenue / net income / dividends charted across 2021–2025. Two gaps
+remain, both in the *data*, not the formulas:
+
+- **LPA (`eps`) and VPA (`bvps`) are null for every ticker and view.** brapi's
+  free-plan quote returns `marketCap` but not `sharesOutstanding`, so
+  `MarketData.shares` is `None` and the per-share formulas degrade to null. Fix
+  (issue #22): derive `shares = market_cap / price` (exact, since market cap ≡
+  price × shares) as a fallback in `BrapiPriceProvider`. This mirrors F5 (DY was
+  also missing from brapi and had to be sourced elsewhere).
+- **Closed-year FCL is null for some years** ("série insuficiente" in the year
+  chart), because `_capex` (DFC `6.02.*` PP&E/intangible outflows) doesn't match
+  the label/code in some older DFP filings. TTM FCL is fine. Verify the capex
+  match against multi-year DFPs (noted as related in #22).
+
+---
+
 ## Serving layer — verified faithful
 
 The path calculator → Postgres → FastAPI is a 1:1 passthrough: full `Decimal`

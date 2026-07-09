@@ -41,6 +41,9 @@ class StandardizedFinancials:
     current_liabilities: Decimal | None = None
     total_debt: Decimal | None = None
     dividends_paid: Decimal | None = None  # dividends + JCP paid to controllers
+    # Cash-flow flows (DFC, year-to-date basis — isolated on ``dfc_period_start``).
+    cfo: Decimal | None = None  # net cash from operating activities (DFC 6.01)
+    capex: Decimal | None = None  # purchases of PP&E + intangibles (positive outflow)
 
 
 @dataclass(frozen=True)
