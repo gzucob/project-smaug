@@ -14,6 +14,7 @@ incomplete.
 |---|---|
 | `ING` | Ingestion — brapi client, collection, mirror persistence |
 | `ANL` | Analysis — indicator calculation, PostgreSQL persistence, read API |
+| `WEB` | Front-end — the Next.js app under `frontend/` (UI, charts, formatting) |
 | `PORT` | Portfolio — ticker → sector map |
 | `CORE` | Shared — config, Mongo connection, EventBus, errors |
 | `INFRA` | Docker, dependencies, repository configuration |
@@ -23,8 +24,8 @@ incomplete.
 | `SEC` | Security — secrets, token, exposure |
 
 ## Required labels (all three)
-- area: `area: ingestion`, `area: analysis`, `area: portfolio`, `area: core`,
-  `area: infra`, `area: docs`, `area: testing`
+- area: `area: ingestion`, `area: analysis`, `area: frontend`, `area: portfolio`,
+  `area: core`, `area: infra`, `area: docs`, `area: testing`
 - priority: `priority: high`, `priority: medium`, `priority: low`
 - type: `type: feature`, `type: bug`, `type: tech-debt`, `type: security`,
   `type: docs`, `type: chore`
