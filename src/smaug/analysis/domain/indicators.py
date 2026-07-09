@@ -51,3 +51,10 @@ class Indicators:
     fcf: Decimal | None = None  # annualized free cash flow, in absolute reais
     price_to_fcf: Decimal | None = None
     fcf_yield: Decimal | None = None
+    # Headline financials (absolute reais, the period's own figure — not
+    # annualized). Persisted alongside the ratios so the front-end can chart the
+    # per-year evolution of revenue / earnings / dividends, which the ratios alone
+    # cannot reconstruct.
+    revenue: Decimal | None = None
+    net_income: Decimal | None = None
+    dividends: Decimal | None = None

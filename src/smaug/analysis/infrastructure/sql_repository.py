@@ -59,6 +59,9 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         fcf=i.fcf,
         price_to_fcf=i.price_to_fcf,
         fcf_yield=i.fcf_yield,
+        revenue=i.revenue,
+        net_income=i.net_income,
+        dividends=i.dividends,
     )
 
 
@@ -102,6 +105,9 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
             fcf=row.fcf,
             price_to_fcf=row.price_to_fcf,
             fcf_yield=row.fcf_yield,
+            revenue=row.revenue,
+            net_income=row.net_income,
+            dividends=row.dividends,
         ),
     )
 

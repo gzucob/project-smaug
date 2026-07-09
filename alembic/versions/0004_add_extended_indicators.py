@@ -37,6 +37,9 @@ _NEW_COLUMNS = (
     "fcf",
     "price_to_fcf",
     "fcf_yield",
+    "revenue",
+    "net_income",
+    "dividends",
 )
 
 

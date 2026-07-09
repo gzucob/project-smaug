@@ -63,3 +63,6 @@ class TickerAnalysisRow(Base):
     fcf: Mapped[Decimal | None] = mapped_column(Numeric)
     price_to_fcf: Mapped[Decimal | None] = mapped_column(Numeric)
     fcf_yield: Mapped[Decimal | None] = mapped_column(Numeric)
+    revenue: Mapped[Decimal | None] = mapped_column(Numeric)
+    net_income: Mapped[Decimal | None] = mapped_column(Numeric)
+    dividends: Mapped[Decimal | None] = mapped_column(Numeric)

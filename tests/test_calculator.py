@@ -73,6 +73,10 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.fcf == Decimal(1200)  # annualized (1000 - 100)
     assert ind.price_to_fcf == Decimal(10)  # 12000 / 1200
     assert ind.fcf_yield == Decimal("0.1")  # 1200 / 12000
+    # Headline financials passed through unchanged (the period's own figure).
+    assert ind.revenue == Decimal(3000)
+    assert ind.net_income == Decimal(900)
+    assert ind.dividends == Decimal(600)
 
 
 def test_closed_year_leaves_annualization_a_no_op() -> None:

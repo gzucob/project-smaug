@@ -138,4 +138,7 @@ def compute(
         fcf=annual_fcf,
         price_to_fcf=_div(cap, annual_fcf),
         fcf_yield=_div(annual_fcf, cap),
+        revenue=f.revenue,
+        net_income=f.net_income,
+        dividends=f.dividends_paid,
     )

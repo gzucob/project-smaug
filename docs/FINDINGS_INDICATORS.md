@@ -219,6 +219,13 @@ and `dividends_paid` come from). Modelling choices worth recording:
 - **Payout** = trailing dividends paid / net income over the *same* period basis
   (both trailing-12m in the TTM, both annual in a closed year); not annualized,
   since numerator and denominator share the span.
+- **Headline financials** (`revenue`, `net_income`, `dividends`) are persisted
+  alongside the ratios — the period's own absolute figure in reais (TTM sum or
+  annual DFP), *not* annualized. They are not "indicators" but are stored on the
+  same row (like `net_debt`/`fcf`) so the front-end can chart the per-year
+  evolution of revenue/earnings/dividends, which the ratios alone cannot
+  reconstruct. `dividends` is the same DFC-sourced figure that backs `payout`
+  and the DY.
 
 No reference-run cross-check against the platforms has been done for the new
 indicators yet — a follow-up should verify ROIC, FCF and the per-share figures
