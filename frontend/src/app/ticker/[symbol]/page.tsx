@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HistoryCharts } from "@/components/HistoryCharts";
 import { HistoryStrip } from "@/components/HistoryStrip";
 import { SectorBadge } from "@/components/SectorBadge";
 import { ViewPanel } from "@/components/ViewPanel";
@@ -89,6 +90,20 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
           </p>
         )}
       </section>
+
+      {/* ------------------------------------------------ annual charts --- */}
+      {history.length >= 2 && (
+        <section className="mb-14">
+          <h2 className="mb-5 flex items-center gap-3 font-display text-2xl text-ink-100">
+            Evolução anual
+            <span className="text-sm font-normal text-ink-500">
+              {yearOf(history[0].reference_date)}–{yearOf(history[history.length - 1].reference_date)}
+            </span>
+            <span className="h-px flex-1 bg-gradient-to-r from-gold-500/30 to-transparent" />
+          </h2>
+          <HistoryCharts history={history} sector={reference.sector} />
+        </section>
+      )}
 
       {/* ------------------------------------------------------ history --- */}
       {history.length >= 2 && (
