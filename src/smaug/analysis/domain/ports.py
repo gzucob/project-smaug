@@ -32,9 +32,30 @@ class FundamentalsReader(Protocol):
 
 
 class PriceProvider(Protocol):
-    """Provides current market data (price, market cap) for a ticker."""
+    """Provides market data (current quote + per-year history) for a ticker.
+
+    The two methods now come from different sources (ADR 0011): the live quote
+    from brapi, the closed-year history from Yahoo. The use case still depends
+    on this single port; ``CompositePriceProvider`` routes each call to the
+    source that serves it.
+    """
 
     async def get(self, ticker: str) -> MarketData: ...
+
+    async def year_prices(self, ticker: str, year: int) -> YearPrices:
+        """Average nominal and dividend-adjusted price over ``year``."""
+        ...
+
+
+class PriceHistoryProvider(Protocol):
+    """Provides a ticker's daily price averaged over a closed fiscal year.
+
+    Split out from ``PriceProvider`` because the closed-year basis is sourced
+    independently of the live quote (ADR 0011): brapi's free plan withholds
+    multi-year daily history for all but its demo tickers, so the year averages
+    come from Yahoo Finance. Requesting the year by exact window (not a fixed
+    range) means extending coverage to more years never hits a range ceiling.
+    """
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:
         """Average nominal and dividend-adjusted price over ``year``."""

@@ -1,6 +1,6 @@
 # 0007 — Closed-year price coverage is bounded by the brapi plan
 
-- **Status:** Accepted
+- **Status:** Superseded by [0011](0011-yahoo-finance-for-closed-year-price-history.md)
 - **Date:** 2026-07-10
 
 ## Context
