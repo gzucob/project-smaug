@@ -22,16 +22,24 @@ Always restate the stack before proposing architecture or dependencies.
 
 ## Source of Truth
 - The code is the source of truth for implemented behavior.
-- `docs/PLANO_FASE1.md` — the "how" of Phase 1.
-- `docs/preview_fase1_criterios_implementacao.md` — the "what/why".
-- `docs/FINDINGS_INDICATORS.md` — indicator fidelity findings (Phase 2).
-- `.claude/RULES/` — durable engineering rules.
+- `docs/ROADMAP.md` — the objective, broken into milestones M0–M3.
+- `docs/adr/` — why each modelling/architecture choice was made. Immutable.
+- GitHub issues — what is left. A follow-up lives here, never in prose.
+- `.claude/RULES/` — durable engineering rules; `RULES_DOCS.md` says which
+  artifact a given fact belongs in.
+
+What is true about the *data* right now is never a document — it comes from a
+command (`smaug doctor`) and from the tests. `docs/PLANO_FASE1.md`,
+`docs/preview_fase1_criterios_implementacao.md` and `docs/FINDINGS_INDICATORS.md`
+were retired in #43; their decisions are ADRs 0001–0006, their follow-ups are
+issues, and the files remain in git history.
 
 ## Rules Index
 | File | Covers |
 |---|---|
 | `.claude/RULES/RULES_BRANCHES.md` | Branching, squash-merge, workflow from main |
 | `.claude/RULES/RULES_ISSUES.md` | `[NAMESPACE-NN]` format, area/priority/type labels |
+| `.claude/RULES/RULES_DOCS.md` | Artifact model: rules vs ADR vs issue vs generated report |
 | `.claude/RULES/RULES_GIT_WORKFLOW.md` | Quality gate, commit, push, PR |
 | `.claude/RULES/RULES_LAYERS.md` | Bounded contexts, domain→application→infra→entrypoints hierarchy, EventBus |
 | `.claude/RULES/RULES_ENTITIES.md` | Frozen entities, Beanie/SQLAlchemy models, API DTOs |

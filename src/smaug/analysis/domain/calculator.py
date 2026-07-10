@@ -22,7 +22,7 @@ from smaug.analysis.domain.indicators import Indicators
 _MONTHS_IN_YEAR = Decimal(12)
 # Statutory Brazilian corporate rate (IRPJ 25% + CSLL 9%). ROIC's NOPAT uses this
 # flat rate rather than each company's effective rate — a deliberate approximation
-# (see docs/FINDINGS_INDICATORS.md), matching how the reference platforms simplify.
+# (see docs/adr/0002-*), matching how the reference platforms simplify.
 _TAX_RATE = Decimal("0.34")
 
 

@@ -109,7 +109,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
     naSectors: FINANCIAL,
     caveat:
-      "O NOPAT usa a alíquota estatutária fixa de 34% (IRPJ 25% + CSLL 9%), não a alíquota efetiva de cada empresa — uma aproximação deliberada, registrada em docs/FINDINGS_INDICATORS.md.",
+      "O NOPAT usa a alíquota estatutária fixa de 34% (IRPJ 25% + CSLL 9%), não a alíquota efetiva de cada empresa — uma aproximação deliberada, registrada em docs/adr/0002.",
   },
   net_margin: {
     formula: "Lucro líquido ÷ Receita líquida (mesmo período, sem anualizar)",
@@ -600,7 +600,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "No histórico de anos fechados o denominador é o preço médio ajustado por proventos daquele exercício; nos últimos 12 meses é o preço nominal atual. Ver docs/FINDINGS_INDICATORS.md.",
+      "No histórico de anos fechados o denominador é o preço médio ajustado por proventos daquele exercício; nos últimos 12 meses é o preço nominal atual. Ver docs/adr/0001.",
   },
   ev_ebitda: {
     formula: "(Valor de mercado + Dívida líquida) ÷ EBITDA anualizado",
