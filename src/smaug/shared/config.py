@@ -31,8 +31,10 @@ DEFAULT_BRAPI_MODULES: tuple[str, ...] = (
 
 # Default CVM "modules" — the regulated statement types, not brapi module names.
 # BPA/BPP = balance sheet (assets / liabilities+equity), DRE = income,
-# DFC = cash flow. Configurable via ``CVM_MODULES``.
-DEFAULT_CVM_MODULES: tuple[str, ...] = ("BPA", "BPP", "DRE", "DFC")
+# DFC = cash flow. CAPITAL is the odd one out: the share counts, which come from
+# the FRE file rather than the DFP/ITR statements. Configurable via
+# ``CVM_MODULES``.
+DEFAULT_CVM_MODULES: tuple[str, ...] = ("BPA", "BPP", "DRE", "DFC", "CAPITAL")
 
 
 class Settings(BaseSettings):

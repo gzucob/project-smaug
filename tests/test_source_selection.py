@@ -4,7 +4,9 @@ import httpx
 
 from smaug.entrypoints.cli import _build_data_source
 from smaug.ingestion.infrastructure.brapi_client import BrapiClient
+from smaug.ingestion.infrastructure.cvm_capital import CvmCapitalSource
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource
+from smaug.ingestion.infrastructure.routed_source import RoutedDataSource
 from smaug.shared.config import DEFAULT_BRAPI_MODULES, DEFAULT_CVM_MODULES, Settings
 
 
@@ -20,5 +22,8 @@ async def test_build_data_source_selects_implementation_by_config() -> None:
             Settings(ingestion_source="brapi", brapi_token="tok"), http
         )
 
-    assert isinstance(cvm, CvmDataSource)
+    # CVM needs two archives — statements and share counts — behind one router.
+    assert isinstance(cvm, RoutedDataSource)
+    assert isinstance(cvm._default, CvmDataSource)
+    assert isinstance(cvm._routes["CAPITAL"], CvmCapitalSource)
     assert isinstance(brapi, BrapiClient)

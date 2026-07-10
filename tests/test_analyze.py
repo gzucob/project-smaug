@@ -61,6 +61,16 @@ class FakePrice:
         return self._year or YearPrices()
 
 
+class FakeShares:
+    """CVM's filed share count, per fiscal year. Empty → the brapi fallback."""
+
+    def __init__(self, by_year: dict[int, Decimal] | None = None) -> None:
+        self._by_year = by_year or {}
+
+    async def outstanding(self, ticker: str, year: int) -> Decimal | None:
+        return self._by_year.get(year)
+
+
 class FakeRepo:
     def __init__(self) -> None:
         self.saved: list[TickerAnalysis] = []
@@ -109,6 +119,7 @@ async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
         ),
         FakePrice(MarketData(price=Decimal(10), market_cap=Decimal(12000))),
         repo,
+        FakeShares(),
     )
 
     out = await use_case.execute(["PETR4"])
@@ -156,6 +167,7 @@ async def test_analyze_computes_growth_against_prior_year_annual() -> None:
         FakeReader({"PETR4": quarters}, annuals={"PETR4": [prior]}),
         FakePrice(MarketData(price=Decimal(10), market_cap=Decimal(12000))),
         repo,
+        FakeShares(),
     )
 
     await use_case.execute(["PETR4"])
@@ -196,6 +208,7 @@ async def test_analyze_produces_ttm_and_closed_year_views() -> None:
             year=YearPrices(nominal_avg=Decimal(8), adjusted_avg=Decimal(6)),
         ),
         repo,
+        FakeShares(),
     )
 
     out = await use_case.execute(["PETR4"])
@@ -227,14 +240,103 @@ async def test_analyze_produces_ttm_and_closed_year_views() -> None:
 async def test_analyze_skips_when_fewer_than_four_quarters() -> None:
     two = _quarters(Sector.COMMODITY, net_income=Decimal(300))[:2]
     use_case = AnalyzePortfolioUseCase(
-        FakeReader({"PETR4": two}), FakePrice(), FakeRepo()
+        FakeReader({"PETR4": two}), FakePrice(), FakeRepo(), FakeShares()
     )
     assert await use_case.execute(["PETR4"]) == []
 
 
 async def test_analyze_skips_ticker_without_fundamentals() -> None:
-    use_case = AnalyzePortfolioUseCase(FakeReader({}), FakePrice(), FakeRepo())
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({}), FakePrice(), FakeRepo(), FakeShares()
+    )
     assert await use_case.execute(["PETR4"]) == []
+
+
+async def test_analyze_divides_each_view_by_that_years_filed_shares() -> None:
+    # CVM filed 600 shares for 2024 and 300 for the TTM year — the closed year
+    # must not borrow the current count (that was the F8 approximation). The
+    # annual is 2024, so it never doubles as the TTM's derived Q4.
+    quarters = _quarters(
+        Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(6000)
+    )
+    annual_2024 = StandardizedFinancials(
+        reference_date=date(2024, 12, 31),
+        sector=Sector.COMMODITY,
+        period_start=date(2024, 1, 1),
+        net_income=Decimal(600),
+        equity=Decimal(3600),
+    )
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"PETR4": quarters}, annuals={"PETR4": [annual_2024]}),
+        FakePrice(
+            MarketData(price=Decimal(10), market_cap=Decimal(12000)),
+            year=YearPrices(nominal_avg=Decimal(8), adjusted_avg=Decimal(6)),
+        ),
+        repo,
+        FakeShares({2024: Decimal(600), 2026: Decimal(300)}),
+    )
+
+    out = await use_case.execute(["PETR4"])
+    views = {(a.view, a.reference_date): a for a in out}
+
+    ttm = views[("ttm_live", date(2026, 3, 31))]
+    assert ttm.indicators.eps == Decimal(4)  # TTM 1200 / 300 shares
+    assert ttm.indicators.bvps == Decimal(20)  # 6000 / 300
+
+    y2024 = views[("closed_year", date(2024, 12, 31))]
+    assert y2024.indicators.eps == Decimal(1)  # 600 / 600 shares, not / 300
+    assert y2024.indicators.bvps == Decimal(6)  # 3600 / 600
+
+
+async def test_analyze_falls_back_to_the_quote_share_count() -> None:
+    # No CVM capital ingested for this ticker: brapi's derived count carries it.
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader(
+            {
+                "PETR4": _quarters(
+                    Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(6000)
+                )
+            }
+        ),
+        FakePrice(
+            MarketData(
+                price=Decimal(10), market_cap=Decimal(12000), shares=Decimal(1200)
+            )
+        ),
+        repo,
+        FakeShares(),
+    )
+
+    await use_case.execute(["PETR4"])
+
+    assert repo.saved[0].indicators.eps == Decimal(1)  # 1200 / 1200
+    assert repo.saved[0].indicators.bvps == Decimal(5)  # 6000 / 1200
+
+
+async def test_analyze_keeps_per_share_indicators_when_price_is_missing() -> None:
+    # eps/bvps need only the share count, so a price outage must not null them.
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader(
+            {
+                "BBAS3": _quarters(
+                    Sector.BANK, net_income=Decimal(200), equity=Decimal(8000)
+                )
+            }
+        ),
+        FakePrice(error=BrapiForbiddenError("403")),
+        repo,
+        FakeShares({2026: Decimal(400)}),
+    )
+
+    await use_case.execute(["BBAS3"])
+
+    saved = repo.saved[0]
+    assert saved.indicators.eps == Decimal(2)  # 800 / 400
+    assert saved.indicators.bvps == Decimal(20)  # 8000 / 400
+    assert saved.indicators.pe is None  # still no price
 
 
 async def test_analyze_degrades_when_price_unavailable() -> None:
@@ -248,6 +350,7 @@ async def test_analyze_degrades_when_price_unavailable() -> None:
         ),
         FakePrice(error=BrapiForbiddenError("403")),
         FakeRepo(),
+        FakeShares(),
     )
 
     out = await use_case.execute(["BBAS3"])

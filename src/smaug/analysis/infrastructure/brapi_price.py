@@ -7,8 +7,8 @@ The token is required here and kept out of any persisted metadata.
 
 Dividend yield does not come from here: the free plan does not expose trailing
 dividends, so the trailing payout is sourced from the CVM cash-flow statement
-instead (see ``mongo_fundamentals``). This provider supplies only price/market
-cap.
+instead (see ``mongo_fundamentals``). This provider supplies only the price side:
+price, market cap, and the share count derived from the two.
 """
 
 from __future__ import annotations
@@ -36,6 +36,24 @@ def _avg(values: list[Decimal]) -> Decimal | None:
     return sum(values, Decimal(0)) / Decimal(len(values)) if values else None
 
 
+def _shares(quote: dict[str, Any]) -> Decimal | None:
+    """Share count, preferring the quote's own field over the derived identity.
+
+    The free plan omits ``sharesOutstanding`` but does return ``marketCap``, and
+    market cap is *defined* as price x shares — so dividing them back out is
+    exact, not an estimate. Without it ``eps``/``bvps`` degrade to null.
+    """
+    outstanding = _dec(quote.get("sharesOutstanding"))
+    if outstanding is not None and outstanding > 0:
+        return outstanding
+
+    market_cap = _dec(quote.get("marketCap"))
+    price = _dec(quote.get("regularMarketPrice"))
+    if market_cap is None or price is None or price == 0:
+        return None
+    return market_cap / price
+
+
 class BrapiPriceProvider:
     """Fetches price/market-cap for a ticker from brapi (raises on API failure)."""
 
@@ -58,7 +76,7 @@ class BrapiPriceProvider:
         return MarketData(
             price=_dec(quote.get("regularMarketPrice")),
             market_cap=_dec(quote.get("marketCap")),
-            shares=_dec(quote.get("sharesOutstanding")),
+            shares=_shares(quote),
         )
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:

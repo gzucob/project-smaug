@@ -17,6 +17,7 @@ import typer
 from smaug.analysis.application.analyze import AnalyzePortfolioUseCase
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.infrastructure.brapi_price import BrapiPriceProvider
+from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
 from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsReader
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
 from smaug.ingestion.application.ingest import (
@@ -31,9 +32,14 @@ from smaug.ingestion.application.report import (
 )
 from smaug.ingestion.domain.ports import RawDataSource
 from smaug.ingestion.infrastructure.brapi_client import BrapiClient
+from smaug.ingestion.infrastructure.cvm_capital import (
+    CAPITAL_MODULE,
+    CvmCapitalSource,
+)
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, CvmDocument
 from smaug.ingestion.infrastructure.repositories import BeanieRawIngestionRepository
-from smaug.portfolio.domain.cvm_codes import TICKER_TO_CVM_CODE
+from smaug.ingestion.infrastructure.routed_source import RoutedDataSource
+from smaug.portfolio.domain.cvm_codes import TICKER_TO_CNPJ, TICKER_TO_CVM_CODE
 from smaug.portfolio.domain.sectors import portfolio_tickers
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
@@ -98,13 +104,22 @@ def _build_data_source(
     doc = (document or settings.cvm_document).upper()
     if doc not in ("ITR", "DFP"):
         raise typer.BadParameter("--document must be ITR or DFP")
-    return CvmDataSource(
+    cvm_year = year or settings.cvm_year
+    statements = CvmDataSource(
         http,
         TICKER_TO_CVM_CODE,
-        year=year or settings.cvm_year,
+        year=cvm_year,
         cache_dir=settings.cvm_cache_dir,
         document=cast(CvmDocument, doc),
     )
+    # The share counts live in a different CVM archive (FRE), keyed by CNPJ.
+    capital = CvmCapitalSource(
+        http,
+        TICKER_TO_CNPJ,
+        year=cvm_year,
+        cache_dir=settings.cvm_cache_dir,
+    )
+    return RoutedDataSource({CAPITAL_MODULE: capital}, default=statements)
 
 
 async def _run_ingest(
@@ -175,6 +190,9 @@ async def _run_analyze(tickers: tuple[str, ...]) -> int:
                     http,
                 ),
                 repository=SqlAlchemyAnalysisRepository(session_factory),
+                shares_reader=MongoSharesReader(
+                    mongo[settings.mongo_db]["raw_ingestions"]
+                ),
             )
             analyses = await use_case.execute(tickers)
     finally:

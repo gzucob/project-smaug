@@ -1,4 +1,4 @@
-"""BrapiPriceProvider.year_prices: per-year averages of nominal and adjusted closes."""
+"""BrapiPriceProvider: current quote (price, cap, shares) and per-year averages."""
 
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -15,6 +15,51 @@ def _mock_client(handler: object) -> httpx.AsyncClient:
 
 def _ts(year: int, month: int, day: int) -> int:
     return int(datetime(year, month, day, tzinfo=UTC).timestamp())
+
+
+def _quote_client(quote: dict[str, object]) -> httpx.AsyncClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/quote/PETR4"
+        return httpx.Response(200, json={"results": [quote]})
+
+    return _mock_client(handler)
+
+
+async def test_get_prefers_shares_outstanding_when_the_quote_has_it() -> None:
+    quote = {
+        "regularMarketPrice": 40,
+        "marketCap": 500,
+        "sharesOutstanding": 12,
+    }
+    async with _quote_client(quote) as http:
+        provider = BrapiPriceProvider("https://brapi.dev/api", "SECRET", http)
+        market = await provider.get("PETR4")
+
+    assert market.shares == Decimal(12)  # not the derived 500 / 40 = 12.5
+
+
+async def test_get_derives_shares_from_market_cap_over_price() -> None:
+    quote = {"regularMarketPrice": 40, "marketCap": 500}  # free plan: no shares
+    async with _quote_client(quote) as http:
+        provider = BrapiPriceProvider("https://brapi.dev/api", "SECRET", http)
+        market = await provider.get("PETR4")
+
+    assert market.price == Decimal(40)
+    assert market.market_cap == Decimal(500)
+    assert market.shares == Decimal("12.5")
+
+
+async def test_get_leaves_shares_none_when_price_is_zero_or_missing() -> None:
+    async with _quote_client({"marketCap": 500, "regularMarketPrice": 0}) as http:
+        provider = BrapiPriceProvider("https://brapi.dev/api", "SECRET", http)
+        zero_price = await provider.get("PETR4")
+
+    async with _quote_client({"marketCap": 500}) as http:
+        provider = BrapiPriceProvider("https://brapi.dev/api", "SECRET", http)
+        no_price = await provider.get("PETR4")
+
+    assert zero_price.shares is None
+    assert no_price.shares is None
 
 
 async def test_year_prices_averages_only_the_requested_year() -> None:
