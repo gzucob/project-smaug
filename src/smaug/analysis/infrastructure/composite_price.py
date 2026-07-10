@@ -11,13 +11,15 @@ the use case and confined to the composition root.
 from __future__ import annotations
 
 from smaug.analysis.domain.financials import MarketData, YearPrices
-from smaug.analysis.domain.ports import PriceHistoryProvider, PriceProvider
+from smaug.analysis.domain.ports import CurrentQuoteProvider, PriceHistoryProvider
 
 
 class CompositePriceProvider:
     """A ``PriceProvider`` delegating the quote and the year history separately."""
 
-    def __init__(self, quote: PriceProvider, history: PriceHistoryProvider) -> None:
+    def __init__(
+        self, quote: CurrentQuoteProvider, history: PriceHistoryProvider
+    ) -> None:
         self._quote = quote
         self._history = history
 

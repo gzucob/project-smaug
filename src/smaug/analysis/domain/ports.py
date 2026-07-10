@@ -47,6 +47,19 @@ class PriceProvider(Protocol):
         ...
 
 
+class CurrentQuoteProvider(Protocol):
+    """Provides a ticker's current market data (the live quote side).
+
+    Split from ``PriceProvider`` so the live quote can be sourced and chained
+    independently of the year history (ADR 0013): Yahoo is the primary quote,
+    brapi the fallback. An implementation may return only the price (Yahoo does
+    not expose market cap / shares for free); the use case derives the cap from
+    price × filed shares when it is absent.
+    """
+
+    async def get(self, ticker: str) -> MarketData: ...
+
+
 class PriceHistoryProvider(Protocol):
     """Provides a ticker's daily price averaged over a closed fiscal year.
 

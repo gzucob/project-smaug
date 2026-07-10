@@ -25,10 +25,17 @@ from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.infrastructure.brapi_price import BrapiPriceProvider
 from smaug.analysis.infrastructure.composite_price import CompositePriceProvider
+from smaug.analysis.infrastructure.fallback_price import (
+    FallbackPriceHistory,
+    FallbackQuoteProvider,
+)
 from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
 from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsReader
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
-from smaug.analysis.infrastructure.yahoo_price import YahooPriceHistory
+from smaug.analysis.infrastructure.yahoo_price import (
+    YahooPriceHistory,
+    YahooQuoteProvider,
+)
 from smaug.ingestion.application.ingest import (
     FetchOutcome,
     IngestPortfolioUseCase,
@@ -197,6 +204,30 @@ def analyze(
     raise typer.Exit(code=exit_code)
 
 
+def _build_price_provider(
+    settings: Settings, http: httpx.AsyncClient
+) -> CompositePriceProvider:
+    """Wire the price sources: Yahoo primary, brapi fallback (ADR 0013).
+
+    The live quote and the year history each try Yahoo first and fall back to
+    brapi. brapi's token is only used on the fallback path; the primary Yahoo
+    quote needs none.
+    """
+    brapi = BrapiPriceProvider(
+        settings.brapi_base_url, settings.brapi_token.get_secret_value(), http
+    )
+    return CompositePriceProvider(
+        quote=FallbackQuoteProvider(
+            primary=YahooQuoteProvider(settings.yahoo_base_url, http),
+            fallback=brapi,
+        ),
+        history=FallbackPriceHistory(
+            primary=YahooPriceHistory(settings.yahoo_base_url, http),
+            fallback=brapi,
+        ),
+    )
+
+
 async def _run_analyze(tickers: tuple[str, ...]) -> int:
     settings = get_settings()
     mongo = await init_database(settings)
@@ -208,14 +239,7 @@ async def _run_analyze(tickers: tuple[str, ...]) -> int:
                 reader=MongoFundamentalsReader(
                     mongo[settings.mongo_db]["raw_ingestions"]
                 ),
-                price_provider=CompositePriceProvider(
-                    quote=BrapiPriceProvider(
-                        settings.brapi_base_url,
-                        settings.brapi_token.get_secret_value(),
-                        http,
-                    ),
-                    history=YahooPriceHistory(settings.yahoo_base_url, http),
-                ),
+                price_provider=_build_price_provider(settings, http),
                 repository=SqlAlchemyAnalysisRepository(session_factory),
                 shares_reader=MongoSharesReader(
                     mongo[settings.mongo_db]["raw_ingestions"]

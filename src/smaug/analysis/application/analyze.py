@@ -106,7 +106,8 @@ class AnalyzePortfolioUseCase:
 
         sector = sector_of(ticker)
         computed_at = self._clock()
-        # One quote drives the TTM price and every closed-year repricing.
+        # The live quote prices the TTM view; each closed year prices on its own
+        # year history (ADR 0012), so it is not needed there beyond a share fallback.
         quote = await self._current_quote(ticker)
 
         analyses: list[TickerAnalysis] = []
@@ -143,9 +144,18 @@ class AnalyzePortfolioUseCase:
             return None
         year = current.reference_date.year
         previous = _prior_year_annual(annuals, year)
-        market = dataclasses.replace(
-            quote, shares=await self._shares_for(ticker, year, quote)
-        )
+        shares = await self._shares_for(ticker, year, quote)
+        market = dataclasses.replace(quote, shares=shares)
+        if (
+            market.market_cap is None
+            and market.price is not None
+            and shares is not None
+        ):
+            # The primary quote (Yahoo) serves the price but not the market cap;
+            # derive it from price × filed shares, the same basis the closed year
+            # uses (ADR 0012/0013). brapi's own cap, when it is the fallback, is
+            # kept as-is.
+            market = dataclasses.replace(market, market_cap=market.price * shares)
         return TickerAnalysis(
             ticker=ticker,
             sector=sector,
