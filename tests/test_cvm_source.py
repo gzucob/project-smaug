@@ -1,28 +1,56 @@
-"""CvmDataSource pure logic: DMPL sanitizer, payload shaping, download retry."""
+"""CvmDataSource: statement CSV parsing, version/consolidated selection, download."""
 
 import zipfile
-from datetime import date
-from decimal import Decimal
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from smaug.ingestion.infrastructure.cvm_source import (
+    _ENCODING,
     CvmDataSource,
-    _consolidated_keys,
-    _dropped_consolidated,
-    _sanitize_dmpl,
+    _classify,
+    _Document,
+    _Statement,
 )
 from smaug.portfolio.domain.cvm_codes import TICKER_TO_CVM_CODE
 from smaug.portfolio.domain.sectors import portfolio_tickers
-from smaug.shared.errors import (
-    BrapiNotFoundError,
-    CvmConsolidatedDroppedError,
-    CvmDownloadError,
-)
+from smaug.shared.errors import BrapiNotFoundError, CvmDownloadError
 from tests.fakes import no_sleep
+
+_HEADER = (
+    "CNPJ_CIA;DT_REFER;VERSAO;DENOM_CIA;CD_CVM;GRUPO_DFP;MOEDA;ESCALA_MOEDA;"
+    "ORDEM_EXERC;DT_INI_EXERC;DT_FIM_EXERC;CD_CONTA;DS_CONTA;VL_CONTA;ST_CONTA_FIXA"
+)
+
+
+def _row(
+    cd_cvm: str,
+    ref: str,
+    version: str,
+    conta: str,
+    valor: str,
+    *,
+    ordem: str = "ÚLTIMO",
+) -> str:
+    return (
+        f"00.0/0001-00;{ref};{version};ACME S.A.;{cd_cvm};DF Consolidado;REAL;MIL;"
+        f"{ordem};{ref[:4]}-01-01;{ref};{conta};Conta {conta};{valor};S"
+    )
+
+
+def _statement_zip(path: Path, members: dict[str, list[str]]) -> None:
+    """A CVM statement ZIP, latin-1 encoded like the real open-data files."""
+    with zipfile.ZipFile(path, "w") as z:
+        for name, rows in members.items():
+            body = "\n".join([_HEADER, *rows]) + "\n"
+            z.writestr(name, body.encode(_ENCODING))
+
+
+def _source(tmp_path: Path, mapping: dict[str, str]) -> CvmDataSource:
+    return CvmDataSource(
+        httpx.AsyncClient(), mapping, year=2021, cache_dir=str(tmp_path), document="DFP"
+    )
 
 
 def test_every_portfolio_ticker_has_a_cvm_code() -> None:
@@ -31,66 +59,44 @@ def test_every_portfolio_ticker_has_a_cvm_code() -> None:
     assert all(code.strip() for code in TICKER_TO_CVM_CODE.values())
 
 
-def test_sanitize_dmpl_keeps_header_only_and_leaves_others_intact(
-    tmp_path: Path,
-) -> None:
-    src = tmp_path / "in.zip"
-    with zipfile.ZipFile(src, "w") as z:
-        z.writestr("itr_cia_aberta_DMPL_con_2024.csv", "H1;H2\nrow;a\nrow;b\n")
-        z.writestr("itr_cia_aberta_BPA_con_2024.csv", "H1;H2\nkeep;me\n")
-
-    dst = tmp_path / "out.zip"
-    _sanitize_dmpl(src, dst)
-
-    with zipfile.ZipFile(dst) as z:
-        dmpl = z.read("itr_cia_aberta_DMPL_con_2024.csv").decode()
-        bpa = z.read("itr_cia_aberta_BPA_con_2024.csv").decode()
-    assert dmpl == "H1;H2\n"  # rows stripped, header kept
-    assert bpa == "H1;H2\nkeep;me\n"  # untouched
+def test_classify_identifies_statement_members() -> None:
+    assert _classify("dfp_cia_aberta_BPA_con_2021.csv") == ("BPA", "consolidated")
+    assert _classify("itr_cia_aberta_BPP_ind_2024.csv") == ("BPP", "individual")
+    assert _classify("dfp_cia_aberta_DFC_MI_con_2021.csv") == ("DFC", "consolidated")
+    assert _classify("dfp_cia_aberta_DFC_MD_ind_2021.csv") == ("DFC", "individual")
+    # Statements we don't mirror, and the non-statement members, are skipped.
+    assert _classify("dfp_cia_aberta_DVA_con_2021.csv") is None
+    assert _classify("dfp_cia_aberta_DMPL_ind_2021.csv") is None
+    assert _classify("dfp_cia_aberta_2021.csv") is None
 
 
-def test_to_payload_mirrors_raw_accounts_without_math() -> None:
-    accounts = [
-        SimpleNamespace(
-            code="1",
-            name="Ativo Total",
-            quantity=Decimal("100.5"),
-            level=1,
-            is_fixed=True,
-        ),
-    ]
-    statement = SimpleNamespace(
-        accounts=accounts,
+def test_to_payload_mirrors_raw_accounts_without_math(tmp_path: Path) -> None:
+    statement = _Statement(
+        balance_type="consolidated",
+        company_name="WEG S.A.",
         currency="BRL",
         currency_size=1000,
-        period_end_date=date(2024, 9, 30),
+        period_start="2021-01-01",
+        period_end="2021-12-31",
+        accounts=[{"code": "1", "name": "Ativo Total", "quantity": "100.5"}],
     )
-    doc = SimpleNamespace(
-        cvm_code="1023",
-        company_name="BCO BRASIL S.A.",
-        type=SimpleNamespace(name="ITR"),
-        reference_date=date(2024, 9, 30),
-    )
+    doc = _Document("5410", "2021-12-31", {"BPA": statement})
 
-    payload = CvmDataSource._to_payload(doc, "BPA", "consolidated", statement)
+    payload = _source(tmp_path, {"WEGE3": "5410"})._to_payload(doc, "BPA", statement)
 
-    assert payload["cvm_code"] == "1023"
-    assert payload["statement"] == "BPA"
-    assert payload["reference_date"] == "2024-09-30"
+    assert payload["cvm_code"] == "5410"
+    assert payload["document_type"] == "DFP"
+    assert payload["reference_date"] == "2021-12-31"
+    assert payload["balance_type"] == "consolidated"
     assert payload["currency_size"] == 1000
-    assert payload["accounts"][0]["quantity"] == "100.5"  # exact, as string
-    assert payload["accounts"][0]["name"] == "Ativo Total"
+    assert payload["accounts"][0]["quantity"] == "100.5"  # exact, untouched
 
 
 async def test_dfp_document_targets_the_annual_file_and_url(tmp_path: Path) -> None:
     async with httpx.AsyncClient() as http:
         itr = CvmDataSource(http, {"PETR4": "9512"}, year=2024, cache_dir=str(tmp_path))
         dfp = CvmDataSource(
-            http,
-            {"PETR4": "9512"},
-            year=2024,
-            cache_dir=str(tmp_path),
-            document="DFP",
+            http, {"PETR4": "9512"}, year=2024, cache_dir=str(tmp_path), document="DFP"
         )
 
     assert itr._zip_name == "itr_cia_aberta_2024.zip"  # default stays ITR
@@ -111,117 +117,98 @@ async def test_fetch_skips_unmapped_ticker_without_touching_network(
             await source.fetch("PETR4", "BPA")  # PETR4 not in the injected map
 
 
-def _fake_itr_doc(ref: date) -> SimpleNamespace:
-    """A minimal pycvm-shaped ITR document carrying one BPA account."""
-    statement = SimpleNamespace(
-        accounts=[
-            SimpleNamespace(
-                code="1", name="Ativo Total", quantity=Decimal("1"), level=1
-            )
-        ],
-        currency="BRL",
-        currency_size=1000,
-        period_start_date=date(ref.year, 1, 1),
-        period_end_date=ref,
-    )
-    collection = SimpleNamespace(bpa=statement)
-    return SimpleNamespace(
-        cvm_code="9512",
-        company_name="PETROLEO BRASILEIRO S.A. PETROBRAS",
-        type=SimpleNamespace(name="ITR"),
-        reference_date=ref,
-        consolidated=SimpleNamespace(last=collection),
-        individual=None,
-    )
-
-
 async def test_fetch_returns_one_result_per_filed_quarter(tmp_path: Path) -> None:
-    # The ITR file carries Q1/Q2/Q3 as separate documents; fetch must surface all
+    # The ITR file carries Q1/Q2/Q3 as separate periods; fetch must surface all
     # three (this is exactly what the TTM needs — the earlier code kept only Q3).
-    quarters = [date(2025, 3, 31), date(2025, 6, 30), date(2025, 9, 30)]
+    def _doc(ref: str) -> _Document:
+        stmt = _Statement(
+            balance_type="consolidated",
+            company_name="PETROBRAS",
+            currency="BRL",
+            currency_size=1000,
+            period_start=f"{ref[:4]}-01-01",
+            period_end=ref,
+            accounts=[{"code": "1", "name": "Ativo", "quantity": "1"}],
+        )
+        return _Document("9512", ref, {"BPA": stmt})
+
+    quarters = ["2025-03-31", "2025-06-30", "2025-09-30"]
     async with httpx.AsyncClient() as http:
         source = CvmDataSource(
             http, {"PETR4": "9512"}, year=2025, cache_dir=str(tmp_path)
         )
-        source._index = {"9512": [_fake_itr_doc(ref) for ref in quarters]}
+        source._index = {"9512": [_doc(ref) for ref in quarters]}
         results = await source.fetch("PETR4", "BPA")
 
-    assert [r.payload["reference_date"] for r in results] == [
-        "2025-03-31",
-        "2025-06-30",
-        "2025-09-30",
-    ]
+    assert [r.payload["reference_date"] for r in results] == quarters
     assert all(
         r.request["reference_date"] == r.payload["reference_date"] for r in results
     )
 
 
-def _write_bpa_con(path: Path, rows: list[tuple[str, str, str]]) -> None:
-    """A DFP ZIP with one BPA_con CSV of ``(CD_CVM, DT_REFER, VERSAO)`` rows."""
-    header = "CNPJ_CIA;DT_REFER;VERSAO;CD_CVM;CD_CONTA;VL_CONTA"
-    body = [f"00.0/0001-00;{ref};{ver};{cd};1;100" for cd, ref, ver in rows]
-    with zipfile.ZipFile(path, "w") as z:
-        z.writestr("dfp_cia_aberta_BPA_con_2021.csv", "\n".join([header, *body]) + "\n")
-
-
-def _doc(
-    code: str, ref: date, *, version: int, consolidated: object
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        cvm_code=code, reference_date=ref, version=version, consolidated=consolidated
-    )
-
-
-def test_consolidated_keys_reads_only_wanted_codes(tmp_path: Path) -> None:
-    src = tmp_path / "dfp.zip"
-    # Only 5410 is wanted; the padded 099999 row must be ignored.
-    _write_bpa_con(src, [("005410", "2021-12-31", "1"), ("099999", "2021-12-31", "1")])
-
-    keys = _consolidated_keys(src, wanted={"5410"})
-
-    assert keys == {("5410", "2021-12-31", 1)}  # zero-padded CD_CVM folded to "5410"
-
-
-def test_dropped_consolidated_spares_genuine_individual_filer() -> None:
-    keys = {("5410", "2021-12-31", 1)}
-    docs = [
-        _doc("5410", date(2021, 12, 31), version=1, consolidated=None),  # #55 desync
-        _doc("9493", date(2021, 12, 31), version=1, consolidated=None),  # no con filed
-        _doc("5410", date(2022, 12, 31), version=1, consolidated=object()),  # present
-    ]
-
-    # Only the doc whose consolidated is filed yet missing is flagged.
-    assert _dropped_consolidated(docs, keys) == [("5410", "2021-12-31")]
-
-
-async def test_guard_aborts_when_pycvm_drops_a_filed_consolidated(
+def test_build_index_prefers_consolidated_and_the_latest_version(
     tmp_path: Path,
 ) -> None:
-    src = tmp_path / "dfp_cia_aberta_2021.zip"
-    _write_bpa_con(src, [("005410", "2021-12-31", "1")])
-    dropped = _doc("5410", date(2021, 12, 31), version=1, consolidated=None)
+    zpath = tmp_path / "dfp_cia_aberta_2021.zip"
+    _statement_zip(
+        zpath,
+        {
+            "dfp_cia_aberta_BPA_con_2021.csv": [
+                _row("005410", "2021-12-31", "1", "1", "100"),  # superseded
+                _row("005410", "2021-12-31", "2", "1", "200"),  # amendment wins
+            ],
+            "dfp_cia_aberta_BPA_ind_2021.csv": [
+                _row("005410", "2021-12-31", "2", "1", "999"),  # individual: ignored
+            ],
+        },
+    )
 
-    async with httpx.AsyncClient() as http:
-        source = CvmDataSource(
-            http, {"WEGE3": "5410"}, year=2021, cache_dir=str(tmp_path), document="DFP"
-        )
-        index = {"5410": [dropped]}
-        with pytest.raises(CvmConsolidatedDroppedError, match="WEGE3 2021-12-31"):
-            source._raise_if_consolidated_dropped(src, {"5410"}, index)
+    index = _source(tmp_path, {"WEGE3": "5410"})._build_index(zpath)
+
+    bpa = index["5410"][0].statements["BPA"]
+    assert bpa.balance_type == "consolidated"
+    assert bpa.accounts[0]["quantity"] == "200"  # v2 consolidated, not v1, not ind
 
 
-async def test_guard_allows_a_genuine_individual_only_filer(tmp_path: Path) -> None:
-    # SAPR11 files no consolidated statement, so the raw file has no BPA_con row
-    # for it — mirroring its individual statement is correct, not the #55 bug.
-    src = tmp_path / "dfp_cia_aberta_2021.zip"
-    _write_bpa_con(src, [])  # header only
-    only = _doc("9493", date(2021, 12, 31), version=1, consolidated=None)
+def test_build_index_falls_back_to_individual_when_no_consolidated(
+    tmp_path: Path,
+) -> None:
+    # SAPR11 files only individual statements — the fallback is correct, not a bug.
+    zpath = tmp_path / "dfp_cia_aberta_2021.zip"
+    _statement_zip(
+        zpath,
+        {
+            "dfp_cia_aberta_BPA_ind_2021.csv": [
+                _row("009493", "2021-12-31", "1", "1", "500")
+            ],
+        },
+    )
 
-    async with httpx.AsyncClient() as http:
-        source = CvmDataSource(
-            http, {"SAPR11": "9493"}, year=2021, cache_dir=str(tmp_path), document="DFP"
-        )
-        source._raise_if_consolidated_dropped(src, {"9493"}, {"9493": [only]})
+    index = _source(tmp_path, {"SAPR11": "9493"})._build_index(zpath)
+
+    bpa = index["9493"][0].statements["BPA"]
+    assert bpa.balance_type == "individual"
+    assert bpa.accounts[0]["quantity"] == "500"
+
+
+def test_build_index_folds_dfc_methods_and_drops_the_comparative_period(
+    tmp_path: Path,
+) -> None:
+    zpath = tmp_path / "dfp_cia_aberta_2021.zip"
+    _statement_zip(
+        zpath,
+        {
+            "dfp_cia_aberta_DFC_MI_con_2021.csv": [
+                _row("005410", "2021-12-31", "1", "6.01", "42"),  # indirect method
+                _row("005410", "2021-12-31", "1", "6.01", "40", ordem="PENÚLTIMO"),
+            ],
+        },
+    )
+
+    index = _source(tmp_path, {"WEGE3": "5410"})._build_index(zpath)
+
+    dfc = index["5410"][0].statements["DFC"]  # DFC_MI folded to the DFC module
+    assert [a["quantity"] for a in dfc.accounts] == ["42"]  # comparative dropped
 
 
 ZIP_BYTES = b"PK\x05\x06" + b"\x00" * 18  # smallest valid (empty) ZIP

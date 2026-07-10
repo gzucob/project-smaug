@@ -10,12 +10,12 @@ Rebuilds a 12-month period from CVM quarters. Two rules the CVM data forces:
   the isolated Q4 has no statement of its own — it is derived as
   ``annual − (Q1+Q2+Q3 isolated)``.
 
-The ITR income statement is filed year-to-date, but pycvm may expose either the
-isolated quarter or the accumulated figure. Rather than assume, each period is
+The ITR income statement is filed year-to-date, but a period may arrive as either
+the isolated quarter or the accumulated figure. Rather than assume, each period is
 normalised to an isolated quarter using its own span (``period_start`` →
 ``reference_date``): a ~3-month span is already isolated; a longer span is
 year-to-date and becomes ``YTDₙ − YTDₙ₋₁``. When the span is unknown the value is
-taken as already isolated (the observed pycvm behaviour).
+taken as already isolated (the observed CVM behaviour).
 
 The catch: the DRE and the DFC do not share a period basis. In the real CVM
 files the DRE arrives as isolated quarters while the DFC is always year-to-date,
