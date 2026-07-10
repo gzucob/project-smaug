@@ -18,8 +18,10 @@ Two real-world quirks are handled here:
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import zipfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Any, Literal
@@ -28,7 +30,7 @@ import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
 from smaug.ingestion.infrastructure.download import Sleeper, download_zip
-from smaug.shared.errors import BrapiNotFoundError
+from smaug.shared.errors import BrapiNotFoundError, CvmConsolidatedDroppedError
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -76,6 +78,54 @@ def _sanitize_dmpl(src: Path, dst: Path) -> None:
                 header = data.split(b"\n", 1)[0]
                 data = header + b"\n"
             zout.writestr(info, data)
+
+
+def _consolidated_keys(sanitized: Path, wanted: set[str]) -> set[tuple[str, str, int]]:
+    """``(cvm_code, reference_date, version)`` triples that carry a consolidated
+    BPA in the raw file, read straight from the CSV.
+
+    This is the ground truth pycvm's parallel-reader desync corrupts (#55): after
+    a duplicated head row it silently drops the whole consolidated collection for
+    every following filer, so ``doc.consolidated`` reads ``None`` even though the
+    statement was filed. We compare the parsed docs against this set to catch it.
+    """
+    keys: set[tuple[str, str, int]] = set()
+    with zipfile.ZipFile(sanitized) as archive:
+        members = [name for name in archive.namelist() if "_BPA_con_" in name]
+        for name in members:
+            with archive.open(name) as raw:
+                reader = csv.DictReader(
+                    io.TextIOWrapper(raw, encoding="latin-1"), delimiter=";"
+                )
+                for row in reader:
+                    code = row.get("CD_CVM", "").lstrip("0")
+                    if code not in wanted:
+                        continue
+                    try:
+                        version = int(row.get("VERSAO", ""))
+                    except ValueError:
+                        continue
+                    keys.add((code, row.get("DT_REFER", ""), version))
+    return keys
+
+
+def _dropped_consolidated(
+    docs: Iterable[Any], keys: set[tuple[str, str, int]]
+) -> list[tuple[str, str]]:
+    """The ``(cvm_code, reference_date)`` of kept docs whose consolidated
+    collection pycvm dropped though the raw file carries one (#55).
+
+    A doc with no consolidated *and* no matching key is a genuine individual-only
+    filer (e.g. SAPR11, which files no consolidated) — left alone, not flagged.
+    """
+    dropped: list[tuple[str, str]] = []
+    for doc in docs:
+        if doc.consolidated is not None:
+            continue
+        ref = doc.reference_date.isoformat()
+        if (doc.cvm_code, ref, doc.version) in keys:
+            dropped.append((doc.cvm_code, ref))
+    return dropped
 
 
 class CvmDataSource:
@@ -206,10 +256,34 @@ class CvmDataSource:
             if doc.cvm_code not in wanted:
                 continue
             by_code.setdefault(doc.cvm_code, {})[doc.reference_date] = doc
-        return {
+        index = {
             code: [by_date[ref] for ref in sorted(by_date)]
             for code, by_date in by_code.items()
         }
+        self._raise_if_consolidated_dropped(sanitized, wanted, index)
+        return index
+
+    def _raise_if_consolidated_dropped(
+        self, sanitized: Path, wanted: set[str], index: dict[str, list[Any]]
+    ) -> None:
+        """Refuse to serve parent-only statements pycvm left us by dropping the
+        filed consolidated ones (#55): a silent wrong number is worse than a loud
+        stop. Fatal for the run, like a failed download — the whole file is suspect.
+        """
+        keys = _consolidated_keys(sanitized, wanted)
+        docs = [doc for code_docs in index.values() for doc in code_docs]
+        dropped = _dropped_consolidated(docs, keys)
+        if not dropped:
+            return
+        code_to_ticker = {code: ticker for ticker, code in self._ticker_to_code.items()}
+        detail = ", ".join(
+            f"{code_to_ticker.get(code, code)} {ref}" for code, ref in sorted(dropped)
+        )
+        raise CvmConsolidatedDroppedError(
+            f"{self._zip_name}: pycvm dropped the filed consolidated statements "
+            f"for {detail} (issue #55); refusing to mirror the individual "
+            f"(parent-only) statements in their place."
+        )
 
     @staticmethod
     def _pick_collection(doc: Any) -> tuple[str, Any]:

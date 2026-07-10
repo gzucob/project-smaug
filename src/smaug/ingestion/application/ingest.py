@@ -27,6 +27,7 @@ from smaug.shared.errors import (
     BrapiForbiddenError,
     BrapiNotFoundError,
     BrapiRateLimitError,
+    CvmConsolidatedDroppedError,
     CvmDownloadError,
 )
 from smaug.shared.events import EventBus
@@ -101,10 +102,16 @@ class IngestPortfolioUseCase:
         for module in self._modules:
             try:
                 outcome = await self._fetch_and_store(ticker, module)
-            except (BrapiAuthError, BrapiRateLimitError, CvmDownloadError) as exc:
+            except (
+                BrapiAuthError,
+                BrapiRateLimitError,
+                CvmDownloadError,
+                CvmConsolidatedDroppedError,
+            ) as exc:
                 # Fatal for the whole run: no point hammering the rest. The CVM
-                # ZIP is shared by every ticker of the year, so its definitive
-                # download failure dooms all remaining calls identically.
+                # ZIP is shared by every ticker of the year, so a definitive
+                # download failure — or a parser desync that corrupts the file's
+                # consolidated statements (#55) — dooms all remaining calls.
                 outcomes.append(
                     FetchOutcome(ticker, module, OutcomeStatus.ABORTED, None, str(exc))
                 )

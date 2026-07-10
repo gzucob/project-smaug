@@ -43,6 +43,16 @@ class CvmDownloadError(BrapiError):
     """
 
 
+class CvmConsolidatedDroppedError(BrapiError):
+    """pycvm dropped a filed consolidated statement its reader desynced on (#55).
+
+    Its parallel CSV reader loses the whole consolidated collection for every
+    filer after a duplicated head row, offering only the individual (parent-only)
+    statement — a different, wrong figure. Fatal for the run: mirroring it would
+    silently corrupt the analysis, so we stop rather than store a plausible lie.
+    """
+
+
 class BrapiUnexpectedStatusError(BrapiError):
     """Any other non-success HTTP status we did not plan for."""
 
