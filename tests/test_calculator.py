@@ -171,10 +171,24 @@ def test_bank_null_reasons_name_each_cause() -> None:
     )
     ind = compute(bank, None, MarketData(market_cap=Decimal(8000)))  # no shares
 
-    # Cause 1 — deliberate domain judgement for the regime:
+    # Cause 1 — genuinely meaningless for a bank (ADR 0010): it reports Basileia,
+    # not net debt / EV-EBITDA, and has no EBITDA.
     assert ind.null_reasons["net_debt"] is NullReason.INAPPLICABLE_REGIME
+    assert ind.null_reasons["net_debt_to_ebitda"] is NullReason.INAPPLICABLE_REGIME
+    assert ind.null_reasons["debt_to_equity"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["ev_ebitda"] is NullReason.INAPPLICABLE_REGIME
-    # Cause 2 — inputs our mapper never reads for this regime:
+    assert ind.null_reasons["ebitda_margin"] is NullReason.INAPPLICABLE_REGIME
+    # Cause 2 — computable for a bank (the platforms show it), only unmapped by
+    # us pending #48: margins, ROIC, EBIT/working-capital multiples, current ratio.
+    assert ind.null_reasons["gross_margin"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    assert ind.null_reasons["ebit_margin"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    assert ind.null_reasons["roic"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    assert ind.null_reasons["current_ratio"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    assert ind.null_reasons["price_to_ebit"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    assert (
+        ind.null_reasons["price_to_working_capital"]
+        is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    )
     assert ind.null_reasons["fcf"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
     assert ind.null_reasons["price_to_fcf"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
     # Cause 3 — upstream inputs, each named individually:
@@ -185,6 +199,36 @@ def test_bank_null_reasons_name_each_cause() -> None:
     # Computed values never carry a reason:
     assert ind.roe is not None
     assert "roe" not in ind.null_reasons
+
+
+def test_insurer_null_reasons_split_by_regime() -> None:
+    # ADR 0010: an insurer is the near-mirror of a bank. Margins are degenerate
+    # (both reference platforms show 0%), so they are inapplicable; net debt,
+    # EV-EBITDA, debt/equity, ROIC and current ratio *are* shown by AUVP, so they
+    # are merely unmapped pending #48 — not inapplicable.
+    insurer = StandardizedFinancials(
+        reference_date=_Q3,
+        sector=Sector.INSURER,
+        total_assets=Decimal(50000),
+        equity=Decimal(9000),
+        net_income=Decimal(2500),
+        revenue=Decimal(4000),
+        filed_regime=AccountingRegime.INSURANCE,  # files as its sector predicts
+        unmapped_fields=_FINANCIAL_UNMAPPED,
+    )
+    ind = compute(insurer, None, MarketData(market_cap=Decimal(30000)))
+
+    # Inapplicable for an insurer — the margins:
+    assert ind.null_reasons["gross_margin"] is NullReason.INAPPLICABLE_REGIME
+    assert ind.null_reasons["ebit_margin"] is NullReason.INAPPLICABLE_REGIME
+    assert ind.null_reasons["ebitda_margin"] is NullReason.INAPPLICABLE_REGIME
+    # Merely unmapped for an insurer — the leverage / valuation family:
+    assert ind.null_reasons["net_debt"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    assert ind.null_reasons["net_debt_to_ebitda"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    assert ind.null_reasons["debt_to_equity"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    assert ind.null_reasons["ev_ebitda"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    assert ind.null_reasons["roic"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    assert ind.null_reasons["current_ratio"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
 
 
 def test_mismatched_filer_gets_unexpected_regime_not_inapplicable() -> None:

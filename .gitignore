@@ -33,3 +33,7 @@ preview claude rules/
 
 # Config pessoal do Claude Code
 .claude/settings.local.json
+
+# Capturas das plataformas de referência para o audit da #30 (AUVP/Investidor10)
+# — só local, para reconferência; nunca versionar.
+tmp/
