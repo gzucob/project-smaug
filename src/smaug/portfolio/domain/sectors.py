@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from smaug.shared.errors import UnknownTickerError
+
 
 class Sector(StrEnum):
     """Business sector of a ticker, granular enough for Phase 2 criteria."""
@@ -48,5 +50,8 @@ def portfolio_tickers() -> tuple[str, ...]:
 
 
 def sector_of(ticker: str) -> Sector:
-    """Return the sector for ``ticker``, raising ``KeyError`` if unknown."""
-    return PORTFOLIO[ticker]
+    """Return the sector for ``ticker``, raising ``UnknownTickerError`` if unknown."""
+    try:
+        return PORTFOLIO[ticker]
+    except KeyError as exc:
+        raise UnknownTickerError(ticker) from exc
