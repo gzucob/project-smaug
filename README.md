@@ -42,13 +42,16 @@ docker compose up -d    # sobe Mongo (Fase 1) + Postgres (Fase 2)
 
 ## Uso (Fase 1)
 
+O entrypoint é a CLI Typer `smaug.entrypoints.cli`; com o pacote instalado
+(`uv sync`) os comandos também respondem pelo atalho `smaug <comando>`.
+
 ```bash
 # Coleta o espelho cru das 9 ações (ou de tickers específicos com -t):
-uv run python -m smaug.ingest
-uv run python -m smaug.ingest -t PETR4 -t VALE3
+uv run python -m smaug.entrypoints.cli ingest
+uv run python -m smaug.entrypoints.cli ingest -t PETR4 -t VALE3
 
 # Relatório de completude por ticker (lê o espelho, não recoleta):
-uv run python -m smaug.report
+uv run python -m smaug.entrypoints.cli report
 ```
 
 A coleta é **append-only e re-executável com segurança**: cada chamada grava um
@@ -83,7 +86,7 @@ docker compose up -d
 uv run alembic upgrade head
 
 # 3. Calcula e persiste os indicadores das 9 (ou -t TICKER):
-uv run python -m smaug.analyze
+uv run python -m smaug.entrypoints.cli analyze
 
 # 4. Serve a API para o front-end:
 uvicorn smaug.entrypoints.api:app --reload
@@ -100,7 +103,7 @@ uvicorn smaug.entrypoints.api:app --reload
   retornam cotação — as demais ficam com os múltiplos de mercado nulos, mas os
   indicadores contábeis são calculados normalmente.
 - **Crescimento**: precisa de ≥2 anos no espelho; rode `CVM_YEAR=2023 uv run
-  python -m smaug.ingest` (e 2022) para popular histórico.
+  python -m smaug.entrypoints.cli ingest` (e 2022) para popular histórico.
 - Ainda **sem critérios de "tese azedando"** — isso fica para a fase de análise
   com IA (LangGraph/RAG).
 

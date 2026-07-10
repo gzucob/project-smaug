@@ -11,6 +11,18 @@ class SmaugError(Exception):
     """Base for every error raised by the application."""
 
 
+class UnknownTickerError(SmaugError):
+    """Ticker is not in the portfolio map — a user input error, not a bug.
+
+    Raised by ``sector_of`` so the CLI can report a typo (or a not-yet-added
+    ticker) as a single clean line instead of leaking a raw ``KeyError``.
+    """
+
+    def __init__(self, ticker: str) -> None:
+        self.ticker = ticker
+        super().__init__(f"Unknown ticker: {ticker} (not in portfolio)")
+
+
 class BrapiError(SmaugError):
     """Base for failures while talking to a data source.
 

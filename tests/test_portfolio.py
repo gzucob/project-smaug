@@ -3,6 +3,7 @@
 import pytest
 
 from smaug.portfolio.domain.sectors import Sector, portfolio_tickers, sector_of
+from smaug.shared.errors import UnknownTickerError
 
 
 def test_should_list_nine_tickers_when_portfolio_read() -> None:
@@ -19,6 +20,6 @@ def test_should_flag_commodity_as_non_financial_when_ticker_is_petr4() -> None:
     assert not sector_of("PETR4").is_financial
 
 
-def test_should_raise_key_error_when_ticker_unknown() -> None:
-    with pytest.raises(KeyError):
+def test_should_raise_unknown_ticker_error_when_ticker_unknown() -> None:
+    with pytest.raises(UnknownTickerError, match="NOPE3"):
         sector_of("NOPE3")

@@ -8,8 +8,9 @@ dependencies and call the use cases (plan §3.1 / CLAUDE.md).
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Coroutine
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
 import httpx
 import typer
@@ -49,6 +50,7 @@ from smaug.portfolio.domain.cvm_codes import TICKER_TO_CNPJ, TICKER_TO_CVM_CODE
 from smaug.portfolio.domain.sectors import portfolio_tickers
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
+from smaug.shared.errors import UnknownTickerError
 from smaug.shared.events import EventBus
 from smaug.shared.logging import get_logger
 from smaug.shared.sql_db import create_engine, create_session_factory
@@ -57,6 +59,20 @@ app = typer.Typer(help="smaug — CVM/brapi ingestion and indicator analysis.")
 logger = get_logger("smaug.cli")
 
 _FAILED_STATUSES = frozenset({OutcomeStatus.ERROR, OutcomeStatus.ABORTED})
+
+
+def _guarded[T](coro: Coroutine[Any, Any, T]) -> T:
+    """Run a use-case coroutine, turning an unknown ticker into a clean exit.
+
+    Keeps the raw ``KeyError`` from ``sector_of`` off the terminal — the CLI
+    reports a typo (or a not-yet-added ticker) as one line, like the ingestion
+    side maps brapi HTTP errors to typed ones.
+    """
+    try:
+        return asyncio.run(coro)
+    except UnknownTickerError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
 
 
 @app.command()
@@ -89,7 +105,7 @@ def report(
 ) -> None:
     """Print the completeness report read from the raw mirror."""
     tickers = tuple(ticker) if ticker else portfolio_tickers()
-    asyncio.run(_run_report(tickers))
+    _guarded(_run_report(tickers))
 
 
 def _build_data_source(
@@ -175,7 +191,7 @@ def analyze(
 ) -> None:
     """Compute the fundamental + market indicators and store them in Postgres."""
     tickers = tuple(ticker) if ticker else portfolio_tickers()
-    exit_code = asyncio.run(_run_analyze(tickers))
+    exit_code = _guarded(_run_analyze(tickers))
     raise typer.Exit(code=exit_code)
 
 
@@ -222,7 +238,7 @@ def doctor(
     never recomputes or persists.
     """
     tickers = tuple(ticker) if ticker else portfolio_tickers()
-    exit_code = asyncio.run(_run_doctor(tickers))
+    exit_code = _guarded(_run_doctor(tickers))
     raise typer.Exit(code=exit_code)
 
 
