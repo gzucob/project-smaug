@@ -14,7 +14,7 @@ from smaug.analysis.domain.entities import (
     AnalysisView,
     TickerAnalysis,
 )
-from smaug.analysis.domain.indicators import Indicators
+from smaug.analysis.domain.indicators import Indicators, NullReason
 from smaug.analysis.infrastructure.sqlalchemy_models import TickerAnalysisRow
 from smaug.portfolio.domain.sectors import Sector
 
@@ -62,6 +62,7 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         revenue=i.revenue,
         net_income=i.net_income,
         dividends=i.dividends,
+        null_reasons={k: v.value for k, v in i.null_reasons.items()},
     )
 
 
@@ -108,6 +109,10 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
             revenue=row.revenue,
             net_income=row.net_income,
             dividends=row.dividends,
+            # Pre-vocabulary rows carry NULL: degrade to "unclassified" ({}).
+            null_reasons={
+                k: NullReason(v) for k, v in (row.null_reasons or {}).items()
+            },
         ),
     )
 

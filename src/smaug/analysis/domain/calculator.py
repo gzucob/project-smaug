@@ -14,10 +14,15 @@ No I/O, no framework — just arithmetic over ``StandardizedFinancials`` and
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from decimal import Decimal
 
-from smaug.analysis.domain.financials import MarketData, StandardizedFinancials
-from smaug.analysis.domain.indicators import Indicators
+from smaug.analysis.domain.financials import (
+    MarketData,
+    StandardizedFinancials,
+    expected_regime,
+)
+from smaug.analysis.domain.indicators import Indicators, NullReason
 
 _MONTHS_IN_YEAR = Decimal(12)
 # Statutory Brazilian corporate rate (IRPJ 25% + CSLL 9%). ROIC's NOPAT uses this
@@ -76,12 +81,155 @@ def _net_debt(financials: StandardizedFinancials) -> Decimal | None:
     return financials.total_debt - (financials.cash or Decimal(0))
 
 
+# Indicators deliberately nulled for a financial-regime filer (the sector guard
+# below). Auditing which of these are meaningless vs merely unconventional is
+# still open in #30; here they are only *attributed*, not changed.
+_REGIME_GUARDED = frozenset(
+    {
+        "roic",
+        "gross_margin",
+        "ebit_margin",
+        "ebitda_margin",
+        "net_debt",
+        "net_debt_to_ebitda",
+        "debt_to_equity",
+        "current_ratio",
+        "price_to_ebit",
+        "price_to_working_capital",
+        "ev_ebitda",
+    }
+)
+
+
+@dataclass(frozen=True)
+class _Needs:
+    """The inputs one indicator needs, for attributing its null (#30).
+
+    ``accounts`` are ``StandardizedFinancials`` field names; ``cap``/``shares``
+    are the market-side inputs; ``prior`` is the prior-period field a growth
+    ratio compares against.
+    """
+
+    accounts: tuple[str, ...] = ()
+    cap: bool = False
+    shares: bool = False
+    prior: str | None = None
+
+
+_NEEDS: dict[str, _Needs] = {
+    "roe": _Needs(accounts=("net_income", "equity")),
+    "roa": _Needs(accounts=("net_income", "total_assets")),
+    "roic": _Needs(accounts=("ebit", "equity", "total_debt")),
+    "net_margin": _Needs(accounts=("net_income", "revenue")),
+    "gross_margin": _Needs(accounts=("gross_profit", "revenue")),
+    "ebit_margin": _Needs(accounts=("ebit", "revenue")),
+    "ebitda_margin": _Needs(accounts=("ebitda", "revenue")),
+    "asset_turnover": _Needs(accounts=("revenue", "total_assets")),
+    "eps": _Needs(accounts=("net_income",), shares=True),
+    "bvps": _Needs(accounts=("equity",), shares=True),
+    "net_debt": _Needs(accounts=("total_debt",)),
+    "net_debt_to_ebitda": _Needs(accounts=("total_debt", "ebitda")),
+    "debt_to_equity": _Needs(accounts=("total_debt", "equity")),
+    "liabilities_to_assets": _Needs(accounts=("total_assets", "equity")),
+    "current_ratio": _Needs(accounts=("current_assets", "current_liabilities")),
+    "revenue_growth": _Needs(accounts=("revenue",), prior="revenue"),
+    "net_income_growth": _Needs(accounts=("net_income",), prior="net_income"),
+    "pe": _Needs(accounts=("net_income",), cap=True),
+    "pb": _Needs(accounts=("equity",), cap=True),
+    "psr": _Needs(accounts=("revenue",), cap=True),
+    "price_to_assets": _Needs(accounts=("total_assets",), cap=True),
+    "price_to_ebit": _Needs(accounts=("ebit",), cap=True),
+    "price_to_working_capital": _Needs(
+        accounts=("current_assets", "current_liabilities"), cap=True
+    ),
+    "payout": _Needs(accounts=("dividends_paid", "net_income")),
+    "dividend_yield": _Needs(accounts=("dividends_paid",), cap=True),
+    "ev_ebitda": _Needs(accounts=("total_debt", "ebitda"), cap=True),
+    "fcf": _Needs(accounts=("cfo", "capex")),
+    "price_to_fcf": _Needs(accounts=("cfo", "capex"), cap=True),
+    "fcf_yield": _Needs(accounts=("cfo", "capex"), cap=True),
+    "revenue": _Needs(accounts=("revenue",)),
+    "net_income": _Needs(accounts=("net_income",)),
+    "dividends": _Needs(accounts=("dividends_paid",)),
+}
+
+
+def _classify(
+    name: str,
+    needs: _Needs,
+    f: StandardizedFinancials,
+    previous: StandardizedFinancials | None,
+    market: MarketData,
+    *,
+    guarded: bool,
+    mismatch: bool,
+) -> NullReason | None:
+    """Attribute one null indicator to a cause, most-upstream cause first.
+
+    Precedence: the regime guard (the null exists regardless of inputs), then
+    the accounting inputs (unmapped beats absent, and a regime mismatch
+    overrides both — the mismatch is why the input was never read), then the
+    market-side inputs, then the prior period. ``None`` = unclassified (e.g. a
+    zero denominator).
+    """
+    if guarded and name in _REGIME_GUARDED:
+        return (
+            NullReason.UNEXPECTED_REGIME if mismatch else NullReason.INAPPLICABLE_REGIME
+        )
+    for account in needs.accounts:
+        if getattr(f, account) is None:
+            if account in f.unmapped_fields:
+                return (
+                    NullReason.UNEXPECTED_REGIME
+                    if mismatch
+                    else NullReason.SOURCE_ACCOUNT_UNMAPPED
+                )
+            return NullReason.SOURCE_ACCOUNT_ABSENT
+    if needs.cap and market.market_cap is None:
+        return NullReason.MISSING_PRICE
+    if needs.shares and market.shares is None:
+        return NullReason.MISSING_SHARE_COUNT
+    if needs.prior is not None and (
+        previous is None or getattr(previous, needs.prior) is None
+    ):
+        return NullReason.MISSING_PRIOR_PERIOD
+    return None
+
+
+def _null_reasons(
+    computed: Indicators,
+    f: StandardizedFinancials,
+    previous: StandardizedFinancials | None,
+    market: MarketData,
+) -> dict[str, NullReason]:
+    """Name the cause of every classifiable null in ``computed`` (#30)."""
+    guarded = f.sector.is_financial
+    mismatch = f.filed_regime is not None and f.filed_regime != expected_regime(
+        f.sector
+    )
+    reasons: dict[str, NullReason] = {}
+    for name, needs in _NEEDS.items():
+        if getattr(computed, name) is not None:
+            continue
+        reason = _classify(
+            name, needs, f, previous, market, guarded=guarded, mismatch=mismatch
+        )
+        if reason is not None:
+            reasons[name] = reason
+    return reasons
+
+
 def compute(
     current: StandardizedFinancials,
     previous: StandardizedFinancials | None,
     market: MarketData,
 ) -> Indicators:
-    """Compute all applicable indicators for one ticker/period."""
+    """Compute all applicable indicators for one ticker/period.
+
+    Every null field in the result carries its cause in ``null_reasons`` when
+    one is classifiable — the reason is attributed here, where the null is
+    produced, because only the calculator sees which input broke which ratio.
+    """
     f = current
     is_financial = f.sector.is_financial
     cap = market.market_cap
@@ -106,7 +254,7 @@ def compute(
     prev_revenue = previous.revenue if previous is not None else None
     prev_net_income = previous.net_income if previous is not None else None
 
-    return Indicators(
+    indicators = Indicators(
         roe=_div(annual_net_income, f.equity),
         roa=_div(annual_net_income, f.total_assets),
         roic=None if is_financial else _div(nopat, invested_capital),
@@ -141,4 +289,7 @@ def compute(
         revenue=f.revenue,
         net_income=f.net_income,
         dividends=f.dividends_paid,
+    )
+    return replace(
+        indicators, null_reasons=_null_reasons(indicators, f, previous, market)
     )

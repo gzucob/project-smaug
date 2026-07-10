@@ -1,10 +1,16 @@
 """Indicator calculator: annualization, sector awareness, growth (pure, no I/O)."""
 
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
 from smaug.analysis.domain.calculator import compute
-from smaug.analysis.domain.financials import MarketData, StandardizedFinancials
+from smaug.analysis.domain.financials import (
+    AccountingRegime,
+    MarketData,
+    StandardizedFinancials,
+)
+from smaug.analysis.domain.indicators import NullReason
 from smaug.portfolio.domain.sectors import Sector
 
 _Q3 = date(2024, 9, 30)  # YTD 9 months -> annualization factor 12/9
@@ -131,3 +137,95 @@ def test_bank_skips_inapplicable_indicators() -> None:
     assert ind.price_to_fcf is None
     # No prior period -> no growth
     assert ind.revenue_growth is None
+
+
+# The fields the CVM mapper deliberately skips for a financial-regime filer —
+# mirrors mongo_fundamentals._FINANCIAL_UNMAPPED_FIELDS, inlined here so the
+# domain test stays free of infrastructure imports.
+_FINANCIAL_UNMAPPED = frozenset(
+    {
+        "gross_profit",
+        "ebit",
+        "ebitda",
+        "dep_amort",
+        "cash",
+        "current_assets",
+        "current_liabilities",
+        "total_debt",
+        "cfo",
+        "capex",
+    }
+)
+
+
+def test_bank_null_reasons_name_each_cause() -> None:
+    bank = StandardizedFinancials(
+        reference_date=_Q3,
+        sector=Sector.BANK,
+        total_assets=Decimal(90000),
+        equity=Decimal(8000),
+        net_income=Decimal(600),
+        revenue=Decimal(3000),
+        filed_regime=AccountingRegime.BANK,  # files as its sector predicts
+        unmapped_fields=_FINANCIAL_UNMAPPED,
+    )
+    ind = compute(bank, None, MarketData(market_cap=Decimal(8000)))  # no shares
+
+    # Cause 1 — deliberate domain judgement for the regime:
+    assert ind.null_reasons["net_debt"] is NullReason.INAPPLICABLE_REGIME
+    assert ind.null_reasons["ev_ebitda"] is NullReason.INAPPLICABLE_REGIME
+    # Cause 2 — inputs our mapper never reads for this regime:
+    assert ind.null_reasons["fcf"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    assert ind.null_reasons["price_to_fcf"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    # Cause 3 — upstream inputs, each named individually:
+    assert ind.null_reasons["eps"] is NullReason.MISSING_SHARE_COUNT
+    assert ind.null_reasons["revenue_growth"] is NullReason.MISSING_PRIOR_PERIOD
+    # The filing simply has no dividend line — absent, not unmapped:
+    assert ind.null_reasons["payout"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    # Computed values never carry a reason:
+    assert ind.roe is not None
+    assert "roe" not in ind.null_reasons
+
+
+def test_mismatched_filer_gets_unexpected_regime_not_inapplicable() -> None:
+    # The CXSE3 case (ADR 0006): an insurer by sector that files as a holding.
+    # Its regime-driven nulls are neither inapplicable nor a mapping gap — the
+    # filer reports under a schema its sector does not predict.
+    holding = StandardizedFinancials(
+        reference_date=date(2024, 12, 31),
+        sector=Sector.INSURER,
+        total_assets=Decimal(20000),
+        equity=Decimal(9000),
+        net_income=Decimal(2500),
+        revenue=Decimal(4000),
+        filed_regime=AccountingRegime.CORPORATE,
+        unmapped_fields=_FINANCIAL_UNMAPPED,
+    )
+    ind = compute(
+        holding, None, MarketData(market_cap=Decimal(30000), shares=Decimal(3000))
+    )
+
+    assert ind.null_reasons["gross_margin"] is NullReason.UNEXPECTED_REGIME  # guarded
+    assert ind.null_reasons["fcf"] is NullReason.UNEXPECTED_REGIME  # unmapped input
+    assert ind.roe is not None  # the mapped core still computes
+
+
+def test_missing_price_nulls_the_market_multiples_with_a_named_cause() -> None:
+    # The #42 shape: fundamentals fine, no price -> every cap-based multiple
+    # must say "missing price", not go silently null.
+    ind = compute(_nonfinancial(), None, MarketData(shares=Decimal(600)))
+
+    assert ind.pe is None
+    assert ind.null_reasons["pe"] is NullReason.MISSING_PRICE
+    assert ind.null_reasons["dividend_yield"] is NullReason.MISSING_PRICE
+    assert ind.eps is not None  # per-share needs only the share count
+
+
+def test_unclassifiable_null_carries_no_reason() -> None:
+    # A zero denominator is a null the vocabulary deliberately does not cover:
+    # it must stay unclassified (absent from the map), never misattributed.
+    zero_income = replace(_nonfinancial(), net_income=Decimal(0))
+    ind = compute(zero_income, None, MarketData(market_cap=Decimal(12000)))
+
+    assert ind.payout is None  # dividends / 0
+    assert "payout" not in ind.null_reasons
