@@ -22,9 +22,15 @@ servidos por uma API de leitura. Ambas já estão implementadas — veja
 
 ## Documentação
 
-- Plano da Fase 1 — [`docs/PLANO_FASE1.md`](docs/PLANO_FASE1.md)
-- Critérios da Fase 1 — [`docs/preview_fase1_criterios_implementacao.md`](docs/preview_fase1_criterios_implementacao.md)
-- Achados de fidelidade dos indicadores (Fase 2) — [`docs/FINDINGS_INDICATORS.md`](docs/FINDINGS_INDICATORS.md)
+- Roadmap (objetivo e milestones M0–M3) — [`docs/ROADMAP.md`](docs/ROADMAP.md)
+- Decisões de arquitetura e modelagem (ADRs) — [`docs/adr/`](docs/adr/)
+- Modelo de documentação (regra vs. ADR vs. issue vs. relatório gerado) —
+  [`.claude/RULES/RULES_DOCS.md`](.claude/RULES/RULES_DOCS.md)
+
+O que é verdade sobre os dados **agora** não vive em documento: vem de um
+comando (`smaug doctor`) e dos testes. Os planos da Fase 1 e o log de achados
+(`FINDINGS_INDICATORS.md`) foram aposentados — suas decisões viraram ADRs, seus
+follow-ups viraram issues. O histórico segue no git.
 
 ## Setup local
 
