@@ -4,8 +4,10 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import httpx
+import pytest
 
 from smaug.analysis.infrastructure.brapi_price import BrapiPriceProvider
+from smaug.shared.errors import BrapiTimeoutError
 
 
 def _mock_client(handler: object) -> httpx.AsyncClient:
@@ -92,3 +94,25 @@ async def test_year_prices_empty_when_no_results() -> None:
 
     assert prices.nominal_avg is None
     assert prices.adjusted_avg is None
+
+
+async def test_get_maps_timeout_to_brapi_error() -> None:
+    # A timeout raises before any HTTP response, so it must be translated into
+    # the BrapiError family the analyze use case degrades on — not escape it.
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    async with _mock_client(handler) as http:
+        provider = BrapiPriceProvider("https://brapi.dev/api", "SECRET", http)
+        with pytest.raises(BrapiTimeoutError):
+            await provider.get("PETR4")
+
+
+async def test_year_prices_maps_transport_error_to_brapi_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    async with _mock_client(handler) as http:
+        provider = BrapiPriceProvider("https://brapi.dev/api", "SECRET", http)
+        with pytest.raises(BrapiTimeoutError):
+            await provider.year_prices("PETR4", 2024)
