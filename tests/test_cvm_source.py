@@ -1,4 +1,4 @@
-"""CvmDataSource pure logic: DMPL sanitizer, payload shaping, skip on unmapped."""
+"""CvmDataSource pure logic: DMPL sanitizer, payload shaping, download retry."""
 
 import zipfile
 from datetime import date
@@ -12,7 +12,8 @@ import pytest
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, _sanitize_dmpl
 from smaug.portfolio.domain.cvm_codes import TICKER_TO_CVM_CODE
 from smaug.portfolio.domain.sectors import portfolio_tickers
-from smaug.shared.errors import BrapiNotFoundError
+from smaug.shared.errors import BrapiNotFoundError, CvmDownloadError
+from tests.fakes import no_sleep
 
 
 def test_every_portfolio_ticker_has_a_cvm_code() -> None:
@@ -144,3 +145,76 @@ async def test_fetch_returns_one_result_per_filed_quarter(tmp_path: Path) -> Non
     assert all(
         r.request["reference_date"] == r.payload["reference_date"] for r in results
     )
+
+
+ZIP_BYTES = b"PK\x05\x06" + b"\x00" * 18  # smallest valid (empty) ZIP
+
+
+class _FlakyTransport(httpx.AsyncBaseTransport):
+    """Cuts the connection ``failures`` times, then serves the ZIP."""
+
+    def __init__(self, failures: int, status_code: int = 200) -> None:
+        self.failures = failures
+        self.requests = 0
+        self._status_code = status_code
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.requests += 1
+        if self.requests <= self.failures:
+            raise httpx.RemoteProtocolError(
+                "peer closed connection without sending complete message body",
+                request=request,
+            )
+        return httpx.Response(self._status_code, content=ZIP_BYTES)
+
+
+async def _download_with(transport: httpx.AsyncBaseTransport, dst: Path) -> None:
+    async with httpx.AsyncClient(transport=transport) as http:
+        source = CvmDataSource(
+            http,
+            {"PETR4": "9512"},
+            year=2021,
+            cache_dir=str(dst.parent),
+            document="DFP",
+            sleep=no_sleep,
+        )
+        await source._download(dst)
+
+
+async def test_download_retries_a_cut_connection_and_succeeds(tmp_path: Path) -> None:
+    transport = _FlakyTransport(failures=1)
+    dst = tmp_path / "dfp_cia_aberta_2021.zip"
+
+    await _download_with(transport, dst)
+
+    assert transport.requests == 2  # first attempt cut, second healed it
+    assert dst.read_bytes() == ZIP_BYTES
+    assert not (tmp_path / "dfp_cia_aberta_2021.part").exists()  # renamed away
+
+
+async def test_download_gives_up_after_retries_without_a_partial_file(
+    tmp_path: Path,
+) -> None:
+    transport = _FlakyTransport(failures=99)
+    dst = tmp_path / "dfp_cia_aberta_2021.zip"
+
+    with pytest.raises(CvmDownloadError, match="giving up"):
+        await _download_with(transport, dst)
+
+    assert transport.requests == 3  # 1 attempt + 2 retries
+    assert not dst.exists()  # nothing truncated left to poison the cache
+
+
+async def test_download_retries_5xx_but_fails_404_immediately(tmp_path: Path) -> None:
+    dst = tmp_path / "dfp_cia_aberta_2021.zip"
+
+    flaky_5xx = _FlakyTransport(failures=0, status_code=503)
+    with pytest.raises(CvmDownloadError, match="HTTP 503"):
+        await _download_with(flaky_5xx, dst)
+    assert flaky_5xx.requests == 3  # 5xx is transient: exhausted the retries
+
+    missing_year = _FlakyTransport(failures=0, status_code=404)
+    with pytest.raises(CvmDownloadError, match="HTTP 404"):
+        await _download_with(missing_year, dst)
+    assert missing_year.requests == 1  # 4xx is permanent: no retry
+    assert not dst.exists()

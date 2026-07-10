@@ -4,7 +4,9 @@ Orchestration only. It owns no HTTP and no Mongo details — it talks to the
 brapi client and to the repository *interface*, and publishes a domain event
 on the shared bus. Resilience follows plan §5.1: 401 stops the run, plan/rate
 limits stop the run, 404 (unknown) and 403 (plan-restricted) skip the call, and
-any single failure never takes the other tickers down with it.
+any single failure never takes the other tickers down with it. A definitive CVM
+ZIP download failure also stops the run — the file is shared by the whole year,
+so every remaining call would fail identically.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from smaug.shared.errors import (
     BrapiForbiddenError,
     BrapiNotFoundError,
     BrapiRateLimitError,
+    CvmDownloadError,
 )
 from smaug.shared.events import EventBus
 from smaug.shared.logging import get_logger
@@ -98,8 +101,10 @@ class IngestPortfolioUseCase:
         for module in self._modules:
             try:
                 outcome = await self._fetch_and_store(ticker, module)
-            except (BrapiAuthError, BrapiRateLimitError) as exc:
-                # Fatal for the whole run: no point hammering the rest.
+            except (BrapiAuthError, BrapiRateLimitError, CvmDownloadError) as exc:
+                # Fatal for the whole run: no point hammering the rest. The CVM
+                # ZIP is shared by every ticker of the year, so its definitive
+                # download failure dooms all remaining calls identically.
                 outcomes.append(
                     FetchOutcome(ticker, module, OutcomeStatus.ABORTED, None, str(exc))
                 )

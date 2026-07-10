@@ -12,7 +12,11 @@ class SmaugError(Exception):
 
 
 class BrapiError(SmaugError):
-    """Base for failures while talking to the brapi API."""
+    """Base for failures while talking to a data source.
+
+    Named for the first source (brapi); the CVM source raises from the same
+    family so the ingestion use case keeps a single error root to handle.
+    """
 
 
 class BrapiAuthError(BrapiError):
@@ -29,6 +33,14 @@ class BrapiNotFoundError(BrapiError):
 
 class BrapiForbiddenError(BrapiError):
     """Ticker requires a higher brapi plan (HTTP 403). Skip this call."""
+
+
+class CvmDownloadError(BrapiError):
+    """The CVM yearly ZIP could not be downloaded (retries exhausted or 4xx).
+
+    Fatal for the run: the ZIP is shared by every ticker of that year/document,
+    so there is nothing left to collect once it is unavailable.
+    """
 
 
 class BrapiUnexpectedStatusError(BrapiError):

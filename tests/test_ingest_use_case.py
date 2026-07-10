@@ -7,6 +7,7 @@ from smaug.shared.errors import (
     BrapiAuthError,
     BrapiForbiddenError,
     BrapiNotFoundError,
+    CvmDownloadError,
 )
 from smaug.shared.events import EventBus
 from tests.fakes import FakeDataSource, FakeRawIngestionRepository, no_sleep
@@ -97,6 +98,24 @@ async def test_should_skip_module_on_403_plan_restriction_and_keep_going() -> No
 
 async def test_should_abort_run_on_auth_error_before_next_ticker() -> None:
     source = FakeDataSource(errors={("PETR4", "m1"): BrapiAuthError("bad token")})
+    repo = FakeRawIngestionRepository()
+
+    use_case = IngestPortfolioUseCase(
+        source, repo, EventBus(), ["m1", "m2"], delay_seconds=0, sleep=no_sleep
+    )
+    outcomes = await use_case.execute(["PETR4", "VALE3"])
+
+    assert outcomes[-1].status is OutcomeStatus.ABORTED
+    assert all(o.ticker == "PETR4" for o in outcomes)  # never reached VALE3
+    assert repo.items == []
+
+
+async def test_should_abort_run_when_cvm_zip_download_definitively_fails() -> None:
+    # The yearly ZIP is shared by every ticker: once its download is a lost
+    # cause, every remaining call would fail identically — stop, don't crash.
+    source = FakeDataSource(
+        errors={("PETR4", "m1"): CvmDownloadError("giving up after 3 attempts")}
+    )
     repo = FakeRawIngestionRepository()
 
     use_case = IngestPortfolioUseCase(
