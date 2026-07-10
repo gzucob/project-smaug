@@ -11,7 +11,7 @@ the presentation layer decides formatting.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from decimal import Decimal
 from enum import StrEnum
 
@@ -97,3 +97,13 @@ class Indicators:
     # Why each null field is null, keyed by the field's name. Only null fields
     # appear; a null field with no entry is unclassified (see ``NullReason``).
     null_reasons: Mapping[str, NullReason] = field(default_factory=dict)
+
+
+def indicator_names() -> tuple[str, ...]:
+    """The names of every indicator field, in declaration order.
+
+    Derived from the dataclass so a new indicator is covered automatically —
+    the coverage report (#47) enumerates exactly these, and ``null_reasons`` (the
+    attribution map, not an indicator) is excluded.
+    """
+    return tuple(f.name for f in fields(Indicators) if f.name != "null_reasons")
