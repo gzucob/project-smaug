@@ -27,6 +27,7 @@ from typing import Any
 import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
+from smaug.ingestion.infrastructure.download import Sleeper, download_zip
 from smaug.shared.errors import BrapiNotFoundError
 from smaug.shared.logging import get_logger
 
@@ -61,12 +62,14 @@ class CvmCapitalSource:
         year: int,
         cache_dir: str,
         base_url: str | None = None,
+        sleep: Sleeper = asyncio.sleep,
     ) -> None:
         self._http = http_client
         self._ticker_to_cnpj = dict(ticker_to_cnpj)
         self._year = year
         self._cache_dir = Path(cache_dir)
         self._base_url = (base_url or CVM_FRE_BASE_URL).rstrip("/")
+        self._sleep = sleep
         self._index: dict[str, dict[str, Any]] | None = None
         self._lock = asyncio.Lock()
 
@@ -129,11 +132,13 @@ class CvmCapitalSource:
             return index
 
     async def _download(self, dst: Path) -> None:
+        # Same shared-file reasoning as the statements ZIP: retry + atomic
+        # write, and a definitive failure is fatal for the run (#16).
         url = f"{self._base_url}/{self._zip_name}"
         logger.info("Downloading CVM FRE %s from %s", self._year, url)
-        response = await self._http.get(url, timeout=180.0, follow_redirects=True)
-        response.raise_for_status()
-        dst.write_bytes(response.content)
+        await download_zip(
+            self._http, url, dst, follow_redirects=True, sleep=self._sleep
+        )
 
     def _build_index(self, archive: Path) -> dict[str, dict[str, Any]]:
         """Index the paid-in capital row per wanted CNPJ (sync; runs in a thread).

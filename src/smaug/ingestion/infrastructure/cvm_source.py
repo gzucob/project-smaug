@@ -27,6 +27,7 @@ from typing import Any, Literal
 import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
+from smaug.ingestion.infrastructure.download import Sleeper, download_zip
 from smaug.shared.errors import BrapiNotFoundError
 from smaug.shared.logging import get_logger
 
@@ -89,6 +90,7 @@ class CvmDataSource:
         cache_dir: str,
         document: CvmDocument = "ITR",
         base_url: str | None = None,
+        sleep: Sleeper = asyncio.sleep,
     ) -> None:
         self._http = http_client
         self._ticker_to_code = dict(ticker_to_code)
@@ -97,6 +99,7 @@ class CvmDataSource:
         self._document = document
         self._prefix = _DOCUMENT_PREFIX[document]
         self._base_url = (base_url or _DOCUMENT_BASE_URL[document]).rstrip("/")
+        self._sleep = sleep
         self._index: dict[str, list[Any]] | None = None
         self._lock = asyncio.Lock()
 
@@ -177,11 +180,15 @@ class CvmDataSource:
             return index
 
     async def _download(self, dst: Path) -> None:
+        """Fetch the yearly ZIP with retry + atomic write (see ``download_zip``).
+
+        A definitive failure raises ``CvmDownloadError``; the use case treats
+        it as fatal for the run, since every ticker of the year shares this
+        file.
+        """
         url = f"{self._base_url}/{self._zip_name}"
         logger.info("Downloading CVM %s %s from %s", self._document, self._year, url)
-        response = await self._http.get(url, timeout=180.0)
-        response.raise_for_status()
-        dst.write_bytes(response.content)
+        await download_zip(self._http, url, dst, sleep=self._sleep)
 
     def _build_index(self, sanitized: Path) -> dict[str, list[Any]]:
         """Index every filed period per wanted CVM code (sync; runs in a thread).
