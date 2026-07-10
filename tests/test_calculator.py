@@ -265,6 +265,16 @@ def test_missing_price_nulls_the_market_multiples_with_a_named_cause() -> None:
     assert ind.eps is not None  # per-share needs only the share count
 
 
+def test_missing_shares_blames_the_share_count_not_the_price() -> None:
+    # Closed-year cap = price × shares (ADR 0012): with the year's price present
+    # but no filed share count, the cap-based multiples blame the shares.
+    ind = compute(_nonfinancial(), None, MarketData(price=Decimal(6)))
+
+    assert ind.pe is None
+    assert ind.null_reasons["pe"] is NullReason.MISSING_SHARE_COUNT
+    assert ind.null_reasons["pb"] is NullReason.MISSING_SHARE_COUNT
+
+
 def test_unclassifiable_null_carries_no_reason() -> None:
     # A zero denominator is a null the vocabulary deliberately does not cover:
     # it must stay unclassified (absent from the map), never misattributed.

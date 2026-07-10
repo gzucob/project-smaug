@@ -213,17 +213,18 @@ class AnalyzePortfolioUseCase:
     ) -> tuple[MarketData, Decimal | None]:
         """Price the closed-year multiples on the year's dividend-adjusted average.
 
-        P/E and P/B scale linearly with price, so repricing the *current* market
-        cap onto the year's adjusted basis — ``current_cap × adjusted_avg /
-        current_price`` — gives the historical multiple without needing a
-        historical share count. A price failure degrades to null market multiples
-        while keeping the accounting indicators — including the per-share ones,
-        which need only the share count. Returns the market inputs plus the
-        year's nominal average (stored for reference, not used in multiples).
+        The market cap is built from that year's own facts —
+        ``adjusted_avg × shares(year)`` — rather than repriced from the live
+        quote (superseding ADR 0001). This makes a closed-year row reproducible
+        from the database and independent of the current quote, so it survives a
+        brapi outage: the year's price comes from Yahoo (ADR 0011) and the share
+        count from CVM's filed capital for that year (ADR 0004). The ``quote`` is
+        used only as the share-count fallback when CVM has none. A missing year
+        price or share count degrades the cap to null; the per-share indicators
+        (which need only the share count) are unaffected. Returns the market
+        inputs plus the year's nominal average (stored for reference).
         """
         shares = await self._shares_for(ticker, year, quote)
-        if quote.price is None or quote.price == 0:
-            return MarketData(shares=shares), None
         try:
             prices = await self._price_provider.year_prices(ticker, year)
         except BrapiError as exc:
@@ -236,8 +237,6 @@ class AnalyzePortfolioUseCase:
             return MarketData(shares=shares), None
 
         adjusted = prices.adjusted_avg
-        effective_cap: Decimal | None = None
-        if adjusted is not None and quote.market_cap is not None:
-            effective_cap = quote.market_cap * adjusted / quote.price
-        market = MarketData(price=adjusted, market_cap=effective_cap, shares=shares)
+        cap = None if adjusted is None or shares is None else adjusted * shares
+        market = MarketData(price=adjusted, market_cap=cap, shares=shares)
         return market, prices.nominal_avg

@@ -1,6 +1,6 @@
 # 0001 — Closed-year multiples reprice the market cap onto the dividend-adjusted average
 
-- **Status:** Accepted
+- **Status:** Superseded by [0012](0012-closed-year-cap-from-year-price-and-shares.md)
 - **Date:** 2026-07-08
 - **Provenance:** recorded retroactively on 2026-07-10 from F7 of
   `docs/FINDINGS_INDICATORS.md` (deleted; recoverable in git history). See `.claude/RULES/RULES_DOCS.md`.
