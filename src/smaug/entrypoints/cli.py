@@ -24,9 +24,11 @@ from smaug.analysis.application.doctor import (
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.infrastructure.brapi_price import BrapiPriceProvider
+from smaug.analysis.infrastructure.composite_price import CompositePriceProvider
 from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
 from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsReader
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
+from smaug.analysis.infrastructure.yahoo_price import YahooPriceHistory
 from smaug.ingestion.application.ingest import (
     FetchOutcome,
     IngestPortfolioUseCase,
@@ -206,10 +208,13 @@ async def _run_analyze(tickers: tuple[str, ...]) -> int:
                 reader=MongoFundamentalsReader(
                     mongo[settings.mongo_db]["raw_ingestions"]
                 ),
-                price_provider=BrapiPriceProvider(
-                    settings.brapi_base_url,
-                    settings.brapi_token.get_secret_value(),
-                    http,
+                price_provider=CompositePriceProvider(
+                    quote=BrapiPriceProvider(
+                        settings.brapi_base_url,
+                        settings.brapi_token.get_secret_value(),
+                        http,
+                    ),
+                    history=YahooPriceHistory(settings.yahoo_base_url, http),
                 ),
                 repository=SqlAlchemyAnalysisRepository(session_factory),
                 shares_reader=MongoSharesReader(

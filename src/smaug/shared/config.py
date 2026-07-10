@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     brapi_base_url: str = Field(default="https://brapi.dev/api")
     brapi_modules: tuple[str, ...] = Field(default=DEFAULT_BRAPI_MODULES)
 
+    # ---- Yahoo Finance (closed-year price history) ----
+    # brapi's free plan withholds multi-year daily history for all but its demo
+    # tickers (ADR 0007/0011), so the closed-year averages come from Yahoo's
+    # public chart endpoint. No token; a browser-like User-Agent is set per call.
+    yahoo_base_url: str = Field(default="https://query1.finance.yahoo.com")
+
     # ---- CVM ----
     cvm_modules: tuple[str, ...] = Field(default=DEFAULT_CVM_MODULES)
     # Which CVM document to mirror: DFP = annual closed year (default, used by the
