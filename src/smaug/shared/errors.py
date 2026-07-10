@@ -43,6 +43,16 @@ class BrapiNotFoundError(BrapiError):
     """Ticker or module not found (HTTP 404). Skip this call, keep going."""
 
 
+class BrapiTimeoutError(BrapiError):
+    """Transport-layer failure before any HTTP response (timeout / connection).
+
+    An httpx timeout or network error never reaches ``_raise_for_status`` — no
+    response exists to inspect — so it would otherwise escape the ``BrapiError``
+    family and crash the whole ``analyze`` run. Mapping it here lets the price
+    call degrade to null market multiples per ticker, like a plan-gate 403.
+    """
+
+
 class BrapiForbiddenError(BrapiError):
     """Ticker requires a higher brapi plan (HTTP 403). Skip this call."""
 

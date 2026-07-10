@@ -11,7 +11,7 @@ from smaug.analysis.domain.financials import (
     YearPrices,
 )
 from smaug.portfolio.domain.sectors import Sector
-from smaug.shared.errors import BrapiForbiddenError
+from smaug.shared.errors import BrapiForbiddenError, BrapiTimeoutError
 
 # Four consecutive quarter-ends: the TTM window Jul/2025–Mar/2026.
 _QUARTER_ENDS = (
@@ -358,4 +358,28 @@ async def test_analyze_degrades_when_price_unavailable() -> None:
     assert len(out) == 1
     assert out[0].indicators.roe == Decimal("0.1")  # 800 / 8000, fundamentals survive
     assert out[0].indicators.pe is None  # no price -> no market multiple
+    assert out[0].price is None
+
+
+async def test_analyze_degrades_when_price_times_out() -> None:
+    # A transport timeout is a BrapiError, so it degrades like a plan-gate 403:
+    # market multiples go null, accounting indicators survive.
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader(
+            {
+                "BBAS3": _quarters(
+                    Sector.BANK, net_income=Decimal(200), equity=Decimal(8000)
+                )
+            }
+        ),
+        FakePrice(error=BrapiTimeoutError("read timed out")),
+        FakeRepo(),
+        FakeShares(),
+    )
+
+    out = await use_case.execute(["BBAS3"])
+
+    assert len(out) == 1
+    assert out[0].indicators.roe == Decimal("0.1")  # fundamentals survive
+    assert out[0].indicators.pe is None  # timeout -> no market multiple
     assert out[0].price is None

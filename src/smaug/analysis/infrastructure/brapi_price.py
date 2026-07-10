@@ -21,6 +21,7 @@ import httpx
 
 from smaug.analysis.domain.financials import MarketData, YearPrices
 from smaug.ingestion.infrastructure.brapi_client import BrapiClient
+from smaug.shared.errors import BrapiTimeoutError
 
 
 def _dec(value: Any) -> Decimal | None:
@@ -64,10 +65,28 @@ class BrapiPriceProvider:
         self._token = token
         self._http = http_client
 
-    async def get(self, ticker: str) -> MarketData:
+    async def _get(self, ticker: str, params: dict[str, Any]) -> httpx.Response:
+        """Fetch the quote endpoint, mapping transport failures to a typed error.
+
+        A timeout or connection error raises before any HTTP response exists, so
+        it never passes through ``_raise_for_status``; translating it to
+        ``BrapiTimeoutError`` keeps it inside the ``BrapiError`` family the use
+        case already degrades on (see ``AnalyzePortfolioUseCase._current_quote``).
+        """
         url = f"{self._base_url}/quote/{ticker}"
-        response = await self._http.get(url, params={"token": self._token})
+        try:
+            response = await self._http.get(
+                url, params={"token": self._token, **params}
+            )
+        except httpx.TransportError as exc:
+            raise BrapiTimeoutError(
+                f"transport failure fetching quote for {ticker}: {exc!r}"
+            ) from exc
         BrapiClient._raise_for_status(response, ticker, "quote")
+        return response
+
+    async def get(self, ticker: str) -> MarketData:
+        response = await self._get(ticker, {})
 
         results = response.json().get("results") or []
         if not results:
@@ -86,12 +105,7 @@ class BrapiPriceProvider:
         closed years. Days outside ``year`` are ignored; a year with no data
         yields ``YearPrices()`` (both ``None``) and the multiples degrade to null.
         """
-        url = f"{self._base_url}/quote/{ticker}"
-        response = await self._http.get(
-            url,
-            params={"token": self._token, "range": "5y", "interval": "1d"},
-        )
-        BrapiClient._raise_for_status(response, ticker, "quote")
+        response = await self._get(ticker, {"range": "5y", "interval": "1d"})
 
         results = response.json().get("results") or []
         if not results:
