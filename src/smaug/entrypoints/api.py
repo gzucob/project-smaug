@@ -28,7 +28,14 @@ app = FastAPI(title="smaug — análise fundamentalista", version="0.1.0")
 
 
 class IndicatorsResponse(BaseModel):
-    """The computed indicators (null = not applicable / input missing)."""
+    """The computed indicators.
+
+    ``null_reasons`` names why each null field is null (#30's vocabulary:
+    inapplicable_regime, source_account_unmapped, source_account_absent,
+    missing_price, missing_share_count, missing_prior_period,
+    unexpected_regime), keyed by the field's name. A null field with no entry
+    is unclassified.
+    """
 
     roe: Decimal | None
     roa: Decimal | None
@@ -62,6 +69,7 @@ class IndicatorsResponse(BaseModel):
     revenue: Decimal | None
     net_income: Decimal | None
     dividends: Decimal | None
+    null_reasons: dict[str, str]
 
 
 class AnalysisResponse(BaseModel):

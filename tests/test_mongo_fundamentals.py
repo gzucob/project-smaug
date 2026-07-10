@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
+from smaug.analysis.domain.financials import AccountingRegime
 from smaug.analysis.infrastructure.mongo_fundamentals import (
     MongoFundamentalsReader,
     standardize,
@@ -110,6 +111,60 @@ def test_standardize_bank_pulls_core_and_leaves_rest_none() -> None:
     assert f.total_debt is None
     assert f.current_assets is None
     assert f.ebitda is None
+    # ...and recorded as deliberately unmapped, so the calculator can attribute
+    # the null to "we never read it" rather than "the filing has no such line".
+    assert "ebit" in f.unmapped_fields
+    assert "cfo" in f.unmapped_fields
+
+
+def test_standardize_detects_the_filed_regime_from_the_dre_opening_line() -> None:
+    # The 3.01 labels below are the real ones in the raw mirror (BBAS3, BBSE3,
+    # SAPR11) — the accounting regime is a property of the filing, not of the
+    # Sector enum.
+    cases = [
+        ("Receitas de Intermediação Financeira", AccountingRegime.BANK),
+        (
+            "Receitas das Atividades Seguradoras/Resseguradoras",
+            AccountingRegime.INSURANCE,
+        ),
+        ("Receita de Venda de Bens e/ou Serviços", AccountingRegime.CORPORATE),
+    ]
+    for label, regime in cases:
+        by_module = {"DRE": {"accounts": [_acc("3.01", label, "100")]}}
+        f = standardize(by_module, Sector.COMMODITY, date(2024, 12, 31))
+        assert f.filed_regime is regime
+
+    # No DRE, or an unknown opening line -> undetected, never guessed.
+    assert standardize({}, Sector.COMMODITY, date(2024, 12, 31)).filed_regime is None
+    unknown = {"DRE": {"accounts": [_acc("3.01", "Alguma Outra Coisa", "1")]}}
+    assert (
+        standardize(unknown, Sector.COMMODITY, date(2024, 12, 31)).filed_regime is None
+    )
+
+
+def test_standardize_flags_the_insurer_that_files_as_a_holding() -> None:
+    # CXSE3 (ADR 0006): sector says insurer, but the DRE opens with the
+    # corporate "Receita de Venda" line. The mapper records what was filed;
+    # the calculator turns the mismatch into the "unexpected regime" cause.
+    by_module = {
+        "DRE": {
+            "accounts": [
+                _acc("3.01", "Receita de Venda de Bens e/ou Serviços", "900"),
+                _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "120"),
+            ]
+        },
+    }
+
+    f = standardize(by_module, Sector.INSURER, date(2024, 12, 31))
+
+    assert f.filed_regime is AccountingRegime.CORPORATE
+    assert f.revenue == Decimal("900")  # 3.01 is still read by code
+    assert "gross_profit" in f.unmapped_fields  # early return still applies
+
+
+def test_standardize_nonfinancial_has_no_unmapped_fields() -> None:
+    f = standardize({}, Sector.COMMODITY, date(2024, 12, 31))
+    assert f.unmapped_fields == frozenset()
 
 
 def test_standardize_takes_controllers_share_wide_cash_and_dividends() -> None:

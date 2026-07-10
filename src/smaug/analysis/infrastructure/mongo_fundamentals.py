@@ -20,10 +20,41 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
-from smaug.analysis.domain.financials import StandardizedFinancials
+from smaug.analysis.domain.financials import AccountingRegime, StandardizedFinancials
 from smaug.portfolio.domain.sectors import Sector, sector_of
 
 _STATEMENTS = ("BPA", "BPP", "DRE", "DFC")
+
+# The fields standardize() deliberately never reads for a financial-regime
+# filer — the "source account unmapped" null cause of #30. Carried on the
+# entity so the calculator can tell "we skipped it" apart from "the filing has
+# no such line".
+_FINANCIAL_UNMAPPED_FIELDS = frozenset(
+    {
+        "gross_profit",
+        "ebit",
+        "ebitda",
+        "dep_amort",
+        "cash",
+        "current_assets",
+        "current_liabilities",
+        "total_debt",
+        "cfo",
+        "capex",
+    }
+)
+
+# How the DRE's opening line (3.01) reads under each accounting regime,
+# accent-folded. Verified against the real filings in the raw mirror: banks
+# open with "Receitas de Intermediação Financeira", insurers with "Receitas das
+# Atividades Seguradoras/Resseguradoras", and the corporate schema with
+# "Receita de Venda de Bens e/ou Serviços" — which is how CXSE3, an insurer by
+# sector, actually files (as a holding; ADR 0006).
+_REGIME_MARKERS: tuple[tuple[str, AccountingRegime], ...] = (
+    ("intermediacao financeira", AccountingRegime.BANK),
+    ("seguradora", AccountingRegime.INSURANCE),
+    ("receita de venda", AccountingRegime.CORPORATE),
+)
 
 # Closed-year (historical) view: keep only annual periods. In Brazil the annual
 # DFP closes on 31-Dec, while the ITRs are Q1–Q3 (never December), so the month
@@ -227,6 +258,23 @@ def _mul(value: Decimal | None, scale: Decimal) -> Decimal | None:
     return None if value is None else value * scale
 
 
+def _filed_regime(dre: Accounts) -> AccountingRegime | None:
+    """The regime this filer actually reports under, read off the DRE's 3.01 label.
+
+    ``None`` when the DRE is absent or its opening line matches no known
+    schema — an unknown regime is never guessed, so a mismatch (#30's
+    "unexpected regime" cause) is only ever flagged from positive evidence.
+    """
+    for account in dre:
+        if str(account.get("code")) == "3.01":
+            label = _fold(str(account.get("name", "")))
+            for marker, regime in _REGIME_MARKERS:
+                if marker in label:
+                    return regime
+            return None
+    return None
+
+
 def standardize(
     by_module: Mapping[str, Any], sector: Sector, reference_date: date
 ) -> StandardizedFinancials:
@@ -243,6 +291,7 @@ def standardize(
     net_income = _mul(_net_income(dre), dre_s)
     revenue = _mul(_by_code(dre, "3.01"), dre_s)
     dividends_paid = _mul(_dividends_paid(dfc), dfc_s)
+    filed_regime = _filed_regime(dre)
 
     if sector.is_financial:
         return StandardizedFinancials(
@@ -255,6 +304,8 @@ def standardize(
             net_income=net_income,
             revenue=revenue,
             dividends_paid=dividends_paid,
+            filed_regime=filed_regime,
+            unmapped_fields=_FINANCIAL_UNMAPPED_FIELDS,
         )
 
     ebit = _mul(_by_code(dre, "3.05"), dre_s)  # before financial result/taxes
@@ -287,6 +338,7 @@ def standardize(
         dividends_paid=dividends_paid,
         cfo=_mul(_by_code(dfc, "6.01"), dfc_s),  # net operating cash flow
         capex=_mul(_capex(dfc), dfc_s),
+        filed_regime=filed_regime,
     )
 
 

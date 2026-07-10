@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, Numeric, String
+from sqlalchemy import JSON, Date, DateTime, Numeric, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -66,3 +66,6 @@ class TickerAnalysisRow(Base):
     revenue: Mapped[Decimal | None] = mapped_column(Numeric)
     net_income: Mapped[Decimal | None] = mapped_column(Numeric)
     dividends: Mapped[Decimal | None] = mapped_column(Numeric)
+    # Cause per null indicator, keyed by column name (#30's NullReason values).
+    # NULL on rows computed before the vocabulary existed.
+    null_reasons: Mapped[dict[str, str] | None] = mapped_column(JSON)

@@ -162,4 +162,8 @@ def build_ttm(
         dividends_paid=summed["dividends_paid"],
         cfo=summed["cfo"],
         capex=summed["capex"],
+        # Null-cause provenance (#30) travels with the window: same filer, same
+        # regime and same deliberately-skipped fields as its quarters.
+        filed_regime=latest.filed_regime,
+        unmapped_fields=latest.unmapped_fields,
     )

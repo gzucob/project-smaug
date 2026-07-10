@@ -1,15 +1,51 @@
 """The computed indicators (Phase 2 output).
 
-Pure value object. Every field is ``Decimal | None`` — ``None`` means "not
-applicable to this sector" (e.g. net debt for a bank) or "input missing", never
-zero. Ratios are fractions (0.18 = 18%), not percentages, so the presentation
-layer decides formatting.
+Pure value object. Every field is ``Decimal | None`` — ``None`` is meaningful,
+never zero — and ``null_reasons`` names *why* each null is null (#30), as a
+parallel map rather than a sentinel inside the ``Decimal | None`` fields: a
+sentinel would poison every consumer's arithmetic, while an absent key degrades
+to the old behaviour. Ratios are fractions (0.18 = 18%), not percentages, so
+the presentation layer decides formatting.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from decimal import Decimal
+from enum import StrEnum
+
+
+class NullReason(StrEnum):
+    """Why an indicator is null — the enumerable cause vocabulary of #30.
+
+    Four root causes, keyed on the *accounting regime* (what the company
+    actually files) rather than the ``Sector`` enum (ADR 0006):
+
+    * ``INAPPLICABLE_REGIME`` — economically meaningless under the filer's
+      regime (net debt for a bank: deposits are input, not borrowing).
+    * ``SOURCE_ACCOUNT_UNMAPPED`` — our mapper deliberately never reads the
+      account for this regime; computable in principle, not implemented.
+    * ``SOURCE_ACCOUNT_ABSENT`` — we looked for the account and the filing has
+      no such line (e.g. no dividend outflow in the DFC that year).
+    * ``MISSING_PRICE`` / ``MISSING_SHARE_COUNT`` / ``MISSING_PRIOR_PERIOD`` —
+      an upstream input from another source is missing (brapi price, FRE share
+      count, the prior year's ingestion), split so a report can say *which*.
+    * ``UNEXPECTED_REGIME`` — the company files under a regime other than the
+      one its sector predicts (CXSE3 declares as a holding, not an insurer),
+      so every regime-driven null is neither inapplicable nor unmapped.
+
+    A null with no recorded reason is *unclassified* — a reportable status of
+    its own (#47), e.g. a zero denominator.
+    """
+
+    INAPPLICABLE_REGIME = "inapplicable_regime"
+    SOURCE_ACCOUNT_UNMAPPED = "source_account_unmapped"
+    SOURCE_ACCOUNT_ABSENT = "source_account_absent"
+    MISSING_PRICE = "missing_price"
+    MISSING_SHARE_COUNT = "missing_share_count"
+    MISSING_PRIOR_PERIOD = "missing_prior_period"
+    UNEXPECTED_REGIME = "unexpected_regime"
 
 
 @dataclass(frozen=True)
@@ -58,3 +94,6 @@ class Indicators:
     revenue: Decimal | None = None
     net_income: Decimal | None = None
     dividends: Decimal | None = None
+    # Why each null field is null, keyed by the field's name. Only null fields
+    # appear; a null field with no entry is unclassified (see ``NullReason``).
+    null_reasons: Mapping[str, NullReason] = field(default_factory=dict)
