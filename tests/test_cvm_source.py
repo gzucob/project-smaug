@@ -9,10 +9,19 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, _sanitize_dmpl
+from smaug.ingestion.infrastructure.cvm_source import (
+    CvmDataSource,
+    _consolidated_keys,
+    _dropped_consolidated,
+    _sanitize_dmpl,
+)
 from smaug.portfolio.domain.cvm_codes import TICKER_TO_CVM_CODE
 from smaug.portfolio.domain.sectors import portfolio_tickers
-from smaug.shared.errors import BrapiNotFoundError, CvmDownloadError
+from smaug.shared.errors import (
+    BrapiNotFoundError,
+    CvmConsolidatedDroppedError,
+    CvmDownloadError,
+)
 from tests.fakes import no_sleep
 
 
@@ -145,6 +154,74 @@ async def test_fetch_returns_one_result_per_filed_quarter(tmp_path: Path) -> Non
     assert all(
         r.request["reference_date"] == r.payload["reference_date"] for r in results
     )
+
+
+def _write_bpa_con(path: Path, rows: list[tuple[str, str, str]]) -> None:
+    """A DFP ZIP with one BPA_con CSV of ``(CD_CVM, DT_REFER, VERSAO)`` rows."""
+    header = "CNPJ_CIA;DT_REFER;VERSAO;CD_CVM;CD_CONTA;VL_CONTA"
+    body = [f"00.0/0001-00;{ref};{ver};{cd};1;100" for cd, ref, ver in rows]
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("dfp_cia_aberta_BPA_con_2021.csv", "\n".join([header, *body]) + "\n")
+
+
+def _doc(
+    code: str, ref: date, *, version: int, consolidated: object
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        cvm_code=code, reference_date=ref, version=version, consolidated=consolidated
+    )
+
+
+def test_consolidated_keys_reads_only_wanted_codes(tmp_path: Path) -> None:
+    src = tmp_path / "dfp.zip"
+    # Only 5410 is wanted; the padded 099999 row must be ignored.
+    _write_bpa_con(src, [("005410", "2021-12-31", "1"), ("099999", "2021-12-31", "1")])
+
+    keys = _consolidated_keys(src, wanted={"5410"})
+
+    assert keys == {("5410", "2021-12-31", 1)}  # zero-padded CD_CVM folded to "5410"
+
+
+def test_dropped_consolidated_spares_genuine_individual_filer() -> None:
+    keys = {("5410", "2021-12-31", 1)}
+    docs = [
+        _doc("5410", date(2021, 12, 31), version=1, consolidated=None),  # #55 desync
+        _doc("9493", date(2021, 12, 31), version=1, consolidated=None),  # no con filed
+        _doc("5410", date(2022, 12, 31), version=1, consolidated=object()),  # present
+    ]
+
+    # Only the doc whose consolidated is filed yet missing is flagged.
+    assert _dropped_consolidated(docs, keys) == [("5410", "2021-12-31")]
+
+
+async def test_guard_aborts_when_pycvm_drops_a_filed_consolidated(
+    tmp_path: Path,
+) -> None:
+    src = tmp_path / "dfp_cia_aberta_2021.zip"
+    _write_bpa_con(src, [("005410", "2021-12-31", "1")])
+    dropped = _doc("5410", date(2021, 12, 31), version=1, consolidated=None)
+
+    async with httpx.AsyncClient() as http:
+        source = CvmDataSource(
+            http, {"WEGE3": "5410"}, year=2021, cache_dir=str(tmp_path), document="DFP"
+        )
+        index = {"5410": [dropped]}
+        with pytest.raises(CvmConsolidatedDroppedError, match="WEGE3 2021-12-31"):
+            source._raise_if_consolidated_dropped(src, {"5410"}, index)
+
+
+async def test_guard_allows_a_genuine_individual_only_filer(tmp_path: Path) -> None:
+    # SAPR11 files no consolidated statement, so the raw file has no BPA_con row
+    # for it — mirroring its individual statement is correct, not the #55 bug.
+    src = tmp_path / "dfp_cia_aberta_2021.zip"
+    _write_bpa_con(src, [])  # header only
+    only = _doc("9493", date(2021, 12, 31), version=1, consolidated=None)
+
+    async with httpx.AsyncClient() as http:
+        source = CvmDataSource(
+            http, {"SAPR11": "9493"}, year=2021, cache_dir=str(tmp_path), document="DFP"
+        )
+        source._raise_if_consolidated_dropped(src, {"9493"}, {"9493": [only]})
 
 
 ZIP_BYTES = b"PK\x05\x06" + b"\x00" * 18  # smallest valid (empty) ZIP
