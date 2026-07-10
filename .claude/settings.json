@@ -1,15 +1,3 @@
 {
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "shell": "bash",
-            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Project convention: when this session surfaces an important finding (a bug, a data divergence between our computed indicators and the reference platforms, or a modelling decision), record it as a dated entry in docs/FINDINGS_INDICATORS.md before ending the session.\"}}'"
-          }
-        ]
-      }
-    ]
-  }
+  "hooks": {}
 }
