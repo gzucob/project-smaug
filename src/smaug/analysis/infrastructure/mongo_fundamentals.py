@@ -58,7 +58,7 @@ _REGIME_MARKERS: tuple[tuple[str, AccountingRegime], ...] = (
 
 # Closed-year (historical) view: keep only annual periods. In Brazil the annual
 # DFP closes on 31-Dec, while the ITRs are Q1–Q3 (never December), so the month
-# alone distinguishes a closed year without depending on pycvm's document enum.
+# alone distinguishes a closed year without depending on a per-filing document tag.
 _CLOSED_YEAR_MONTH = 12
 
 # Consolidated DRE bottom line, in priority order (label varies by sector). Used

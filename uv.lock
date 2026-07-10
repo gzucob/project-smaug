@@ -427,15 +427,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pycvm"
-version = "0.4.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0a/1c/f3f5dd5e836a79e3b4d67b7aa62169285722cab7ab9020adb7b614f048fe/pycvm-0.4.1.tar.gz", hash = "sha256:15f32607748fefce4b4b1a3c11e236128667b0c7f52a45b7a6ed01692b053a13", size = 82419, upload-time = "2023-05-26T17:00:45.672Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/81/a9/c28a035e98266001bab8bb043bdfa3656ecca3bb9c7c5053adfd73564c48/pycvm-0.4.1-py3-none-any.whl", hash = "sha256:dea46439b8ea85a6c4ce57e149e90e8ae939902ecd99a418d67e51ca8450bb4f", size = 79502, upload-time = "2023-05-26T17:00:43.569Z" },
-]
-
-[[package]]
 name = "pydantic"
 version = "2.13.4"
 source = { registry = "https://pypi.org/simple" }
@@ -646,7 +637,6 @@ dependencies = [
     { name = "beanie" },
     { name = "fastapi" },
     { name = "httpx" },
-    { name = "pycvm" },
     { name = "pydantic-settings" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "typer" },
@@ -669,7 +659,6 @@ requires-dist = [
     { name = "beanie", specifier = ">=1.29" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "pycvm", specifier = ">=0.4" },
     { name = "pydantic-settings", specifier = ">=2.7" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "typer", specifier = ">=0.15" },

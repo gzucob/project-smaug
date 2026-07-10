@@ -12,7 +12,8 @@ were cross-checked against CVM's ``cad_cia_aberta.csv`` registry.
 
 from __future__ import annotations
 
-# Ticker -> CVM code (string, no leading zeros — matches pycvm's ``cvm_code``).
+# Ticker -> CVM code (string, no leading zeros — the reader strips the CSV's
+# zero-padded ``CD_CVM`` to match).
 TICKER_TO_CVM_CODE: dict[str, str] = {
     "PETR4": "9512",  # PETROLEO BRASILEIRO S.A. PETROBRAS
     "VALE3": "4170",  # VALE S.A.

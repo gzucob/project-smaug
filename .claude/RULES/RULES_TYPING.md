@@ -14,11 +14,11 @@ applies_to: src/smaug/**/*.py
 uv run mypy src
 ```
 
-`pycvm` ships no type stubs, so `pyproject.toml` sets
-`[[tool.mypy.overrides]] module = ["cvm.*"]` with `ignore_missing_imports =
-true` — this is the only sanctioned blanket override. A new one needs the
-same justification (a third-party dependency with no stubs), not "mypy is
-being annoying here."
+There are currently **no** `[[tool.mypy.overrides]]` blanket ignores. The last
+one (`cvm.*`, for pycvm, which shipped no stubs) was removed with the dependency
+in ADR 0009. A new blanket override needs a real justification — a third-party
+dependency with no stubs — recorded next to it, not "mypy is being annoying
+here."
 
 ## Type Annotations
 

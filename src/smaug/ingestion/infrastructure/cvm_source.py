@@ -1,18 +1,26 @@
 """CVM raw data source — parses dados.cvm.gov.br into the ``RawDataSource`` port.
 
 Unlike brapi (one HTTP call per ticker/module), CVM ships one yearly ZIP with
-*every* company. So this source downloads that ZIP once, caches it, parses it
-with pycvm, and then serves each ticker/statement from the in-memory index.
-It stays a faithful mirror: it stores the raw statement accounts (code, name,
-value) exactly as filed — no indicators, no math (that is Phase 2).
+*every* company. So this source downloads that ZIP once, caches it, reads the
+statement CSVs it contains, and serves each ticker/statement from the in-memory
+index. It stays a faithful mirror: it stores the raw statement accounts (code,
+name, value) exactly as filed — no indicators, no math (that is Phase 2).
 
-Two real-world quirks are handled here:
+The statement CSVs are read directly (ADR 0009), not through pycvm: pycvm's
+reader crashed on the real DMPL, and — worse — its parallel batch reader
+desynchronised on a duplicated head row and silently dropped whole consolidated
+collections (#55), so we mirrored parent-only statements without noticing.
+Reading each ``{statement}_{con|ind}`` member on its own removes both failure
+modes and lets us pick the amendment (highest ``VERSAO``) deterministically.
+
+Three real-world quirks are handled here:
   * CVM is keyed by ``CD_CVM``, not by B3 ticker — hence the injected
     ticker -> code map (see ``portfolio.domain.cvm_codes``).
-  * pycvm's DMPL parser crashes on the real 2024 ITR
-    (``KeyError: 'Patrimônio Líquido'``). We do not need DMPL, but the parser
-    walks the whole file, so we neutralise the DMPL members (header only)
-    before parsing — ``_sanitize_dmpl``.
+  * A company files the same reference date several times (``VERSAO``); the
+    highest version is the amendment that supersedes the rest.
+  * Consolidated and individual (parent-only) statements live in separate
+    members; the consolidated is preferred, the individual is the fallback for a
+    filer that reports no consolidated (e.g. SAPR11).
 """
 
 from __future__ import annotations
@@ -20,9 +28,10 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import unicodedata
 import zipfile
-from collections.abc import Iterable, Mapping, Sequence
-from datetime import date
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -30,7 +39,7 @@ import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
 from smaug.ingestion.infrastructure.download import Sleeper, download_zip
-from smaug.shared.errors import BrapiNotFoundError, CvmConsolidatedDroppedError
+from smaug.shared.errors import BrapiNotFoundError
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -39,8 +48,8 @@ CVM_ITR_BASE_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/ITR/DADOS"
 CVM_DFP_BASE_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS"
 
 # document kind -> (base URL, file-name prefix). ITR = quarterly (YTD periods),
-# DFP = annual closed year (single 12-month period). pycvm's DFPITRFile parses
-# both; only the URL and file name differ.
+# DFP = annual closed year (single 12-month period). Same CSV layout; only the
+# URL and file name differ.
 CvmDocument = Literal["ITR", "DFP"]
 _DOCUMENT_BASE_URL: dict[str, str] = {
     "ITR": CVM_ITR_BASE_URL,
@@ -51,81 +60,87 @@ _DOCUMENT_PREFIX: dict[str, str] = {
     "DFP": "dfp_cia_aberta",
 }
 
-# module (config) -> attribute on pycvm's StatementCollection.
-_MODULE_TO_ATTR: dict[str, str] = {
-    "BPA": "bpa",  # balance sheet — assets
-    "BPP": "bpp",  # balance sheet — liabilities + equity
-    "DRE": "dre",  # income statement
-    "DFC": "dfc",  # cash flow
-    "DMPL": "dmpl",
-    "DVA": "dva",
+# The modules we mirror, in balance-sheet-then-statement order.
+_MODULES: tuple[str, ...] = ("BPA", "BPP", "DRE", "DFC")
+
+# Substring in a member's file name -> the module it carries. The cash flow ships
+# as two members (indirect / direct method); a filer uses one, both fold to DFC.
+_MEMBER_MODULE: dict[str, str] = {
+    "_BPA_": "BPA",  # balance sheet — assets
+    "_BPP_": "BPP",  # balance sheet — liabilities + equity
+    "_DRE_": "DRE",  # income statement
+    "_DFC_MI_": "DFC",  # cash flow, indirect method
+    "_DFC_MD_": "DFC",  # cash flow, direct method
 }
 
+# ESCALA_MOEDA -> the multiplier ``mongo_fundamentals`` scales figures by.
+_CURRENCY_SIZE: dict[str, int] = {"MIL": 1000, "UNIDADE": 1}
 
-def _sanitize_dmpl(src: Path, dst: Path) -> None:
-    """Copy ``src`` to ``dst`` with every DMPL member reduced to its header.
+# CVM open datasets are latin-1, semicolon-separated (like the FRE in cvm_capital).
+_ENCODING = "latin-1"
+_DELIMITER = ";"
 
-    pycvm insists on parsing DMPL and blows up on the real file; emptying the
-    DMPL CSVs (keeping a valid header row) lets the whole file parse.
-    """
-    with (
-        zipfile.ZipFile(src) as zin,
-        zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout,
-    ):
-        for info in zin.infolist():
-            data = zin.read(info.filename)
-            if "_DMPL_" in info.filename.upper():
-                header = data.split(b"\n", 1)[0]
-                data = header + b"\n"
-            zout.writestr(info, data)
+# ORDEM_EXERC of the period being reported (vs. PENÚLTIMO, the comparative), folded.
+_LAST_PERIOD = "ULTIMO"
 
 
-def _consolidated_keys(sanitized: Path, wanted: set[str]) -> set[tuple[str, str, int]]:
-    """``(cvm_code, reference_date, version)`` triples that carry a consolidated
-    BPA in the raw file, read straight from the CSV.
-
-    This is the ground truth pycvm's parallel-reader desync corrupts (#55): after
-    a duplicated head row it silently drops the whole consolidated collection for
-    every following filer, so ``doc.consolidated`` reads ``None`` even though the
-    statement was filed. We compare the parsed docs against this set to catch it.
-    """
-    keys: set[tuple[str, str, int]] = set()
-    with zipfile.ZipFile(sanitized) as archive:
-        members = [name for name in archive.namelist() if "_BPA_con_" in name]
-        for name in members:
-            with archive.open(name) as raw:
-                reader = csv.DictReader(
-                    io.TextIOWrapper(raw, encoding="latin-1"), delimiter=";"
-                )
-                for row in reader:
-                    code = row.get("CD_CVM", "").lstrip("0")
-                    if code not in wanted:
-                        continue
-                    try:
-                        version = int(row.get("VERSAO", ""))
-                    except ValueError:
-                        continue
-                    keys.add((code, row.get("DT_REFER", ""), version))
-    return keys
+def _fold(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).upper()
 
 
-def _dropped_consolidated(
-    docs: Iterable[Any], keys: set[tuple[str, str, int]]
-) -> list[tuple[str, str]]:
-    """The ``(cvm_code, reference_date)`` of kept docs whose consolidated
-    collection pycvm dropped though the raw file carries one (#55).
+def _currency(moeda: str | None) -> str | None:
+    if not moeda:
+        return None
+    return "BRL" if moeda.strip().upper() == "REAL" else moeda.strip()
 
-    A doc with no consolidated *and* no matching key is a genuine individual-only
-    filer (e.g. SAPR11, which files no consolidated) — left alone, not flagged.
-    """
-    dropped: list[tuple[str, str]] = []
-    for doc in docs:
-        if doc.consolidated is not None:
-            continue
-        ref = doc.reference_date.isoformat()
-        if (doc.cvm_code, ref, doc.version) in keys:
-            dropped.append((doc.cvm_code, ref))
-    return dropped
+
+def _classify(member: str) -> tuple[str, str] | None:
+    """``(module, balance_type)`` for a statement CSV, or ``None`` to skip it."""
+    if "_con_" in member:
+        balance_type = "consolidated"
+    elif "_ind_" in member:
+        balance_type = "individual"
+    else:
+        return None
+    for token, module in _MEMBER_MODULE.items():
+        if token in member:
+            return module, balance_type
+    return None
+
+
+def _account(row: Mapping[str, str]) -> dict[str, Any]:
+    """One raw account line, mirrored as filed (Any: the untyped CVM payload)."""
+    code = row.get("CD_CONTA", "")
+    return {
+        "code": code,
+        "name": row.get("DS_CONTA", ""),
+        "quantity": row.get("VL_CONTA", ""),
+        "level": code.count(".") + 1 if code else None,
+        "is_fixed": (row.get("ST_CONTA_FIXA") or "").strip().upper() == "S",
+    }
+
+
+@dataclass
+class _Statement:
+    """One statement (module) for one filed period, as read from its CSV member."""
+
+    balance_type: str
+    company_name: str
+    currency: str | None
+    currency_size: int | None
+    period_start: str | None
+    period_end: str | None
+    accounts: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class _Document:
+    """The statements kept for one ``(cvm_code, reference_date)`` filing period."""
+
+    cvm_code: str
+    reference_date: str
+    statements: dict[str, _Statement]
 
 
 class CvmDataSource:
@@ -150,7 +165,7 @@ class CvmDataSource:
         self._prefix = _DOCUMENT_PREFIX[document]
         self._base_url = (base_url or _DOCUMENT_BASE_URL[document]).rstrip("/")
         self._sleep = sleep
-        self._index: dict[str, list[Any]] | None = None
+        self._index: dict[str, list[_Document]] | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -177,11 +192,8 @@ class CvmDataSource:
 
         results: list[RawFetchResult] = []
         for doc in docs:
-            balance_type, collection = self._pick_collection(doc)
-            if collection is None:
-                continue
-            statement = self._statement_for(collection, module)
-            if statement is None or not getattr(statement, "accounts", None):
+            statement = doc.statements.get(module.upper())
+            if statement is None or not statement.accounts:
                 continue
             results.append(
                 RawFetchResult(
@@ -191,18 +203,18 @@ class CvmDataSource:
                         "file": self._zip_name,
                         "cvm_code": code,
                         "statement": module,
-                        "balance_type": balance_type,
-                        "reference_date": doc.reference_date.isoformat(),
+                        "balance_type": statement.balance_type,
+                        "reference_date": doc.reference_date,
                     },
                     http_status=200,
-                    payload=self._to_payload(doc, module, balance_type, statement),
+                    payload=self._to_payload(doc, module, statement),
                 )
             )
         if not results:
             raise BrapiNotFoundError(f"no {module} for {ticker} ({code})")
         return results
 
-    async def _ensure_loaded(self) -> dict[str, list[Any]]:
+    async def _ensure_loaded(self) -> dict[str, list[_Document]]:
         cached = self._index
         if cached is not None:
             return cached
@@ -212,12 +224,9 @@ class CvmDataSource:
                 return cached
             self._cache_dir.mkdir(parents=True, exist_ok=True)
             raw = self._cache_dir / self._zip_name
-            sanitized = self._cache_dir / f"{self._prefix}_{self._year}.sanitized.zip"
             if not raw.exists():
                 await self._download(raw)
-            if not sanitized.exists():
-                await asyncio.to_thread(_sanitize_dmpl, raw, sanitized)
-            index = await asyncio.to_thread(self._build_index, sanitized)
+            index = await asyncio.to_thread(self._build_index, raw)
             self._index = index
             logger.info(
                 "Loaded CVM %s %s: %d of %d portfolio companies found (%d periods)",
@@ -240,95 +249,109 @@ class CvmDataSource:
         logger.info("Downloading CVM %s %s from %s", self._document, self._year, url)
         await download_zip(self._http, url, dst, sleep=self._sleep)
 
-    def _build_index(self, sanitized: Path) -> dict[str, list[Any]]:
+    def _build_index(self, archive_path: Path) -> dict[str, list[_Document]]:
         """Index every filed period per wanted CVM code (sync; runs in a thread).
 
-        The ITR file holds each company's Q1/Q2/Q3 as separate documents; the
-        TTM needs all of them, so we keep one document per distinct
-        ``reference_date`` (a later filing of the same period wins — amendments)
-        and return them oldest-first.
+        Reads each statement member directly, keeping the current period's rows
+        (``ORDEM_EXERC`` = ÚLTIMO) per ``(code, reference_date, version, module,
+        balance_type)``, then reduces to one document per period — see ``_reduce``.
         """
-        from cvm import DFPITRFile
-
         wanted = set(self._ticker_to_code.values())
-        by_code: dict[str, dict[date, Any]] = {}
-        for doc in DFPITRFile(str(sanitized)):
-            if doc.cvm_code not in wanted:
-                continue
-            by_code.setdefault(doc.cvm_code, {})[doc.reference_date] = doc
-        index = {
-            code: [by_date[ref] for ref in sorted(by_date)]
-            for code, by_date in by_code.items()
-        }
-        self._raise_if_consolidated_dropped(sanitized, wanted, index)
-        return index
+        accumulated: dict[tuple[str, str, int, str, str], _Statement] = {}
+        with zipfile.ZipFile(archive_path) as archive:
+            for member in archive.namelist():
+                classified = _classify(member)
+                if classified is None:
+                    continue
+                module, balance_type = classified
+                self._read_member(
+                    archive, member, module, balance_type, wanted, accumulated
+                )
+        return _reduce(accumulated)
 
-    def _raise_if_consolidated_dropped(
-        self, sanitized: Path, wanted: set[str], index: dict[str, list[Any]]
+    @staticmethod
+    def _read_member(
+        archive: zipfile.ZipFile,
+        member: str,
+        module: str,
+        balance_type: str,
+        wanted: set[str],
+        accumulated: dict[tuple[str, str, int, str, str], _Statement],
     ) -> None:
-        """Refuse to serve parent-only statements pycvm left us by dropping the
-        filed consolidated ones (#55): a silent wrong number is worse than a loud
-        stop. Fatal for the run, like a failed download — the whole file is suspect.
-        """
-        keys = _consolidated_keys(sanitized, wanted)
-        docs = [doc for code_docs in index.values() for doc in code_docs]
-        dropped = _dropped_consolidated(docs, keys)
-        if not dropped:
-            return
-        code_to_ticker = {code: ticker for ticker, code in self._ticker_to_code.items()}
-        detail = ", ".join(
-            f"{code_to_ticker.get(code, code)} {ref}" for code, ref in sorted(dropped)
-        )
-        raise CvmConsolidatedDroppedError(
-            f"{self._zip_name}: pycvm dropped the filed consolidated statements "
-            f"for {detail} (issue #55); refusing to mirror the individual "
-            f"(parent-only) statements in their place."
-        )
+        with archive.open(member) as raw:
+            reader = csv.DictReader(
+                io.TextIOWrapper(raw, encoding=_ENCODING), delimiter=_DELIMITER
+            )
+            for row in reader:
+                code = row.get("CD_CVM", "").lstrip("0")
+                if code not in wanted:
+                    continue
+                if _fold(row.get("ORDEM_EXERC", "")).strip() != _LAST_PERIOD:
+                    continue
+                try:
+                    version = int(row.get("VERSAO", ""))
+                except ValueError:
+                    continue
+                key = (code, row.get("DT_REFER", ""), version, module, balance_type)
+                statement = accumulated.get(key)
+                if statement is None:
+                    statement = _Statement(
+                        balance_type=balance_type,
+                        company_name=row.get("DENOM_CIA", ""),
+                        currency=_currency(row.get("MOEDA")),
+                        currency_size=_CURRENCY_SIZE.get(
+                            (row.get("ESCALA_MOEDA") or "").strip().upper()
+                        ),
+                        period_start=row.get("DT_INI_EXERC") or None,
+                        period_end=row.get("DT_FIM_EXERC") or None,
+                    )
+                    accumulated[key] = statement
+                statement.accounts.append(_account(row))
 
-    @staticmethod
-    def _pick_collection(doc: Any) -> tuple[str, Any]:
-        """Prefer the consolidated statements, fall back to individual."""
-        if doc.consolidated is not None:
-            return "consolidated", doc.consolidated.last
-        if doc.individual is not None:
-            return "individual", doc.individual.last
-        return "none", None
-
-    @staticmethod
-    def _statement_for(collection: Any, module: str) -> Any:
-        attr = _MODULE_TO_ATTR.get(module.upper())
-        if attr is None:
-            return None
-        return getattr(collection, attr, None)
-
-    @staticmethod
     def _to_payload(
-        doc: Any, module: str, balance_type: str, statement: Any
+        self, doc: _Document, module: str, statement: _Statement
     ) -> dict[str, Any]:
-        period_start = getattr(statement, "period_start_date", None)
-        period_end = getattr(statement, "period_end_date", None)
-        currency = getattr(statement, "currency", None)
         return {
-            "cvm_code": str(doc.cvm_code),
-            "company_name": str(doc.company_name),
-            "document_type": getattr(doc.type, "name", str(doc.type)),
-            "reference_date": doc.reference_date.isoformat(),
+            "cvm_code": doc.cvm_code,
+            "company_name": statement.company_name,
+            "document_type": self._document,
+            "reference_date": doc.reference_date,
             "statement": module,
-            "balance_type": balance_type,
-            "currency": None if currency is None else str(currency),
-            "currency_size": getattr(statement, "currency_size", None),
-            "period_start_date": (
-                None if period_start is None else period_start.isoformat()
-            ),
-            "period_end_date": None if period_end is None else period_end.isoformat(),
-            "accounts": [
-                {
-                    "code": str(a.code),
-                    "name": str(a.name),
-                    "quantity": str(a.quantity),
-                    "level": getattr(a, "level", None),
-                    "is_fixed": getattr(a, "is_fixed", None),
-                }
-                for a in statement.accounts
-            ],
+            "balance_type": statement.balance_type,
+            "currency": statement.currency,
+            "currency_size": statement.currency_size,
+            "period_start_date": statement.period_start,
+            "period_end_date": statement.period_end,
+            "accounts": statement.accounts,
         }
+
+
+def _reduce(
+    accumulated: dict[tuple[str, str, int, str, str], _Statement],
+) -> dict[str, list[_Document]]:
+    """Collapse the accumulated rows to one document per ``(code, reference_date)``.
+
+    Keeps the amendment (highest ``VERSAO``) and, within it, prefers each module's
+    consolidated statement over its individual one. A period with no statement at
+    the chosen version is dropped.
+    """
+    periods = {(code, ref) for (code, ref, *_rest) in accumulated}
+    max_version: dict[tuple[str, str], int] = {}
+    for code, ref, version, *_rest in accumulated:
+        key = (code, ref)
+        if version > max_version.get(key, -1):
+            max_version[key] = version
+
+    index: dict[str, list[_Document]] = {}
+    for code, ref in sorted(periods):
+        version = max_version[(code, ref)]
+        statements: dict[str, _Statement] = {}
+        for module in _MODULES:
+            statement = accumulated.get(
+                (code, ref, version, module, "consolidated")
+            ) or accumulated.get((code, ref, version, module, "individual"))
+            if statement is not None:
+                statements[module] = statement
+        if statements:
+            index.setdefault(code, []).append(_Document(code, ref, statements))
+    return index
