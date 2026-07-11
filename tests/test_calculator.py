@@ -275,11 +275,12 @@ def test_missing_shares_blames_the_share_count_not_the_price() -> None:
     assert ind.null_reasons["pb"] is NullReason.MISSING_SHARE_COUNT
 
 
-def test_unclassifiable_null_carries_no_reason() -> None:
-    # A zero denominator is a null the vocabulary deliberately does not cover:
-    # it must stay unclassified (absent from the map), never misattributed.
+def test_zero_denominator_null_is_named() -> None:
+    # A zero denominator is a known status, not an unclassified null: with every
+    # input present, payout = dividends / 0 is the ZERO_DENOMINATOR dead-end (ANL-23).
     zero_income = replace(_nonfinancial(), net_income=Decimal(0))
     ind = compute(zero_income, None, MarketData(market_cap=Decimal(12000)))
 
     assert ind.payout is None  # dividends / 0
-    assert "payout" not in ind.null_reasons
+    assert ind.null_reasons["payout"] is NullReason.ZERO_DENOMINATOR
+    assert ind.null_reasons["pe"] is NullReason.ZERO_DENOMINATOR  # cap / 0

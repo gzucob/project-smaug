@@ -181,14 +181,17 @@ def _classify(
     *,
     inapplicable: frozenset[str],
     mismatch: bool,
-) -> NullReason | None:
+) -> NullReason:
     """Attribute one null indicator to a cause, most-upstream cause first.
 
     Precedence: the regime's inapplicable set (the null exists regardless of
     inputs), then the accounting inputs (unmapped beats absent, and a regime
     mismatch overrides both — the mismatch is why the input was never read),
-    then the market-side inputs, then the prior period. ``None`` = unclassified
-    (e.g. a zero denominator).
+    then the market-side inputs, then the prior period. If none fired, every
+    input the indicator needs is present, so a still-null ratio is a zero
+    denominator (a zero *numerator* yields 0, a value — not a null): the
+    ``ZERO_DENOMINATOR`` dead-end. This relies on every ``_Needs`` entry being
+    input-complete for its denominator; ``None`` is never returned.
     """
     if name in inapplicable:
         return (
@@ -215,7 +218,7 @@ def _classify(
         previous is None or getattr(previous, needs.prior) is None
     ):
         return NullReason.MISSING_PRIOR_PERIOD
-    return None
+    return NullReason.ZERO_DENOMINATOR
 
 
 def _null_reasons(
@@ -224,7 +227,11 @@ def _null_reasons(
     previous: StandardizedFinancials | None,
     market: MarketData,
 ) -> dict[str, NullReason]:
-    """Name the cause of every classifiable null in ``computed`` (#30)."""
+    """Name the cause of every null in ``computed`` (#30).
+
+    Every null now carries a reason — the zero-denominator dead-end is named
+    too (ANL-23), so there is no unclassified status left for the nine tickers.
+    """
     inapplicable = _inapplicable(f.sector)
     mismatch = f.filed_regime is not None and f.filed_regime != expected_regime(
         f.sector
@@ -233,7 +240,7 @@ def _null_reasons(
     for name, needs in _NEEDS.items():
         if getattr(computed, name) is not None:
             continue
-        reason = _classify(
+        reasons[name] = _classify(
             name,
             needs,
             f,
@@ -242,8 +249,6 @@ def _null_reasons(
             inapplicable=inapplicable,
             mismatch=mismatch,
         )
-        if reason is not None:
-            reasons[name] = reason
     return reasons
 
 
