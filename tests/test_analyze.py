@@ -141,6 +141,31 @@ async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
     assert saved.indicators.pb == Decimal(2)  # 12000 / 6000
 
 
+async def test_analyze_derives_ttm_cap_from_price_and_shares() -> None:
+    # The primary quote (Yahoo) gives the price but no market cap; the TTM cap is
+    # derived as price × filed shares, so the cap-based multiples still compute
+    # without brapi (ADR 0013).
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader(
+            {
+                "PETR4": _quarters(
+                    Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(6000)
+                )
+            }
+        ),
+        FakePrice(MarketData(price=Decimal(10))),  # price only, no market_cap
+        repo,
+        FakeShares({2026: Decimal(1200)}),
+    )
+
+    await use_case.execute(["PETR4"])
+
+    saved = repo.saved[0]
+    assert saved.indicators.pe == Decimal(10)  # cap 10 × 1200 = 12000 / 1200
+    assert saved.indicators.pb == Decimal(2)  # 12000 / 6000
+
+
 async def test_analyze_computes_growth_against_prior_year_annual() -> None:
     # TTM window ends 2026-06-30 (year 2026); the prior closed year (2025 DFP) is
     # the year-over-year growth base. Only two quarters fall in 2025, so build_ttm

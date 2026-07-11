@@ -14,9 +14,10 @@ PostgreSQL, served by a read API. Both phases are already implemented (see
   (migrations in `alembic/versions/`). The calculation trigger is CLI
   (`smaug.analyze`); FastAPI (`smaug.entrypoints.api`) serves already-persisted
   results — it's a read API, not a write one.
-- brapi: price source (current price + dividend-adjusted series) used by
-  Phase 2 regardless of the ingestion source; also an alternative ingestion
-  source (`INGESTION_SOURCE=brapi`), limited on the free plan.
+- Price source for Phase 2 (current quote + dividend-adjusted year history):
+  **Yahoo Finance is primary, brapi is the fallback** (ADR 0013). The cap is
+  derived (`price × filed shares`), not fetched. brapi is also an alternative
+  ingestion source (`INGESTION_SOURCE=brapi`), limited on the free plan.
 
 Always restate the stack before proposing architecture or dependencies.
 

@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 
-from smaug.analysis.domain.financials import YearPrices
+from smaug.analysis.domain.financials import MarketData, YearPrices
 from smaug.shared.errors import BrapiTimeoutError
 from smaug.shared.logging import get_logger
 
@@ -49,6 +49,50 @@ def _avg(values: list[Decimal]) -> Decimal | None:
 def _yahoo_symbol(ticker: str) -> str:
     """Map a B3 ticker to its Yahoo symbol (``PETR4`` → ``PETR4.SA``)."""
     return f"{ticker}.SA"
+
+
+class YahooQuoteProvider:
+    """Fetches a ticker's current price from Yahoo (the live-quote side).
+
+    Yahoo's chart ``meta`` carries ``regularMarketPrice`` without auth, but not
+    market cap or share count — the richer ``v7/finance/quote`` endpoint now
+    requires a crumb (HTTP 401). So this returns the price only; the use case
+    derives ``cap = price × shares`` from CVM's filed count (ADR 0012/0013) and
+    leaves market cap / shares null here. An unresolved symbol or a bad response
+    yields ``MarketData()`` (null price); only a transport failure raises.
+    """
+
+    def __init__(self, base_url: str, http_client: httpx.AsyncClient) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._http = http_client
+
+    async def get(self, ticker: str) -> MarketData:
+        symbol = _yahoo_symbol(ticker)
+        url = f"{self._base_url}/v8/finance/chart/{symbol}"
+        try:
+            response = await self._http.get(
+                url,
+                params={"range": "1d", "interval": "1d"},
+                headers={"User-Agent": _USER_AGENT},
+            )
+        except httpx.TransportError as exc:
+            raise BrapiTimeoutError(
+                f"transport failure fetching Yahoo quote for {symbol}: {exc!r}"
+            ) from exc
+
+        if response.status_code != httpx.codes.OK:
+            logger.warning(
+                "Yahoo quote for %s: HTTP %d; price will be null",
+                symbol,
+                response.status_code,
+            )
+            return MarketData()
+
+        results = (response.json().get("chart") or {}).get("result") or []
+        if not results:
+            return MarketData()
+        meta = results[0].get("meta") or {}
+        return MarketData(price=_dec(meta.get("regularMarketPrice")))
 
 
 class YahooPriceHistory:

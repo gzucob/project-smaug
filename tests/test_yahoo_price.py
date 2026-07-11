@@ -6,7 +6,11 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from smaug.analysis.infrastructure.yahoo_price import YahooPriceHistory
+from smaug.analysis.domain.financials import MarketData
+from smaug.analysis.infrastructure.yahoo_price import (
+    YahooPriceHistory,
+    YahooQuoteProvider,
+)
 from smaug.shared.errors import BrapiTimeoutError
 
 
@@ -107,3 +111,40 @@ async def test_year_prices_maps_transport_error_to_brapi_error() -> None:
         provider = YahooPriceHistory("https://query1.finance.yahoo.com", http)
         with pytest.raises(BrapiTimeoutError):
             await provider.year_prices("PETR4", 2024)
+
+
+async def test_quote_reads_price_from_chart_meta() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v8/finance/chart/PETR4.SA"
+        assert request.headers["user-agent"].startswith("Mozilla/")
+        body = {"chart": {"result": [{"meta": {"regularMarketPrice": 39.65}}]}}
+        return httpx.Response(200, json=body)
+
+    async with _mock_client(handler) as http:
+        provider = YahooQuoteProvider("https://query1.finance.yahoo.com", http)
+        market = await provider.get("PETR4")
+
+    assert market.price == Decimal("39.65")
+    assert market.market_cap is None  # Yahoo does not expose it for free
+    assert market.shares is None
+
+
+async def test_quote_null_when_symbol_unknown() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"chart": {"result": None}})
+
+    async with _mock_client(handler) as http:
+        provider = YahooQuoteProvider("https://query1.finance.yahoo.com", http)
+        market = await provider.get("DEAD3")
+
+    assert market == MarketData()
+
+
+async def test_quote_maps_transport_error_to_brapi_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    async with _mock_client(handler) as http:
+        provider = YahooQuoteProvider("https://query1.finance.yahoo.com", http)
+        with pytest.raises(BrapiTimeoutError):
+            await provider.get("PETR4")
