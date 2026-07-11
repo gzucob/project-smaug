@@ -7,6 +7,7 @@ the sector-directed completeness check (plan §6).
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import StrEnum
 
 from smaug.shared.errors import UnknownTickerError
@@ -55,3 +56,16 @@ def sector_of(ticker: str) -> Sector:
         return PORTFOLIO[ticker]
     except KeyError as exc:
         raise UnknownTickerError(ticker) from exc
+
+
+def require_portfolio_tickers(tickers: Iterable[str]) -> None:
+    """Reject the first ticker not in the portfolio, raising ``UnknownTickerError``.
+
+    A ticker absent from the portfolio is a user input error the moment it is
+    passed — not a data-source 404. Ingest stays batch-resilient for real
+    filings, but a typo is caught up front (like the analyze path, #13/#60)
+    instead of being folded into the collection log as an expected skip.
+    """
+    for ticker in tickers:
+        if ticker not in PORTFOLIO:
+            raise UnknownTickerError(ticker)
