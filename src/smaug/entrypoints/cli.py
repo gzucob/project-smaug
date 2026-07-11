@@ -56,7 +56,10 @@ from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, CvmDocument
 from smaug.ingestion.infrastructure.repositories import BeanieRawIngestionRepository
 from smaug.ingestion.infrastructure.routed_source import RoutedDataSource
 from smaug.portfolio.domain.cvm_codes import TICKER_TO_CNPJ, TICKER_TO_CVM_CODE
-from smaug.portfolio.domain.sectors import portfolio_tickers
+from smaug.portfolio.domain.sectors import (
+    portfolio_tickers,
+    require_portfolio_tickers,
+)
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
 from smaug.shared.errors import UnknownTickerError
@@ -99,7 +102,8 @@ def ingest(
     """Collect the configured modules for the active source and store the mirror."""
     tickers = tuple(ticker) if ticker else portfolio_tickers()
     try:
-        exit_code = asyncio.run(_run_ingest(tickers, document=document, year=year))
+        # _guarded turns an unknown ticker into a clean exit, like analyze (#13).
+        exit_code = _guarded(_run_ingest(tickers, document=document, year=year))
     except NotImplementedError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
@@ -156,6 +160,9 @@ def _build_data_source(
 async def _run_ingest(
     tickers: tuple[str, ...], *, document: str | None = None, year: int | None = None
 ) -> int:
+    # An unknown ticker is a user error — reject before any download, not as a
+    # 404-skip in the collection log (#60). Real filings stay batch-resilient.
+    require_portfolio_tickers(tickers)
     settings = get_settings()
     client = await init_database(settings)
     try:
