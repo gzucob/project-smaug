@@ -104,93 +104,87 @@ def test_closed_year_leaves_annualization_a_no_op() -> None:
     assert ind.pe == Decimal(10)  # 12000 / 1200
 
 
-def test_bank_skips_inapplicable_indicators() -> None:
-    bank = StandardizedFinancials(
+# The one line the CVM mapper still skips for a financial-regime filer — mirrors
+# mongo_fundamentals._FINANCIAL_UNMAPPED_FIELDS, inlined here so the domain test
+# stays free of infrastructure imports.
+_FINANCIAL_UNMAPPED = frozenset({"dep_amort", "ebitda"})
+
+
+def _mapped_bank() -> StandardizedFinancials:
+    """A bank as the CVM mapper actually builds it (ADR 0015).
+
+    It carries what a bank's chart of accounts holds — including 3.03 (net
+    interest income, standing in for gross profit) and 3.05 (pre-tax profit,
+    standing in for EBIT) — and *not* what it lacks: a bank files no debt line and
+    no current/non-current split, so those stay ``None`` at the source rather than
+    being blanked downstream.
+    """
+    return StandardizedFinancials(
         reference_date=_Q3,
         sector=Sector.BANK,
+        total_assets=Decimal(90000),
         equity=Decimal(8000),
         net_income=Decimal(600),  # annualized -> 800
         revenue=Decimal(3000),
-        total_debt=Decimal(9999),  # present but must be ignored for a bank
-        current_assets=Decimal(1),
-        current_liabilities=Decimal(1),
+        gross_profit=Decimal(1200),  # 3.03 — net interest income
+        ebit=Decimal(900),  # 3.05 — pre-tax result
+        cash=Decimal(5000),
+        cfo=Decimal(450),  # annualized -> 600
+        capex=Decimal(150),  # annualized -> 200
+        filed_regime=AccountingRegime.BANK,
+        unmapped_fields=_FINANCIAL_UNMAPPED,
     )
-    ind = compute(bank, None, MarketData(market_cap=Decimal(8000)))
+
+
+def test_bank_computes_the_ratios_its_schema_supports() -> None:
+    ind = compute(_mapped_bank(), None, MarketData(market_cap=Decimal(8000)))
 
     assert ind.roe == Decimal("0.1")  # 800 / 8000
     assert ind.net_margin == Decimal("0.2")  # 600 / 3000
     assert ind.pe == Decimal(10)  # 8000 / 800
     assert ind.pb == Decimal(1)
-    # Not applicable to a financial institution:
+    # Mapped by #48 — these light up for a bank now, with no calculator guard:
+    assert ind.gross_margin == Decimal("0.4")  # 1200 / 3000 — the spread
+    assert ind.ebit_margin == Decimal("0.3")  # 900 / 3000
+    assert ind.price_to_ebit == Decimal(8000) / Decimal(1200)  # ebit annualized
+    assert ind.fcf == Decimal(400)  # (450 - 150), annualized
+    assert ind.price_to_fcf == Decimal(20)  # 8000 / 400
+    # Unbuildable from a bank's schema — no debt line, no current/non-current split:
     assert ind.net_debt is None
     assert ind.net_debt_to_ebitda is None
-    assert ind.current_ratio is None
+    assert ind.debt_to_equity is None
     assert ind.ev_ebitda is None
     assert ind.ebitda_margin is None
-    assert ind.gross_margin is None
     assert ind.roic is None
-    assert ind.ebit_margin is None
-    assert ind.debt_to_equity is None
-    assert ind.price_to_ebit is None
+    assert ind.current_ratio is None
     assert ind.price_to_working_capital is None
-    assert ind.fcf is None
-    assert ind.price_to_fcf is None
     # No prior period -> no growth
     assert ind.revenue_growth is None
 
 
-# The fields the CVM mapper deliberately skips for a financial-regime filer —
-# mirrors mongo_fundamentals._FINANCIAL_UNMAPPED_FIELDS, inlined here so the
-# domain test stays free of infrastructure imports.
-_FINANCIAL_UNMAPPED = frozenset(
-    {
-        "gross_profit",
-        "ebit",
-        "ebitda",
-        "dep_amort",
-        "cash",
-        "current_assets",
-        "current_liabilities",
-        "total_debt",
-        "cfo",
-        "capex",
-    }
-)
-
-
 def test_bank_null_reasons_name_each_cause() -> None:
-    bank = StandardizedFinancials(
-        reference_date=_Q3,
-        sector=Sector.BANK,
-        total_assets=Decimal(90000),
-        equity=Decimal(8000),
-        net_income=Decimal(600),
-        revenue=Decimal(3000),
-        filed_regime=AccountingRegime.BANK,  # files as its sector predicts
-        unmapped_fields=_FINANCIAL_UNMAPPED,
-    )
-    ind = compute(bank, None, MarketData(market_cap=Decimal(8000)))  # no shares
+    ind = compute(
+        _mapped_bank(), None, MarketData(market_cap=Decimal(8000))
+    )  # no shares
 
-    # Cause 1 — genuinely meaningless for a bank (ADR 0010): it reports Basileia,
-    # not net debt / EV-EBITDA, and has no EBITDA.
+    # Cause 1 — genuinely meaningless for a bank: it reports Basileia, not net debt
+    # / EV-EBITDA, and has no EBITDA (ADR 0010). ADR 0015 adds the three the
+    # mapping settled: a bank's balance sheet has no current/non-current split, so
+    # its current ratio and P/working-capital are unbuildable, and its ROIC
+    # denominator (equity + net debt) inherits the net-debt verdict.
     assert ind.null_reasons["net_debt"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["net_debt_to_ebitda"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["debt_to_equity"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["ev_ebitda"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["ebitda_margin"] is NullReason.INAPPLICABLE_REGIME
-    # Cause 2 — computable for a bank (the platforms show it), only unmapped by
-    # us pending #48: margins, ROIC, EBIT/working-capital multiples, current ratio.
-    assert ind.null_reasons["gross_margin"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
-    assert ind.null_reasons["ebit_margin"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
-    assert ind.null_reasons["roic"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
-    assert ind.null_reasons["current_ratio"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
-    assert ind.null_reasons["price_to_ebit"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
-    assert (
-        ind.null_reasons["price_to_working_capital"]
-        is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    assert ind.null_reasons["roic"] is NullReason.INAPPLICABLE_REGIME
+    assert ind.null_reasons["current_ratio"] is NullReason.INAPPLICABLE_REGIME
+    assert ind.null_reasons["price_to_working_capital"] is (
+        NullReason.INAPPLICABLE_REGIME
     )
-    assert ind.null_reasons["fcf"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
-    assert ind.null_reasons["price_to_fcf"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    # Cause 2 — nothing is merely *unmapped* for a bank any more: #48 mapped every
+    # account whose absence used to be a mapping gap. This is the M1 win, so pin it.
+    assert NullReason.SOURCE_ACCOUNT_UNMAPPED not in ind.null_reasons.values()
     # Cause 3 — upstream inputs, each named individually:
     assert ind.null_reasons["eps"] is NullReason.MISSING_SHARE_COUNT
     assert ind.null_reasons["revenue_growth"] is NullReason.MISSING_PRIOR_PERIOD
@@ -202,10 +196,12 @@ def test_bank_null_reasons_name_each_cause() -> None:
 
 
 def test_insurer_null_reasons_split_by_regime() -> None:
-    # ADR 0010: an insurer is the near-mirror of a bank. Margins are degenerate
-    # (both reference platforms show 0%), so they are inapplicable; net debt,
-    # EV-EBITDA, debt/equity, ROIC and current ratio *are* shown by AUVP, so they
-    # are merely unmapped pending #48 — not inapplicable.
+    # ADR 0010: an insurer is the near-mirror of a bank — its margins are
+    # degenerate (both reference platforms show 0%), so they are inapplicable.
+    # ADR 0015: unlike a bank, it files a corporate-shaped balance sheet, so its
+    # current ratio computes; but the insurer schema has no borrowings line at all
+    # (2.01.04 is "Capitalização" there), so the leverage family is *absent* at the
+    # source — we looked and there is nothing to read — rather than unmapped.
     insurer = StandardizedFinancials(
         reference_date=_Q3,
         sector=Sector.INSURER,
@@ -213,6 +209,9 @@ def test_insurer_null_reasons_split_by_regime() -> None:
         equity=Decimal(9000),
         net_income=Decimal(2500),
         revenue=Decimal(4000),
+        ebit=Decimal(3000),  # 3.07 for an insurer, not 3.05
+        current_assets=Decimal(6000),
+        current_liabilities=Decimal(3000),
         filed_regime=AccountingRegime.INSURANCE,  # files as its sector predicts
         unmapped_fields=_FINANCIAL_UNMAPPED,
     )
@@ -222,13 +221,15 @@ def test_insurer_null_reasons_split_by_regime() -> None:
     assert ind.null_reasons["gross_margin"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["ebit_margin"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["ebitda_margin"] is NullReason.INAPPLICABLE_REGIME
-    # Merely unmapped for an insurer — the leverage / valuation family:
-    assert ind.null_reasons["net_debt"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
-    assert ind.null_reasons["net_debt_to_ebitda"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
-    assert ind.null_reasons["debt_to_equity"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
-    assert ind.null_reasons["ev_ebitda"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
-    assert ind.null_reasons["roic"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
-    assert ind.null_reasons["current_ratio"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+    # Absent at the source — the insurer schema files no debt line:
+    assert ind.null_reasons["net_debt"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    assert ind.null_reasons["net_debt_to_ebitda"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    assert ind.null_reasons["debt_to_equity"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    assert ind.null_reasons["ev_ebitda"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    assert ind.null_reasons["roic"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    # Its balance sheet *does* carry the current/non-current split a bank lacks:
+    assert ind.current_ratio == Decimal(2)  # 6000 / 3000
+    assert "current_ratio" not in ind.null_reasons
 
 
 def test_mismatched_filer_gets_unexpected_regime_not_inapplicable() -> None:
@@ -243,14 +244,20 @@ def test_mismatched_filer_gets_unexpected_regime_not_inapplicable() -> None:
         net_income=Decimal(2500),
         revenue=Decimal(4000),
         filed_regime=AccountingRegime.CORPORATE,
-        unmapped_fields=_FINANCIAL_UNMAPPED,
+        # Filing corporately, it is now *mapped* corporately (ADR 0015), so nothing
+        # is deliberately skipped for it — its unmapped set is empty.
+        unmapped_fields=frozenset(),
     )
     ind = compute(
         holding, None, MarketData(market_cap=Decimal(30000), shares=Decimal(3000))
     )
 
-    assert ind.null_reasons["gross_margin"] is NullReason.UNEXPECTED_REGIME  # guarded
-    assert ind.null_reasons["fcf"] is NullReason.UNEXPECTED_REGIME  # unmapped input
+    # Suppressed by its *sector's* regime, then attributed to the mismatch — the
+    # filer reports under a schema its sector does not predict.
+    assert ind.null_reasons["gross_margin"] is NullReason.UNEXPECTED_REGIME
+    # But a line its filed regime *does* have and this filing simply omits is
+    # absent, not a mapping gap: the mismatch does not override a real absence.
+    assert ind.null_reasons["fcf"] is NullReason.SOURCE_ACCOUNT_ABSENT
     assert ind.roe is not None  # the mapped core still computes
 
 

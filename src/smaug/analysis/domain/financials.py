@@ -75,6 +75,17 @@ class StandardizedFinancials:
     # Cash-flow flows (DFC, year-to-date basis — isolated on ``dfc_period_start``).
     cfo: Decimal | None = None  # net cash from operating activities (DFC 6.01)
     capex: Decimal | None = None  # purchases of PP&E + intangibles (positive outflow)
+    # Bank-regime lines (ADR 0015). Signed as filed: the CVM records an expense as
+    # negative, and the mirror does not flip it — net interest income is therefore
+    # ``interest_income + interest_expense``, not a subtraction. Feeds #27.
+    interest_income: Decimal | None = None  # DRE 3.01.01 "Receita de Juros"
+    interest_expense: Decimal | None = None  # DRE 3.02.01 (negative)
+    loan_loss_provision: Decimal | None = None  # DRE 3.04.01 credit-risk (negative)
+    fee_income: Decimal | None = None  # DRE 3.04.02 services rendered
+    # Insurance-regime lines (ADR 0015), same sign convention. Zero for a filer
+    # that holds insurers rather than underwriting itself (BBSE3).
+    earned_premium: Decimal | None = None  # DRE 3.01.01 "Receitas com Seguros"
+    claims_incurred: Decimal | None = None  # DRE 3.02.01 (negative)
     # Null-cause provenance (#30). ``filed_regime`` is what the mapper detected
     # in the statements themselves (None = undetected); ``unmapped_fields`` names
     # the fields above that the mapper deliberately never read for this filer, so
