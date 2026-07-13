@@ -14,7 +14,9 @@ from datetime import date
 from decimal import Decimal
 from enum import StrEnum
 
+from smaug.analysis.domain.indicators import NullReason
 from smaug.portfolio.domain.sectors import Sector
+from smaug.portfolio.domain.share_classes import ShareKind
 
 
 class AccountingRegime(StrEnum):
@@ -84,11 +86,38 @@ class StandardizedFinancials:
 
 @dataclass(frozen=True)
 class MarketData:
-    """Market-side inputs (from brapi's quote): price and derived aggregates."""
+    """Market-side inputs for one view: the ticker's price and its company's cap.
+
+    ``price`` is the analyzed ticker's own quote (a unit's price is the bundle's).
+    ``market_cap`` is the whole company — the sum over its listed share classes
+    (ADR 0014), so for a dual-class ticker it is *not* ``price × shares``.
+    ``shares`` is the filed total, the denominator of the per-share indicators
+    only. ``cap_null_reason`` carries which input the use case was missing when
+    it could not build the cap, since a null cap alone cannot say whether a class
+    price or a class share count was the one that went missing.
+    """
 
     price: Decimal | None = None
     market_cap: Decimal | None = None
     shares: Decimal | None = None
+    cap_null_reason: NullReason | None = None
+
+
+@dataclass(frozen=True)
+class ShareCounts:
+    """The shares a company filed for one fiscal year, split by class (CVM's FRE).
+
+    ``total`` is the filer's own total, not a sum we compute — a company can file
+    a total that its class lines do not add up to, and the mirror stays faithful.
+    """
+
+    common: Decimal | None = None
+    preferred: Decimal | None = None
+    total: Decimal | None = None
+
+    def of(self, kind: ShareKind) -> Decimal | None:
+        """The count filed for one share class."""
+        return self.common if kind is ShareKind.COMMON else self.preferred
 
 
 @dataclass(frozen=True)

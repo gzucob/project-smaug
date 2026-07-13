@@ -56,10 +56,12 @@ class YahooQuoteProvider:
 
     Yahoo's chart ``meta`` carries ``regularMarketPrice`` without auth, but not
     market cap or share count — the richer ``v7/finance/quote`` endpoint now
-    requires a crumb (HTTP 401). So this returns the price only; the use case
-    derives ``cap = price × shares`` from CVM's filed count (ADR 0012/0013) and
-    leaves market cap / shares null here. An unresolved symbol or a bad response
-    yields ``MarketData()`` (null price); only a transport failure raises.
+    requires a crumb (HTTP 401). So this returns the price only, which is all the
+    use case wants: it capitalizes the company itself, summing each listed share
+    class at its own quote from CVM's filed counts (ADR 0014). A vendor's
+    company-wide cap would be the wrong number anyway. An unresolved symbol or a
+    bad response yields ``MarketData()`` (null price); only a transport failure
+    raises.
     """
 
     def __init__(self, base_url: str, http_client: httpx.AsyncClient) -> None:

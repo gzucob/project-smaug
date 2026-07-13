@@ -266,13 +266,37 @@ def test_missing_price_nulls_the_market_multiples_with_a_named_cause() -> None:
 
 
 def test_missing_shares_blames_the_share_count_not_the_price() -> None:
-    # Closed-year cap = price × shares (ADR 0012): with the year's price present
-    # but no filed share count, the cap-based multiples blame the shares.
-    ind = compute(_nonfinancial(), None, MarketData(price=Decimal(6)))
+    # The cap sums the company's share classes (ADR 0014), so the use case is the
+    # one that knows which input it was missing and hands the reason over. Here
+    # the year's price is present and the filed count is not.
+    ind = compute(
+        _nonfinancial(),
+        None,
+        MarketData(price=Decimal(6), cap_null_reason=NullReason.MISSING_SHARE_COUNT),
+    )
 
     assert ind.pe is None
     assert ind.null_reasons["pe"] is NullReason.MISSING_SHARE_COUNT
     assert ind.null_reasons["pb"] is NullReason.MISSING_SHARE_COUNT
+
+
+def test_a_sibling_class_without_a_quote_blames_the_price() -> None:
+    # A dual-class company whose ON class has no quote cannot be capitalized even
+    # though the analyzed ticker's own price and share count are both in hand —
+    # the null cap blames the missing price, not the shares it does have.
+    ind = compute(
+        _nonfinancial(),
+        None,
+        MarketData(
+            price=Decimal(6),
+            shares=Decimal(600),
+            cap_null_reason=NullReason.MISSING_PRICE,
+        ),
+    )
+
+    assert ind.pe is None
+    assert ind.null_reasons["pe"] is NullReason.MISSING_PRICE
+    assert ind.eps is not None  # the per-share side still has its count
 
 
 def test_zero_denominator_null_is_named() -> None:

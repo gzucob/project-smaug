@@ -13,14 +13,15 @@ Each ticker yields **two perspectives** (see ``analysis-two-views`` design):
   priced on its dividend-adjusted average ("how it was priced during that year"),
   which is the basis the reference platforms use for historical multiples.
 
-The share count behind the per-share indicators comes from CVM's filed capital
-composition, per fiscal year, so a closed year divides by the shares that
-existed *that* year. brapi's quote is only a fallback (see ``_shares_for``).
+Both the share counts and the market cap come from CVM's filed capital
+composition, per fiscal year, so a closed year is priced on the shares that
+existed *that* year. The cap is summed over the company's listed share classes,
+each on its own quote (ADR 0014) — so the two views differ only in *which* price
+each class is summed at: the current quote, or that year's adjusted average.
 """
 
 from __future__ import annotations
 
-import dataclasses
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -31,7 +32,12 @@ from smaug.analysis.domain.entities import (
     VIEW_TTM,
     TickerAnalysis,
 )
-from smaug.analysis.domain.financials import MarketData, StandardizedFinancials
+from smaug.analysis.domain.financials import (
+    MarketData,
+    StandardizedFinancials,
+    YearPrices,
+)
+from smaug.analysis.domain.market_cap import capitalize
 from smaug.analysis.domain.ports import (
     AnalysisRepository,
     FundamentalsReader,
@@ -40,6 +46,7 @@ from smaug.analysis.domain.ports import (
 )
 from smaug.analysis.domain.ttm import build_ttm
 from smaug.portfolio.domain.sectors import Sector, sector_of
+from smaug.portfolio.domain.share_classes import listed_classes
 from smaug.shared.errors import BrapiError
 from smaug.shared.logging import get_logger
 
@@ -106,8 +113,8 @@ class AnalyzePortfolioUseCase:
 
         sector = sector_of(ticker)
         computed_at = self._clock()
-        # The live quote prices the TTM view; each closed year prices on its own
-        # year history (ADR 0012), so it is not needed there beyond a share fallback.
+        # The live quote prices the TTM view only; each closed year prices on its
+        # own year history (ADR 0012), so it is not needed there at all.
         quote = await self._current_quote(ticker)
 
         analyses: list[TickerAnalysis] = []
@@ -119,7 +126,7 @@ class AnalyzePortfolioUseCase:
         for annual in annuals:  # oldest → newest
             analyses.append(
                 await self._closed_year_analysis(
-                    ticker, sector, annual, annuals, quote, computed_at
+                    ticker, sector, annual, annuals, computed_at
                 )
             )
 
@@ -144,18 +151,7 @@ class AnalyzePortfolioUseCase:
             return None
         year = current.reference_date.year
         previous = _prior_year_annual(annuals, year)
-        shares = await self._shares_for(ticker, year, quote)
-        market = dataclasses.replace(quote, shares=shares)
-        if (
-            market.market_cap is None
-            and market.price is not None
-            and shares is not None
-        ):
-            # The primary quote (Yahoo) serves the price but not the market cap;
-            # derive it from price × filed shares, the same basis the closed year
-            # uses (ADR 0012/0013). brapi's own cap, when it is the fallback, is
-            # kept as-is.
-            market = dataclasses.replace(market, market_cap=market.price * shares)
+        market = await self._market_now(ticker, year, quote)
         return TickerAnalysis(
             ticker=ticker,
             sector=sector,
@@ -174,13 +170,12 @@ class AnalyzePortfolioUseCase:
         sector: Sector,
         annual: StandardizedFinancials,
         annuals: list[StandardizedFinancials],
-        quote: MarketData,
         computed_at: datetime,
     ) -> TickerAnalysis:
         """One closed fiscal year, priced on its dividend-adjusted average."""
         year = annual.reference_date.year
         previous = _prior_year_annual(annuals, year)
-        market, nominal_avg = await self._market_for_year(ticker, year, quote)
+        market, nominal_avg = await self._market_for_year(ticker, year)
         return TickerAnalysis(
             ticker=ticker,
             sector=sector,
@@ -193,21 +188,33 @@ class AnalyzePortfolioUseCase:
             view=VIEW_CLOSED_YEAR,
         )
 
-    async def _shares_for(
+    async def _market_now(
         self, ticker: str, year: int, quote: MarketData
-    ) -> Decimal | None:
-        """The share count for ``year``: CVM's filed capital, else brapi's quote.
+    ) -> MarketData:
+        """The live market inputs: the ticker's quote + the company's current cap.
 
-        CVM is authoritative and per-year. The brapi fallback divides the market
-        cap by the price, which only holds for a single share class — the cap is
-        company-wide, so a dual-class ticker (PETR4, BBDC4) lands a few percent
-        off. It is still better than no per-share indicator; see F12.
+        The cap sums each listed class at its own current quote (ADR 0014), so a
+        dual-class company (PETR4/PETR3) is no longer priced as if every share
+        traded at the analyzed ticker's price, and a unit (SAPR11) gets a cap at
+        all. The analyzed ticker's own quote is already in hand; only its sibling
+        classes cost an extra call.
         """
-        shares = await self._shares_reader.outstanding(ticker, year)
-        if shares is not None:
-            return shares
-        logger.info("No CVM share count for %s %d; falling back to brapi", ticker, year)
-        return quote.shares
+        counts = await self._shares_reader.counts(ticker, year)
+        prices = {
+            share_class.symbol: (
+                quote.price
+                if share_class.symbol == ticker
+                else (await self._current_quote(share_class.symbol)).price
+            )
+            for share_class in listed_classes(ticker)
+        }
+        cap, cap_null_reason = capitalize(ticker, counts, prices)
+        return MarketData(
+            price=quote.price,
+            market_cap=cap,
+            shares=await self._shares_reader.outstanding(ticker, year),
+            cap_null_reason=cap_null_reason,
+        )
 
     async def _current_quote(self, ticker: str) -> MarketData:
         try:
@@ -218,35 +225,47 @@ class AnalyzePortfolioUseCase:
             )
             return MarketData()
 
-    async def _market_for_year(
-        self, ticker: str, year: int, quote: MarketData
-    ) -> tuple[MarketData, Decimal | None]:
-        """Price the closed-year multiples on the year's dividend-adjusted average.
-
-        The market cap is built from that year's own facts —
-        ``adjusted_avg × shares(year)`` — rather than repriced from the live
-        quote (superseding ADR 0001). This makes a closed-year row reproducible
-        from the database and independent of the current quote, so it survives a
-        brapi outage: the year's price comes from Yahoo (ADR 0011) and the share
-        count from CVM's filed capital for that year (ADR 0004). The ``quote`` is
-        used only as the share-count fallback when CVM has none. A missing year
-        price or share count degrades the cap to null; the per-share indicators
-        (which need only the share count) are unaffected. Returns the market
-        inputs plus the year's nominal average (stored for reference).
-        """
-        shares = await self._shares_for(ticker, year, quote)
+    async def _year_prices(self, symbol: str, year: int) -> YearPrices:
         try:
-            prices = await self._price_provider.year_prices(ticker, year)
+            return await self._price_provider.year_prices(symbol, year)
         except BrapiError as exc:
             logger.warning(
                 "No %d prices for %s (%s); year multiples will be null",
                 year,
-                ticker,
+                symbol,
                 exc,
             )
-            return MarketData(shares=shares), None
+            return YearPrices()
 
-        adjusted = prices.adjusted_avg
-        cap = None if adjusted is None or shares is None else adjusted * shares
-        market = MarketData(price=adjusted, market_cap=cap, shares=shares)
-        return market, prices.nominal_avg
+    async def _market_for_year(
+        self, ticker: str, year: int
+    ) -> tuple[MarketData, Decimal | None]:
+        """Price the closed-year multiples on that year's dividend-adjusted average.
+
+        The market cap is built from that year's own facts — each listed class at
+        its own adjusted average for the year, times the shares filed for that
+        class (ADR 0014) — rather than repriced from the live quote (superseding
+        ADR 0001). A closed-year row is therefore reproducible from the database
+        and independent of the current quote: the year's prices come from Yahoo
+        (ADR 0011) and the counts from CVM's filed capital for that year (ADR
+        0004). A missing class price or class count degrades the cap to null; the
+        per-share indicators (which need only the filed total) are unaffected.
+        Returns the market inputs plus the year's nominal average (for reference).
+        """
+        counts = await self._shares_reader.counts(ticker, year)
+        own = await self._year_prices(ticker, year)
+        prices: dict[str, Decimal | None] = {}
+        for share_class in listed_classes(ticker):
+            symbol = share_class.symbol
+            year_prices = (
+                own if symbol == ticker else await self._year_prices(symbol, year)
+            )
+            prices[symbol] = year_prices.adjusted_avg
+        cap, cap_null_reason = capitalize(ticker, counts, prices)
+        market = MarketData(
+            price=own.adjusted_avg,
+            market_cap=cap,
+            shares=await self._shares_reader.outstanding(ticker, year),
+            cap_null_reason=cap_null_reason,
+        )
+        return market, own.nominal_avg
