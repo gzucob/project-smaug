@@ -6,43 +6,42 @@ and pulls the specific accounts each indicator needs — by CVM code where the
 code is stable across sectors, and by (accent-folded) name where the code
 differs (equity is 2.03 for a normal company but 2.07 for a bank).
 
-Account codes were verified against the real 2024 ITR. The structure differs by
-sector, so the mapping is sector-aware: for banks/insurers only the lines that
-make sense (total assets, equity, net income, revenue) are pulled; the rest stay
-``None`` and the calculator skips the corresponding ratios.
+The mapping keys on the **accounting regime the filer actually files under**, not
+on its ``Sector`` (ADR 0015). The two are not the same, and reading the sector is
+how accounts that exist go unread: BBSE3 is an insurer that files a corporate-
+shaped balance sheet, and CXSE3 is an insurer that files as a holding outright.
+
+The same CVM code also means different things per regime, so a code is only ever
+read within its regime's branch (ADR 0005's dead needle, twice over): ``3.05`` is
+EBIT for a corporate filer but *pre-tax profit* for a bank (whose EBIT is at no
+code at all — interest is its operation), and ``2.01.04`` is "Empréstimos e
+Financiamentos" for a corporate filer but "Capitalização" for an insurer.
 """
 
 from __future__ import annotations
 
 import unicodedata
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
-from smaug.analysis.domain.financials import AccountingRegime, StandardizedFinancials
+from smaug.analysis.domain.financials import (
+    AccountingRegime,
+    StandardizedFinancials,
+    expected_regime,
+)
 from smaug.portfolio.domain.sectors import Sector, sector_of
 
 _STATEMENTS = ("BPA", "BPP", "DRE", "DFC")
 
-# The fields standardize() deliberately never reads for a financial-regime
-# filer — the "source account unmapped" null cause of #30. Carried on the
-# entity so the calculator can tell "we skipped it" apart from "the filing has
-# no such line".
-_FINANCIAL_UNMAPPED_FIELDS = frozenset(
-    {
-        "gross_profit",
-        "ebit",
-        "ebitda",
-        "dep_amort",
-        "cash",
-        "current_assets",
-        "current_liabilities",
-        "total_debt",
-        "cfo",
-        "capex",
-    }
-)
+# D&A is the one line we still deliberately skip for a financial filer: a bank
+# files it inside a filer-specific "Outras Despesas Operacionais" breakdown whose
+# sub-codes are not stable across banks, and no indicator consumes it (EBITDA is
+# inapplicable under both financial regimes — ADR 0010). Naming it here keeps the
+# null honest if a future indicator does reach for it (#27).
+_FINANCIAL_UNMAPPED_FIELDS = frozenset({"dep_amort", "ebitda"})
 
 # How the DRE's opening line (3.01) reads under each accounting regime,
 # accent-folded. Verified against the real filings in the raw mirror: banks
@@ -278,36 +277,114 @@ def _filed_regime(dre: Accounts) -> AccountingRegime | None:
 def standardize(
     by_module: Mapping[str, Any], sector: Sector, reference_date: date
 ) -> StandardizedFinancials:
-    """Build one period's ``StandardizedFinancials`` from its CVM statements."""
-    period_start = _period_start(by_module, "DRE")
-    dfc_period_start = _period_start(by_module, "DFC")
+    """Build one period's ``StandardizedFinancials`` from its CVM statements.
+
+    Dispatches on the regime the filer actually filed under, falling back to the
+    one its sector predicts when the DRE is missing or its opening line matches
+    no known schema — mapping under a guessed regime would read the wrong codes.
+    """
     bpa, bpa_s = _accounts(by_module, "BPA"), _scale(by_module, "BPA")
     bpp, bpp_s = _accounts(by_module, "BPP"), _scale(by_module, "BPP")
     dre, dre_s = _accounts(by_module, "DRE"), _scale(by_module, "DRE")
     dfc, dfc_s = _accounts(by_module, "DFC"), _scale(by_module, "DFC")
 
-    total_assets = _mul(_by_code(bpa, "1"), bpa_s)
-    equity = _mul(_equity(bpp), bpp_s)
-    net_income = _mul(_net_income(dre), dre_s)
-    revenue = _mul(_by_code(dre, "3.01"), dre_s)
-    dividends_paid = _mul(_dividends_paid(dfc), dfc_s)
     filed_regime = _filed_regime(dre)
 
-    if sector.is_financial:
-        return StandardizedFinancials(
-            reference_date=reference_date,
-            sector=sector,
-            period_start=period_start,
-            dfc_period_start=dfc_period_start,
-            total_assets=total_assets,
-            equity=equity,
-            net_income=net_income,
-            revenue=revenue,
-            dividends_paid=dividends_paid,
-            filed_regime=filed_regime,
-            unmapped_fields=_FINANCIAL_UNMAPPED_FIELDS,
-        )
+    # Lines that sit at the same code under every regime.
+    base = StandardizedFinancials(
+        reference_date=reference_date,
+        sector=sector,
+        period_start=_period_start(by_module, "DRE"),
+        dfc_period_start=_period_start(by_module, "DFC"),
+        total_assets=_mul(_by_code(bpa, "1"), bpa_s),
+        equity=_mul(_equity(bpp), bpp_s),
+        net_income=_mul(_net_income(dre), dre_s),
+        revenue=_mul(_by_code(dre, "3.01"), dre_s),
+        gross_profit=_mul(_by_code(dre, "3.03"), dre_s),
+        dividends_paid=_mul(_dividends_paid(dfc), dfc_s),
+        cfo=_mul(_by_code(dfc, "6.01"), dfc_s),  # net operating cash flow
+        capex=_mul(_capex(dfc), dfc_s),
+        filed_regime=filed_regime,
+    )
 
+    regime = filed_regime or expected_regime(sector)
+    if regime is AccountingRegime.BANK:
+        return _as_bank(base, bpa, bpa_s, dre, dre_s)
+    if regime is AccountingRegime.INSURANCE:
+        return _as_insurer(base, bpa, bpa_s, bpp, bpp_s, dre, dre_s)
+    return _as_corporate(base, bpa, bpa_s, bpp, bpp_s, dre, dre_s, dfc, dfc_s)
+
+
+def _as_bank(
+    base: StandardizedFinancials,
+    bpa: Accounts,
+    bpa_s: Decimal,
+    dre: Accounts,
+    dre_s: Decimal,
+) -> StandardizedFinancials:
+    """A bank's balance sheet has no current/non-current split and no debt line.
+
+    ``gross_profit`` carries 3.03, which for a bank is the net interest income —
+    the spread, its closest analogue to a gross result. ``ebit`` carries 3.05,
+    which for a bank is profit *before tax*, not before interest: interest is the
+    operation, so there is no line to strip. Both are deliberate approximations,
+    matching what the reference platforms compute (ADR 0015); ``total_debt``,
+    ``current_assets`` and ``current_liabilities`` stay ``None`` because the
+    schema has no such lines — the calculator names those nulls inapplicable.
+    """
+    return replace(
+        base,
+        ebit=_mul(_by_code(dre, "3.05"), dre_s),  # pre-tax result — see docstring
+        cash=_mul(_by_code(bpa, "1.01"), bpa_s),  # no 1.01.01/1.01.02 split
+        interest_income=_mul(_by_code(dre, "3.01.01"), dre_s),
+        interest_expense=_mul(_by_code(dre, "3.02.01"), dre_s),
+        loan_loss_provision=_mul(_by_code(dre, "3.04.01"), dre_s),
+        fee_income=_mul(_by_code(dre, "3.04.02"), dre_s),
+        unmapped_fields=_FINANCIAL_UNMAPPED_FIELDS,
+    )
+
+
+def _as_insurer(
+    base: StandardizedFinancials,
+    bpa: Accounts,
+    bpa_s: Decimal,
+    bpp: Accounts,
+    bpp_s: Decimal,
+    dre: Accounts,
+    dre_s: Decimal,
+) -> StandardizedFinancials:
+    """An insurer files a corporate-shaped balance sheet but its own DRE.
+
+    So the current/non-current split *is* there (1.01 / 2.01), while EBIT sits at
+    3.07 rather than 3.05 — the insurer DRE carries an extra level. ``total_debt``
+    stays ``None`` on purpose: the insurer schema has no borrowings line at all
+    (2.01.04 is "Capitalização" here, and 2.02.01 is payables and provisions), so
+    there is nothing to read (ADR 0015).
+    """
+    return replace(
+        base,
+        ebit=_mul(_by_code(dre, "3.07"), dre_s),  # before financial result/taxes
+        cash=_mul(_sum(_by_code(bpa, "1.01.01"), _by_code(bpa, "1.01.02")), bpa_s),
+        current_assets=_mul(_by_code(bpa, "1.01"), bpa_s),
+        current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),
+        earned_premium=_mul(_by_code(dre, "3.01.01"), dre_s),
+        claims_incurred=_mul(_by_code(dre, "3.02.01"), dre_s),
+        unmapped_fields=_FINANCIAL_UNMAPPED_FIELDS,
+    )
+
+
+def _as_corporate(
+    base: StandardizedFinancials,
+    bpa: Accounts,
+    bpa_s: Decimal,
+    bpp: Accounts,
+    bpp_s: Decimal,
+    dre: Accounts,
+    dre_s: Decimal,
+    dfc: Accounts,
+    dfc_s: Decimal,
+) -> StandardizedFinancials:
+    """The standard chart of accounts — and what CXSE3 files, despite its sector."""
     ebit = _mul(_by_code(dre, "3.05"), dre_s)  # before financial result/taxes
     dep_amort = _mul(_by_name(dfc, "depreciacao"), dfc_s)  # cash-flow add-back
     ebitda = (
@@ -316,16 +393,8 @@ def standardize(
     # Cash for net debt = cash & equivalents (1.01.01) + short-term financial
     # investments (1.01.02), matching how the platforms measure liquidity.
     cash = _mul(_sum(_by_code(bpa, "1.01.01"), _by_code(bpa, "1.01.02")), bpa_s)
-    return StandardizedFinancials(
-        reference_date=reference_date,
-        sector=sector,
-        period_start=period_start,
-        dfc_period_start=dfc_period_start,
-        total_assets=total_assets,
-        equity=equity,
-        net_income=net_income,
-        revenue=revenue,
-        gross_profit=_mul(_by_code(dre, "3.03"), dre_s),
+    return replace(
+        base,
         ebit=ebit,
         ebitda=ebitda,
         dep_amort=dep_amort,
@@ -335,10 +404,6 @@ def standardize(
         total_debt=_mul(
             _sum(_by_code(bpp, "2.01.04"), _by_code(bpp, "2.02.01")), bpp_s
         ),
-        dividends_paid=dividends_paid,
-        cfo=_mul(_by_code(dfc, "6.01"), dfc_s),  # net operating cash flow
-        capex=_mul(_capex(dfc), dfc_s),
-        filed_regime=filed_regime,
     )
 
 
