@@ -13,6 +13,7 @@ from typing import Protocol
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.financials import (
     MarketData,
+    ShareCounts,
     StandardizedFinancials,
     YearPrices,
 )
@@ -52,9 +53,10 @@ class CurrentQuoteProvider(Protocol):
 
     Split from ``PriceProvider`` so the live quote can be sourced and chained
     independently of the year history (ADR 0013): Yahoo is the primary quote,
-    brapi the fallback. An implementation may return only the price (Yahoo does
-    not expose market cap / shares for free); the use case derives the cap from
-    price × filed shares when it is absent.
+    brapi the fallback. Only the price is read: an implementation's own market cap
+    is company-wide, and the use case builds the cap itself by summing each listed
+    share class at its own quote (ADR 0014). It is called once per class, so the
+    ``ticker`` here is a share class symbol (``PETR3``), not only a portfolio one.
     """
 
     async def get(self, ticker: str) -> MarketData: ...
@@ -80,6 +82,15 @@ class SharesReader(Protocol):
 
     async def outstanding(self, ticker: str, year: int) -> Decimal | None:
         """Total shares as of ``year``, or the nearest earlier year on file."""
+        ...
+
+    async def counts(self, ticker: str, year: int) -> ShareCounts | None:
+        """The same filing split by class (ON/PN) — the multi-class cap's counts.
+
+        Unlike ``outstanding`` this is served for a unit too: the cap sums the
+        underlying classes, which is exactly what a unit's bundle price cannot
+        give (ADR 0014).
+        """
         ...
 
 

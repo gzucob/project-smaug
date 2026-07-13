@@ -7,10 +7,13 @@ from smaug.analysis.application.analyze import AnalyzePortfolioUseCase
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.financials import (
     MarketData,
+    ShareCounts,
     StandardizedFinancials,
     YearPrices,
 )
+from smaug.analysis.domain.indicators import NullReason
 from smaug.portfolio.domain.sectors import Sector
+from smaug.portfolio.domain.share_classes import is_unit
 from smaug.shared.errors import BrapiForbiddenError, BrapiTimeoutError
 
 # Four consecutive quarter-ends: the TTM window Jul/2025–Mar/2026.
@@ -44,12 +47,19 @@ class FakePrice:
         data: MarketData | None = None,
         *,
         year: YearPrices | None = None,
+        by_symbol: dict[str, MarketData] | None = None,
+        year_by_symbol: dict[str, YearPrices] | None = None,
         error: Exception | None = None,
         get_error: Exception | None = None,
         year_error: Exception | None = None,
     ) -> None:
         self._data = data
         self._year = year
+        # ``by_symbol``/``year_by_symbol`` price each share class differently — the
+        # multi-class cap sums PETR3 and PETR4 at their own quotes. Without them
+        # every symbol gets the same price, which is enough for most tests.
+        self._by_symbol = by_symbol
+        self._year_by_symbol = year_by_symbol
         # ``error`` fails both sides; ``get_error``/``year_error`` fail one only,
         # so a test can knock out the live quote while the year history survives.
         self._get_error = get_error if get_error is not None else error
@@ -58,22 +68,41 @@ class FakePrice:
     async def get(self, ticker: str) -> MarketData:
         if self._get_error is not None:
             raise self._get_error
+        if self._by_symbol is not None:
+            return self._by_symbol.get(ticker, MarketData())
         return self._data or MarketData()
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:
         if self._year_error is not None:
             raise self._year_error
+        if self._year_by_symbol is not None:
+            return self._year_by_symbol.get(ticker, YearPrices())
         return self._year or YearPrices()
 
 
 class FakeShares:
-    """CVM's filed share count, per fiscal year. Empty → the brapi fallback."""
+    """CVM's filed capital composition, per fiscal year (ON/PN + the filer's total)."""
 
-    def __init__(self, by_year: dict[int, Decimal] | None = None) -> None:
+    def __init__(self, by_year: dict[int, ShareCounts] | None = None) -> None:
         self._by_year = by_year or {}
 
     async def outstanding(self, ticker: str, year: int) -> Decimal | None:
+        if is_unit(ticker):
+            return None
+        filed = self._by_year.get(year)
+        return filed.total if filed is not None else None
+
+    async def counts(self, ticker: str, year: int) -> ShareCounts | None:
         return self._by_year.get(year)
+
+
+def _counts(*, common: int, preferred: int = 0) -> ShareCounts:
+    """A filed capital composition. A class with no shares is absent, not zero."""
+    return ShareCounts(
+        common=Decimal(common),
+        preferred=Decimal(preferred) if preferred else None,
+        total=Decimal(common + preferred),
+    )
 
 
 class FakeRepo:
@@ -122,9 +151,9 @@ async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
                 )
             }
         ),
-        FakePrice(MarketData(price=Decimal(10), market_cap=Decimal(12000))),
+        FakePrice(MarketData(price=Decimal(10))),
         repo,
-        FakeShares(),
+        FakeShares({2026: _counts(common=800, preferred=400)}),
     )
 
     out = await use_case.execute(["PETR4"])
@@ -137,33 +166,78 @@ async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
     assert saved.price == Decimal(10)  # current nominal quote
     assert saved.price_nominal == Decimal(10)
     assert saved.price_basis == "ttm_current_nominal"
+    # Both classes quote at 10 here → cap = 10 × (800 + 400) = 12000.
     assert saved.indicators.pe == Decimal(10)  # 12000 / 1200
     assert saved.indicators.pb == Decimal(2)  # 12000 / 6000
 
 
-async def test_analyze_derives_ttm_cap_from_price_and_shares() -> None:
-    # The primary quote (Yahoo) gives the price but no market cap; the TTM cap is
-    # derived as price × filed shares, so the cap-based multiples still compute
-    # without brapi (ADR 0013).
+async def test_analyze_sums_the_ttm_cap_over_the_listed_share_classes() -> None:
+    # PETR3 (ON) and PETR4 (PN) each trade at their own price, so Petrobras is
+    # worth 12 × 800 + 10 × 400 = 13600 — not the analyzed ticker's quote times
+    # every share the company filed (10 × 1200 = 12000), which is what the old
+    # single-quote cap paid and what made PETR4 land ~7% off (ADR 0014, #39).
     repo = FakeRepo()
     use_case = AnalyzePortfolioUseCase(
         FakeReader(
             {
                 "PETR4": _quarters(
-                    Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(6000)
+                    Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(6800)
                 )
             }
         ),
-        FakePrice(MarketData(price=Decimal(10))),  # price only, no market_cap
+        FakePrice(
+            by_symbol={
+                "PETR3": MarketData(price=Decimal(12)),
+                "PETR4": MarketData(price=Decimal(10)),
+            }
+        ),
         repo,
-        FakeShares({2026: Decimal(1200)}),
+        FakeShares({2026: _counts(common=800, preferred=400)}),
     )
 
     await use_case.execute(["PETR4"])
 
     saved = repo.saved[0]
-    assert saved.indicators.pe == Decimal(10)  # cap 10 × 1200 = 12000 / 1200
-    assert saved.indicators.pb == Decimal(2)  # 12000 / 6000
+    assert saved.price == Decimal(10)  # the analyzed ticker's own quote, unchanged
+    assert saved.indicators.pb == Decimal(2)  # cap 13600 / 6800, not 12000 / 6800
+    assert saved.indicators.eps == Decimal(1)  # 1200 / 1200 — the filed total
+
+
+async def test_analyze_capitalizes_a_unit_from_its_underlying_classes() -> None:
+    # A unit's quote prices a bundle, so there is no share count to multiply it by
+    # and the single-quote cap left SAPR11 with every multiple null. Summing the
+    # underlying classes (SAPR3 ON + SAPR4 PN) capitalizes the company without
+    # modelling the bundle at all (ADR 0014). The per-share indicators still need
+    # that composition, so they stay null — with a named cause (#38).
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader(
+            {
+                "SAPR11": _quarters(
+                    Sector.UTILITY, net_income=Decimal(250), equity=Decimal(5500)
+                )
+            }
+        ),
+        FakePrice(
+            by_symbol={
+                "SAPR3": MarketData(price=Decimal(8)),
+                "SAPR4": MarketData(price=Decimal(7)),
+                "SAPR11": MarketData(price=Decimal(22)),  # the bundle's own price
+            }
+        ),
+        repo,
+        FakeShares({2026: _counts(common=500, preferred=1000)}),
+    )
+
+    await use_case.execute(["SAPR11"])
+
+    saved = repo.saved[0]
+    assert saved.price == Decimal(22)  # the unit quote is what the holder sees
+    # cap = 8 × 500 + 7 × 1000 = 11000; TTM net income = 4 × 250 = 1000.
+    assert saved.indicators.pe == Decimal(11)
+    assert saved.indicators.pb == Decimal(2)  # 11000 / 5500
+    assert saved.indicators.eps is None
+    assert saved.indicators.null_reasons["eps"] is NullReason.MISSING_SHARE_COUNT
 
 
 async def test_analyze_computes_growth_against_prior_year_annual() -> None:
@@ -195,7 +269,7 @@ async def test_analyze_computes_growth_against_prior_year_annual() -> None:
     repo = FakeRepo()
     use_case = AnalyzePortfolioUseCase(
         FakeReader({"PETR4": quarters}, annuals={"PETR4": [prior]}),
-        FakePrice(MarketData(price=Decimal(10), market_cap=Decimal(12000))),
+        FakePrice(MarketData(price=Decimal(10))),
         repo,
         FakeShares(),
     )
@@ -234,11 +308,16 @@ async def test_analyze_produces_ttm_and_closed_year_views() -> None:
     use_case = AnalyzePortfolioUseCase(
         FakeReader({"PETR4": quarters}, annuals={"PETR4": [annual_2024, annual_2025]}),
         FakePrice(
-            MarketData(price=Decimal(10), market_cap=Decimal(12000)),
+            MarketData(price=Decimal(10)),
             year=YearPrices(nominal_avg=Decimal(8), adjusted_avg=Decimal(6)),
         ),
         repo,
-        FakeShares({2024: Decimal(1200), 2025: Decimal(1200)}),
+        FakeShares(
+            {
+                2024: _counts(common=800, preferred=400),
+                2025: _counts(common=800, preferred=400),
+            }
+        ),
     )
 
     out = await use_case.execute(["PETR4"])
@@ -290,7 +369,7 @@ async def test_analyze_prices_closed_year_without_the_live_quote() -> None:
             year=YearPrices(nominal_avg=Decimal(8), adjusted_avg=Decimal(6)),
         ),
         repo,
-        FakeShares({2024: Decimal(1200)}),
+        FakeShares({2024: _counts(common=800, preferred=400)}),
     )
 
     await use_case.execute(["PETR4"])
@@ -340,11 +419,16 @@ async def test_analyze_divides_each_view_by_that_years_filed_shares() -> None:
     use_case = AnalyzePortfolioUseCase(
         FakeReader({"PETR4": quarters}, annuals={"PETR4": [annual_2024]}),
         FakePrice(
-            MarketData(price=Decimal(10), market_cap=Decimal(12000)),
+            MarketData(price=Decimal(10)),
             year=YearPrices(nominal_avg=Decimal(8), adjusted_avg=Decimal(6)),
         ),
         repo,
-        FakeShares({2024: Decimal(600), 2026: Decimal(300)}),
+        FakeShares(
+            {
+                2024: _counts(common=400, preferred=200),
+                2026: _counts(common=200, preferred=100),
+            }
+        ),
     )
 
     out = await use_case.execute(["PETR4"])
@@ -359,8 +443,12 @@ async def test_analyze_divides_each_view_by_that_years_filed_shares() -> None:
     assert y2024.indicators.bvps == Decimal(6)  # 3600 / 600
 
 
-async def test_analyze_falls_back_to_the_quote_share_count() -> None:
-    # No CVM capital ingested for this ticker: brapi's derived count carries it.
+async def test_analyze_refuses_the_quotes_own_cap_and_share_count() -> None:
+    # brapi's quote carries a company-wide market cap and a share count derived
+    # from it, so for a multi-class ticker the identity cap ≡ price × shares does
+    # not hold: PETR4 landed +6.7% off the filed count. With no CVM filing there
+    # is no honest count, so both the cap and the per-share indicators go null
+    # with a named cause rather than take the vendor's biased pair (#39).
     repo = FakeRepo()
     use_case = AnalyzePortfolioUseCase(
         FakeReader(
@@ -376,13 +464,16 @@ async def test_analyze_falls_back_to_the_quote_share_count() -> None:
             )
         ),
         repo,
-        FakeShares(),
+        FakeShares(),  # CVM filed nothing for this ticker
     )
 
     await use_case.execute(["PETR4"])
 
-    assert repo.saved[0].indicators.eps == Decimal(1)  # 1200 / 1200
-    assert repo.saved[0].indicators.bvps == Decimal(5)  # 6000 / 1200
+    ind = repo.saved[0].indicators
+    assert ind.eps is None
+    assert ind.pe is None  # brapi's 12000 is not borrowed
+    assert ind.null_reasons["eps"] is NullReason.MISSING_SHARE_COUNT
+    assert ind.null_reasons["pe"] is NullReason.MISSING_SHARE_COUNT
 
 
 async def test_analyze_keeps_per_share_indicators_when_price_is_missing() -> None:
@@ -398,7 +489,7 @@ async def test_analyze_keeps_per_share_indicators_when_price_is_missing() -> Non
         ),
         FakePrice(error=BrapiForbiddenError("403")),
         repo,
-        FakeShares({2026: Decimal(400)}),
+        FakeShares({2026: _counts(common=400)}),  # BBAS3 lists ON only
     )
 
     await use_case.execute(["BBAS3"])
@@ -407,6 +498,7 @@ async def test_analyze_keeps_per_share_indicators_when_price_is_missing() -> Non
     assert saved.indicators.eps == Decimal(2)  # 800 / 400
     assert saved.indicators.bvps == Decimal(20)  # 8000 / 400
     assert saved.indicators.pe is None  # still no price
+    assert saved.indicators.null_reasons["pe"] is NullReason.MISSING_PRICE
 
 
 async def test_analyze_degrades_when_price_unavailable() -> None:

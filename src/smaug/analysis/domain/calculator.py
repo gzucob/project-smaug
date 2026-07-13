@@ -207,10 +207,12 @@ def _classify(
                 )
             return NullReason.SOURCE_ACCOUNT_ABSENT
     if needs.cap and market.market_cap is None:
-        # cap = price × shares (closed year, ADR 0012), so a null cap blames the
-        # price unless the price is present and only the share count is missing.
-        if market.price is not None and market.shares is None:
-            return NullReason.MISSING_SHARE_COUNT
+        # The cap sums the company's share classes (ADR 0014), so which input went
+        # missing is not readable from ``price``/``shares`` here — a sibling class
+        # can be the one lacking a quote. The use case names it when it builds the
+        # cap; the price is the fallback blame when it did not.
+        if market.cap_null_reason is not None:
+            return market.cap_null_reason
         return NullReason.MISSING_PRICE
     if needs.shares and market.shares is None:
         return NullReason.MISSING_SHARE_COUNT

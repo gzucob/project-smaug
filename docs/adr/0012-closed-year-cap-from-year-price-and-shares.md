@@ -1,6 +1,6 @@
 # 0012 — Closed-year cap is built from the year's price and filed shares
 
-- **Status:** Accepted (supersedes [0001](0001-closed-year-pricing-basis.md))
+- **Status:** Superseded by [0014](0014-market-cap-summed-over-listed-share-classes.md) (supersedes [0001](0001-closed-year-pricing-basis.md))
 - **Date:** 2026-07-10
 
 ## Context
