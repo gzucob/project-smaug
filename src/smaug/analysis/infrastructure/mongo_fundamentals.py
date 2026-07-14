@@ -109,9 +109,33 @@ def _by_code(accounts: Accounts, code: str) -> Decimal | None:
     return None
 
 
-def _by_name(accounts: Accounts, needle: str) -> Decimal | None:
+def _account_by_name(accounts: Accounts, needle: str) -> Mapping[str, Any] | None:
     folded = _fold(needle)
     for account in accounts:
+        if folded in _fold(str(account.get("name", ""))):
+            return account
+    return None
+
+
+def _by_name(accounts: Accounts, needle: str) -> Decimal | None:
+    account = _account_by_name(accounts, needle)
+    return None if account is None else _dec(account.get("quantity"))
+
+
+def _child_by_name(accounts: Accounts, parent: str, needle: str) -> Decimal | None:
+    """The first line matching ``needle`` among ``parent``'s sub-accounts.
+
+    Scoping the search to the parent's own children is what keeps the DRE's *two*
+    "Atribuído aos Sócios..." blocks apart. A bank files the pair twice — once
+    under 3.09 (Resultado das Operações Continuadas) and once under 3.11 (Lucro
+    Consolidado) — and leaves the 3.09 pair blank; an unscoped name search reads
+    that leading zero and reports the bank as earning nothing (BBAS3's Q3, #78).
+    """
+    prefix = f"{parent}."
+    folded = _fold(needle)
+    for account in accounts:
+        if not str(account.get("code", "")).startswith(prefix):
+            continue
         if folded in _fold(str(account.get("name", ""))):
             return _dec(account.get("quantity"))
     return None
@@ -120,39 +144,59 @@ def _by_name(accounts: Accounts, needle: str) -> Decimal | None:
 def _controllers_share(
     accounts: Accounts,
     *,
+    total: Mapping[str, Any] | None,
     controllers: str,
-    total: Decimal | None,
     minority: str,
 ) -> Decimal | None:
     """The controlling shareholders' slice of a consolidated figure.
 
-    Platforms report the controllers' equity/earnings, not the consolidated
-    total that still carries the minority interest. The split is exposed in two
-    shapes: an explicit "attributed to the controller" line (banks), or a
-    consolidated total plus a "non-controlling" sub-line (most companies). Prefer
-    the explicit line; else ``total − minority``; else the total unchanged (no
-    split filed → the total already is the controllers' figure).
+    Platforms report the controllers' equity/earnings, not the consolidated total
+    that still carries the minority interest. The split is exposed in two shapes:
+    an explicit "attributed to the controller" sub-line (banks), or a total plus a
+    "non-controlling" sub-line (most companies). Both are read as children of the
+    total (``_child_by_name``): prefer the explicit line, else fall back on the
+    accounting identity ``controllers = total − minority``, which an absent
+    minority line reduces to the total — the no-split-filed case.
+
+    An explicit **zero** is the exception. Where the identity yields a non-zero
+    figure, a zero on the controllers' line is an unfilled field, not an economic
+    zero, and the identity wins: CXSE3 files 3.11.01 = 0 against a 3.7bn total and
+    a zero minority (#78), which read literally reports a profitable insurer as
+    earning nothing. A controllers' share that is *genuinely* zero requires the
+    minority to take the whole total — and there the identity yields zero too, so
+    it still reads zero. A non-zero explicit line is always believed, so a real
+    bank split (BBAS3's 3.11.01) keeps winning over the total.
     """
-    explicit = _by_name(accounts, controllers)
-    if explicit is not None:
+    if total is None:
+        return None
+    total_value = _dec(total.get("quantity"))
+    parent = str(total.get("code", ""))
+    explicit = _child_by_name(accounts, parent, controllers)
+    minority_value = _child_by_name(accounts, parent, minority)
+
+    derived: Decimal | None = None
+    if total_value is not None:
+        derived = total_value - (
+            minority_value if minority_value is not None else Decimal(0)
+        )
+
+    unfilled_zero = explicit == 0 and derived is not None and derived != 0
+    if explicit is not None and not unfilled_zero:
         return explicit
-    minority_value = _by_name(accounts, minority)
-    if total is not None and minority_value is not None:
-        return total - minority_value
-    return total
+    return derived
 
 
 def _net_income(dre: Accounts) -> Decimal | None:
     """Net income attributable to the controlling shareholders (DRE)."""
-    total: Decimal | None = None
+    total: Mapping[str, Any] | None = None
     for name in _NET_INCOME_TOTAL_NAMES:
-        total = _by_name(dre, name)
+        total = _account_by_name(dre, name)
         if total is not None:
             break
     return _controllers_share(
         dre,
-        controllers="socios da empresa controladora",
         total=total,
+        controllers="socios da empresa controladora",
         minority="socios nao controladores",
     )
 
@@ -161,8 +205,8 @@ def _equity(bpp: Accounts) -> Decimal | None:
     """Equity attributable to the controlling shareholders (BPP)."""
     return _controllers_share(
         bpp,
+        total=_account_by_name(bpp, "patrimonio liquido"),
         controllers="atribuido ao controlador",
-        total=_by_name(bpp, "patrimonio liquido"),
         minority="nao controladores",
     )
 

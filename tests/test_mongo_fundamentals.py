@@ -307,6 +307,84 @@ def test_standardize_takes_controllers_share_wide_cash_and_dividends() -> None:
     assert f.dfc_period_start == date(2025, 1, 1)
 
 
+def _dre(accounts: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"DRE": {"accounts": accounts}}
+
+
+def test_standardize_derives_net_income_when_the_controllers_split_is_filed_blank() -> (
+    None
+):
+    # CXSE3's real 2024 DFP (#78): the consolidated total is filed, both halves of
+    # the split are left at 0. Read literally, a profitable insurer earns nothing.
+    # The identity (controllers = total - minority) says the total IS the
+    # controllers' share, which the DMPL independently confirms.
+    f = standardize(
+        _dre(
+            [
+                _acc("3.01", "Receita de Venda de Bens e/ou Serviços", "0"),
+                _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "3765184"),
+                _acc("3.11.01", "Atribuído a Sócios da Empresa Controladora", "0"),
+                _acc("3.11.02", "Atribuído a Sócios Não Controladores", "0"),
+            ]
+        ),
+        Sector.INSURER,
+        date(2024, 12, 31),
+    )
+
+    assert f.net_income == Decimal("3765184")
+
+
+def test_standardize_reads_the_controllers_line_under_the_total() -> None:
+    # BBAS3's real Q3 ITR (#78): the DRE carries the "Atribuído aos Sócios..." pair
+    # TWICE — blank under 3.09, filed under 3.11. A whole-statement name search hits
+    # the 3.09 zero first and reports the bank as earning nothing, so the search is
+    # scoped to the total's own children. The genuine split must still beat the
+    # total: 21,992,490 of a 24,031,310 consolidated result is the controllers'.
+    f = standardize(
+        _dre(
+            [
+                _acc("3.01", "Receitas de Intermediação Financeira", "201800451"),
+                _acc("3.09.01", "Atribuído aos Sócios da Empresa Controladora", "0"),
+                _acc("3.09.02", "Atribuído aos Sócios não Controladores", "0"),
+                _acc(
+                    "3.11",
+                    "Lucro ou Prejuízo Líquido Consolidado do Período",
+                    "24031310",
+                ),
+                _acc(
+                    "3.11.01",
+                    "Atribuído aos Sócios da Empresa Controladora",
+                    "21992490",
+                ),
+                _acc("3.11.02", "Atribuído aos Sócios não Controladores", "2038820"),
+            ]
+        ),
+        Sector.BANK,
+        date(2024, 9, 30),
+    )
+
+    assert f.net_income == Decimal("21992490")
+
+
+def test_standardize_keeps_a_controllers_share_that_is_genuinely_zero() -> None:
+    # The one shape where a 0 on the controllers' line is real: the minority takes
+    # the whole result. The identity yields 0 too, so the fallback cannot inflate it.
+    f = standardize(
+        _dre(
+            [
+                _acc("3.01", "Receita de Venda de Bens e/ou Serviços", "900"),
+                _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "200"),
+                _acc("3.11.01", "Atribuído a Sócios da Empresa Controladora", "0"),
+                _acc("3.11.02", "Atribuído a Sócios Não Controladores", "200"),
+            ]
+        ),
+        Sector.COMMODITY,
+        date(2024, 12, 31),
+    )
+
+    assert f.net_income == Decimal("0")
+
+
 def test_standardize_bank_uses_explicit_controllers_line() -> None:
     # Banks file an explicit "attributed to the controller" line for both equity
     # and net income; the mapper must prefer it over the consolidated total.
