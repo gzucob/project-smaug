@@ -1,0 +1,686 @@
+{
+  "PETR4": {
+    "2024": {
+      "financials": {
+        "reference_date": "2024-12-31",
+        "sector": "commodity",
+        "period_start": "2024-01-01",
+        "dfc_period_start": "2024-01-01",
+        "total_assets": "1124797000000.0000000000",
+        "equity": "366006000000.0000000000",
+        "net_income": "36606000000.0000000000",
+        "revenue": "490829000000.0000000000",
+        "gross_profit": "246462000000.0000000000",
+        "ebit": "137201000000.0000000000",
+        "ebitda": "204234000000.0000000000",
+        "dep_amort": "67033000000.0000000000",
+        "cash": "46651000000.0000000000",
+        "current_assets": "135212000000.0000000000",
+        "current_liabilities": "194808000000.0000000000",
+        "total_debt": "373467000000.0000000000",
+        "dividends_paid": "100305000000.0000000000",
+        "cfo": "204037000000.0000000000",
+        "capex": "79856000000.0000000000",
+        "interest_income": null,
+        "interest_expense": null,
+        "loan_loss_provision": null,
+        "fee_income": null,
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "corporate",
+        "unmapped_fields": []
+      },
+      "market": {
+        "price": "38.20414335699195392430278884",
+        "market_cap": "503945029812.4895863920425028",
+        "shares": "12732968592"
+      }
+    },
+    "2025": {
+      "financials": {
+        "reference_date": "2025-12-31",
+        "sector": "commodity",
+        "period_start": "2025-01-01",
+        "dfc_period_start": "2025-01-01",
+        "total_assets": "1223389000000.0000000000",
+        "equity": "415786000000.0000000000",
+        "net_income": "110129000000.0000000000",
+        "revenue": "497549000000.0000000000",
+        "gross_profit": "236998000000.0000000000",
+        "ebit": "145628000000.0000000000",
+        "ebitda": "230016000000.0000000000",
+        "dep_amort": "84388000000.0000000000",
+        "cash": "50608000000.0000000000",
+        "current_assets": "140026000000.0000000000",
+        "current_liabilities": "198368000000.0000000000",
+        "total_debt": "384025000000.0000000000",
+        "dividends_paid": "45205000000.0000000000",
+        "cfo": "200333000000.0000000000",
+        "capex": "108714000000.0000000000",
+        "interest_income": null,
+        "interest_expense": null,
+        "loan_loss_provision": null,
+        "fee_income": null,
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "corporate",
+        "unmapped_fields": []
+      },
+      "market": {
+        "price": "32.702639976501464876",
+        "market_cap": "441029659289.3554141801634030",
+        "shares": "12888732761"
+      }
+    }
+  },
+  "VALE3": {
+    "2024": {
+      "financials": {
+        "reference_date": "2024-12-31",
+        "sector": "commodity",
+        "period_start": "2024-01-01",
+        "dfc_period_start": "2024-01-01",
+        "total_assets": "496325000000.0000000000",
+        "equity": "206772000000.0000000000",
+        "net_income": "31592000000.0000000000",
+        "revenue": "206005000000.0000000000",
+        "gross_profit": "74687000000.0000000000",
+        "ebit": "55459000000.0000000000",
+        "ebitda": "71984000000.0000000000",
+        "dep_amort": "16525000000.0000000000",
+        "cash": "31002000000.0000000000",
+        "current_assets": "83476000000.0000000000",
+        "current_liabilities": "81055000000.0000000000",
+        "total_debt": "96012000000.0000000000",
+        "dividends_paid": "20663000000.0000000000",
+        "cfo": "50199000000.0000000000",
+        "capex": "35098000000.0000000000",
+        "interest_income": null,
+        "interest_expense": null,
+        "loan_loss_provision": null,
+        "fee_income": null,
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "corporate",
+        "unmapped_fields": []
+      },
+      "market": {
+        "price": "62.07729104030654733864541833",
+        "market_cap": "264990546992.1876353429940198",
+        "shares": "4268719580"
+      }
+    },
+    "2025": {
+      "financials": {
+        "reference_date": "2025-12-31",
+        "sector": "commodity",
+        "period_start": "2025-01-01",
+        "dfc_period_start": "2025-01-01",
+        "total_assets": "476094000000.0000000000",
+        "equity": "184299000000.0000000000",
+        "net_income": "13814000000.0000000000",
+        "revenue": "213595000000.0000000000",
+        "gross_profit": "74708000000.0000000000",
+        "ebit": "31969000000.0000000000",
+        "ebitda": "49275000000.0000000000",
+        "dep_amort": "17306000000.0000000000",
+        "cash": "41629000000.0000000000",
+        "current_assets": "100645000000.0000000000",
+        "current_liabilities": "87320000000.0000000000",
+        "total_debt": "103457000000.0000000000",
+        "dividends_paid": "19971000000.0000000000",
+        "cfo": "48765000000.0000000000",
+        "capex": "33390000000.0000000000",
+        "interest_income": null,
+        "interest_expense": null,
+        "loan_loss_provision": null,
+        "fee_income": null,
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "corporate",
+        "unmapped_fields": []
+      },
+      "market": {
+        "price": "57.267160064697265632",
+        "market_cap": "238742881940.5828049608231473",
+        "shares": "4168931764"
+      }
+    }
+  },
+  "SAPR11": {
+    "2024": {
+      "financials": {
+        "reference_date": "2024-12-31",
+        "sector": "utility",
+        "period_start": "2024-01-01",
+        "dfc_period_start": "2024-01-01",
+        "total_assets": "20508000000.0000000000",
+        "equity": "10828707000.0000000000",
+        "net_income": "1545347000.0000000000",
+        "revenue": "6848219000.0000000000",
+        "gross_profit": "3957833000.0000000000",
+        "ebit": "2376613000.0000000000",
+        "ebitda": null,
+        "dep_amort": null,
+        "cash": "1800757000.0000000000",
+        "current_assets": "3296187000.0000000000",
+        "current_liabilities": "1850428000.0000000000",
+        "total_debt": "6631335000.0000000000",
+        "dividends_paid": "403072000.0000000000",
+        "cfo": "2775021000.0000000000",
+        "capex": "1908908000.0000000000",
+        "interest_income": null,
+        "interest_expense": null,
+        "loan_loss_provision": null,
+        "fee_income": null,
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "corporate",
+        "unmapped_fields": []
+      },
+      "market": {
+        "price": "27.57474101397145793227091633",
+        "market_cap": "8267438123.882392488169240578",
+        "shares": null
+      }
+    },
+    "2025": {
+      "financials": {
+        "reference_date": "2025-12-31",
+        "sector": "utility",
+        "period_start": "2025-01-01",
+        "dfc_period_start": "2025-01-01",
+        "total_assets": "26465924000.0000000000",
+        "equity": "12347781000.0000000000",
+        "net_income": "2079568000.0000000000",
+        "revenue": "7205727000.0000000000",
+        "gross_profit": "4054944000.0000000000",
+        "ebit": "2337506000.0000000000",
+        "ebitda": null,
+        "dep_amort": null,
+        "cash": "5608131000.0000000000",
+        "current_assets": "7222564000.0000000000",
+        "current_liabilities": "6024748000.0000000000",
+        "total_debt": "7392664000.0000000000",
+        "dividends_paid": "412743000.0000000000",
+        "cfo": "7060384000.0000000000",
+        "capex": "2615418000.0000000000",
+        "interest_income": null,
+        "interest_expense": null,
+        "loan_loss_provision": null,
+        "fee_income": null,
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "corporate",
+        "unmapped_fields": []
+      },
+      "market": {
+        "price": "32.581399879455566328",
+        "market_cap": "9897630504.730213283218502376",
+        "shares": null
+      }
+    }
+  },
+  "TAEE11": {
+    "2024": {
+      "financials": {
+        "reference_date": "2024-12-31",
+        "sector": "utility",
+        "period_start": "2024-01-01",
+        "dfc_period_start": "2024-01-01",
+        "total_assets": "20431093000.0000000000",
+        "equity": "6939504000.0000000000",
+        "net_income": "1693915000.0000000000",
+        "revenue": "3718138000.0000000000",
+        "gross_profit": "2472307000.0000000000",
+        "ebit": "2863363000.0000000000",
+        "ebitda": "2888083000.0000000000",
+        "dep_amort": "24720000.0000000000",
+        "cash": "750976000.0000000000",
+        "current_assets": "3022657000.0000000000",
+        "current_liabilities": "2462741000.0000000000",
+        "total_debt": "9799865000.0000000000",
+        "dividends_paid": "1006548000.0000000000",
+        "cfo": "1540337000.0000000000",
+        "capex": "44285000.0000000000",
+        "interest_income": null,
+        "interest_expense": null,
+        "loan_loss_provision": null,
+        "fee_income": null,
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "corporate",
+        "unmapped_fields": []
+      },
+      "market": {
+        "price": "35.05820723453840871314741036",
+        "market_cap": "12071125857.28632433977982352",
+        "shares": null
+      }
+    },
+    "2025": {
+      "financials": {
+        "reference_date": "2025-12-31",
+        "sector": "utility",
+        "period_start": "2025-01-01",
+        "dfc_period_start": "2025-01-01",
+        "total_assets": "22506506000.0000000000",
+        "equity": "7608982000.0000000000",
+        "net_income": "1579863000.0000000000",
+        "revenue": "4624113000.0000000000",
+        "gross_profit": "2546290000.0000000000",
+        "ebit": "2736283000.0000000000",
+        "ebitda": "2799541000.0000000000",
+        "dep_amort": "63258000.0000000000",
+        "cash": "741596000.0000000000",
+        "current_assets": "3579382000.0000000000",
+        "current_liabilities": "2285134000.0000000000",
+        "total_debt": "10974442000.0000000000",
+        "dividends_paid": "1020493000.0000000000",
+        "cfo": "1531430000.0000000000",
+        "capex": "43797000.0000000000",
+        "interest_income": null,
+        "interest_expense": null,
+        "loan_loss_provision": null,
+        "fee_income": null,
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "corporate",
+        "unmapped_fields": []
+      },
+      "market": {
+        "price": "35.602280151367187484",
+        "market_cap": "12234479849.50917398425709970",
+        "shares": null
+      }
+    }
+  },
+  "WEGE3": {
+    "2024": {
+      "financials": {
+        "reference_date": "2024-12-31",
+        "sector": "industry",
+        "period_start": "2024-01-01",
+        "dfc_period_start": "2024-01-01",
+        "total_assets": "41489701000.0000000000",
+        "equity": "22204221000.0000000000",
+        "net_income": "6042593000.0000000000",
+        "revenue": "37986941000.0000000000",
+        "gross_profit": "12813845000.0000000000",
+        "ebit": "7690528000.0000000000",
+        "ebitda": "8503013000.0000000000",
+        "dep_amort": "812485000.0000000000",
+        "cash": "7996076000.0000000000",
+        "current_assets": "27221359000.0000000000",
+        "current_liabilities": "15454265000.0000000000",
+        "total_debt": "3595237000.0000000000",
+        "dividends_paid": null,
+        "cfo": "7252269000.0000000000",
+        "capex": "1850322000.0000000000",
+        "interest_income": null,
+        "interest_expense": null,
+        "loan_loss_provision": null,
+        "fee_income": null,
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "corporate",
+        "unmapped_fields": []
+      },
+      "market": {
+        "price": "45.03410360632664651394422311",
+        "market_cap": "188942264965.0680427266463863",
+        "shares": "4195537378"
+      }
+    },
+    "2025": {
+      "financials": {
+        "reference_date": "2025-12-31",
+        "sector": "industry",
+        "period_start": "2025-01-01",
+        "dfc_period_start": "2025-01-01",
+        "total_assets": "42645030000.0000000000",
+        "equity": "17417185000.0000000000",
+        "net_income": "6376219000.0000000000",
+        "revenue": "40804110000.0000000000",
+        "gross_profit": "13681633000.0000000000",
+        "ebit": "7998741000.0000000000",
+        "ebitda": "9000037000.0000000000",
+        "dep_amort": "1001296000.0000000000",
+        "cash": "7279865000.0000000000",
+        "current_assets": "26910845000.0000000000",
+        "current_liabilities": "17386401000.0000000000",
+        "total_debt": "4590822000.0000000000",
+        "dividends_paid": null,
+        "cfo": "6451033000.0000000000",
+        "capex": "2691321000.0000000000",
+        "interest_income": null,
+        "interest_expense": null,
+        "loan_loss_provision": null,
+        "fee_income": null,
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "corporate",
+        "unmapped_fields": []
+      },
+      "market": {
+        "price": "44.090679855346679588",
+        "market_cap": "184991087915.9102860662928991",
+        "shares": "4195695973"
+      }
+    }
+  },
+  "BBAS3": {
+    "2024": {
+      "financials": {
+        "reference_date": "2024-12-31",
+        "sector": "bank",
+        "period_start": "2024-01-01",
+        "dfc_period_start": "2024-01-01",
+        "total_assets": "2398719197000.0000000000",
+        "equity": "179623018000.0000000000",
+        "net_income": "35260189000.0000000000",
+        "revenue": "278362644000.0000000000",
+        "gross_profit": "56249234000.0000000000",
+        "ebit": "37939717000.0000000000",
+        "ebitda": null,
+        "dep_amort": null,
+        "cash": "83167243000.0000000000",
+        "current_assets": null,
+        "current_liabilities": null,
+        "total_debt": null,
+        "dividends_paid": "14824290000.0000000000",
+        "cfo": "127208098000.0000000000",
+        "capex": "5746240000.0000000000",
+        "interest_income": "154911257000.0000000000",
+        "interest_expense": "-154245628000.0000000000",
+        "loan_loss_provision": "0E-10",
+        "fee_income": "21277678000.0000000000",
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "bank",
+        "unmapped_fields": [
+          "dep_amort",
+          "ebitda"
+        ]
+      },
+      "market": {
+        "price": "27.30452191022287802390438247",
+        "market_cap": "155855507263.8163098609117659",
+        "shares": "5708047472"
+      }
+    },
+    "2025": {
+      "financials": {
+        "reference_date": "2025-12-31",
+        "sector": "bank",
+        "period_start": "2025-01-01",
+        "dfc_period_start": "2025-01-01",
+        "total_assets": "2455143253000.0000000000",
+        "equity": "189207675000.0000000000",
+        "net_income": "18151787000.0000000000",
+        "revenue": "293379482000.0000000000",
+        "gross_profit": "31308634000.0000000000",
+        "ebit": "6816490000.0000000000",
+        "ebitda": null,
+        "dep_amort": null,
+        "cash": "59635525000.0000000000",
+        "current_assets": null,
+        "current_liabilities": null,
+        "total_debt": null,
+        "dividends_paid": "6680889000.0000000000",
+        "cfo": "159254089000.0000000000",
+        "capex": "7366486000.0000000000",
+        "interest_income": "172134172000.0000000000",
+        "interest_expense": "-190035617000.0000000000",
+        "loan_loss_provision": "0E-10",
+        "fee_income": "19512469000.0000000000",
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "bank",
+        "unmapped_fields": [
+          "dep_amort",
+          "ebitda"
+        ]
+      },
+      "market": {
+        "price": "23.736479965209960912",
+        "market_cap": "135498832846.7260067971832006",
+        "shares": "5708463641"
+      }
+    }
+  },
+  "BBDC4": {
+    "2024": {
+      "financials": {
+        "reference_date": "2024-12-31",
+        "sector": "bank",
+        "period_start": "2024-01-01",
+        "dfc_period_start": "2024-01-01",
+        "total_assets": "2069506045000.0000000000",
+        "equity": "168409653000.0000000000",
+        "net_income": "19085448000.0000000000",
+        "revenue": "206038383000.0000000000",
+        "gross_profit": "30685344000.0000000000",
+        "ebit": "13255345000.0000000000",
+        "ebitda": null,
+        "dep_amort": null,
+        "cash": "208023801000.0000000000",
+        "current_assets": null,
+        "current_liabilities": null,
+        "total_debt": null,
+        "dividends_paid": "6541998000.0000000000",
+        "cfo": "50228485000.0000000000",
+        "capex": "8048458000.0000000000",
+        "interest_income": "106563199000.0000000000",
+        "interest_expense": "-123668305000.0000000000",
+        "loan_loss_provision": "0E-10",
+        "fee_income": "22430691000.0000000000",
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "bank",
+        "unmapped_fields": [
+          "dep_amort",
+          "ebitda"
+        ]
+      },
+      "market": {
+        "price": "13.98147411650395487649402390",
+        "market_cap": "139691363896.8388183487639461",
+        "shares": "10546824728"
+      }
+    },
+    "2025": {
+      "financials": {
+        "reference_date": "2025-12-31",
+        "sector": "bank",
+        "period_start": "2025-01-01",
+        "dfc_period_start": "2025-01-01",
+        "total_assets": "2330327216000.0000000000",
+        "equity": "178415153000.0000000000",
+        "net_income": "24549089000.0000000000",
+        "revenue": "217623566000.0000000000",
+        "gross_profit": "35476271000.0000000000",
+        "ebit": "14448089000.0000000000",
+        "ebitda": null,
+        "dep_amort": null,
+        "cash": "193516834000.0000000000",
+        "current_assets": null,
+        "current_liabilities": null,
+        "total_debt": null,
+        "dividends_paid": "11834032000.0000000000",
+        "cfo": "-62534000000.0000000000",
+        "capex": "11630468000.0000000000",
+        "interest_income": "106547652000.0000000000",
+        "interest_expense": "-147247125000.0000000000",
+        "loan_loss_provision": "0E-10",
+        "fee_income": "22882184000.0000000000",
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "bank",
+        "unmapped_fields": [
+          "dep_amort",
+          "ebitda"
+        ]
+      },
+      "market": {
+        "price": "15.396840003967285188",
+        "market_cap": "152422524809.3990058101982847",
+        "shares": "10577012028"
+      }
+    }
+  },
+  "BBSE3": {
+    "2024": {
+      "financials": {
+        "reference_date": "2024-12-31",
+        "sector": "insurer",
+        "period_start": "2024-01-01",
+        "dfc_period_start": "2024-01-01",
+        "total_assets": "21615587000.0000000000",
+        "equity": "9695421000.0000000000",
+        "net_income": "8703353000.0000000000",
+        "revenue": "0E-10",
+        "gross_profit": "0E-10",
+        "ebit": "9757267000.0000000000",
+        "ebitda": null,
+        "dep_amort": null,
+        "cash": "8508976000.0000000000",
+        "current_assets": "9905706000.0000000000",
+        "current_liabilities": "8277884000.0000000000",
+        "total_debt": null,
+        "dividends_paid": "5193340000.0000000000",
+        "cfo": "4223583000.0000000000",
+        "capex": null,
+        "interest_income": null,
+        "interest_expense": null,
+        "loan_loss_provision": null,
+        "fee_income": null,
+        "earned_premium": "0E-10",
+        "claims_incurred": "0E-10",
+        "filed_regime": "insurance",
+        "unmapped_fields": [
+          "dep_amort",
+          "ebitda"
+        ]
+      },
+      "market": {
+        "price": "34.13047808005040370517928287",
+        "market_cap": "66253606870.77980648779982180",
+        "shares": "1941186019"
+      }
+    },
+    "2025": {
+      "financials": {
+        "reference_date": "2025-12-31",
+        "sector": "insurer",
+        "period_start": "2025-01-01",
+        "dfc_period_start": "2025-01-01",
+        "total_assets": "23097696000.0000000000",
+        "equity": "10384393000.0000000000",
+        "net_income": "9017329000.0000000000",
+        "revenue": "0E-10",
+        "gross_profit": "0E-10",
+        "ebit": "9865768000.0000000000",
+        "ebitda": null,
+        "dep_amort": null,
+        "cash": "10044855000.0000000000",
+        "current_assets": "11383437000.0000000000",
+        "current_liabilities": "8906984000.0000000000",
+        "total_debt": null,
+        "dividends_paid": "8273740000.0000000000",
+        "cfo": "3710770000.0000000000",
+        "capex": null,
+        "interest_income": null,
+        "interest_expense": null,
+        "loan_loss_provision": null,
+        "fee_income": null,
+        "earned_premium": "0E-10",
+        "claims_incurred": "0E-10",
+        "filed_regime": "insurance",
+        "unmapped_fields": [
+          "dep_amort",
+          "ebitda"
+        ]
+      },
+      "market": {
+        "price": "36.030559959411621196",
+        "market_cap": "67831669359.20675293145001116",
+        "shares": "1882614909"
+      }
+    }
+  },
+  "CXSE3": {
+    "2024": {
+      "financials": {
+        "reference_date": "2024-12-31",
+        "sector": "insurer",
+        "period_start": "2024-01-01",
+        "dfc_period_start": "2024-01-01",
+        "total_assets": "14024016000.0000000000",
+        "equity": "12889324000.0000000000",
+        "net_income": "3765184000.0000000000",
+        "revenue": "0E-10",
+        "gross_profit": "0E-10",
+        "ebit": "4223023000.0000000000",
+        "ebitda": "4226748000.0000000000",
+        "dep_amort": "3725000.0000000000",
+        "cash": "1209921000.0000000000",
+        "current_assets": "1969462000.0000000000",
+        "current_liabilities": "1131440000.0000000000",
+        "total_debt": "0E-10",
+        "dividends_paid": "3288290000.0000000000",
+        "cfo": "3599712000.0000000000",
+        "capex": null,
+        "interest_income": null,
+        "interest_expense": null,
+        "loan_loss_provision": null,
+        "fee_income": null,
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "corporate",
+        "unmapped_fields": []
+      },
+      "market": {
+        "price": "14.81705178872522602788844622",
+        "market_cap": "44451155366.17567808366533866",
+        "shares": "3000000000"
+      }
+    },
+    "2025": {
+      "financials": {
+        "reference_date": "2025-12-31",
+        "sector": "insurer",
+        "period_start": "2025-01-01",
+        "dfc_period_start": "2025-01-01",
+        "total_assets": "14765001000.0000000000",
+        "equity": "13550484000.0000000000",
+        "net_income": "4291560000.0000000000",
+        "revenue": "0E-10",
+        "gross_profit": "0E-10",
+        "ebit": "4647593000.0000000000",
+        "ebitda": "4653678000.0000000000",
+        "dep_amort": "6085000.0000000000",
+        "cash": "1696395000.0000000000",
+        "current_assets": "2046298000.0000000000",
+        "current_liabilities": "1202266000.0000000000",
+        "total_debt": "10129000.0000000000",
+        "dividends_paid": "3791083000.0000000000",
+        "cfo": "4273412000.0000000000",
+        "capex": null,
+        "interest_income": null,
+        "interest_expense": null,
+        "loan_loss_provision": null,
+        "fee_income": null,
+        "earned_premium": null,
+        "claims_incurred": null,
+        "filed_regime": "corporate",
+        "unmapped_fields": []
+      },
+      "market": {
+        "price": "14.899000007629394524",
+        "market_cap": "44697000022.88818357200000000",
+        "shares": "3000000000"
+      }
+    }
+  }
+}

@@ -1,0 +1,140 @@
+{
+  "_readme": [
+    "The reference platform's published values for the nine tickers — the M1 gate (#44).",
+    "Captured by hand: platforms are a moving target, so the platform, the URL and the",
+    "capture date are part of the record. Our side is NOT stored here; it is computed by",
+    "the real calculator from tests/fixtures/analysis_inputs.json (regenerate that with",
+    "scripts/export_reference_inputs.py). A divergence is therefore a failing test, not a",
+    "paragraph — and a divergence we accept has to be written down, cell by cell, with its",
+    "reason. Widening a tolerance to hide one is what this file exists to prevent."
+  ],
+  "platform": "Dados de Mercado",
+  "url": "https://www.dadosdemercado.com.br/acoes/{ticker}",
+  "captured_on": "2026-07-14",
+
+  "tolerances": {
+    "_why": "Relative. A margin is arithmetic on two filed lines and must land exactly; a per-share value carries the share count, which moves with a corporate action mid-year; ROE divides by a closing balance (ADR 0003) whose basis the platform does not publish.",
+    "gross_margin": 0.01,
+    "net_margin": 0.02,
+    "eps": 0.02,
+    "bvps": 0.02,
+    "roe": 0.03
+  },
+
+  "not_compared": {
+    "_why": "Indicators whose divergence is decided, not accidental. Comparing them would only measure the platform's basis against ours.",
+    "pe": "The platform draws its historical multiples on the dividend-adjusted price series; we divide by what the shares actually traded at that year (ADR 0018). PETR4 2022 reads 0.91 there and 2.25 here, and a P/E under 1 is not how anyone valued Petrobras.",
+    "pb": "Same price basis as pe (ADR 0018).",
+    "psr": "Same price basis as pe (ADR 0018).",
+    "roa": "The platform publishes it rounded to two decimals of a fraction (0.01 for a bank), which carries no information to compare against.",
+    "dividend_yield": "Different basis on both sides of the fraction. We divide the dividends the company actually *paid* in cash that year (the DFC) by that year's average market cap; the platform divides the dividends *declared* for the year, per share, by a single price. For PETR4 2024 the two land at 19.9% (ours) against 21.92% (theirs) — the same company, measured two ways. What the gate does check is that no closed year yields more than the whole company is worth, which is what the adjusted-price basis used to produce (105.9% for PETR4 2022, ADR 0018)."
+  },
+
+  "tickers": {
+    "PETR4": {
+      "2024": {"eps": 2.84, "bvps": 28.40, "roe": 0.1007, "net_margin": 0.0754, "gross_margin": 0.5021},
+      "2025": {"eps": 8.54, "bvps": 32.26, "roe": 0.2649, "net_margin": 0.2223, "gross_margin": 0.4763}
+    },
+    "VALE3": {
+      "2024": {
+        "eps": 7.12, "bvps": 46.58, "roe": 0.1424, "net_margin": 0.1477, "gross_margin": 0.3625,
+        "except": {
+          "eps": "The platform divides by the shares VALE *issued*; we divide by the shares outstanding, net of the 270 M it holds in treasury (ADR 0017). The 4% gap is exactly that stake.",
+          "bvps": "Same treasury basis as eps (ADR 0017).",
+          "roe": "The platform's denominator is the whole consolidated equity, minority interest included; ours is the controlling shareholders' slice, which is what their own EPS divides by.",
+          "net_margin": "The platform's numerator is the consolidated result, minority interest included; ours is the controllers' share (the same line its EPS uses)."
+        }
+      },
+      "2025": {
+        "eps": 3.11, "bvps": 41.52, "roe": 0.0625, "net_margin": 0.0553, "gross_margin": 0.3498,
+        "except": {
+          "eps": "Treasury basis — see 2024.",
+          "bvps": "Treasury basis — see 2024.",
+          "roe": "Minority-interest basis — see 2024.",
+          "net_margin": "Minority-interest basis — see 2024."
+        }
+      }
+    },
+    "WEGE3": {
+      "2024": {
+        "eps": 1.44, "bvps": 5.29, "roe": 0.2732, "net_margin": 0.1663, "gross_margin": 0.3373,
+        "except": {
+          "net_margin": "The platform's numerator is the consolidated result, minority interest included; ours is the controllers' share. Its own EPS (1.44, which we match) divides the controllers' line — the platform is not consistent with itself here."
+        }
+      },
+      "2025": {
+        "eps": 1.52, "bvps": 4.15, "roe": 0.3652, "net_margin": 0.1661, "gross_margin": 0.3353,
+        "except": {"net_margin": "Minority-interest basis — see 2024."}
+      }
+    },
+    "BBAS3": {
+      "2024": {
+        "eps": 6.15, "roe": 0.1583, "net_margin": 0.1267, "gross_margin": 0.2021,
+        "except": {
+          "roe": "The platform files no book value per share for BBAS3 2024 (it publishes 0.00), and its ROE for that year cannot be reconciled with any equity the bank reports. Its 2025 ROE (9.83%) *is* consistent with ours (9.59%), which is what makes the 2024 cell a hole in their data rather than a difference in ours."
+        }
+      },
+      "2025": {
+        "eps": 3.17, "bvps": 32.21, "roe": 0.0983, "net_margin": 0.0619, "gross_margin": 0.1067,
+        "except": {
+          "bvps": "The platform's book value implies an equity ~2% below the R$189.2 bn BBAS3 files. Its bank book-value column is demonstrably unreliable — for 2024 it publishes 0.00 — so this is recorded against the platform, not against us, and re-checked against a second source in #93."
+        }
+      }
+    },
+    "BBDC4": {
+      "2024": {
+        "eps": 1.80, "roe": 0.1038, "net_margin": 0.0926, "gross_margin": 0.1489,
+        "except": {
+          "roe": "Same hole as BBAS3 2024: the platform publishes no book value per share, and its ROE implies an equity Bradesco does not report. Its 2025 ROE (14.25%) agrees with ours (13.76%)."
+        }
+      },
+      "2025": {
+        "eps": 2.32, "bvps": 16.26, "roe": 0.1425, "net_margin": 0.1128, "gross_margin": 0.1630,
+        "except": {
+          "bvps": "Same defective bank book-value column as BBAS3 2025: it implies an equity ~4% below the R$178.4 bn Bradesco files, and publishes 0.00 for 2024. Re-checked against a second source in #93.",
+          "roe": "Follows its bvps: the same understated equity is this ROE's denominator."
+        }
+      }
+    },
+    "BBSE3": {
+      "2024": {"eps": 4.48, "bvps": 4.99, "roe": 0.8977},
+      "2025": {
+        "eps": 4.64, "bvps": 5.35, "roe": 0.8684,
+        "except": {
+          "eps": "The platform divides by the 1.941 bn shares BBSE3 issued; we divide by the 1.883 bn outstanding, net of the 58.8 M it holds in treasury (ADR 0017). The 3% gap is exactly that stake. (Its 2024 cell happens to use a post-buyback count and therefore agrees — the platform is not consistent with itself across years.)",
+          "bvps": "Same treasury basis as eps (ADR 0017)."
+        }
+      }
+    },
+    "CXSE3": {
+      "2024": {"eps": 1.26, "bvps": 4.30, "roe": 0.2921},
+      "2025": {"eps": 1.43, "bvps": 4.52, "roe": 0.3167}
+    },
+    "SAPR11": {
+      "2024": {
+        "eps": 1.02, "bvps": 7.17, "roe": 0.1427, "net_margin": 0.2257, "gross_margin": 0.5779,
+        "except": {
+          "eps": "A unit is a bundle of shares (SAPR11 = 1 ON + 2 PN), so a per-*share* figure has no per-unit price to pair with. We serve None rather than a number that invites the platform's own mistake: it divides the unit's price by the per-share earnings and publishes a P/E of 25 against a real one near 5 (#38).",
+          "bvps": "Same bundle mismatch as eps (#38)."
+        }
+      },
+      "2025": {
+        "eps": 1.38, "bvps": 8.17, "roe": 0.1684, "net_margin": 0.2886, "gross_margin": 0.5627,
+        "except": {"eps": "Unit — see 2024 (#38).", "bvps": "Unit — see 2024 (#38)."}
+      }
+    },
+    "TAEE11": {
+      "2024": {
+        "eps": 1.64, "bvps": 6.71, "roe": 0.2441, "net_margin": 0.4556, "gross_margin": 0.6649,
+        "except": {
+          "eps": "Unit (TAEE11 = 1 ON + 2 PN) — see SAPR11 2024 (#38).",
+          "bvps": "Unit — see SAPR11 2024 (#38)."
+        }
+      },
+      "2025": {
+        "eps": 1.53, "bvps": 7.36, "roe": 0.2076, "net_margin": 0.3417, "gross_margin": 0.5507,
+        "except": {"eps": "Unit — see SAPR11 (#38).", "bvps": "Unit — see SAPR11 (#38)."}
+      }
+    }
+  }
+}
