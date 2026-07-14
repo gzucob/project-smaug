@@ -1,6 +1,6 @@
 # 0010 — Financial-indicator applicability is decided per accounting regime
 
-- **Status:** Accepted
+- **Status:** Accepted — refined by [0020](0020-applicability-is-keyed-on-the-filed-regime.md), which reads the regime off the **filing** rather than off the sector; the per-regime verdicts below stand unchanged
 - **Date:** 2026-07-10
 
 ## Context

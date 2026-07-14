@@ -28,7 +28,6 @@ from smaug.analysis.domain.financials import (
     expected_regime,
 )
 from smaug.analysis.domain.indicators import Indicators, NullReason
-from smaug.portfolio.domain.sectors import Sector
 
 _MONTHS_IN_YEAR = Decimal(12)
 # Statutory Brazilian corporate rate (IRPJ 25% + CSLL 9%). ROIC's NOPAT uses this
@@ -122,9 +121,18 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
 }
 
 
-def _inapplicable(sector: Sector) -> frozenset[str]:
-    """Indicators inapplicable under ``sector``'s expected accounting regime (#30)."""
-    return _INAPPLICABLE_BY_REGIME.get(expected_regime(sector), frozenset())
+def _inapplicable(f: StandardizedFinancials) -> frozenset[str]:
+    """Indicators the filer's own chart of accounts cannot support (ADR 0020).
+
+    Keyed on the regime the company **files under**, read off the filing itself
+    (ADR 0015) — never on the regime its sector predicts. The two differ: CXSE3 is
+    an insurer by sector and files as a corporate holding (ADR 0006), and asking
+    the sector suppressed three margins its chart of accounts supports perfectly
+    well. The sector's expectation is the fallback for a filing whose regime could
+    not be detected at all, where there is nothing better to ask.
+    """
+    regime = f.filed_regime or expected_regime(f.sector)
+    return _INAPPLICABLE_BY_REGIME.get(regime, frozenset())
 
 
 def _suppressed(indicators: Indicators, inapplicable: frozenset[str]) -> Indicators:
@@ -206,31 +214,23 @@ def _classify(
     market: MarketData,
     *,
     inapplicable: frozenset[str],
-    mismatch: bool,
 ) -> NullReason:
     """Attribute one null indicator to a cause, most-upstream cause first.
 
-    Precedence: the regime's inapplicable set (the null exists regardless of
-    inputs), then the accounting inputs (unmapped beats absent, and a regime
-    mismatch overrides both — the mismatch is why the input was never read),
-    then the market-side inputs, then the prior period. If none fired, every
-    input the indicator needs is present, so a still-null ratio is a zero
-    denominator (a zero *numerator* yields 0, a value — not a null): the
-    ``ZERO_DENOMINATOR`` dead-end. This relies on every ``_Needs`` entry being
-    input-complete for its denominator; ``None`` is never returned.
+    Precedence: the filed regime's inapplicable set (the null exists regardless of
+    inputs), then the accounting inputs (unmapped beats absent), then the
+    market-side inputs, then the prior period. If none fired, every input the
+    indicator needs is present, so a still-null ratio is a zero denominator (a zero
+    *numerator* yields 0, a value — not a null): the ``ZERO_DENOMINATOR`` dead-end.
+    This relies on every ``_Needs`` entry being input-complete for its denominator;
+    ``None`` is never returned.
     """
     if name in inapplicable:
-        return (
-            NullReason.UNEXPECTED_REGIME if mismatch else NullReason.INAPPLICABLE_REGIME
-        )
+        return NullReason.INAPPLICABLE_REGIME
     for account in needs.accounts:
         if getattr(f, account) is None:
             if account in f.unmapped_fields:
-                return (
-                    NullReason.UNEXPECTED_REGIME
-                    if mismatch
-                    else NullReason.SOURCE_ACCOUNT_UNMAPPED
-                )
+                return NullReason.SOURCE_ACCOUNT_UNMAPPED
             return NullReason.SOURCE_ACCOUNT_ABSENT
     if needs.cap and market.market_cap is None:
         # The cap sums the company's share classes (ADR 0014), so which input went
@@ -260,10 +260,7 @@ def _null_reasons(
     Every null now carries a reason — the zero-denominator dead-end is named
     too (ANL-23), so there is no unclassified status left for the nine tickers.
     """
-    inapplicable = _inapplicable(f.sector)
-    mismatch = f.filed_regime is not None and f.filed_regime != expected_regime(
-        f.sector
-    )
+    inapplicable = _inapplicable(f)
     reasons: dict[str, NullReason] = {}
     for name, needs in _NEEDS.items():
         if getattr(computed, name) is not None:
@@ -275,7 +272,6 @@ def _null_reasons(
             previous,
             market,
             inapplicable=inapplicable,
-            mismatch=mismatch,
         )
     return reasons
 
@@ -352,7 +348,7 @@ def compute(
         net_income=f.net_income,
         dividends=f.dividends_paid,
     )
-    indicators = _suppressed(indicators, _inapplicable(f.sector))
+    indicators = _suppressed(indicators, _inapplicable(f))
     return replace(
         indicators, null_reasons=_null_reasons(indicators, f, previous, market)
     )

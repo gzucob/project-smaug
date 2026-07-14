@@ -20,14 +20,11 @@ def test_should_list_nine_tickers_when_portfolio_read() -> None:
     assert len(portfolio_tickers()) == 9
 
 
-def test_should_flag_bank_as_financial_when_ticker_is_bbas3() -> None:
+def test_should_map_the_ticker_to_its_sector() -> None:
+    # The sector is a label for the UI and the expected-regime fallback — it no
+    # longer gates any indicator (ADR 0020: the filed regime does).
     assert sector_of("BBAS3") is Sector.BANK
-    assert sector_of("BBAS3").is_financial
-
-
-def test_should_flag_commodity_as_non_financial_when_ticker_is_petr4() -> None:
     assert sector_of("PETR4") is Sector.COMMODITY
-    assert not sector_of("PETR4").is_financial
 
 
 def test_should_raise_unknown_ticker_error_when_ticker_unknown() -> None:
