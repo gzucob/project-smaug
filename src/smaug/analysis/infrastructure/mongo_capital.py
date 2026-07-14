@@ -71,6 +71,21 @@ def _sum(*counts: Decimal | None) -> Decimal | None:
     return sum(present, Decimal(0)) if present else None
 
 
+def _rank(payload: Mapping[str, Any]) -> tuple[int, str]:
+    """How one filed capital row beats another: newest amendment, newest approval.
+
+    The approval date is an ISO ``YYYY-MM-DD`` string, so it sorts as filed; a row
+    that carries none (any document mirrored before #86) ranks below every dated
+    one rather than competing on ingestion order.
+    """
+    version = payload.get("version")
+    approval = payload.get("approval_date")
+    return (
+        version if isinstance(version, int) else 0,
+        approval if isinstance(approval, str) else "",
+    )
+
+
 def _year_of(reference_date: Any) -> int | None:
     """Year from an ISO ``YYYY-MM-DD`` reference date, or None if unparseable."""
     if not isinstance(reference_date, str) or len(reference_date) < 4:
@@ -111,16 +126,27 @@ class MongoSharesReader:
     async def _by_year(self, ticker: str) -> dict[int, ShareCounts]:
         """The capital composition that supersedes the rest, per year.
 
-        The mirror holds every FRE amendment (ADR 0016), so ordering by ingestion
-        time is not enough — the amendment with the highest ``version`` is the one
-        that stands, whenever it happened to be ingested. ``fetched_at`` only
-        breaks a tie between two copies of the same version.
+        Two filed facts order the candidates, in this order:
+
+        * ``version`` — the mirror holds every FRE amendment (ADR 0016), so
+          ingestion time is not enough: the highest amendment stands, whenever it
+          happened to be ingested.
+        * ``approval_date`` — *within* an amendment, the member is a history of
+          capital events, and several of its rows are paid-in. SANEPAR's 2021 FRE
+          files the 2020 split (1.51 bn shares) next to two 2016 approvals (503 M);
+          the company's capital is the one most recently approved. Picking by
+          cursor order instead served SANEPAR's 2016 capital, pricing the company
+          at a third of its size (#86).
+
+        ``fetched_at`` only breaks a tie between two copies of the same row. An
+        undated row (mirrored before #86) sorts below every dated one, so a stale
+        copy in the append-only mirror can never win.
         """
         cursor = self._collection.find(
             {"ticker": ticker, "source": "cvm", "module": CAPITAL_MODULE}
         ).sort("fetched_at", 1)
         by_year: dict[int, ShareCounts] = {}
-        best: dict[int, int] = {}
+        best: dict[int, tuple[int, str]] = {}
         async for document in cursor:
             payload = document.get("payload")
             if not isinstance(payload, Mapping):
@@ -128,15 +154,14 @@ class MongoSharesReader:
             year = _year_of(payload.get("reference_date"))
             if year is None:
                 continue
-            version = payload.get("version")
-            version = version if isinstance(version, int) else 0
-            if year in best and version < best[year]:
+            rank = _rank(payload)
+            if year in best and rank < best[year]:
                 continue
             common = _positive(payload.get("common_shares"))
             preferred = _positive(payload.get("preferred_shares"))
             total = _positive(payload.get("total_shares")) or _sum(common, preferred)
             if total is None:
                 continue
-            best[year] = version
+            best[year] = rank
             by_year[year] = ShareCounts(common=common, preferred=preferred, total=total)
         return by_year

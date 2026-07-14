@@ -12,6 +12,13 @@ Two real-world quirks are handled here:
     document type 'FRE WEB'``), so the CSV member is read directly.
   * A company files the same reference date several times (``Versao``); the
     highest version is the amendment that supersedes the rest.
+
+And one that is *not* handled here, deliberately: within a single version, the
+member is a **history of capital events**, one row per approval date, several of
+them paid-in (SANEPAR's 2021 FRE files the 2020 split alongside two 2016
+approvals). Every row is mirrored with the approval date that identifies it (#86);
+which one is the company's capital *today* is the reader's judgement, not the
+mirror's (ADR 0016).
 """
 
 from __future__ import annotations
@@ -90,12 +97,14 @@ class CvmCapitalSource:
         return f"fre_cia_aberta_capital_social_{self._year}.csv"
 
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
-        """Return every paid-in capital row ``ticker`` filed — one per amendment.
+        """Return every paid-in capital row ``ticker`` filed — one per amendment,
+        and one per approval date within an amendment.
 
         The mirror keeps all of them and picks none (ADR 0016); the reader takes
-        the highest ``version`` for the year. The FRE is heavily amended (BBDC4 is
-        on v30), so which one supersedes which is exactly the kind of judgement
-        that does not belong in an append-only mirror.
+        the highest ``version``, and within it the latest ``approval_date``. The FRE
+        is heavily amended (BBDC4 is on v30) and each amendment restates the whole
+        capital history, so which row supersedes which is exactly the kind of
+        judgement that does not belong in an append-only mirror.
         """
         index = await self._ensure_loaded()
 
@@ -118,6 +127,10 @@ class CvmCapitalSource:
                     "statement": module,
                     "reference_date": row["reference_date"],
                     "version": row["version"],
+                    # Two paid-in rows of the same version differ only by the capital
+                    # event they record — so the event identifies the request (#86).
+                    "capital_id": row["capital_id"],
+                    "approval_date": row["approval_date"],
                 },
                 http_status=200,
                 payload=row,
@@ -178,13 +191,22 @@ class CvmCapitalSource:
 
 
 def _to_payload(row: Mapping[str, str]) -> dict[str, Any]:
-    """Mirror the filed row — share counts as filed, no derivation."""
+    """Mirror the filed row — share counts as filed, no derivation.
+
+    ``approval_date`` is what tells one paid-in row from another within the same
+    version: the same filing carries the capital as approved on several dates, and
+    without it the reader is choosing by cursor order (#86).
+    """
     return {
         "cnpj": row["CNPJ_Companhia"],
         "company_name": row["Nome_Companhia"],
         "reference_date": row["Data_Referencia"],
         "version": _int(row["Versao"]),
+        "capital_id": row["ID_Capital_Social"],
         "capital_type": row["Tipo_Capital"],
+        "approval_date": row["Data_Autorizacao_Aprovacao"],
+        "capital_value": row["Valor_Capital"],
+        "payment_term": row["Prazo_Integralizacao"],
         "common_shares": _int(row["Quantidade_Acoes_Ordinarias"]),
         "preferred_shares": _int(row["Quantidade_Acoes_Preferenciais"]),
         "total_shares": _int(row["Quantidade_Total_Acoes"]),

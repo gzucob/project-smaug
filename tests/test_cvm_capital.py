@@ -42,6 +42,8 @@ def _row(
     common: str = "10",
     preferred: str = "5",
     total: str = "15",
+    approved: str = "2023-04-27",
+    capital_id: str = "1",
 ) -> dict[str, str]:
     return {
         "CNPJ_Companhia": cnpj,
@@ -49,9 +51,9 @@ def _row(
         "Versao": version,
         "ID_Documento": "1",
         "Nome_Companhia": "COMPANHIA TESTE S.A.",
-        "ID_Capital_Social": "1",
+        "ID_Capital_Social": capital_id,
         "Tipo_Capital": capital_type,
-        "Data_Autorizacao_Aprovacao": "2023-04-27",
+        "Data_Autorizacao_Aprovacao": approved,
         "Valor_Capital": "1000.00",
         "Prazo_Integralizacao": "",
         "Quantidade_Acoes_Ordinarias": common,
@@ -129,6 +131,31 @@ async def test_fetch_mirrors_every_filed_version_and_picks_none(tmp_path: Path) 
     filed = {r.payload["version"]: r.payload["total_shares"] for r in results}
     assert filed == {22: 200, 3: 100}
     assert all(r.request["version"] == r.payload["version"] for r in results)
+
+
+async def test_fetch_mirrors_every_approval_of_the_same_version(tmp_path: Path) -> None:
+    # A version restates the whole capital history: SANEPAR's 2021 FRE files the
+    # 2020 split next to two 2016 approvals, all paid-in (#86). Every one is
+    # mirrored, each carrying the approval date the reader picks by.
+    _write_zip(
+        tmp_path / "fre_cia_aberta_2025.zip",
+        [
+            _row(_PETRO, version="8", approved="2016-12-19", total="503735173"),
+            _row(
+                _PETRO,
+                version="8",
+                approved="2020-03-27",
+                total="1511205519",
+                capital_id="2",
+            ),
+        ],
+    )
+
+    results = await _source(tmp_path).fetch("PETR4", CAPITAL_MODULE)
+
+    filed = {r.payload["approval_date"]: r.payload["total_shares"] for r in results}
+    assert filed == {"2016-12-19": 503735173, "2020-03-27": 1511205519}
+    assert {r.request["capital_id"] for r in results} == {"1", "2"}
 
 
 async def test_fetch_raises_for_a_company_absent_from_the_file(tmp_path: Path) -> None:

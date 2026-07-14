@@ -41,20 +41,26 @@ def _doc(
     preferred: int = 0,
     fetched_at: datetime | None = None,
     version: int = 1,
+    approved: str | None = "2023-04-27",
 ) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "reference_date": f"{year}-12-31",
+        "version": version,
+        # The FRE writes an absent class as 0, never as a blank.
+        "common_shares": total if common is None else common,
+        "preferred_shares": preferred,
+        "total_shares": total,
+    }
+    # ``approved=None`` is a document mirrored before #86, when the approval date
+    # was not stored at all — the append-only mirror still holds those.
+    if approved is not None:
+        payload["approval_date"] = approved
     return {
         "ticker": ticker,
         "source": "cvm",
         "module": "CAPITAL",
         "fetched_at": fetched_at or datetime(2026, 1, 1, tzinfo=UTC),
-        "payload": {
-            "reference_date": f"{year}-12-31",
-            "version": version,
-            # The FRE writes an absent class as 0, never as a blank.
-            "common_shares": total if common is None else common,
-            "preferred_shares": preferred,
-            "total_shares": total,
-        },
+        "payload": payload,
     }
 
 
@@ -199,6 +205,71 @@ async def test_outstanding_prefers_the_later_ingestion_of_the_same_year() -> Non
     )
 
     assert await reader.outstanding("PETR4", 2025) == Decimal(222)
+
+
+async def test_the_latest_approval_of_a_version_is_the_companys_capital() -> None:
+    # A single FRE version restates the whole capital history, several rows of it
+    # paid-in: SANEPAR's 2021 filing carries the 2020 split (1.51 bn shares) and the
+    # 2016 approvals it superseded (503 M). Picking by cursor order took the 2016
+    # row and priced the company at a third of its size (#86).
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc(
+                    "SAPR11",
+                    2021,
+                    1_511_205_519,
+                    common=503_735_259,
+                    preferred=1_007_470_260,
+                    approved="2020-03-27",
+                    fetched_at=datetime(2026, 1, 1, tzinfo=UTC),
+                ),
+                _doc(
+                    "SAPR11",
+                    2021,
+                    503_735_173,
+                    common=167_911_724,
+                    preferred=335_823_449,
+                    approved="2016-12-19",
+                    fetched_at=datetime(2026, 6, 1, tzinfo=UTC),
+                ),
+            ]
+        )
+    )
+
+    assert await reader.counts("SAPR11", 2021) == ShareCounts(
+        common=Decimal(503_735_259),
+        preferred=Decimal(1_007_470_260),
+        total=Decimal(1_511_205_519),
+    )
+
+
+async def test_an_undated_legacy_row_never_beats_a_dated_one() -> None:
+    # The mirror is append-only: the documents stored before #86 carry no approval
+    # date and are still there, ingested *after* nothing. Ranking them below every
+    # dated row is what keeps a stale copy from winning on ingestion order alone.
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc(
+                    "BBAS3",
+                    2022,
+                    2_865_417_020,
+                    approved="2023-04-27",
+                    fetched_at=datetime(2026, 1, 1, tzinfo=UTC),
+                ),
+                _doc(
+                    "BBAS3",
+                    2022,
+                    286_541_720,
+                    approved=None,
+                    fetched_at=datetime(2026, 6, 1, tzinfo=UTC),
+                ),
+            ]
+        )
+    )
+
+    assert await reader.outstanding("BBAS3", 2022) == Decimal(2_865_417_020)
 
 
 async def test_outstanding_is_none_without_any_capital_document() -> None:
