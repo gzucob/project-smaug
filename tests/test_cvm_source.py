@@ -38,10 +38,11 @@ def _row(
     valor: str,
     *,
     ordem: str = "ÚLTIMO",
+    ini: str | None = None,
 ) -> str:
     return (
         f"00.0/0001-00;{ref};{version};ACME S.A.;{cd_cvm};DF Consolidado;REAL;MIL;"
-        f"{ordem};{ref[:4]}-01-01;{ref};{conta};Conta {conta};{valor};S"
+        f"{ordem};{ini or f'{ref[:4]}-01-01'};{ref};{conta};Conta {conta};{valor};S"
     )
 
 
@@ -270,6 +271,33 @@ def test_build_index_keeps_the_dmpl_column_that_tells_its_rows_apart(
         "Patrimônio Líquido": "7",
         "Participação dos Não Controladores": "3",
     }
+
+
+def test_build_index_keeps_both_period_columns_of_an_itr(tmp_path: Path) -> None:
+    # An ITR income statement files the same reference date TWICE: accumulated from
+    # 01-Jan, and the isolated quarter. The two rows share every other key field and
+    # differ only by DT_INI_EXERC — so without it in the key they collapse into one
+    # statement holding two rows for 3.11, indistinguishable, and the reader is left
+    # taking whichever the CSV happened to list first (#83).
+    zpath = tmp_path / "dfp_cia_aberta_2021.zip"
+    _statement_zip(
+        zpath,
+        {
+            "dfp_cia_aberta_DRE_con_2021.csv": [
+                _row("005410", "2021-09-30", "1", "3.11", "900", ini="2021-01-01"),
+                _row("005410", "2021-09-30", "1", "3.11", "300", ini="2021-07-01"),
+            ],
+        },
+    )
+
+    index = _source(tmp_path, {"WEGE3": "5410"})._build_index(zpath)
+
+    by_start = {s.period_start: s for s in index["5410"]}
+    assert sorted(by_start) == ["2021-01-01", "2021-07-01"]
+    for statement in by_start.values():
+        assert [a["code"] for a in statement.accounts] == ["3.11"]  # never merged
+    assert by_start["2021-01-01"].accounts[0]["quantity"] == "900"  # accumulated
+    assert by_start["2021-07-01"].accounts[0]["quantity"] == "300"  # isolated quarter
 
 
 ZIP_BYTES = b"PK\x05\x06" + b"\x00" * 18  # smallest valid (empty) ZIP

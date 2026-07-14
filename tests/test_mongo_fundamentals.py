@@ -4,6 +4,8 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
+import pytest
+
 from smaug.analysis.domain.financials import AccountingRegime
 from smaug.analysis.infrastructure.mongo_fundamentals import (
     MongoFundamentalsReader,
@@ -547,6 +549,45 @@ async def test_reader_selects_amendment_consolidated_and_current_period() -> Non
 
     assert annual is not None
     assert annual.revenue == Decimal("400")  # v2 consolidated — not v1, ind, or prior
+
+
+def _column(ref: str, start: str, value: str) -> dict[str, Any]:
+    """One of an ITR's two income-statement columns, as the mirror now stores them."""
+    return {
+        "payload": {
+            "reference_date": ref,
+            "document_type": "ITR",
+            "version": 1,
+            "balance_type": "consolidated",
+            "ordem_exerc": "ULTIMO",
+            "period_start_date": start,
+            "accounts": [_acc("3.01", "Receita", value)],
+        },
+        "module": "DRE",
+        "fetched_at": datetime(2026, 7, 2, tzinfo=UTC),
+    }
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+async def test_reader_takes_the_accumulated_column_of_an_itr(reverse: bool) -> None:
+    # An ITR files its income statement in two columns for the same reference date:
+    # accumulated from 01-Jan (9 months here) and the isolated quarter (3 months).
+    # Before #83 they were merged into one payload and the reader just took whichever
+    # row the CSV listed first — so CVM's row order silently decided whether a
+    # 3-month figure was reported against a 9-month span. The accumulated column is
+    # now chosen explicitly, and the document order must not matter.
+    docs = [
+        _column("2024-09-30", "2024-01-01", "900"),  # accumulated
+        _column("2024-09-30", "2024-07-01", "300"),  # isolated quarter
+    ]
+    reader = MongoFundamentalsReader(
+        _FakeCollection(list(reversed(docs)) if reverse else docs)
+    )
+
+    (quarter,) = await reader.history("PETR4")
+
+    assert quarter.revenue == Decimal("900")
+    assert quarter.period_start == date(2024, 1, 1)  # the span the value belongs to
 
 
 async def test_reader_uses_the_individual_statement_when_it_is_all_there_is() -> None:

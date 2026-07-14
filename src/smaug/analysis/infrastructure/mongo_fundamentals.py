@@ -38,8 +38,9 @@ _STATEMENTS = ("BPA", "BPP", "DRE", "DFC")
 
 # The mirror stores every filing and chooses none of them (ADR 0016), so the
 # choice is made here: the reported period rather than its comparative, the latest
-# amendment, and the consolidated statement over the parent-only one. This is the
-# selection ingestion used to bake in — moved, not changed, so the numbers hold.
+# amendment, the consolidated statement over the parent-only one, and — of an ITR's
+# two income-statement columns — the one accumulated from 01-Jan rather than the
+# isolated quarter (see ``_rank``, #83).
 #
 # A filing that predates ADR 0016 carries neither discriminator; it is treated as
 # the reported period at version 0, so an old mirror still reads correctly.
@@ -496,7 +497,7 @@ class MongoFundamentalsReader:
 
         by_period: dict[str, dict[str, Any]] = {}
         doc_type: dict[str, str | None] = {}
-        best: dict[tuple[str, str], tuple[int, int, datetime]] = {}
+        best: dict[tuple[str, str], tuple[int, int, int, datetime]] = {}
         for doc in docs:
             payload = doc.get("payload")
             module = doc.get("module")
@@ -533,17 +534,38 @@ def _ordem(payload: Mapping[str, Any]) -> str:
     return ordem if isinstance(ordem, str) else _CURRENT_PERIOD
 
 
-def _rank(payload: Mapping[str, Any], fetched: datetime) -> tuple[int, int, datetime]:
+def _span_months(payload: Mapping[str, Any]) -> int:
+    """Months covered by this filing's period column (0 for a balance sheet)."""
+    start = _iso_date(payload.get("period_start_date"))
+    end = _iso_date(payload.get("reference_date"))
+    if start is None or end is None:
+        return 0
+    return (end.year - start.year) * 12 + (end.month - start.month) + 1
+
+
+def _rank(
+    payload: Mapping[str, Any], fetched: datetime
+) -> tuple[int, int, int, datetime]:
     """How strongly one filing is preferred over another for the same period+module.
 
     Version dominates the balance type: the amendment supersedes the original even
     when only the parent-only statement was refiled. ``fetched_at`` is the last
     resort — two ingestions of the identical filing, the newer copy wins.
+
+    The span breaks the remaining tie, and it is the choice #83 exists to make: an
+    ITR files its income statement in two columns — accumulated from 01-Jan and the
+    isolated quarter — which are otherwise identical filings. The **accumulated**
+    (longest) column is taken, for two reasons: ``build_ttm`` already isolates a
+    quarter from its span (``YTDₙ − YTDₙ₋₁``), and the DFC offers no other column, so
+    this keeps the DRE and the DFC on one period basis. A filer that files only the
+    isolated column still ranks first — there is nothing longer to lose to — and its
+    3-month span tells ``build_ttm`` it is already isolated.
     """
     version = payload.get("version")
     balance = payload.get("balance_type")
     return (
         version if isinstance(version, int) else 0,
         _BALANCE_RANK.get(balance if isinstance(balance, str) else "", 0),
+        _span_months(payload),
         fetched,
     )
