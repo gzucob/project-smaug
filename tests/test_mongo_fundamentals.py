@@ -87,7 +87,13 @@ def test_standardize_applies_currency_size_to_absolute_reais() -> None:
 
 
 def test_standardize_bank_reads_its_own_chart_of_accounts() -> None:
-    # The codes and labels below are the real ones in the raw mirror (BBAS3 DFP).
+    # The codes and labels below are the real ones in the raw mirror, from the
+    # **parent** filing a bank's income statement now comes from (ADR 0019). Its
+    # chart of accounts is not the consolidated one: the loan-loss provision is
+    # deducted *inside* 3.02 (so 3.03 is already net of it), and the two banks even
+    # disagree on its code — 3.02.05 for BBAS3, 3.02.04 for BBDC4 — which is why
+    # every line here is read by label, scoped to its parent (#27).
+    #
     # A bank's balance sheet has no current/non-current split and no borrowings
     # line, and its cash sits at 1.01 whole — there is no 1.01.01/1.01.02 to sum.
     by_module = {
@@ -96,6 +102,9 @@ def test_standardize_bank_reads_its_own_chart_of_accounts() -> None:
                 _acc("1", "Ativo Total", "5000"),
                 _acc("1.01", "Caixa e Equivalentes de Caixa", "300"),
                 _acc("1.02", "Ativos Financeiros", "4000"),
+                _acc("1.02.04", "Ativos Financeiros ao Custo Amortizado", "3000"),
+                _acc("1.02.04.04", "Operações de Crédito", "2200"),
+                _acc("1.02.04.05", "Provisão para Perdas Esperadas", "-200"),
             ]
         },
         "BPP": {
@@ -107,12 +116,15 @@ def test_standardize_bank_reads_its_own_chart_of_accounts() -> None:
         "DRE": {
             "accounts": [
                 _acc("3.01", "Receitas de Intermediação Financeira", "400"),
-                _acc("3.01.01", "Receita de Juros", "400"),
+                _acc("3.01.01", "Operações de Crédito", "250"),
                 _acc("3.02", "Despesas de Intermediação Financeira", "-260"),
-                _acc("3.02.01", "Despesa de Juros", "-260"),
+                _acc("3.02.01", "Operações de Captação no Mercado", "-190"),
+                _acc("3.02.05", "Provisão p/ Créditos de Liquidação Duvidosa", "-70"),
                 _acc("3.03", "Resultado Bruto de Intermediação Financeira", "140"),
-                _acc("3.04.01", "Despesa de Provisão para Perda Esperada", "-70"),
+                _acc("3.04.01", "Despesa de Provisão para Perda Esperada", "0"),
                 _acc("3.04.02", "Receitas de Prestação de Serviços", "45"),
+                _acc("3.04.03", "Despesas com Pessoal", "-30"),
+                _acc("3.04.04", "Outras Despesas de Administrativas", "-20"),
                 _acc("3.05", "Resultado antes dos Tributos sobre o Lucro", "60"),
                 _acc("3.09", "Lucro ou Prejuízo das Operações Continuadas", "90"),
             ]
@@ -133,15 +145,17 @@ def test_standardize_bank_reads_its_own_chart_of_accounts() -> None:
     assert f.revenue == Decimal("400")
     assert f.net_income == Decimal("90")
     assert f.cash == Decimal("300")  # 1.01 whole, not 1.01.01 + 1.01.02
-    assert f.gross_profit == Decimal("140")  # 3.03 = net interest income
+    assert f.gross_profit == Decimal("140")  # 3.03 — the spread, net of the provision
     assert f.ebit == Decimal("60")  # 3.05 = pre-tax profit (ADR 0015)
     assert f.cfo == Decimal("500")
     assert f.capex == Decimal("190")  # 150 + 40
-    # The bank-specific lines #27 needs, signed as filed:
-    assert f.interest_income == Decimal("400")
-    assert f.interest_expense == Decimal("-260")
+    # The bank lines the ratios of #27 are built on, signed as filed. The provision
+    # is the one inside 3.02 — not the empty 3.04.01 the consolidated chart uses.
     assert f.loan_loss_provision == Decimal("-70")
     assert f.fee_income == Decimal("45")
+    assert f.personnel_expense == Decimal("-30")
+    assert f.admin_expense == Decimal("-20")
+    assert f.loan_book == Decimal("2000")  # 2200 gross, less its own 200 provision
     # Unbuildable from a bank's schema — never read, never guessed. 2.02 above is
     # the bank's funding (deposits), and must not be mistaken for debt.
     assert f.total_debt is None

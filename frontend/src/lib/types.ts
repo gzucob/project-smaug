@@ -46,6 +46,10 @@ export interface Indicators {
   fcf: Decimalish;
   price_to_fcf: Decimalish;
   fcf_yield: Decimalish;
+  // Bank-only (ADR 0021): null under every other accounting regime.
+  net_interest_margin: Decimalish;
+  efficiency_ratio: Decimalish;
+  cost_of_risk: Decimalish;
   revenue: Decimalish;
   net_income: Decimalish;
   dividends: Decimalish;

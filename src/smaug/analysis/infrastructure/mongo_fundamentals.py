@@ -426,17 +426,41 @@ def _as_bank(
     matching what the reference platforms compute (ADR 0015); ``total_debt``,
     ``current_assets`` and ``current_liabilities`` stay ``None`` because the
     schema has no such lines — the calculator names those nulls inapplicable.
+
+    Everything below is read **by label, scoped to its parent** rather than by code,
+    because the two banks do not agree on the codes: the loan-loss provision is
+    3.02.05 for BBAS3 and 3.02.04 for BBDC4 (#27). The provision sits *inside* 3.02
+    here — the parent filing's chart of accounts (ADR 0019) deducts it before the
+    3.03 spread — which is why ``gross_profit`` for a bank is net of it, and why the
+    calculator adds it back to get the interest margin.
     """
     return replace(
         base,
         ebit=_mul(_by_code(dre, "3.05"), dre_s),  # pre-tax result — see docstring
         cash=_mul(_by_code(bpa, "1.01"), bpa_s),  # no 1.01.01/1.01.02 split
-        interest_income=_mul(_by_code(dre, "3.01.01"), dre_s),
-        interest_expense=_mul(_by_code(dre, "3.02.01"), dre_s),
-        loan_loss_provision=_mul(_by_code(dre, "3.04.01"), dre_s),
-        fee_income=_mul(_by_code(dre, "3.04.02"), dre_s),
+        loan_loss_provision=_mul(_child_by_name(dre, "3.02", "provisao"), dre_s),
+        fee_income=_mul(_child_by_name(dre, "3.04", "prestacao de servicos"), dre_s),
+        personnel_expense=_mul(_child_by_name(dre, "3.04", "pessoal"), dre_s),
+        admin_expense=_mul(_child_by_name(dre, "3.04", "administrativas"), dre_s),
+        loan_book=_loan_book(bpa, bpa_s),
         unmapped_fields=_FINANCIAL_UNMAPPED_FIELDS,
     )
+
+
+def _loan_book(bpa: Accounts, scale: Decimal) -> Decimal | None:
+    """The credit portfolio, net of the provision carried against it.
+
+    Both banks file the loan book under "Ativos Financeiros ao Custo Amortizado"
+    (1.02.04) with the balance-sheet provision as its sibling — but only BBDC4
+    fills that provision line in (BBAS3 files zero there, its portfolio already net).
+    Subtracting it where it is filed puts the two banks on one basis: what the bank
+    still expects to collect.
+    """
+    gross = _child_by_name(bpa, "1.02.04", "operacoes de credito")
+    if gross is None:
+        return None
+    provision = _child_by_name(bpa, "1.02.04", "provisao") or Decimal(0)
+    return _mul(gross + provision, scale)  # the provision is filed negative
 
 
 def _as_insurer(

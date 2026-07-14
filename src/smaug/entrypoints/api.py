@@ -66,6 +66,9 @@ class IndicatorsResponse(BaseModel):
     fcf: Decimal | None
     price_to_fcf: Decimal | None
     fcf_yield: Decimal | None
+    net_interest_margin: Decimal | None
+    efficiency_ratio: Decimal | None
+    cost_of_risk: Decimal | None
     revenue: Decimal | None
     net_income: Decimal | None
     dividends: Decimal | None

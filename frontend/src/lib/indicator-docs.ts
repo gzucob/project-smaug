@@ -749,6 +749,65 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
   },
+
+  // -------------------------------------------------------------- banco ---
+  // Só um banco preenche estes três: o balanço dele é o negócio (ADR 0021).
+  net_interest_margin: {
+    formula: "Margem financeira bruta (spread antes da provisão) ÷ Ativo total",
+    what: "O quanto o banco ganha de spread — juros que recebe menos juros que paga — sobre cada real de ativo. É o preço do dinheiro dele, antes de descontar os calotes.",
+    strongIn: [
+      {
+        where: "Intermediários Financeiros (bancos)",
+        why: "é a receita primária do negócio: emprestar caro e captar barato",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Bancos com forte receita de serviços",
+        why: "parte relevante do lucro vem de tarifas e seguros, que a margem financeira não enxerga — olhe o índice de eficiência ao lado",
+      },
+    ],
+    naSectors: ["insurer", "utility", "commodity", "industry"],
+    caveat:
+      "Dividimos pelo ativo total, não pelos ativos rentáveis: o CVM não separa uns dos outros na demonstração estruturada. Isso subestima a margem em relação ao número que o próprio banco publica.",
+  },
+  efficiency_ratio: {
+    formula:
+      "(Despesas com pessoal + administrativas) ÷ (Margem financeira bruta + Tarifas)",
+    what: "Quanto do que o banco ganha é consumido pela própria estrutura — agências, pessoal, back office. Aqui, menor é melhor: 33% significa que um terço da receita vira custo interno.",
+    strongIn: [
+      {
+        where: "Intermediários Financeiros (bancos)",
+        why: "é o placar de gestão do setor, e o que separa um banco caro de um enxuto",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Comparações entre bancos de perfis diferentes",
+        why: "um banco de varejo carrega milhares de agências e nunca terá a eficiência de um banco de atacado — o índice compara mal fora do mesmo perfil",
+      },
+    ],
+    naSectors: ["insurer", "utility", "commodity", "industry"],
+    caveat:
+      "Os bancos publicam um índice gerencial, com ajustes próprios. O nosso sai direto da demonstração, então costuma ficar alguns pontos acima do divulgado.",
+  },
+  cost_of_risk: {
+    formula: "Provisão para créditos duvidosos (do ano) ÷ Carteira de crédito",
+    what: "Quanto o banco precisou reservar para calotes, em relação a tudo que emprestou. É o preço do risco que ele escolheu correr — e sobe antes do lucro cair.",
+    strongIn: [
+      {
+        where: "Intermediários Financeiros (bancos)",
+        why: "é o indicador que antecipa a deterioração: a provisão sobe no balanço antes de o calote aparecer no lucro",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Um ano isolado",
+        why: "a provisão responde a mudanças de política de crédito e a eventos setoriais — só a série de vários anos mostra a tendência",
+      },
+    ],
+    naSectors: ["insurer", "utility", "commodity", "industry"],
+  },
 };
 
 export function indicatorDoc(key: IndicatorKey): IndicatorDoc {

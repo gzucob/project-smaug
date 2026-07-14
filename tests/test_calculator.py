@@ -162,6 +162,43 @@ def test_bank_computes_the_ratios_its_schema_supports() -> None:
     assert ind.revenue_growth is None
 
 
+def test_bank_computes_its_own_three_ratios() -> None:
+    # ADR 0021, shaped on BBAS3's real filing. Its 3.03 spread (1200) is already net
+    # of the loan-loss provision (-600), which the parent chart deducts inside the
+    # intermediation expenses — so the margin the bank earned *before* writing
+    # anything off is 1800, which is the *margem financeira bruta* it reports.
+    bank = replace(
+        _mapped_bank(),
+        reference_date=date(2024, 12, 31),  # a closed year: no annualization
+        total_assets=Decimal(60000),
+        gross_profit=Decimal(1200),
+        loan_loss_provision=Decimal(-600),
+        fee_income=Decimal(400),
+        personnel_expense=Decimal(-500),
+        admin_expense=Decimal(-200),
+        loan_book=Decimal(20000),
+    )
+
+    ind = compute(bank, None, MarketData(market_cap=Decimal(8000)))
+
+    # spread before provisions = 1200 + 600 = 1800, over 60000 of assets
+    assert ind.net_interest_margin == Decimal("0.03")
+    # (500 + 200) of expense over (1800 + 400) of operating revenue — a cost, so it
+    # reads positive even though CVM files both expenses negative
+    assert ind.efficiency_ratio == Decimal(700) / Decimal(2200)
+    assert ind.cost_of_risk == Decimal(600) / Decimal(20000)  # 600 written off / 20000
+
+
+def test_the_bank_ratios_are_inapplicable_to_everyone_else() -> None:
+    # A company that sells goods has no spread, no loan book and no payroll measured
+    # against a spread. The null is a verdict of the regime, not a missing input.
+    ind = compute(_nonfinancial(), None, MarketData(market_cap=Decimal(12000)))
+
+    for name in ("net_interest_margin", "efficiency_ratio", "cost_of_risk"):
+        assert getattr(ind, name) is None
+        assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
+
+
 def test_bank_null_reasons_name_each_cause() -> None:
     ind = compute(
         _mapped_bank(), None, MarketData(market_cap=Decimal(8000))

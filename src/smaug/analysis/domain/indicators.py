@@ -89,6 +89,13 @@ class Indicators:
     fcf: Decimal | None = None  # annualized free cash flow, in absolute reais
     price_to_fcf: Decimal | None = None
     fcf_yield: Decimal | None = None
+    # Bank-only ratios (ADR 0021). A bank's balance sheet is its business, so the
+    # ratios that describe it are its own: how wide the spread it earns is, how much
+    # of that spread its own payroll consumes, and what its lending is costing it in
+    # defaults. Null under every other regime — inapplicable, not missing.
+    net_interest_margin: Decimal | None = None  # spread / total assets
+    efficiency_ratio: Decimal | None = None  # operating expense / operating revenue
+    cost_of_risk: Decimal | None = None  # loan-loss provision / loan book
     # Headline financials (absolute reais, the period's own figure — not
     # annualized). Persisted alongside the ratios so the front-end can chart the
     # per-year evolution of revenue / earnings / dividends, which the ratios alone

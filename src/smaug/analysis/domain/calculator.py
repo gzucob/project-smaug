@@ -80,6 +80,15 @@ def _annualized(
     return value * _MONTHS_IN_YEAR / Decimal(months)
 
 
+def _negated(value: Decimal | None) -> Decimal | None:
+    """Flip a ratio built from a filed expense, which CVM records as negative.
+
+    An efficiency ratio of 34% is a cost, and reporting it as −34% would be a
+    faithful reading of the sign and a useless number to look at.
+    """
+    return None if value is None else -value
+
+
 def _net_debt(financials: StandardizedFinancials) -> Decimal | None:
     if financials.total_debt is None:
         return None
@@ -98,6 +107,12 @@ def _net_debt(financials: StandardizedFinancials) -> Decimal | None:
 # and its ROIC denominator (equity + net debt) inherits the net-debt verdict
 # above, since a deposit is funding, not borrowing. Every *other* indicator a
 # financial filer nulls now falls through to the input check.
+#
+# The three bank ratios (ADR 0021) run the other way: they describe a balance sheet
+# that *is* the business, and a company that sells goods has no spread, no loan book
+# and no payroll-against-spread to report. They are inapplicable to everyone else.
+_BANK_ONLY = frozenset({"net_interest_margin", "efficiency_ratio", "cost_of_risk"})
+
 _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
     AccountingRegime.BANK: frozenset(
         {
@@ -117,7 +132,9 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
             "ebit_margin",
             "ebitda_margin",
         }
-    ),
+    )
+    | _BANK_ONLY,
+    AccountingRegime.CORPORATE: _BANK_ONLY,
 }
 
 
@@ -194,6 +211,19 @@ _NEEDS: dict[str, _Needs] = {
     "price_to_working_capital": _Needs(
         accounts=("current_assets", "current_liabilities"), cap=True
     ),
+    "net_interest_margin": _Needs(
+        accounts=("gross_profit", "loan_loss_provision", "total_assets")
+    ),
+    "efficiency_ratio": _Needs(
+        accounts=(
+            "gross_profit",
+            "loan_loss_provision",
+            "personnel_expense",
+            "admin_expense",
+            "fee_income",
+        )
+    ),
+    "cost_of_risk": _Needs(accounts=("loan_loss_provision", "loan_book")),
     "payout": _Needs(accounts=("dividends_paid", "net_income")),
     "dividend_yield": _Needs(accounts=("dividends_paid",), cap=True),
     "ev_ebitda": _Needs(accounts=("total_debt", "ebitda"), cap=True),
@@ -314,6 +344,20 @@ def compute(
     prev_revenue = previous.revenue if previous is not None else None
     prev_net_income = previous.net_income if previous is not None else None
 
+    # The bank's spread, before the cost of default. A bank's 3.03 already deducts
+    # the loan-loss provision (it sits inside the intermediation expenses in the
+    # parent chart of accounts, ADR 0019), so adding the provision back — it is filed
+    # negative — recovers the margin the bank earned before writing anything off.
+    # That is the *margem financeira bruta* the banks themselves report.
+    interest_margin = _sub(f.gross_profit, f.loan_loss_provision)
+    annual_interest_margin = _annualized(interest_margin, f)
+    # What the bank's own payroll and back office consume of what it earns: the
+    # spread plus the fees it charges. Both sides annualized, so a quarter compares
+    # to a year (ADR 0021).
+    operating_expense = _add(f.personnel_expense, f.admin_expense)
+    operating_revenue = _add(interest_margin, f.fee_income)
+    annual_provision = _annualized(f.loan_loss_provision, f)
+
     indicators = Indicators(
         roe=_div(annual_net_income, f.equity),
         roa=_div(annual_net_income, f.total_assets),
@@ -338,6 +382,10 @@ def compute(
         price_to_assets=_div(cap, f.total_assets),
         price_to_ebit=_div(cap, annual_ebit),
         price_to_working_capital=_div(cap, working_capital),
+        net_interest_margin=_div(annual_interest_margin, f.total_assets),
+        # Expenses are filed negative, so the ratio is negated to read as a cost.
+        efficiency_ratio=_negated(_div(operating_expense, operating_revenue)),
+        cost_of_risk=_negated(_div(annual_provision, f.loan_book)),
         payout=_div(f.dividends_paid, f.net_income),
         dividend_yield=_div(f.dividends_paid, cap),
         ev_ebitda=_div(enterprise_value, annual_ebitda),
