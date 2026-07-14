@@ -22,14 +22,6 @@ class Sector(StrEnum):
     COMMODITY = "commodity"
     INDUSTRY = "industry"
 
-    @property
-    def is_financial(self) -> bool:
-        """Banks and insurers report under a financial-institution structure."""
-        return self in _FINANCIAL_SECTORS
-
-
-_FINANCIAL_SECTORS: frozenset[Sector] = frozenset({Sector.BANK, Sector.INSURER})
-
 
 # The target portfolio (plan §1). Order is stable for reproducible collection.
 PORTFOLIO: dict[str, Sector] = {

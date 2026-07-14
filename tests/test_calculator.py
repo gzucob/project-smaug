@@ -232,10 +232,11 @@ def test_insurer_null_reasons_split_by_regime() -> None:
     assert "current_ratio" not in ind.null_reasons
 
 
-def test_mismatched_filer_gets_unexpected_regime_not_inapplicable() -> None:
-    # The CXSE3 case (ADR 0006): an insurer by sector that files as a holding.
-    # Its regime-driven nulls are neither inapplicable nor a mapping gap — the
-    # filer reports under a schema its sector does not predict.
+def test_applicability_follows_the_filed_regime_not_the_sector() -> None:
+    # The CXSE3 case (ADR 0006/0020): an insurer by sector that files as a holding.
+    # Applicability is a property of the chart of accounts the company *uses*, so
+    # this filer is judged as the corporate it files as — the insurer's suppressed
+    # margins are not applied to it, and a null it does have gets a filed cause.
     holding = StandardizedFinancials(
         reference_date=date(2024, 12, 31),
         sector=Sector.INSURER,
@@ -252,13 +253,32 @@ def test_mismatched_filer_gets_unexpected_regime_not_inapplicable() -> None:
         holding, None, MarketData(market_cap=Decimal(30000), shares=Decimal(3000))
     )
 
-    # Suppressed by its *sector's* regime, then attributed to the mismatch — the
-    # filer reports under a schema its sector does not predict.
-    assert ind.null_reasons["gross_margin"] is NullReason.UNEXPECTED_REGIME
-    # But a line its filed regime *does* have and this filing simply omits is
-    # absent, not a mapping gap: the mismatch does not override a real absence.
+    # Not suppressed: the corporate schema it files under supports a gross margin,
+    # and this filing simply carries no gross-profit line. That is an absence in the
+    # filing, not a verdict of ours — which is the whole difference (#95).
+    assert ind.null_reasons["gross_margin"] is NullReason.SOURCE_ACCOUNT_ABSENT
     assert ind.null_reasons["fcf"] is NullReason.SOURCE_ACCOUNT_ABSENT
     assert ind.roe is not None  # the mapped core still computes
+
+
+def test_a_filer_is_judged_by_the_regime_it_files_even_when_its_sector_agrees() -> None:
+    # The other side of #95: a bank that files as one keeps the bank's inapplicable
+    # set, and its null says so — the change is *which* regime is asked, not whether
+    # a regime decides.
+    bank = StandardizedFinancials(
+        reference_date=date(2024, 12, 31),
+        sector=Sector.BANK,
+        total_assets=Decimal(50000),
+        equity=Decimal(8000),
+        net_income=Decimal(900),
+        revenue=Decimal(4000),
+        filed_regime=AccountingRegime.BANK,
+    )
+
+    ind = compute(bank, None, MarketData(market_cap=Decimal(30000)))
+
+    assert ind.net_debt is None
+    assert ind.null_reasons["net_debt"] is NullReason.INAPPLICABLE_REGIME
 
 
 def test_missing_price_nulls_the_market_multiples_with_a_named_cause() -> None:

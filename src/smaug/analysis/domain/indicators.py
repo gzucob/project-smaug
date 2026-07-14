@@ -31,9 +31,6 @@ class NullReason(StrEnum):
     * ``MISSING_PRICE`` / ``MISSING_SHARE_COUNT`` / ``MISSING_PRIOR_PERIOD`` —
       an upstream input from another source is missing (brapi price, FRE share
       count, the prior year's ingestion), split so a report can say *which*.
-    * ``UNEXPECTED_REGIME`` — the company files under a regime other than the
-      one its sector predicts (CXSE3 declares as a holding, not an insurer),
-      so every regime-driven null is neither inapplicable nor unmapped.
     * ``ZERO_DENOMINATOR`` — every input is present, but the ratio is undefined
       because its denominator is zero (a holding filing revenue = 0 nulls
       P/Receita and the margins; a year with ~zero earnings nulls P/E, payout).
@@ -50,7 +47,6 @@ class NullReason(StrEnum):
     MISSING_PRICE = "missing_price"
     MISSING_SHARE_COUNT = "missing_share_count"
     MISSING_PRIOR_PERIOD = "missing_prior_period"
-    UNEXPECTED_REGIME = "unexpected_regime"
     ZERO_DENOMINATOR = "zero_denominator"
 
 
