@@ -60,7 +60,7 @@ export interface Analysis {
   reference_date: string; // ISO date
   computed_at: string; // ISO datetime
   price: Decimalish;
-  price_nominal: Decimalish;
+  price_adjusted: Decimalish; // total-return basis; null on the live view
   price_basis: string | null;
   indicators: Indicators;
 }

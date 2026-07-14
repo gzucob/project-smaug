@@ -164,7 +164,7 @@ async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
     assert saved.reference_date == date(2026, 3, 31)
     assert saved.indicators.roe == Decimal("0.2")  # 1200 / 6000
     assert saved.price == Decimal(10)  # current nominal quote
-    assert saved.price_nominal == Decimal(10)
+    assert saved.price_adjusted is None  # nothing paid out since a live quote
     assert saved.price_basis == "ttm_current_nominal"
     # Both classes quote at 10 here → cap = 10 × (800 + 400) = 12000.
     assert saved.indicators.pe == Decimal(10)  # 12000 / 1200
@@ -332,19 +332,58 @@ async def test_analyze_produces_ttm_and_closed_year_views() -> None:
     assert ttm.price == Decimal(10)  # current nominal quote
 
     y2025 = views[("closed_year", date(2025, 12, 31))]
-    assert y2025.price_basis == "adjusted_year_avg"
-    assert y2025.price == Decimal(6)  # adjusted average
-    assert y2025.price_nominal == Decimal(8)  # nominal average
-    # cap = adjusted_avg × shares(2025) = 6 × 1200 = 7200
-    #   → P/E = 7200/600 = 12, P/VP = 7200/3600 = 2
-    assert y2025.indicators.pe == Decimal(12)
-    assert y2025.indicators.pb == Decimal(2)
+    assert y2025.price_basis == "nominal_year_avg"
+    assert y2025.price == Decimal(8)  # what the shares traded at that year
+    assert y2025.price_adjusted == Decimal(6)  # the total-return ruler, kept aside
+    # cap = nominal_avg × shares(2025) = 8 × 1200 = 9600 (ADR 0018)
+    #   → P/E = 9600/600 = 16, P/VP = 9600/3600
+    assert y2025.indicators.pe == Decimal(16)
+    assert y2025.indicators.pb == Decimal(9600) / Decimal(3600)
     # YoY vs the 2024 DFP: net income (600 - 500) / 500 = 0.2.
     assert y2025.indicators.net_income_growth == Decimal("0.2")
 
     # The oldest closed year has no prior DFP → growth degrades to null.
     y2024 = views[("closed_year", date(2024, 12, 31))]
     assert y2024.indicators.net_income_growth is None
+
+
+async def test_a_closed_years_multiples_divide_by_what_the_shares_traded_at() -> None:
+    # ADR 0018. The dividend-adjusted series discounts every past price by the payouts
+    # made since, so for a heavy payer it collapses: PETR4's 2022 average reads R$13.15
+    # adjusted against R$30.67 nominal, which turned its dividend yield into 106% — a
+    # number that cannot describe how the market valued the company that year. The
+    # valuation multiples divide by the nominal average; the adjusted one is kept
+    # beside them, for return comparisons, and never reaches the cap.
+    quarters = _quarters(Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(600))
+    annual = StandardizedFinancials(
+        reference_date=date(2024, 12, 31),
+        sector=Sector.COMMODITY,
+        period_start=date(2024, 1, 1),
+        net_income=Decimal(100),
+        equity=Decimal(600),
+        dividends_paid=Decimal(400),
+    )
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"PETR4": quarters}, annuals={"PETR4": [annual]}),
+        FakePrice(
+            MarketData(price=Decimal(10)),
+            # The adjusted average is a third of the nominal one — a PETR4-shaped gap.
+            year=YearPrices(nominal_avg=Decimal(30), adjusted_avg=Decimal(10)),
+        ),
+        repo,
+        FakeShares({2024: _counts(common=60, preferred=40)}),  # 100 shares in all
+    )
+
+    await use_case.execute(["PETR4"])
+    year = next(a for a in repo.saved if a.view == "closed_year")
+
+    # cap = 30 × 100 = 3000 → P/E 30, DY 13.3%. On the adjusted basis the same year
+    # would read cap 1000, P/E 10 and a 40% yield.
+    assert year.price == Decimal(30)
+    assert year.price_adjusted == Decimal(10)
+    assert year.indicators.pe == Decimal(30)
+    assert year.indicators.dividend_yield == Decimal(400) / Decimal(3000)
 
 
 async def test_analyze_prices_closed_year_without_the_live_quote() -> None:
@@ -376,9 +415,9 @@ async def test_analyze_prices_closed_year_without_the_live_quote() -> None:
     views = {(a.view, a.reference_date): a for a in repo.saved}
 
     y2024 = views[("closed_year", date(2024, 12, 31))]
-    assert y2024.price == Decimal(6)  # Yahoo adjusted average, no brapi quote
-    assert y2024.indicators.pe == Decimal(12)  # cap 6 × 1200 = 7200 / 600
-    assert y2024.indicators.pb == Decimal(2)  # 7200 / 3600
+    assert y2024.price == Decimal(8)  # Yahoo nominal average, no brapi quote
+    assert y2024.indicators.pe == Decimal(16)  # cap 8 × 1200 = 9600 / 600
+    assert y2024.indicators.pb == Decimal(9600) / Decimal(3600)
 
     # The live view still degrades: it legitimately needs the current quote.
     ttm = views[("ttm_live", date(2026, 3, 31))]

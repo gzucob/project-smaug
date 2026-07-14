@@ -367,7 +367,7 @@ def format_analysis(analyses: list[TickerAnalysis]) -> str:
     for a in analyses:
         i = a.indicators
         basis = (
-            f" ({a.price_basis}, nominal {_num(a.price_nominal)})"
+            f" ({a.price_basis}, adjusted {_num(a.price_adjusted)})"
             if a.price_basis is not None
             else ""
         )

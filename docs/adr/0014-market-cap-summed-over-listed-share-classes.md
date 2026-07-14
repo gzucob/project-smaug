@@ -1,6 +1,6 @@
 # 0014 — The market cap is summed over the company's listed share classes
 
-- **Status:** Accepted (supersedes [0012](0012-closed-year-cap-from-year-price-and-shares.md))
+- **Status:** Accepted (supersedes [0012](0012-closed-year-cap-from-year-price-and-shares.md)) — its **price basis** is superseded by [0018](0018-nominal-price-for-closed-year-multiples.md), which sums the year's *nominal* averages; the cap identity below stands unchanged
 - **Date:** 2026-07-13
 
 ## Context

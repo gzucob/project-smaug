@@ -31,7 +31,7 @@ class TickerAnalysisRow(Base):
     reference_date: Mapped[date] = mapped_column(Date)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     price: Mapped[Decimal | None] = mapped_column(Numeric)
-    price_nominal: Mapped[Decimal | None] = mapped_column(Numeric)
+    price_adjusted: Mapped[Decimal | None] = mapped_column(Numeric)
     price_basis: Mapped[str | None] = mapped_column(String(24))
 
     roe: Mapped[Decimal | None] = mapped_column(Numeric)

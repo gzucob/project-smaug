@@ -54,10 +54,12 @@ logger = get_logger(__name__)
 
 Clock = Callable[[], datetime]
 
-# The live TTM view is priced on the current nominal quote; each closed year is
-# priced on its dividend-adjusted average (the platforms' historical basis).
+# Both views are priced on what the shares actually traded at: the live TTM on the
+# current quote, each closed year on that year's nominal average (ADR 0018). The
+# dividend-adjusted average is kept alongside as the total-return reference, but it
+# is not what a valuation multiple divides by.
 _TTM_BASIS = "ttm_current_nominal"
-_CLOSED_YEAR_BASIS = "adjusted_year_avg"
+_CLOSED_YEAR_BASIS = "nominal_year_avg"
 
 
 def _utc_now() -> datetime:
@@ -159,7 +161,9 @@ class AnalyzePortfolioUseCase:
             computed_at=computed_at,
             indicators=compute(current, previous, market),
             price=quote.price,
-            price_nominal=quote.price,
+            # A live quote has no adjusted counterpart: nothing has been paid out
+            # since it, so there is nothing to adjust it by.
+            price_adjusted=None,
             price_basis=_TTM_BASIS if quote.price is not None else None,
             view=VIEW_TTM,
         )
@@ -172,10 +176,10 @@ class AnalyzePortfolioUseCase:
         annuals: list[StandardizedFinancials],
         computed_at: datetime,
     ) -> TickerAnalysis:
-        """One closed fiscal year, priced on its dividend-adjusted average."""
+        """One closed fiscal year, priced on what the shares traded at that year."""
         year = annual.reference_date.year
         previous = _prior_year_annual(annuals, year)
-        market, nominal_avg = await self._market_for_year(ticker, year)
+        market, adjusted_avg = await self._market_for_year(ticker, year)
         return TickerAnalysis(
             ticker=ticker,
             sector=sector,
@@ -183,7 +187,7 @@ class AnalyzePortfolioUseCase:
             computed_at=computed_at,
             indicators=compute(annual, previous, market),
             price=market.price,
-            price_nominal=nominal_avg,
+            price_adjusted=adjusted_avg,
             price_basis=_CLOSED_YEAR_BASIS if market.price is not None else None,
             view=VIEW_CLOSED_YEAR,
         )
@@ -240,17 +244,20 @@ class AnalyzePortfolioUseCase:
     async def _market_for_year(
         self, ticker: str, year: int
     ) -> tuple[MarketData, Decimal | None]:
-        """Price the closed-year multiples on that year's dividend-adjusted average.
+        """Price the closed-year multiples on what the shares traded at that year.
 
         The market cap is built from that year's own facts — each listed class at
-        its own adjusted average for the year, times the shares filed for that
-        class (ADR 0014) — rather than repriced from the live quote (superseding
-        ADR 0001). A closed-year row is therefore reproducible from the database
-        and independent of the current quote: the year's prices come from Yahoo
-        (ADR 0011) and the counts from CVM's filed capital for that year (ADR
-        0004). A missing class price or class count degrades the cap to null; the
-        per-share indicators (which need only the filed total) are unaffected.
-        Returns the market inputs plus the year's nominal average (for reference).
+        its own **nominal** average for the year, times the shares outstanding for
+        that class (ADR 0014/0017) — rather than repriced from the live quote
+        (superseding ADR 0001). The nominal average, not the dividend-adjusted one:
+        a valuation multiple asks what the market paid for the company *that year*,
+        and nobody bought PETR4 in 2022 at the R$13.15 the adjusted series now shows
+        (ADR 0018). A closed-year row is therefore reproducible from the database and
+        independent of the current quote: the year's prices come from Yahoo (ADR
+        0011) and the counts from CVM's filed capital for that year (ADR 0004). A
+        missing class price or class count degrades the cap to null; the per-share
+        indicators (which need only the total) are unaffected. Returns the market
+        inputs plus the year's adjusted average, kept as the total-return reference.
         """
         counts = await self._shares_reader.counts(ticker, year)
         own = await self._year_prices(ticker, year)
@@ -260,12 +267,12 @@ class AnalyzePortfolioUseCase:
             year_prices = (
                 own if symbol == ticker else await self._year_prices(symbol, year)
             )
-            prices[symbol] = year_prices.adjusted_avg
+            prices[symbol] = year_prices.nominal_avg
         cap, cap_null_reason = capitalize(ticker, counts, prices)
         market = MarketData(
-            price=own.adjusted_avg,
+            price=own.nominal_avg,
             market_cap=cap,
             shares=await self._shares_reader.outstanding(ticker, year),
             cap_null_reason=cap_null_reason,
         )
-        return market, own.nominal_avg
+        return market, own.adjusted_avg

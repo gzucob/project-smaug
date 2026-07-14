@@ -76,9 +76,9 @@ def test_should_render_analysis_with_view_tag() -> None:
             reference_date=date(2024, 12, 31),
             computed_at=datetime(2026, 7, 8, tzinfo=UTC),
             indicators=Indicators(pe=Decimal("11.4")),
-            price=Decimal("30.48"),
-            price_nominal=Decimal("38.20"),
-            price_basis="adjusted_year_avg",
+            price=Decimal("38.20"),
+            price_adjusted=Decimal("30.48"),
+            price_basis="nominal_year_avg",
             view="closed_year",
         )
     ]
@@ -87,7 +87,7 @@ def test_should_render_analysis_with_view_tag() -> None:
 
     assert "closed_year" in text
     assert "2024-12-31" in text
-    assert "adjusted_year_avg" in text
+    assert "nominal_year_avg" in text
 
 
 async def test_should_render_report_with_missing_marker() -> None:
