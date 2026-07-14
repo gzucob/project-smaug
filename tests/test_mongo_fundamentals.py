@@ -418,3 +418,69 @@ async def test_history_returns_quarters_and_annual_returns_the_dfp() -> None:
     assert annual is not None
     assert annual.reference_date == date(2024, 12, 31)
     assert annual.revenue == Decimal("400")
+
+
+def _filed(
+    ref: str,
+    value: str,
+    *,
+    version: int,
+    balance_type: str,
+    ordem: str = "ULTIMO",
+) -> dict[str, Any]:
+    """One filing of the DRE as the post-ADR-0016 mirror stores it."""
+    return {
+        "payload": {
+            "reference_date": ref,
+            "document_type": "DFP",
+            "version": version,
+            "balance_type": balance_type,
+            "ordem_exerc": ordem,
+            "accounts": [_acc("3.01", "Receita", value)],
+        },
+        "module": "DRE",
+        "fetched_at": datetime(2026, 7, 2, tzinfo=UTC),
+    }
+
+
+async def test_reader_selects_amendment_consolidated_and_current_period() -> None:
+    # ADR 0016: the mirror hands the reader every filing and picks none of them.
+    # The selection ingestion used to bake in now happens here — and only here.
+    reader = MongoFundamentalsReader(
+        _FakeCollection(
+            [
+                _filed("2024-12-31", "100", version=1, balance_type="consolidated"),
+                _filed("2024-12-31", "999", version=2, balance_type="individual"),
+                _filed("2024-12-31", "400", version=2, balance_type="consolidated"),
+                # The comparative column of the same filing: the *prior* year's
+                # figure, which must never be mistaken for this period's.
+                _filed(
+                    "2024-12-31",
+                    "7",
+                    version=2,
+                    balance_type="consolidated",
+                    ordem="PENULTIMO",
+                ),
+            ]
+        )
+    )
+
+    annual = await reader.annual("PETR4")
+
+    assert annual is not None
+    assert annual.revenue == Decimal("400")  # v2 consolidated — not v1, ind, or prior
+
+
+async def test_reader_uses_the_individual_statement_when_it_is_all_there_is() -> None:
+    # SAPR11 files no consolidated statement at all — the parent-only one is the
+    # filing, not a second-best.
+    reader = MongoFundamentalsReader(
+        _FakeCollection(
+            [_filed("2024-12-31", "500", version=1, balance_type="individual")]
+        )
+    )
+
+    annual = await reader.annual("SAPR11")
+
+    assert annual is not None
+    assert annual.revenue == Decimal("500")

@@ -50,7 +50,9 @@ from smaug.ingestion.domain.ports import RawDataSource
 from smaug.ingestion.infrastructure.brapi_client import BrapiClient
 from smaug.ingestion.infrastructure.cvm_capital import (
     CAPITAL_MODULE,
+    TREASURY_MODULE,
     CvmCapitalSource,
+    CvmTreasurySource,
 )
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, CvmDocument
 from smaug.ingestion.infrastructure.repositories import BeanieRawIngestionRepository
@@ -154,7 +156,18 @@ def _build_data_source(
         year=cvm_year,
         cache_dir=settings.cvm_cache_dir,
     )
-    return RoutedDataSource({CAPITAL_MODULE: capital}, default=statements)
+    # ...and the statements ZIP has a composition of its own, which is the only
+    # place treasury shares are filed. Also keyed by CNPJ, not by CD_CVM.
+    treasury = CvmTreasurySource(
+        http,
+        TICKER_TO_CNPJ,
+        year=cvm_year,
+        cache_dir=settings.cvm_cache_dir,
+        document=cast(CvmDocument, doc),
+    )
+    return RoutedDataSource(
+        {CAPITAL_MODULE: capital, TREASURY_MODULE: treasury}, default=statements
+    )
 
 
 async def _run_ingest(

@@ -31,10 +31,26 @@ DEFAULT_BRAPI_MODULES: tuple[str, ...] = (
 
 # Default CVM "modules" — the regulated statement types, not brapi module names.
 # BPA/BPP = balance sheet (assets / liabilities+equity), DRE = income,
-# DFC = cash flow. CAPITAL is the odd one out: the share counts, which come from
-# the FRE file rather than the DFP/ITR statements. Configurable via
+# DFC = cash flow, DMPL = changes in equity, DVA = value added, DRA = comprehensive
+# income. The last three are mirrored but not yet read by an indicator: the mirror
+# does not decide what will turn out to be useful (ADR 0016) — the DMPL already
+# settled #78, which the DRE alone could not.
+#
+# The two CAPITAL modules are the odd ones out — share counts, not statements.
+# CAPITAL comes from the FRE file (the primary count, ADR 0004); CAPITAL_DFP comes
+# from the statements ZIP and is what carries **treasury shares**. Configurable via
 # ``CVM_MODULES``.
-DEFAULT_CVM_MODULES: tuple[str, ...] = ("BPA", "BPP", "DRE", "DFC", "CAPITAL")
+DEFAULT_CVM_MODULES: tuple[str, ...] = (
+    "BPA",
+    "BPP",
+    "DRE",
+    "DFC",
+    "DMPL",
+    "DVA",
+    "DRA",
+    "CAPITAL",
+    "CAPITAL_DFP",
+)
 
 
 class Settings(BaseSettings):

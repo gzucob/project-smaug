@@ -113,8 +113,9 @@ async def test_fetch_mirrors_the_paid_in_share_counts(tmp_path: Path) -> None:
     assert results[0].request["cnpj"] == _PETRO
 
 
-async def test_fetch_keeps_the_highest_filed_version(tmp_path: Path) -> None:
-    # An amendment (Versao 22) supersedes the original filing, whatever the order.
+async def test_fetch_mirrors_every_filed_version_and_picks_none(tmp_path: Path) -> None:
+    # ADR 0016: which amendment supersedes which is the reader's call, not the
+    # mirror's. Both are stored; ``MongoCapitalReader`` takes the highest version.
     _write_zip(
         tmp_path / "fre_cia_aberta_2025.zip",
         [
@@ -125,8 +126,9 @@ async def test_fetch_keeps_the_highest_filed_version(tmp_path: Path) -> None:
 
     results = await _source(tmp_path).fetch("PETR4", CAPITAL_MODULE)
 
-    assert results[0].payload["total_shares"] == 200
-    assert results[0].payload["version"] == 22
+    filed = {r.payload["version"]: r.payload["total_shares"] for r in results}
+    assert filed == {22: 200, 3: 100}
+    assert all(r.request["version"] == r.payload["version"] for r in results)
 
 
 async def test_fetch_raises_for_a_company_absent_from_the_file(tmp_path: Path) -> None:
