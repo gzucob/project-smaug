@@ -551,6 +551,83 @@ async def test_reader_selects_amendment_consolidated_and_current_period() -> Non
     assert annual.revenue == Decimal("400")  # v2 consolidated — not v1, ind, or prior
 
 
+def _bank_filing(
+    module: str, balance_type: str, accounts: list[dict[str, Any]]
+) -> dict[str, Any]:
+    return {
+        "payload": {
+            "reference_date": "2024-12-31",
+            "document_type": "DFP",
+            "version": 1,
+            "balance_type": balance_type,
+            "ordem_exerc": "ULTIMO",
+            "accounts": accounts,
+        },
+        "module": module,
+        "fetched_at": datetime(2026, 7, 2, tzinfo=UTC),
+    }
+
+
+async def test_a_banks_income_statement_comes_from_the_parent_filing() -> None:
+    # ADR 0019, shaped on BBAS3's real 2024 DFP: a bank files two income statements
+    # that disagree, and only the parent one is the result it reports (35.3 bn). The
+    # consolidated statement closes at 29.2 bn, 26.4 bn of it to the controllers —
+    # a figure nobody publishes. The balance sheet is the other way round, so it must
+    # *stay* consolidated even as the DRE crosses over.
+    reader = MongoFundamentalsReader(
+        _FakeCollection(
+            [
+                _bank_filing(
+                    "DRE",
+                    "consolidated",
+                    [
+                        _acc("3.01", "Receitas de Intermediação Financeira", "273500"),
+                        _acc("3.11", "Lucro ou Prejuízo Líquido Consolidado", "29200"),
+                        _acc(
+                            "3.11.01",
+                            "Atribuído aos Sócios da Empresa Controladora",
+                            "26400",
+                        ),
+                        _acc(
+                            "3.11.02", "Atribuído aos Sócios não Controladores", "2800"
+                        ),
+                    ],
+                ),
+                _bank_filing(
+                    "DRE",
+                    "individual",
+                    [
+                        _acc("3.01", "Receitas de Intermediação Financeira", "278400"),
+                        # Above the employees' profit share — not the bottom line.
+                        _acc(
+                            "3.07",
+                            "Lucro ou Prejuízo das Operações Continuadas",
+                            "39800",
+                        ),
+                        _acc(
+                            "3.10", "Participações nos Lucros e Contribuições", "-4500"
+                        ),
+                        _acc("3.11", "Lucro ou Prejuízo Líquido do Período", "35300"),
+                    ],
+                ),
+                _bank_filing(
+                    "BPA", "consolidated", [_acc("1", "Ativo Total", "2398700")]
+                ),
+                _bank_filing(
+                    "BPA", "individual", [_acc("1", "Ativo Total", "1694000")]
+                ),
+            ]
+        )
+    )
+
+    annual = await reader.annual("BBAS3")
+
+    assert annual is not None
+    assert annual.net_income == Decimal("35300")  # the parent's bottom line
+    assert annual.revenue == Decimal("278400")  # ...and the parent's revenue with it
+    assert annual.total_assets == Decimal("2398700")  # the balance sheet stays wide
+
+
 def _column(ref: str, start: str, value: str) -> dict[str, Any]:
     """One of an ITR's two income-statement columns, as the mirror now stores them."""
     return {

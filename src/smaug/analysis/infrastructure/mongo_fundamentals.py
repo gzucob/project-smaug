@@ -71,11 +71,19 @@ _REGIME_MARKERS: tuple[tuple[str, AccountingRegime], ...] = (
 # alone distinguishes a closed year without depending on a per-filing document tag.
 _CLOSED_YEAR_MONTH = 12
 
-# Consolidated DRE bottom line, in priority order (label varies by sector). Used
-# only as a fallback when the controllers' line is absent — see ``_net_income``.
+# The DRE's bottom line, in priority order (the label varies by sector, and by
+# whether the statement is consolidated or parent-only). Used as the total whose
+# controllers' share is read — see ``_net_income``.
+#
+# The parent-only line matters for a bank, whose income statement we take from the
+# parent filing (ADR 0019). It has to outrank the "operações continuadas" fallbacks:
+# those sit *above* the profit-sharing deduction, and BBAS3's parent 2024 reads
+# R$39.8 bn there against R$35.3 bn at the bottom line — the R$4.5 bn its employees
+# are paid.
 _NET_INCOME_TOTAL_NAMES = (
     "lucro ou prejuizo liquido consolidado do periodo",
     "lucro/prejuizo consolidado do periodo",
+    "lucro ou prejuizo liquido do periodo",
     "resultado liquido das operacoes continuadas",
     "lucro ou prejuizo das operacoes continuadas",
 )
@@ -329,6 +337,38 @@ def _filed_regime(dre: Accounts) -> AccountingRegime | None:
     return None
 
 
+def _bank_dre(
+    chosen: Mapping[str, Any] | None, parent: Mapping[str, Any] | None
+) -> Mapping[str, Any] | None:
+    """The parent-only income statement, when the filer is a bank (ADR 0019).
+
+    A bank files two income statements that **materially disagree**, and only one of
+    them is the result anybody quotes. BBAS3's 2024 DFP: the parent statement closes
+    at R$35.3 bn, the consolidated one at R$29.2 bn — R$26.4 bn of it attributed to
+    the controllers. The bank reports 35.3, the press reports 35.3, and the reference
+    platforms' LPA divides 35.3 (BBDC4: 19.1 bn against the consolidated 17.3 bn).
+    Nobody, anywhere, publishes the consolidated figure: the two statements are drawn
+    under different accounting standards, and the market reads the BACEN one.
+
+    The **balance sheet** stays consolidated — there the market reads the other one
+    (Bradesco's published total assets are the consolidated R$2.07 tn, not the
+    parent's R$1.69 tn). The asymmetry is the filings', not ours.
+
+    Returns ``None`` when the filer is not a bank, or when it filed no parent income
+    statement, leaving the ordinary choice (the consolidated one) in place.
+    """
+    if chosen is None or parent is None:
+        return None
+    if _filed_regime(_accounts_of(chosen)) is not AccountingRegime.BANK:
+        return None
+    return parent
+
+
+def _accounts_of(payload: Mapping[str, Any]) -> Accounts:
+    accounts = payload.get("accounts")
+    return accounts if isinstance(accounts, Sequence) else ()
+
+
 def standardize(
     by_module: Mapping[str, Any], sector: Sector, reference_date: date
 ) -> StandardizedFinancials:
@@ -498,6 +538,10 @@ class MongoFundamentalsReader:
         by_period: dict[str, dict[str, Any]] = {}
         doc_type: dict[str, str | None] = {}
         best: dict[tuple[str, str], tuple[int, int, int, datetime]] = {}
+        # The parent-only income statements, kept aside: for a bank they are the
+        # ones that carry the result the bank itself reports (see ``_bank_dre``).
+        parent_dre: dict[str, Mapping[str, Any]] = {}
+        parent_best: dict[str, tuple[int, int, int, datetime]] = {}
         for doc in docs:
             payload = doc.get("payload")
             module = doc.get("module")
@@ -521,6 +565,15 @@ class MongoFundamentalsReader:
                 tag = payload.get("document_type")
                 if isinstance(tag, str):
                     doc_type[ref] = tag
+            if module == "DRE" and payload.get("balance_type") == "individual":
+                if ref not in parent_best or rank > parent_best[ref]:
+                    parent_best[ref] = rank
+                    parent_dre[ref] = payload
+
+        for ref, modules in by_period.items():
+            bank_dre = _bank_dre(modules.get("DRE"), parent_dre.get(ref))
+            if bank_dre is not None:
+                modules["DRE"] = bank_dre
 
         return [
             (doc_type.get(ref), standardize(modules, sector, date.fromisoformat(ref)))
