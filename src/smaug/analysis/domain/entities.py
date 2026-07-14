@@ -26,7 +26,12 @@ class TickerAnalysis:
     reference_date: date  # CVM period the fundamentals came from
     computed_at: datetime
     indicators: Indicators
-    price: Decimal | None = None  # price used for the market multiples
-    price_nominal: Decimal | None = None  # same period, nominal (unadjusted) basis
-    price_basis: str | None = None  # how ``price`` was derived (e.g. adjusted_year_avg)
+    # The price the market multiples divide by: what the shares actually traded at —
+    # the live quote, or the closed year's nominal average (ADR 0018).
+    price: Decimal | None = None
+    # The same year's dividend-adjusted average: a total-return ruler, not a
+    # valuation one. Kept for return comparisons; ``None`` for the live view, which
+    # has had no payout since to adjust for.
+    price_adjusted: Decimal | None = None
+    price_basis: str | None = None  # how ``price`` was derived (e.g. nominal_year_avg)
     view: AnalysisView = VIEW_TTM  # which perspective this row represents

@@ -28,7 +28,7 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         reference_date=analysis.reference_date,
         computed_at=analysis.computed_at,
         price=analysis.price,
-        price_nominal=analysis.price_nominal,
+        price_adjusted=analysis.price_adjusted,
         price_basis=analysis.price_basis,
         roe=i.roe,
         roa=i.roa,
@@ -73,7 +73,7 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
         reference_date=row.reference_date,
         computed_at=row.computed_at,
         price=row.price,
-        price_nominal=row.price_nominal,
+        price_adjusted=row.price_adjusted,
         price_basis=row.price_basis,
         view=cast(AnalysisView, row.view),
         indicators=Indicators(

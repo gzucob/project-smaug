@@ -81,7 +81,7 @@ class AnalysisResponse(BaseModel):
     reference_date: date
     computed_at: datetime
     price: Decimal | None
-    price_nominal: Decimal | None
+    price_adjusted: Decimal | None
     price_basis: str | None
     indicators: IndicatorsResponse
 
@@ -102,7 +102,7 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
         reference_date=analysis.reference_date,
         computed_at=analysis.computed_at,
         price=analysis.price,
-        price_nominal=analysis.price_nominal,
+        price_adjusted=analysis.price_adjusted,
         price_basis=analysis.price_basis,
         indicators=IndicatorsResponse.model_validate(
             analysis.indicators, from_attributes=True

@@ -23,8 +23,11 @@ export function ViewPanel({
 }) {
   const isTtm = analysis.view === "ttm_live";
   const priceMain = toNum(analysis.price);
-  const priceNom = toNum(analysis.price_nominal);
-  const showNominal = priceNom !== null && priceMain !== null && Math.abs(priceNom - priceMain) > 0.005;
+  const priceAdjusted = toNum(analysis.price_adjusted);
+  // The adjusted average is a return ruler, not a valuation one — shown only as a
+  // footnote, and only when it actually differs from the price the multiples use.
+  const showAdjusted =
+    priceAdjusted !== null && priceMain !== null && Math.abs(priceAdjusted - priceMain) > 0.005;
 
   return (
     <article className={`panel ${primary ? "panel-hover" : ""} flex flex-col gap-5 p-6`}>
@@ -44,8 +47,10 @@ export function ViewPanel({
           <div className="text-[0.68rem] text-ink-500">
             {analysis.price_basis ? `base: ${analysis.price_basis}` : "preço para múltiplos"}
           </div>
-          {showNominal && (
-            <div className="nums text-[0.68rem] text-ink-600">nominal {price(analysis.price_nominal)}</div>
+          {showAdjusted && (
+            <div className="nums text-[0.68rem] text-ink-600">
+              ajustado {price(analysis.price_adjusted)}
+            </div>
           )}
         </div>
       </header>
