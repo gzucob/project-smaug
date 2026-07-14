@@ -17,7 +17,8 @@ PostgreSQL, served by a read API. Both phases are already implemented (see
 - Price source for Phase 2 (current quote + dividend-adjusted year history):
   **Yahoo Finance is primary, brapi is the fallback** (ADR 0013). The cap is
   derived, not fetched: the cap sums the company's listed share classes, each at
-  its own price (`Σ class_price × class_shares`, ADR 0014). brapi is also an alternative
+  its own price (`Σ class_price × class_shares`, ADR 0014), counting only the shares
+  actually **outstanding** — issued less treasury (ADR 0017). brapi is also an alternative
   ingestion source (`INGESTION_SOURCE=brapi`), limited on the free plan.
 
 Always restate the stack before proposing architecture or dependencies.
