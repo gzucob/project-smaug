@@ -78,7 +78,12 @@ class PriceHistoryProvider(Protocol):
 
 
 class SharesReader(Protocol):
-    """Reads the share count a company had filed for a given fiscal year."""
+    """Reads a company's outstanding shares for a given fiscal year.
+
+    Outstanding, not issued: the shares the company holds in treasury are netted
+    out of both readings below (ADR 0017), so the cap and the per-share indicators
+    are built on the same denominator.
+    """
 
     async def outstanding(self, ticker: str, year: int) -> Decimal | None:
         """Total shares as of ``year``, or the nearest earlier year on file."""

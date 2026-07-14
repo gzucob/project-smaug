@@ -64,6 +64,88 @@ def _doc(
     }
 
 
+def _composition(
+    ticker: str,
+    reference_date: str,
+    issued_total: int,
+    *,
+    common: int = 0,
+    preferred: int = 0,
+    total: int | None = None,
+    version: int = 1,
+) -> dict[str, Any]:
+    """A DFP/ITR ``composicao_capital`` row — the only filing that names treasury."""
+    return {
+        "ticker": ticker,
+        "source": "cvm",
+        "module": "CAPITAL_DFP",
+        "fetched_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "payload": {
+            "reference_date": reference_date,
+            "version": version,
+            "total_shares": issued_total,
+            "treasury_common_shares": common,
+            "treasury_preferred_shares": preferred,
+            "treasury_total_shares": total if total is not None else common + preferred,
+        },
+    }
+
+
+async def test_counts_are_served_net_of_the_shares_held_in_treasury() -> None:
+    # BBSE3 2024: 58.8 M of its 2 bn shares are its own (ADR 0017). Pricing them
+    # over-values the company by 3%, in one direction, every year.
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc("BBSE3", 2024, 2_000_000_000),
+                _composition("BBSE3", "2024-12-31", 2_000_000_000, common=58_813_981),
+            ]
+        )
+    )
+
+    assert await reader.outstanding("BBSE3", 2024) == Decimal(1_941_186_019)
+
+
+async def test_the_latest_period_of_the_year_carries_the_treasury_balance() -> None:
+    # The mirror holds the DFP's year-end row *and* the ITR quarters (ADR 0016). For a
+    # closed year the balance that stands is 31-Dec's, not September's.
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc("WEGE3", 2024, 4_197_317_998),
+                _composition("WEGE3", "2024-12-31", 4_197_317_998, common=1_780_620),
+                _composition("WEGE3", "2024-09-30", 4_197_317_998, common=9_999_999),
+            ]
+        )
+    )
+
+    assert await reader.outstanding("WEGE3", 2024) == Decimal(4_195_537_378)
+
+
+async def test_an_unreadable_composition_serves_the_issued_count() -> None:
+    # BBDC4 files a negative treasury count for 2022 (#88). Unknown treasury is not
+    # zero treasury, but it is not a reason to lose the company's share count either:
+    # the issued figure stands, over-count and all, and the reader logs it (ADR 0017).
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc(
+                    "BBDC4",
+                    2022,
+                    10_658_488_028,
+                    common=5_338_393_881,
+                    preferred=5_320_094_147,
+                ),
+                _composition(
+                    "BBDC4", "2022-12-31", 10_658_488, common=-8_089, preferred=-8_229
+                ),
+            ]
+        )
+    )
+
+    assert await reader.outstanding("BBDC4", 2022) == Decimal(10_658_488_028)
+
+
 async def test_the_highest_filed_version_supersedes_the_rest() -> None:
     # The mirror now holds every FRE amendment (ADR 0016), and the FRE is heavily
     # amended. The amendment wins on its *version*, not on when it was ingested —

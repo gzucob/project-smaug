@@ -132,6 +132,23 @@ class ShareCounts:
 
 
 @dataclass(frozen=True)
+class CapitalComposition:
+    """The statements' own capital composition — the only filing that names treasury.
+
+    Mirrored from the DFP/ITR ``composicao_capital`` member (ADR 0016). Every count
+    here is **at the filer's own scale**: some companies file units and some file
+    thousands, and the member carries no column saying which (ADR 0017 resolves it
+    against the FRE). ``issued_total`` is that scale's witness — it is the same
+    quantity the FRE reports, so the two totals reconcile to the multiple.
+    """
+
+    issued_total: Decimal | None = None
+    treasury_common: Decimal | None = None
+    treasury_preferred: Decimal | None = None
+    treasury_total: Decimal | None = None
+
+
+@dataclass(frozen=True)
 class YearPrices:
     """Average share price over one calendar year, both bases.
 
