@@ -40,6 +40,7 @@ def _doc(
     common: int | None = None,
     preferred: int = 0,
     fetched_at: datetime | None = None,
+    version: int = 1,
 ) -> dict[str, Any]:
     return {
         "ticker": ticker,
@@ -48,12 +49,43 @@ def _doc(
         "fetched_at": fetched_at or datetime(2026, 1, 1, tzinfo=UTC),
         "payload": {
             "reference_date": f"{year}-12-31",
+            "version": version,
             # The FRE writes an absent class as 0, never as a blank.
             "common_shares": total if common is None else common,
             "preferred_shares": preferred,
             "total_shares": total,
         },
     }
+
+
+async def test_the_highest_filed_version_supersedes_the_rest() -> None:
+    # The mirror now holds every FRE amendment (ADR 0016), and the FRE is heavily
+    # amended. The amendment wins on its *version*, not on when it was ingested —
+    # ordering by fetched_at alone would make the answer depend on ingestion order.
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc(
+                    "PETR4",
+                    2024,
+                    200,
+                    version=27,
+                    fetched_at=datetime(2026, 1, 1, tzinfo=UTC),
+                ),
+                _doc(
+                    "PETR4",
+                    2024,
+                    100,
+                    version=3,
+                    fetched_at=datetime(2026, 6, 1, tzinfo=UTC),  # ingested later
+                ),
+            ]
+        )
+    )
+
+    assert await reader.outstanding("PETR4", 2024) == Decimal(
+        200
+    )  # v27, not the late v3
 
 
 async def test_outstanding_returns_the_count_filed_for_that_year() -> None:

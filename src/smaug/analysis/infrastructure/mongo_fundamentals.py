@@ -36,6 +36,16 @@ from smaug.portfolio.domain.sectors import Sector, sector_of
 
 _STATEMENTS = ("BPA", "BPP", "DRE", "DFC")
 
+# The mirror stores every filing and chooses none of them (ADR 0016), so the
+# choice is made here: the reported period rather than its comparative, the latest
+# amendment, and the consolidated statement over the parent-only one. This is the
+# selection ingestion used to bake in — moved, not changed, so the numbers hold.
+#
+# A filing that predates ADR 0016 carries neither discriminator; it is treated as
+# the reported period at version 0, so an old mirror still reads correctly.
+_CURRENT_PERIOD = "ULTIMO"  # vs. PENULTIMO, the prior-period comparative column
+_BALANCE_RANK: dict[str, int] = {"consolidated": 1, "individual": 0}
+
 # D&A is the one line we still deliberately skip for a financial filer: a bank
 # files it inside a filer-specific "Outras Despesas Operacionais" breakdown whose
 # sub-codes are not stable across banks, and no indicator consumes it (EBITDA is
@@ -442,7 +452,7 @@ class MongoFundamentalsReader:
 
         by_period: dict[str, dict[str, Any]] = {}
         doc_type: dict[str, str | None] = {}
-        latest_fetch: dict[tuple[str, str], datetime] = {}
+        best: dict[tuple[str, str], tuple[int, int, datetime]] = {}
         for doc in docs:
             payload = doc.get("payload")
             module = doc.get("module")
@@ -456,9 +466,12 @@ class MongoFundamentalsReader:
             ref = payload.get("reference_date")
             if not isinstance(ref, str):
                 continue
+            if _ordem(payload) != _CURRENT_PERIOD:
+                continue  # the comparative describes the prior period, not this one
             key = (ref, module)
-            if key not in latest_fetch or fetched > latest_fetch[key]:
-                latest_fetch[key] = fetched
+            rank = _rank(payload, fetched)
+            if key not in best or rank > best[key]:
+                best[key] = rank
                 by_period.setdefault(ref, {})[module] = payload
                 tag = payload.get("document_type")
                 if isinstance(tag, str):
@@ -468,3 +481,25 @@ class MongoFundamentalsReader:
             (doc_type.get(ref), standardize(modules, sector, date.fromisoformat(ref)))
             for ref, modules in sorted(by_period.items())
         ]
+
+
+def _ordem(payload: Mapping[str, Any]) -> str:
+    """Which column of the filing this is — the reported period, or its comparative."""
+    ordem = payload.get("ordem_exerc")
+    return ordem if isinstance(ordem, str) else _CURRENT_PERIOD
+
+
+def _rank(payload: Mapping[str, Any], fetched: datetime) -> tuple[int, int, datetime]:
+    """How strongly one filing is preferred over another for the same period+module.
+
+    Version dominates the balance type: the amendment supersedes the original even
+    when only the parent-only statement was refiled. ``fetched_at`` is the last
+    resort — two ingestions of the identical filing, the newer copy wins.
+    """
+    version = payload.get("version")
+    balance = payload.get("balance_type")
+    return (
+        version if isinstance(version, int) else 0,
+        _BALANCE_RANK.get(balance if isinstance(balance, str) else "", 0),
+        fetched,
+    )

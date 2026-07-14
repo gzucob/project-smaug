@@ -109,12 +109,18 @@ class MongoSharesReader:
         return by_year[served]
 
     async def _by_year(self, ticker: str) -> dict[int, ShareCounts]:
-        """Latest filed capital composition per year (a later ingestion wins)."""
-        # Oldest first, so a re-ingestion of the same year overwrites the older one.
+        """The capital composition that supersedes the rest, per year.
+
+        The mirror holds every FRE amendment (ADR 0016), so ordering by ingestion
+        time is not enough — the amendment with the highest ``version`` is the one
+        that stands, whenever it happened to be ingested. ``fetched_at`` only
+        breaks a tie between two copies of the same version.
+        """
         cursor = self._collection.find(
             {"ticker": ticker, "source": "cvm", "module": CAPITAL_MODULE}
         ).sort("fetched_at", 1)
         by_year: dict[int, ShareCounts] = {}
+        best: dict[int, int] = {}
         async for document in cursor:
             payload = document.get("payload")
             if not isinstance(payload, Mapping):
@@ -122,10 +128,15 @@ class MongoSharesReader:
             year = _year_of(payload.get("reference_date"))
             if year is None:
                 continue
+            version = payload.get("version")
+            version = version if isinstance(version, int) else 0
+            if year in best and version < best[year]:
+                continue
             common = _positive(payload.get("common_shares"))
             preferred = _positive(payload.get("preferred_shares"))
             total = _positive(payload.get("total_shares")) or _sum(common, preferred)
             if total is None:
                 continue
+            best[year] = version
             by_year[year] = ShareCounts(common=common, preferred=preferred, total=total)
         return by_year
