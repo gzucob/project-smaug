@@ -75,13 +75,16 @@ class StandardizedFinancials:
     # Cash-flow flows (DFC, year-to-date basis — isolated on ``dfc_period_start``).
     cfo: Decimal | None = None  # net cash from operating activities (DFC 6.01)
     capex: Decimal | None = None  # purchases of PP&E + intangibles (positive outflow)
-    # Bank-regime lines (ADR 0015). Signed as filed: the CVM records an expense as
-    # negative, and the mirror does not flip it — net interest income is therefore
-    # ``interest_income + interest_expense``, not a subtraction. Feeds #27.
-    interest_income: Decimal | None = None  # DRE 3.01.01 "Receita de Juros"
-    interest_expense: Decimal | None = None  # DRE 3.02.01 (negative)
-    loan_loss_provision: Decimal | None = None  # DRE 3.04.01 credit-risk (negative)
-    fee_income: Decimal | None = None  # DRE 3.04.02 services rendered
+    # Bank-regime lines (ADR 0015/0021). Signed as filed: the CVM records an expense
+    # as negative and the mirror does not flip it, so the calculator adds a provision
+    # back rather than subtracting it. Read from the parent filing's chart of accounts
+    # (ADR 0019), where the loan-loss provision is deducted *inside* the intermediation
+    # expenses — which is why ``gross_profit`` (3.03) is already net of it.
+    loan_loss_provision: Decimal | None = None  # inside DRE 3.02 (negative)
+    fee_income: Decimal | None = None  # DRE 3.04 services rendered
+    personnel_expense: Decimal | None = None  # DRE 3.04 payroll (negative)
+    admin_expense: Decimal | None = None  # DRE 3.04 other administrative (negative)
+    loan_book: Decimal | None = None  # BPA 1.02.04, net of its own provision
     # Insurance-regime lines (ADR 0015), same sign convention. Zero for a filer
     # that holds insurers rather than underwriting itself (BBSE3).
     earned_premium: Decimal | None = None  # DRE 3.01.01 "Receitas com Seguros"
