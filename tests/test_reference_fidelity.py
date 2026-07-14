@@ -32,7 +32,7 @@ from smaug.analysis.domain.financials import (
     StandardizedFinancials,
 )
 from smaug.analysis.domain.indicators import Indicators
-from smaug.portfolio.domain.sectors import Sector
+from smaug.portfolio.domain.sectors import Sector, sector_of
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 _REFERENCE = json.loads((_FIXTURES / "reference_platforms.json").read_text("utf-8"))
@@ -153,6 +153,53 @@ def test_no_closed_year_pays_out_more_than_the_company_is_worth(ticker: str) -> 
             f"{ticker} {year}: dividend yield {float(yield_):.1%} — a company cannot "
             f"pay out more than its own market capitalization"
         )
+
+
+def _roe_tickers() -> list[str]:
+    """Tickers whose 2025 ROE the platform publishes and we compare (#45).
+
+    The two banks are left out on purpose — see the test below.
+    """
+    return sorted(
+        ticker
+        for ticker, years in _REFERENCE["tickers"].items()
+        if "roe" in years.get("2025", {})
+        and _reason(ticker, "2025", "roe") is None
+        and "2024" in _INPUTS.get(ticker, {})
+        and sector_of(ticker) is not Sector.BANK
+    )
+
+
+@pytest.mark.parametrize("ticker", _roe_tickers())
+def test_roe_divides_by_the_closing_balance_like_the_platforms(ticker: str) -> None:
+    # #45: ADR 0003 divides the year's result by the equity at its *close*, not by
+    # the average of the opening and closing balances — a choice made without a
+    # measurement behind it. This is the measurement.
+    #
+    # The closing basis lands on the platform's published ROE exactly for four of
+    # these and within 0.7% for the rest; the average basis misses by 2.6% to 11.9%
+    # (WEGE3 by 11.9% in both years). Whoever is tempted to "fix" this to an average
+    # balance has to get past this test first.
+    #
+    # The two **banks** are excluded, and the exclusion is itself a finding: for
+    # BBAS3 and BBDC4 the platform's ROE fits the *average* balance, and its book
+    # value per share for them equals the two-year average equity (BBAS3: 185.0 bn /
+    # 5.73 bn shares = 32.29 against its published 32.21). That is exactly the
+    # anomaly #93 records — the platform's bank equity column, not our basis.
+    published = _REFERENCE["tickers"][ticker]["2025"]["roe"]
+    exported = _INPUTS[ticker]
+    result = Decimal(exported["2025"]["financials"]["net_income"])
+    closing = Decimal(exported["2025"]["financials"]["equity"])
+    opening = Decimal(exported["2024"]["financials"]["equity"])
+
+    on_closing = float(result / closing)
+    on_average = float(result / ((opening + closing) / 2))
+
+    assert abs(on_closing - published) < abs(on_average - published), (
+        f"{ticker} 2025: the average-balance ROE ({on_average:.2%}) is now closer to "
+        f"{_REFERENCE['platform']}'s {published:.2%} than the closing-balance one "
+        f"({on_closing:.2%}) — ADR 0003's basis no longer matches the platforms"
+    )
 
 
 def test_the_not_compared_indicators_are_named_with_their_basis() -> None:
