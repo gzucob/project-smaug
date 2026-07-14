@@ -19,9 +19,14 @@ reader crashed on the real DMPL, and — worse — its parallel batch reader
 desynchronised on a duplicated head row and silently dropped whole consolidated
 collections (#55), so we mirrored parent-only statements without noticing.
 
-Three real-world quirks are handled here:
+Four real-world quirks are handled here:
   * CVM is keyed by ``CD_CVM``, not by B3 ticker — hence the injected
     ticker -> code map (see ``portfolio.domain.cvm_codes``).
+  * An ITR income statement files **two period columns** for the same reference
+    date: accumulated from 01-Jan, and the isolated quarter. They differ only by
+    ``DT_INI_EXERC``, so that field is part of the statement's identity — without
+    it both columns collapse into one accounts list, two rows per ``CD_CONTA``,
+    indistinguishable (#83).
   * The **DMPL is a matrix**, not a list: its rows carry an extra ``COLUNA_DF``
     (which equity column the figure belongs to — capital, reserves, retained
     earnings, non-controlling interest). Two rows share a ``CD_CONTA`` and differ
@@ -141,9 +146,18 @@ def _account(row: Mapping[str, str]) -> dict[str, Any]:
     return account
 
 
-# One statement is identified by all five of these. Collapsing any of them is what
-# ADR 0016 stopped doing: they are different filings, not duplicates.
-_Key = tuple[str, str, int, str, str, str]  # code, ref, version, module, type, ordem
+# One statement is identified by all of these. Collapsing any of them is what ADR 0016
+# stopped doing: they are different filings, not duplicates.
+#
+# ``period_start`` (DT_INI_EXERC) is part of the identity because an ITR income
+# statement files the *same* reference date twice — once accumulated from 01-Jan, once
+# for the isolated quarter — under an otherwise identical key. Leaving it out merged
+# both columns into one accounts list, two rows per code, with nothing to tell them
+# apart; the reader then just took whichever the CSV happened to list first (#83). A
+# stock statement (BPA/BPP) has no start date and so carries "" here.
+_Key = tuple[
+    str, str, int, str, str, str, str
+]  # code, ref, version, module, type, ordem, period_start
 
 
 @dataclass
@@ -195,10 +209,13 @@ class CvmDataSource:
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
         """Return every raw statement filed for ``ticker``/``module``.
 
-        One result per ``(reference_date, version, balance_type, ordem_exerc)`` —
-        the mirror keeps all of them (ADR 0016). So an ITR year yields Q1/Q2/Q3,
-        each in both balance types, once per amendment, with its comparative
-        alongside. 404 only when the filer has no such statement at all.
+        One result per
+        ``(reference_date, version, balance_type, ordem_exerc, period_start)`` — the
+        mirror keeps all of them (ADR 0016). So an ITR year yields Q1/Q2/Q3, each in
+        both balance types, once per amendment, with its comparative alongside, and
+        each income statement in both the columns CVM files it in: accumulated from
+        01-Jan, and the isolated quarter (#83). 404 only when the filer has no such
+        statement at all.
         """
         index = await self._ensure_loaded()
 
@@ -224,6 +241,7 @@ class CvmDataSource:
                     "reference_date": statement.reference_date,
                     "version": statement.version,
                     "ordem_exerc": statement.ordem_exerc,
+                    "period_start": statement.period_start,
                 },
                 http_status=200,
                 payload=self._to_payload(code, statement),
@@ -274,8 +292,8 @@ class CvmDataSource:
         """Index every statement filed by a wanted CVM code (sync; runs in a thread).
 
         Nothing is selected or collapsed here (ADR 0016) — every
-        ``(reference_date, version, balance_type, ordem_exerc)`` the ZIP carries is
-        kept, and the reader decides which of them it wants.
+        ``(reference_date, version, balance_type, ordem_exerc, period_start)`` the ZIP
+        carries is kept, and the reader decides which of them it wants.
         """
         wanted = set(self._ticker_to_code.values())
         accumulated: dict[_Key, _Statement] = {}
@@ -333,7 +351,16 @@ def _read_member(
                 continue
             ordem = _fold(row.get("ORDEM_EXERC", "")).strip()
             reference_date = row.get("DT_REFER", "")
-            key = (code, reference_date, version, module, balance_type, ordem)
+            period_start = row.get("DT_INI_EXERC") or ""
+            key = (
+                code,
+                reference_date,
+                version,
+                module,
+                balance_type,
+                ordem,
+                period_start,
+            )
             statement = accumulated.get(key)
             if statement is None:
                 statement = _Statement(
@@ -347,7 +374,7 @@ def _read_member(
                     currency_size=_CURRENCY_SIZE.get(
                         (row.get("ESCALA_MOEDA") or "").strip().upper()
                     ),
-                    period_start=row.get("DT_INI_EXERC") or None,
+                    period_start=period_start or None,
                     period_end=row.get("DT_FIM_EXERC") or None,
                 )
                 accumulated[key] = statement
