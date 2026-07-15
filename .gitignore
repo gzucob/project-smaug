@@ -37,3 +37,6 @@ preview claude rules/
 # Capturas das plataformas de referência para o audit da #30 (AUVP/Investidor10)
 # — só local, para reconferência; nunca versionar.
 tmp/
+
+# Playwright MCP working dir (page snapshots, console logs, screenshots) — local only.
+.playwright-mcp/
