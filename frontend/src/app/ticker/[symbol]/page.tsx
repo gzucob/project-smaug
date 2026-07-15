@@ -5,7 +5,7 @@ import { SectorBadge } from "@/components/SectorBadge";
 import { ViewPanel } from "@/components/ViewPanel";
 import { VaultOffline } from "@/components/VaultOffline";
 import { fetchTicker } from "@/lib/api";
-import { price, yearOf } from "@/lib/format";
+import { count, money, price, yearOf } from "@/lib/format";
 import type { Analysis } from "@/lib/types";
 
 export async function generateMetadata({ params }: { params: Promise<{ symbol: string }> }) {
@@ -48,6 +48,15 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
 
   const headlinePrice = ttm?.price ?? latestClosed?.price ?? null;
 
+  // Scale figures (not ratios): show the company's size at the top, from the live
+  // view when there is one, else the latest closed year (#25).
+  const scale = reference.indicators;
+  const scaleFigures: { label: string; value: string }[] = [
+    { label: "Valor de mercado", value: money(scale.market_cap) },
+    { label: "Enterprise value", value: money(scale.enterprise_value) },
+    { label: "Ações", value: count(scale.shares) },
+  ];
+
   return (
     <div className="mx-auto max-w-[1600px] px-5 py-12">
       {/* --------------------------------------------------------- hero --- */}
@@ -71,6 +80,16 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
           <div className="nums text-4xl font-semibold text-gold-molten">{price(headlinePrice)}</div>
         </div>
       </header>
+
+      {/* ------------------------------------------------ scale figures --- */}
+      <div className="rise mb-12 flex flex-wrap gap-x-12 gap-y-4 border-t border-ink-900/80 pt-5" style={{ animationDelay: "200ms" }}>
+        {scaleFigures.map((f) => (
+          <div key={f.label}>
+            <div className="text-xs uppercase tracking-wide text-ink-500">{f.label}</div>
+            <div className="nums mt-1 text-xl font-medium text-ink-100">{f.value}</div>
+          </div>
+        ))}
+      </div>
 
       {/* ---------------------------------------------------- two views --- */}
       <section className="mb-14">

@@ -750,6 +750,61 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
   },
 
+  // ------------------------------------------------------------ escala ---
+  // Figuras de tamanho (reais absolutos / contagem), exibidas no topo da página,
+  // não no grid de índices.
+  market_cap: {
+    formula: "Σ (preço da classe × ações da classe em circulação)",
+    what: "Quanto o mercado paga pela empresa inteira: a soma sobre cada classe listada, cada uma ao seu próprio preço, contando só as ações em circulação (líquidas de tesouraria).",
+    strongIn: [
+      {
+        where: "Qualquer subsetor",
+        why: "é o denominador de todos os múltiplos de mercado — o preço que o mercado atribui ao negócio todo",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas com uma única cotação líquida",
+        why: "no plano grátis do brapi só algumas ações retornam preço, então o valor pode ficar nulo",
+      },
+    ],
+  },
+  enterprise_value: {
+    formula: "Valor de mercado + dívida líquida",
+    what: "O que custaria comprar a empresa e quitar suas dívidas: o valor de mercado mais a dívida líquida de caixa. É o preço do negócio independente de como ele é financiado.",
+    strongIn: [
+      {
+        where: "Indústria, Energia, Saneamento",
+        why: "compara empresas com estruturas de capital diferentes numa base única",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Holdings com muito caixa",
+        why: "a dívida líquida negativa (caixa maior que a dívida) encolhe o EV abaixo do valor de mercado",
+      },
+    ],
+    naSectors: ["bank"],
+    caveat:
+      "Nulo para um banco: depósito é funding, não dívida, então não há dívida líquida a somar (ADR 0022).",
+  },
+  shares: {
+    formula: "Ações emitidas − ações em tesouraria",
+    what: "Quantas ações estão de fato em circulação — o denominador do LPA e do VPA. Exclui as ações que a própria empresa recomprou e mantém em tesouraria.",
+    strongIn: [
+      {
+        where: "Qualquer subsetor",
+        why: "a base de ações define quanto do lucro e do patrimônio cabe a cada ação",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Units (SAPR11, TAEE11)",
+        why: "uma unit é um pacote de ações de classes diferentes, então a contagem por classe não vira um número por unit direto (#38)",
+      },
+    ],
+  },
+
   // -------------------------------------------------------------- banco ---
   // Só um banco preenche estes três: o balanço dele é o negócio (ADR 0021).
   net_interest_margin: {

@@ -65,6 +65,9 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         revenue=i.revenue,
         net_income=i.net_income,
         dividends=i.dividends,
+        market_cap=i.market_cap,
+        enterprise_value=i.enterprise_value,
+        shares=i.shares,
         null_reasons={k: v.value for k, v in i.null_reasons.items()},
     )
 
@@ -115,6 +118,9 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
             revenue=row.revenue,
             net_income=row.net_income,
             dividends=row.dividends,
+            market_cap=row.market_cap,
+            enterprise_value=row.enterprise_value,
+            shares=row.shares,
             # Pre-vocabulary rows carry NULL: degrade to "unclassified" ({}).
             null_reasons={
                 k: NullReason(v) for k, v in (row.null_reasons or {}).items()

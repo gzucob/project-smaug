@@ -63,6 +63,19 @@ export function money(v: Decimalish): string {
   return `${sign}R$ ${nf(0, 2).format(abs)}`;
 }
 
+/** Large plain counts in compact form, e.g. "5,71 bi" (share counts). */
+export function count(v: Decimalish): string {
+  const n = toNum(v);
+  if (n === null) return EN_DASH;
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "−" : "";
+  const scale = (div: number, suffix: string) => `${sign}${nf(0, 2).format(abs / div)} ${suffix}`;
+  if (abs >= 1e9) return scale(1e9, "bi");
+  if (abs >= 1e6) return scale(1e6, "mi");
+  if (abs >= 1e3) return scale(1e3, "mil");
+  return `${sign}${nf(0, 0).format(abs)}`;
+}
+
 /** Sign of a fraction for coloring; 0/null → "flat". */
 export function signOf(v: Decimalish): "up" | "down" | "flat" {
   const n = toNum(v);
