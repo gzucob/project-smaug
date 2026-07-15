@@ -107,7 +107,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "dívida é insumo operacional, não financiamento; separar capital próprio de terceiros não faz sentido",
       },
     ],
-    naSectors: FINANCIAL,
+    naSectors: ["bank"],
     caveat:
       "O NOPAT usa a alíquota estatutária fixa de 34% (IRPJ 25% + CSLL 9%), não a alíquota efetiva de cada empresa — uma aproximação deliberada, registrada em docs/adr/0002.",
   },
@@ -158,7 +158,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o custo é reconhecido por evolução de obra, então a margem bruta oscila com o cronograma, não com a rentabilidade",
       },
     ],
-    naSectors: FINANCIAL,
+    naSectors: ["insurer"],
   },
   ebit_margin: {
     formula: "EBIT (lucro operacional) ÷ Receita líquida",
@@ -179,7 +179,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "juros são receita e despesa operacionais — excluí-los descaracteriza o resultado",
       },
     ],
-    naSectors: FINANCIAL,
+    naSectors: ["insurer"],
   },
   ebitda_margin: {
     formula: "EBITDA ÷ Receita líquida",
@@ -333,7 +333,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "captação é o insumo do negócio, não um passivo a ser quitado — a conta não tem sentido econômico",
       },
     ],
-    naSectors: FINANCIAL,
+    naSectors: ["bank"],
   },
   net_debt_to_ebitda: {
     formula: "Dívida líquida ÷ EBITDA anualizado",
@@ -358,7 +358,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "não há dívida líquida a medir",
       },
     ],
-    naSectors: FINANCIAL,
+    naSectors: ["bank"],
   },
   debt_to_equity: {
     formula: "Dívida total ÷ Patrimônio líquido",
@@ -379,7 +379,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o índice muda de sinal e deixa de ser ordenável",
       },
     ],
-    naSectors: FINANCIAL,
+    naSectors: ["bank"],
   },
   liabilities_to_assets: {
     formula: "(Ativo total − Patrimônio líquido) ÷ Ativo total",
@@ -420,7 +420,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "operam de propósito com liquidez corrente abaixo de 1, financiados por fornecedores e por receita previsível — não é sinal de aperto",
       },
     ],
-    naSectors: FINANCIAL,
+    naSectors: ["bank"],
   },
 
   // ------------------------------------------------ múltiplos de mercado ---
@@ -527,7 +527,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o numerador ignora a dívida mas o denominador a exclui do custo — para essas, use EV/EBITDA",
       },
     ],
-    naSectors: FINANCIAL,
   },
   price_to_working_capital: {
     formula: "Valor de mercado ÷ (Ativo circulante − Passivo circulante)",
@@ -548,7 +547,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "não há circulante clássico a subtrair",
       },
     ],
-    naSectors: FINANCIAL,
+    naSectors: ["bank"],
   },
   payout: {
     formula: "Proventos pagos no exercício ÷ Lucro líquido",
@@ -625,7 +624,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o EBITDA ignora o reinvestimento obrigatório; um EV/EBITDA baixo pode esconder um FCL nulo",
       },
     ],
-    naSectors: FINANCIAL,
+    naSectors: ["bank"],
   },
 
   // -------------------------------------------------------- fluxo de caixa ---
