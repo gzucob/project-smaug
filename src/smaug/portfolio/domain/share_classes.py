@@ -65,7 +65,25 @@ LISTED_CLASSES: dict[str, tuple[ShareClass, ...]] = {
     "CXSE3": (_on("CXSE3"),),
 }
 
-UNIT_TICKERS: frozenset[str] = frozenset({"SAPR11", "TAEE11"})
+# How many underlying shares each unit bundles, by class (ON, PN). Curated
+# reference data — the FRE does not publish it (like ``TICKER_TO_CVM_CODE``). Both
+# portfolio units bundle 1 ON + 2 PN, so a unit is worth three underlying shares.
+# The per-*unit* earnings/book value the market pairs with the unit price is the
+# per-share figure times this bundle size, which is why LPA/VPA divide the filed
+# count by it. This reconciles with the per-class LPA the DRE files at 3.99 (#38):
+# TAEE11 files ON = PN = R$1.639, so per unit = 3 × 1.639 = R$4.92.
+UNIT_COMPOSITION: dict[str, tuple[int, int]] = {  # (ON per unit, PN per unit)
+    "SAPR11": (1, 2),
+    "TAEE11": (1, 2),
+}
+
+UNIT_TICKERS: frozenset[str] = frozenset(UNIT_COMPOSITION)
+
+
+def shares_per_unit(ticker: str) -> int | None:
+    """Underlying shares one unit of ``ticker`` bundles (``None`` when not a unit)."""
+    composition = UNIT_COMPOSITION.get(ticker)
+    return None if composition is None else sum(composition)
 
 
 def listed_classes(ticker: str) -> tuple[ShareClass, ...]:

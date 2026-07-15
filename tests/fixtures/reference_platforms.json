@@ -123,8 +123,8 @@
       "2024": {
         "eps": 1.02, "bvps": 7.17, "roe": 0.1427, "net_margin": 0.2257, "gross_margin": 0.5779,
         "except": {
-          "eps": "(c) share base: a unit is a bundle of shares (SAPR11 = 1 ON + 2 PN), so a per-*share* figure has no per-unit price to pair with. We serve None rather than a number that invites the platform's own mistake: it divides the unit's price by the per-share earnings and publishes a P/E of 25 against a real one near 5 (#38).",
-          "bvps": "(c) share base: same bundle mismatch as eps (#38)."
+          "eps": "(c) share base: a unit bundles 1 ON + 2 PN, so we divide by the number of units — the per-unit LPA that pairs with the unit price (R$3.07, reconciling exactly with the DRE's own per-class LPA at 3.99: 1×0.959 + 2×1.055). The platform publishes the per-*share* figure (1.02) against the per-*unit* price — the ~3× gap, and why its P/E reads ~25 against a real ~8 (#38).",
+          "bvps": "(c) share base: same per-unit basis as eps — equity ÷ units (#38)."
         }
       },
       "2025": {
@@ -136,8 +136,8 @@
       "2024": {
         "eps": 1.64, "bvps": 6.71, "roe": 0.2441, "net_margin": 0.4556, "gross_margin": 0.6649,
         "except": {
-          "eps": "(c) share base: unit (TAEE11 = 1 ON + 2 PN) — see SAPR11 2024 (#38).",
-          "bvps": "(c) share base: unit — see SAPR11 2024 (#38)."
+          "eps": "(c) share base: per-unit LPA — TAEE11 bundles 1 ON + 2 PN (R$4.92 = 3 × the DRE's 3.99 per-share R$1.639); the platform publishes the per-share figure. See SAPR11 2024 (#38).",
+          "bvps": "(c) share base: per-unit basis — equity ÷ units. See SAPR11 2024 (#38)."
         }
       },
       "2025": {
