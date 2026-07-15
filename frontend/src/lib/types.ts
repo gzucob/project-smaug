@@ -53,6 +53,9 @@ export interface Indicators {
   revenue: Decimalish;
   net_income: Decimalish;
   dividends: Decimalish;
+  market_cap: Decimalish;
+  enterprise_value: Decimalish;
+  shares: Decimalish;
 }
 
 export type IndicatorKey = keyof Indicators;

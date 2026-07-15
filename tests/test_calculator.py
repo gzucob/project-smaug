@@ -318,6 +318,31 @@ def test_a_filer_is_judged_by_the_regime_it_files_even_when_its_sector_agrees() 
     assert ind.null_reasons["net_debt"] is NullReason.INAPPLICABLE_REGIME
 
 
+def test_scale_figures_are_carried_through_to_the_output() -> None:
+    # #25: market cap, enterprise value and the share count are the calculator's own
+    # market-side inputs — persisted, not discarded, so the front-end can show them.
+    market = MarketData(
+        price=Decimal(12), market_cap=Decimal(12000), shares=Decimal(600)
+    )
+
+    ind = compute(_nonfinancial(), None, market)
+
+    assert ind.market_cap == Decimal(12000)
+    assert ind.shares == Decimal(600)
+    # EV = cap + net debt (total_debt 2000 − cash 500 = 1500).
+    assert ind.enterprise_value == Decimal(13500)
+
+
+def test_enterprise_value_is_inapplicable_for_a_bank() -> None:
+    # EV inherits net debt's applicability: a bank has no borrowings line, so both are
+    # inapplicable under the regime — named, not silently missing (like net_debt).
+    ind = compute(_mapped_bank(), None, MarketData(market_cap=Decimal(8000)))
+
+    assert ind.market_cap == Decimal(8000)  # the cap itself is still meaningful
+    assert ind.enterprise_value is None
+    assert ind.null_reasons["enterprise_value"] is NullReason.INAPPLICABLE_REGIME
+
+
 def test_missing_price_nulls_the_market_multiples_with_a_named_cause() -> None:
     # The #42 shape: fundamentals fine, no price -> every cap-based multiple
     # must say "missing price", not go silently null.

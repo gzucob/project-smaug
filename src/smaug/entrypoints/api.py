@@ -72,6 +72,9 @@ class IndicatorsResponse(BaseModel):
     revenue: Decimal | None
     net_income: Decimal | None
     dividends: Decimal | None
+    market_cap: Decimal | None
+    enterprise_value: Decimal | None
+    shares: Decimal | None
     null_reasons: dict[str, str]
 
 

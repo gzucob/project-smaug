@@ -103,6 +103,15 @@ class Indicators:
     revenue: Decimal | None = None
     net_income: Decimal | None = None
     dividends: Decimal | None = None
+    # Scale figures (absolute reais / a share count) — the market-side inputs the
+    # calculator already builds its multiples from, persisted so the front-end can
+    # show them at the top of a ticker page. ``market_cap`` is the sum over the
+    # listed classes (ADR 0014); ``enterprise_value`` is ``cap + net_debt`` and is
+    # null wherever ``net_debt`` is (banks: inapplicable); ``shares`` is the filed
+    # count that the per-share indicators divide by.
+    market_cap: Decimal | None = None
+    enterprise_value: Decimal | None = None
+    shares: Decimal | None = None
     # Why each null field is null, keyed by the field's name. Only null fields
     # appear; a null field with no entry is unclassified (see ``NullReason``).
     null_reasons: Mapping[str, NullReason] = field(default_factory=dict)

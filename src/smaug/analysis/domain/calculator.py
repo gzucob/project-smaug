@@ -121,6 +121,7 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
             "net_debt_to_ebitda",
             "debt_to_equity",
             "ev_ebitda",
+            "enterprise_value",
             "roic",
             "current_ratio",
             "price_to_working_capital",
@@ -233,6 +234,12 @@ _NEEDS: dict[str, _Needs] = {
     "revenue": _Needs(accounts=("revenue",)),
     "net_income": _Needs(accounts=("net_income",)),
     "dividends": _Needs(accounts=("dividends_paid",)),
+    # Scale figures. ``enterprise_value`` = cap + net debt, so it needs the cap and
+    # the debt line net debt is built from; it is also in the bank inapplicable set,
+    # so a bank's null is named INAPPLICABLE_REGIME before its inputs are checked.
+    "market_cap": _Needs(cap=True),
+    "enterprise_value": _Needs(accounts=("total_debt",), cap=True),
+    "shares": _Needs(shares=True),
 }
 
 
@@ -395,6 +402,9 @@ def compute(
         revenue=f.revenue,
         net_income=f.net_income,
         dividends=f.dividends_paid,
+        market_cap=cap,
+        enterprise_value=enterprise_value,
+        shares=market.shares,
     )
     indicators = _suppressed(indicators, _inapplicable(f))
     return replace(

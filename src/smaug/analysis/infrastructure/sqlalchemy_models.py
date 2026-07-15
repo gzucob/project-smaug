@@ -69,6 +69,9 @@ class TickerAnalysisRow(Base):
     revenue: Mapped[Decimal | None] = mapped_column(Numeric)
     net_income: Mapped[Decimal | None] = mapped_column(Numeric)
     dividends: Mapped[Decimal | None] = mapped_column(Numeric)
+    market_cap: Mapped[Decimal | None] = mapped_column(Numeric)
+    enterprise_value: Mapped[Decimal | None] = mapped_column(Numeric)
+    shares: Mapped[Decimal | None] = mapped_column(Numeric)
     # Cause per null indicator, keyed by column name (#30's NullReason values).
     # NULL on rows computed before the vocabulary existed.
     null_reasons: Mapped[dict[str, str] | None] = mapped_column(JSON)
