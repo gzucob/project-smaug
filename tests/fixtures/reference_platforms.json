@@ -111,7 +111,7 @@
         "eps": 4.64, "bvps": 5.35, "roe": 0.8684,
         "except": {
           "eps": "(c) share base: Dados de Mercado divides by the 1.941 bn shares BBSE3 issued; we divide by the 1.883 bn outstanding, net of the 58.8 M in treasury (ADR 0017). The 3% gap is that stake. (Its 2024 cell uses a post-buyback count and so agrees — a within-platform inconsistency across years.)",
-          "bvps": "(c) share base: two distinct treasury effects live on this line. Dados de Mercado (5.35) divides our net-of-treasury equity by *issued* shares — the same share-count effect as eps. AUVP/Investidor10 (6.51) instead add the R$1.869 bn of treasury back into the *equity numerator* (gross-of-treasury R$12.25 bn ÷ outstanding). Our 5.52 is the filed 2.03 total (net) ÷ outstanding; verified against the filed BPP (ADR 0017, 0022) — not a defect."
+          "bvps": "Two different effects, per period. vs Dados de Mercado (5.35) it is (c) share base: it divides our net-of-treasury 2025 equity by *issued* shares, we by outstanding — the same share-count effect as eps. vs AUVP/Investidor10 (6.51) it is (b) period: those show the *current* quarter (2026-03-31), where BBSE3 cancelled the R$1.869 bn of treasury it held at 2025-12-31 (2.03.04.09: −1.869 → −0.005 bn), so its filed 2.03 equity genuinely rose to R$12.64 bn. Our own TTM view reads that same balance and also yields VPA 6.51 — we match them like-for-like. Our closed-year 5.52 is the filed 2025 2.03 total ÷ outstanding, verified against the mirror (ADR 0017, 0022) — not a defect."
         }
       }
     },

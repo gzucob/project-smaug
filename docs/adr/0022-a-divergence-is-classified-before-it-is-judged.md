@@ -75,9 +75,10 @@ hide a divergence, and platform parity is never a goal in itself.
 - **Triage costs primary-source discipline.** A bank's or a holding's own results report has
   to be read before a divergence is judged. That discipline is what separates a real profit
   collapse (BBAS3 closed 2025 at R$20.7 bn on the agribusiness crisis — bucket none, not a
-  bug) from a period defect, and a treasury-basis gap (BBSE3's equity, bucket c — our filed
-  2.03 total is correct, the platforms add treasury back) from a missing equity line. Both
-  were nearly misjudged; only the filing settled them.
+  bug) from a period defect, and an equity gap (BBSE3's book value: the platforms show the
+  current quarter, where BBSE3 cancelled its treasury and equity genuinely rose to R$12.64 bn
+  — a period difference our own TTM view reproduces exactly) from a missing equity line. Both
+  were nearly misjudged; only reading the filed balance sheets settled them.
 - **The specification is the input a future indicator change needs.** The three PRs it took
   to get a bank's income statement right (#92 → the bank lines → #99) would likely have been
   one, had the basis been written down first.
