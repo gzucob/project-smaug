@@ -32,7 +32,7 @@ from typing import Any, Protocol
 
 from smaug.analysis.domain.capital import outstanding_counts
 from smaug.analysis.domain.financials import CapitalComposition, ShareCounts
-from smaug.portfolio.domain.share_classes import is_unit
+from smaug.portfolio.domain.share_classes import shares_per_unit
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -132,10 +132,16 @@ class MongoSharesReader:
         self._collection = collection
 
     async def outstanding(self, ticker: str, year: int) -> Decimal | None:
-        if is_unit(ticker):
-            return None
         filed = await self.counts(ticker, year)
-        return filed.total if filed is not None else None
+        if filed is None or filed.total is None:
+            return None
+        per_unit = shares_per_unit(ticker)
+        if per_unit is not None:
+            # A unit bundles ``per_unit`` underlying shares (1 ON + 2 PN), so the
+            # per-*unit* LPA/VPA divide by the number of units — the earnings and
+            # book value that pair with the unit's own quoted price (#38).
+            return filed.total / per_unit
+        return filed.total
 
     async def counts(self, ticker: str, year: int) -> ShareCounts | None:
         """The issued classes net of the shares the company holds in treasury.

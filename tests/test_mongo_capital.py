@@ -198,11 +198,12 @@ async def test_outstanding_is_none_before_the_earliest_filing() -> None:
     assert await reader.outstanding("PETR4", 2021) is None
 
 
-async def test_outstanding_is_none_for_a_unit_ticker() -> None:
-    # A unit quotes a bundle of shares, so the filed count is the wrong divisor.
+async def test_outstanding_is_the_unit_count_for_a_unit_ticker() -> None:
+    # A unit bundles 1 ON + 2 PN, so the divisor for its per-unit LPA/VPA is the
+    # number of units — the filed share count over three (#38).
     reader = MongoSharesReader(FakeCollection([_doc("TAEE11", 2025, 1_033_496_721)]))
 
-    assert await reader.outstanding("TAEE11", 2025) is None
+    assert await reader.outstanding("TAEE11", 2025) == Decimal(344_498_907)
 
 
 async def test_counts_split_the_filing_by_share_class() -> None:
