@@ -45,7 +45,7 @@ from smaug.analysis.domain.ports import (
     SharesReader,
 )
 from smaug.analysis.domain.ttm import build_ttm
-from smaug.portfolio.domain.share_classes import listed_classes
+from smaug.portfolio.domain.share_classes import ShareClass, listed_classes
 from smaug.portfolio.domain.taxonomy import Classification, classify
 from smaug.shared.errors import BrapiError, UnknownTickerError
 from smaug.shared.logging import get_logger
@@ -58,6 +58,11 @@ Clock = Callable[[], datetime]
 # Defaults to the committed snapshot; the CLI passes a registry-backed resolver
 # so an on-demand ticker outside it degrades to the CVM single level (ADR 0024).
 ClassificationResolver = Callable[[str], Classification]
+
+# How a ticker's listed share classes are resolved for the cap (ADR 0014).
+# Defaults to the curated nine (``listed_classes``); the CLI passes a
+# registry-backed resolver so an on-demand ticker is capitalized too (#110).
+ClassesResolver = Callable[[str], tuple[ShareClass, ...]]
 
 
 def _default_classification(ticker: str) -> Classification:
@@ -108,6 +113,7 @@ class AnalyzePortfolioUseCase:
         *,
         clock: Clock = _utc_now,
         classification_resolver: ClassificationResolver = _default_classification,
+        classes_resolver: ClassesResolver = listed_classes,
     ) -> None:
         self._reader = reader
         self._price_provider = price_provider
@@ -115,6 +121,7 @@ class AnalyzePortfolioUseCase:
         self._shares_reader = shares_reader
         self._clock = clock
         self._classification_resolver = classification_resolver
+        self._classes_resolver = classes_resolver
 
     async def execute(self, tickers: Iterable[str]) -> list[TickerAnalysis]:
         results: list[TickerAnalysis] = []
@@ -220,15 +227,16 @@ class AnalyzePortfolioUseCase:
         classes cost an extra call.
         """
         counts = await self._shares_reader.counts(ticker, year)
+        classes = self._classes_resolver(ticker)
         prices = {
             share_class.symbol: (
                 quote.price
                 if share_class.symbol == ticker
                 else (await self._current_quote(share_class.symbol)).price
             )
-            for share_class in listed_classes(ticker)
+            for share_class in classes
         }
-        cap, cap_null_reason = capitalize(ticker, counts, prices)
+        cap, cap_null_reason = capitalize(classes, counts, prices)
         return MarketData(
             price=quote.price,
             market_cap=cap,
@@ -278,13 +286,14 @@ class AnalyzePortfolioUseCase:
         counts = await self._shares_reader.counts(ticker, year)
         own = await self._year_prices(ticker, year)
         prices: dict[str, Decimal | None] = {}
-        for share_class in listed_classes(ticker):
+        classes = self._classes_resolver(ticker)
+        for share_class in classes:
             symbol = share_class.symbol
             year_prices = (
                 own if symbol == ticker else await self._year_prices(symbol, year)
             )
             prices[symbol] = year_prices.nominal_avg
-        cap, cap_null_reason = capitalize(ticker, counts, prices)
+        cap, cap_null_reason = capitalize(classes, counts, prices)
         market = MarketData(
             price=own.nominal_avg,
             market_cap=cap,

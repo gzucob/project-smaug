@@ -65,6 +65,7 @@ from smaug.portfolio.domain.sectors import (
     portfolio_tickers,
     sector_from_cvm,
 )
+from smaug.portfolio.domain.share_classes import ShareClass, listed_classes
 from smaug.portfolio.domain.taxonomy import Classification, classify
 from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
 from smaug.shared.config import Settings, get_settings
@@ -147,6 +148,21 @@ def _classification_resolver(
         if classification is None:
             raise UnknownTickerError(ticker)
         return classification
+
+    return resolve
+
+
+def _classes_resolver(
+    identities: dict[str, CompanyIdentity],
+) -> Callable[[str], tuple[ShareClass, ...]]:
+    """The listed ON/PN classes for the cap: curated for the nine, else FCA."""
+
+    def resolve(ticker: str) -> tuple[ShareClass, ...]:
+        curated = listed_classes(ticker)
+        if curated:
+            return curated
+        identity = identities.get(ticker)
+        return identity.share_classes if identity is not None else ()
 
     return resolve
 
@@ -362,6 +378,7 @@ async def _run_analyze(tickers: tuple[str, ...]) -> int:
                     mongo[settings.mongo_db]["raw_ingestions"]
                 ),
                 classification_resolver=_classification_resolver(identities),
+                classes_resolver=_classes_resolver(identities),
             )
             analyses = await use_case.execute(tickers)
     finally:
