@@ -6,6 +6,7 @@ from smaug.portfolio.domain.sectors import (
     Sector,
     portfolio_tickers,
     require_portfolio_tickers,
+    sector_from_cvm,
     sector_of,
 )
 from smaug.portfolio.domain.share_classes import (
@@ -71,3 +72,16 @@ def test_a_single_class_ticker_lists_only_itself() -> None:
 
 def test_an_unknown_ticker_has_no_listed_classes() -> None:
     assert listed_classes("ZZZZ99") == ()
+
+
+def test_sector_from_cvm_folds_the_activity_label_to_the_enum() -> None:
+    # The coarse fallback for on-demand tickers: the CVM's single activity label
+    # mapped to the five-value enum (accent- and case-insensitive).
+    assert sector_from_cvm("Bancos") is Sector.BANK
+    assert sector_from_cvm("Seguradoras") is Sector.INSURER
+    assert sector_from_cvm("Energia Elétrica") is Sector.UTILITY
+    assert sector_from_cvm("Petróleo e Gás") is Sector.COMMODITY
+    assert sector_from_cvm("Extração Mineral") is Sector.COMMODITY
+    # Anything unmatched degrades to INDUSTRY, never raises (e.g. Klabin).
+    assert sector_from_cvm("Papel e Celulose") is Sector.INDUSTRY
+    assert sector_from_cvm("") is Sector.INDUSTRY

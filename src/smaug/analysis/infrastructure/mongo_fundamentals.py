@@ -21,7 +21,7 @@ Financiamentos" for a corporate filer but "Capitalização" for an insurer.
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -536,8 +536,17 @@ def _is_annual(doc_type: str | None, financials: StandardizedFinancials) -> bool
 class MongoFundamentalsReader:
     """Reads the CVM mirror: ITR quarters (history) and the annual DFP (annual)."""
 
-    def __init__(self, collection: RawCollection) -> None:
+    def __init__(
+        self,
+        collection: RawCollection,
+        *,
+        sector_resolver: Callable[[str], Sector] = sector_of,
+    ) -> None:
         self._collection = collection
+        # The sector only seeds the ``expected_regime`` fallback (the filed regime,
+        # read off the statement, decides applicability). Curated for the nine;
+        # the CLI injects a registry-backed resolver for on-demand tickers.
+        self._sector_resolver = sector_resolver
 
     async def history(self, ticker: str) -> list[StandardizedFinancials]:
         """ITR quarterly periods (oldest→newest) — the raw material for the TTM."""
@@ -557,7 +566,7 @@ class MongoFundamentalsReader:
     ) -> list[tuple[str | None, StandardizedFinancials]]:
         cursor = self._collection.find({"source": "cvm", "ticker": ticker})
         docs: list[Mapping[str, Any]] = await cursor.to_list(None)
-        sector = sector_of(ticker)
+        sector = self._sector_resolver(ticker)
 
         by_period: dict[str, dict[str, Any]] = {}
         doc_type: dict[str, str | None] = {}

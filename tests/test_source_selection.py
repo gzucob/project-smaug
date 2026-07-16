@@ -16,10 +16,14 @@ def test_active_modules_follows_selected_source() -> None:
 
 
 async def test_build_data_source_selects_implementation_by_config() -> None:
+    # The CVM key maps are resolved upstream (curated nine + FCA registry) and
+    # passed in; brapi ignores them (it keys off the ticker directly).
+    code = {"PETR4": "9512"}
+    cnpj = {"PETR4": "33.000.167/0001-01"}
     async with httpx.AsyncClient() as http:
-        cvm = _build_data_source(Settings(ingestion_source="cvm"), http)
+        cvm = _build_data_source(Settings(ingestion_source="cvm"), http, code, cnpj)
         brapi = _build_data_source(
-            Settings(ingestion_source="brapi", brapi_token="tok"), http
+            Settings(ingestion_source="brapi", brapi_token="tok"), http, code, cnpj
         )
 
     # CVM needs two archives — statements and share counts — behind one router.

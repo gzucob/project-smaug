@@ -15,7 +15,7 @@ was born with.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date
 
@@ -27,6 +27,10 @@ from smaug.analysis.domain.indicators import (
 )
 from smaug.analysis.domain.ports import AnalysisRepository
 from smaug.portfolio.domain.sectors import Sector, sector_of
+
+# See ``analyze.SectorResolver``: the curated nine by default, a registry-backed
+# resolver for on-demand tickers, injected at the composition root.
+SectorResolver = Callable[[str], Sector]
 
 
 @dataclass(frozen=True)
@@ -117,8 +121,14 @@ def _exercise_of(analysis: TickerAnalysis) -> ExerciseCoverage:
 class DoctorUseCase:
     """Build the coverage report from the persisted analysis (read-only)."""
 
-    def __init__(self, repository: AnalysisRepository) -> None:
+    def __init__(
+        self,
+        repository: AnalysisRepository,
+        *,
+        sector_resolver: SectorResolver = sector_of,
+    ) -> None:
         self._repository = repository
+        self._sector_resolver = sector_resolver
 
     async def execute(self, tickers: Iterable[str]) -> DoctorReport:
         coverages: list[TickerCoverage] = []
@@ -130,6 +140,6 @@ class DoctorUseCase:
             for closed in await self._repository.history(ticker):
                 exercises.append(_exercise_of(closed))
             coverages.append(
-                TickerCoverage(ticker, sector_of(ticker), tuple(exercises))
+                TickerCoverage(ticker, self._sector_resolver(ticker), tuple(exercises))
             )
         return DoctorReport(tuple(coverages))

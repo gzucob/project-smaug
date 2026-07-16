@@ -54,6 +54,11 @@ logger = get_logger(__name__)
 
 Clock = Callable[[], datetime]
 
+# How a ticker's display/fallback ``Sector`` is resolved. Defaults to the curated
+# nine (``sector_of``); the CLI passes a registry-backed resolver so an on-demand
+# ticker gets a sector too (its applicability still rides on ``filed_regime``).
+SectorResolver = Callable[[str], Sector]
+
 # Both views are priced on what the shares actually traded at: the live TTM on the
 # current quote, each closed year on that year's nominal average (ADR 0018). The
 # dividend-adjusted average is kept alongside as the total-return reference, but it
@@ -93,12 +98,14 @@ class AnalyzePortfolioUseCase:
         shares_reader: SharesReader,
         *,
         clock: Clock = _utc_now,
+        sector_resolver: SectorResolver = sector_of,
     ) -> None:
         self._reader = reader
         self._price_provider = price_provider
         self._repository = repository
         self._shares_reader = shares_reader
         self._clock = clock
+        self._sector_resolver = sector_resolver
 
     async def execute(self, tickers: Iterable[str]) -> list[TickerAnalysis]:
         results: list[TickerAnalysis] = []
@@ -113,7 +120,7 @@ class AnalyzePortfolioUseCase:
             logger.warning("No CVM fundamentals for %s; skipping", ticker)
             return []
 
-        sector = sector_of(ticker)
+        sector = self._sector_resolver(ticker)
         computed_at = self._clock()
         # The live quote prices the TTM view only; each closed year prices on its
         # own year history (ADR 0012), so it is not needed there at all.

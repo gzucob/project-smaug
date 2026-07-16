@@ -8,7 +8,7 @@ dependencies and call the use cases (plan §3.1 / CLAUDE.md).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from decimal import Decimal
 from typing import Any, cast
 
@@ -57,11 +57,15 @@ from smaug.ingestion.infrastructure.cvm_capital import (
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, CvmDocument
 from smaug.ingestion.infrastructure.repositories import BeanieRawIngestionRepository
 from smaug.ingestion.infrastructure.routed_source import RoutedDataSource
+from smaug.portfolio.domain.company import CompanyIdentity
 from smaug.portfolio.domain.cvm_codes import TICKER_TO_CNPJ, TICKER_TO_CVM_CODE
 from smaug.portfolio.domain.sectors import (
+    PORTFOLIO,
+    Sector,
     portfolio_tickers,
-    require_portfolio_tickers,
+    sector_from_cvm,
 )
+from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
 from smaug.shared.errors import UnknownTickerError
@@ -87,6 +91,63 @@ def _guarded[T](coro: Coroutine[Any, Any, T]) -> T:
     except UnknownTickerError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
+
+
+async def _registry_identities(
+    settings: Settings, http: httpx.AsyncClient, tickers: tuple[str, ...]
+) -> dict[str, CompanyIdentity]:
+    """Resolve tickers outside the curated nine via the CVM FCA registry.
+
+    The nine keep their verified ``cvm_codes.py`` keys and never trigger an FCA
+    download; any other requested ticker is resolved on demand. A ticker that
+    resolves nowhere is a user error — a typo, or a company CVM does not list —
+    and raises ``UnknownTickerError``, the same clean exit the curated guard gave
+    (this replaces ``require_portfolio_tickers``).
+    """
+    unknown = [t for t in tickers if t not in PORTFOLIO]
+    if not unknown:
+        return {}
+    registry = CvmCompanyRegistry(
+        http, year=settings.cvm_year, cache_dir=settings.cvm_cache_dir
+    )
+    identities = await registry.resolve_all(unknown)
+    for ticker in unknown:
+        if ticker not in identities:
+            raise UnknownTickerError(ticker)
+    return identities
+
+
+def _sector_resolver(
+    identities: dict[str, CompanyIdentity],
+) -> Callable[[str], Sector]:
+    """A ``Sector`` for any requested ticker: curated for the nine, else the CVM
+    activity label folded to the enum (``sector_from_cvm``)."""
+
+    def resolve(ticker: str) -> Sector:
+        if ticker in PORTFOLIO:
+            return PORTFOLIO[ticker]
+        identity = identities.get(ticker)
+        if identity is None:
+            raise UnknownTickerError(ticker)
+        return sector_from_cvm(identity.cvm_sector)
+
+    return resolve
+
+
+async def _cvm_key_maps(
+    settings: Settings, http: httpx.AsyncClient, tickers: tuple[str, ...]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """The ticker -> CD_CVM and ticker -> CNPJ maps the CVM sources need.
+
+    Curated for the nine (verified, offline), registry-resolved for the rest.
+    """
+    code = {t: TICKER_TO_CVM_CODE[t] for t in tickers if t in TICKER_TO_CVM_CODE}
+    cnpj = {t: TICKER_TO_CNPJ[t] for t in tickers if t in TICKER_TO_CNPJ}
+    identities = await _registry_identities(settings, http, tickers)
+    for ticker, identity in identities.items():
+        code[ticker] = identity.cd_cvm
+        cnpj[ticker] = identity.cnpj
+    return code, cnpj
 
 
 @app.command()
@@ -126,6 +187,8 @@ def report(
 def _build_data_source(
     settings: Settings,
     http: httpx.AsyncClient,
+    ticker_to_code: dict[str, str],
+    ticker_to_cnpj: dict[str, str],
     *,
     document: str | None = None,
     year: int | None = None,
@@ -135,6 +198,7 @@ def _build_data_source(
     Both implement ``RawDataSource``, so the use case never knows which one it
     got. The token is only required (and only exists) for brapi. ``document``/
     ``year`` override the config for one run (e.g. to pull several CVM files).
+    The CVM key maps are resolved upstream (curated nine + FCA registry).
     """
     if settings.ingestion_source == "brapi":
         return BrapiClient(settings.brapi_base_url, settings.require_token(), http)
@@ -144,7 +208,7 @@ def _build_data_source(
     cvm_year = year or settings.cvm_year
     statements = CvmDataSource(
         http,
-        TICKER_TO_CVM_CODE,
+        ticker_to_code,
         year=cvm_year,
         cache_dir=settings.cvm_cache_dir,
         document=cast(CvmDocument, doc),
@@ -152,7 +216,7 @@ def _build_data_source(
     # The share counts live in a different CVM archive (FRE), keyed by CNPJ.
     capital = CvmCapitalSource(
         http,
-        TICKER_TO_CNPJ,
+        ticker_to_cnpj,
         year=cvm_year,
         cache_dir=settings.cvm_cache_dir,
     )
@@ -160,7 +224,7 @@ def _build_data_source(
     # place treasury shares are filed. Also keyed by CNPJ, not by CD_CVM.
     treasury = CvmTreasurySource(
         http,
-        TICKER_TO_CNPJ,
+        ticker_to_cnpj,
         year=cvm_year,
         cache_dir=settings.cvm_cache_dir,
         document=cast(CvmDocument, doc),
@@ -173,15 +237,21 @@ def _build_data_source(
 async def _run_ingest(
     tickers: tuple[str, ...], *, document: str | None = None, year: int | None = None
 ) -> int:
-    # An unknown ticker is a user error — reject before any download, not as a
-    # 404-skip in the collection log (#60). Real filings stay batch-resilient.
-    require_portfolio_tickers(tickers)
     settings = get_settings()
     client = await init_database(settings)
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
+            # For CVM, resolve the registrant keys up front: an unknown ticker is
+            # a user error rejected before any statement download (#60), not a
+            # 404-skip. brapi keys off the ticker directly, so it needs no map.
+            if settings.ingestion_source == "cvm":
+                code_map, cnpj_map = await _cvm_key_maps(settings, http, tickers)
+            else:
+                code_map, cnpj_map = {}, {}
             use_case = IngestPortfolioUseCase(
-                client=_build_data_source(settings, http, document=document, year=year),
+                client=_build_data_source(
+                    settings, http, code_map, cnpj_map, document=document, year=year
+                ),
                 repository=BeanieRawIngestionRepository(),
                 event_bus=EventBus(),
                 modules=settings.active_modules,
@@ -200,10 +270,15 @@ async def _run_report(tickers: tuple[str, ...]) -> None:
     settings = get_settings()
     client = await init_database(settings)
     try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            resolver = _sector_resolver(
+                await _registry_identities(settings, http, tickers)
+            )
         use_case = CompletenessReportUseCase(
             repository=BeanieRawIngestionRepository(),
             modules=settings.active_modules,
             source=settings.ingestion_source,
+            sector_resolver=resolver,
         )
         completeness = await use_case.execute(tickers)
     finally:
@@ -255,15 +330,20 @@ async def _run_analyze(tickers: tuple[str, ...]) -> int:
     session_factory = create_session_factory(engine)
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
+            resolver = _sector_resolver(
+                await _registry_identities(settings, http, tickers)
+            )
             use_case = AnalyzePortfolioUseCase(
                 reader=MongoFundamentalsReader(
-                    mongo[settings.mongo_db]["raw_ingestions"]
+                    mongo[settings.mongo_db]["raw_ingestions"],
+                    sector_resolver=resolver,
                 ),
                 price_provider=_build_price_provider(settings, http),
                 repository=SqlAlchemyAnalysisRepository(session_factory),
                 shares_reader=MongoSharesReader(
                     mongo[settings.mongo_db]["raw_ingestions"]
                 ),
+                sector_resolver=resolver,
             )
             analyses = await use_case.execute(tickers)
     finally:
@@ -296,7 +376,13 @@ async def _run_doctor(tickers: tuple[str, ...]) -> int:
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
     try:
-        use_case = DoctorUseCase(SqlAlchemyAnalysisRepository(session_factory))
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            resolver = _sector_resolver(
+                await _registry_identities(settings, http, tickers)
+            )
+        use_case = DoctorUseCase(
+            SqlAlchemyAnalysisRepository(session_factory), sector_resolver=resolver
+        )
         report = await use_case.execute(tickers)
     finally:
         await engine.dispose()
