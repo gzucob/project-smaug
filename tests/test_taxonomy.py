@@ -31,7 +31,7 @@ def test_classify_prefers_the_snapshot_over_the_cvm_label() -> None:
 
 
 def test_classify_falls_back_to_the_cvm_single_level() -> None:
-    c = classify("ABEV3", cvm_sector="Bebidas")  # not in the snapshot
+    c = classify("XXXX3", cvm_sector="Bebidas")  # a ticker never in the snapshot
     assert c == Classification("Bebidas", None, None)
     assert c is not None
     assert c.source == "cvm"
