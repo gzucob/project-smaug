@@ -25,15 +25,18 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import re
+import unicodedata
 import zipfile
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
 
 from smaug.ingestion.infrastructure.download import Sleeper, download_zip
 from smaug.portfolio.domain.company import CompanyIdentity
+from smaug.portfolio.domain.share_classes import ShareClass, ShareKind
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -62,6 +65,84 @@ class _Security:
     cnpj: str
     trading: bool
     version: int
+
+
+@dataclass
+class _ClassAccumulator:
+    """The ON/PN trading symbols a company lists, gathered per kind."""
+
+    common: set[str] = field(default_factory=set)
+    preferred: set[str] = field(default_factory=set)
+
+    def add(self, kind: ShareKind, symbol: str) -> None:
+        (self.common if kind is ShareKind.COMMON else self.preferred).add(symbol)
+
+
+def _fold(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
+
+
+def _share_kind(valor_mobiliario: str) -> ShareKind | None:
+    """ON/PN from an FCA ``Valor_Mobiliario`` label; ``None`` for units, BDRs, etc."""
+    label = _fold(valor_mobiliario).strip()
+    if label.startswith("acoes ordinarias"):
+        return ShareKind.COMMON
+    if label.startswith("acoes preferenciais"):
+        return ShareKind.PREFERRED
+    return None
+
+
+def _is_unit(valor_mobiliario: str) -> bool:
+    return _fold(valor_mobiliario).strip().startswith("units")
+
+
+_TICKER_RE = re.compile(r"\b[A-Z]{4}\d{1,2}\b")
+
+
+def _kind_from_suffix(symbol: str) -> ShareKind | None:
+    """ON/PN from a B3 ticker suffix (3 = ON, 4/5/6 = PN); ``None`` for a unit."""
+    suffix = symbol[4:]  # B3 roots are four letters; the rest is the class number
+    if suffix == "3":
+        return ShareKind.COMMON
+    if suffix in ("4", "5", "6"):
+        return ShareKind.PREFERRED
+    return None
+
+
+def _unit_classes(composition: str) -> list[tuple[str, ShareKind]]:
+    """Underlying ON/PN classes named in a unit's ``Composicao_BDR_Unit``.
+
+    Some companies file only the unit on the FCA (Klabin lists KLBN11, never
+    KLBN3/KLBN4), but the unit row spells its bundle out — e.g. "1 KLBN3 +
+    4 KLBN4". Parse the class tickers from it, keyed by suffix.
+    """
+    resolved: list[tuple[str, ShareKind]] = []
+    for symbol in _TICKER_RE.findall(composition.upper()):
+        kind = _kind_from_suffix(symbol)
+        if kind is not None:
+            resolved.append((symbol, kind))
+    return resolved
+
+
+def _resolve_classes(
+    accumulator: _ClassAccumulator,
+) -> tuple[ShareClass, ...]:
+    """The company's ON/PN classes, ordered ON→PN.
+
+    Only when there is at most one class per kind: the market cap sums each class
+    at its own price times the **per-kind** filed count (ADR 0014), so a second
+    class of the same kind would multiply that whole count twice. Rather than a
+    wrong cap, an ambiguous company yields no classes (the cap stays a named null).
+    """
+    if len(accumulator.common) > 1 or len(accumulator.preferred) > 1:
+        return ()
+    classes: list[ShareClass] = []
+    for symbol in accumulator.common:
+        classes.append(ShareClass(symbol=symbol, kind=ShareKind.COMMON))
+    for symbol in accumulator.preferred:
+        classes.append(ShareClass(symbol=symbol, kind=ShareKind.PREFERRED))
+    return tuple(classes)
 
 
 class CvmCompanyRegistry:
@@ -141,8 +222,11 @@ class CvmCompanyRegistry:
         """Join securities (ticker->CNPJ) with the cadastre (CNPJ->CD_CVM)."""
         with zipfile.ZipFile(archive_path) as archive:
             cadastre = self._read_cadastre(archive)
-            securities = self._read_securities(archive)
+            securities, class_accumulators = self._read_securities(archive)
 
+        classes = {
+            cnpj: _resolve_classes(acc) for cnpj, acc in class_accumulators.items()
+        }
         index: dict[str, CompanyIdentity] = {}
         for ticker, security in securities.items():
             company = cadastre.get(security.cnpj)
@@ -155,6 +239,7 @@ class CvmCompanyRegistry:
                 denom=company.denom,
                 cvm_sector=company.cvm_sector,
                 situation=company.situation,
+                share_classes=classes.get(security.cnpj, ()),
             )
         return index
 
@@ -183,9 +268,17 @@ class CvmCompanyRegistry:
                 )
         return cadastre
 
-    def _read_securities(self, archive: zipfile.ZipFile) -> dict[str, _Security]:
-        """Ticker -> CNPJ, preferring a still-trading, highest-version listing."""
+    def _read_securities(
+        self, archive: zipfile.ZipFile
+    ) -> tuple[dict[str, _Security], dict[str, _ClassAccumulator]]:
+        """Ticker -> CNPJ (best listing), plus the ON/PN classes gathered per CNPJ.
+
+        A single pass: the ticker map keys off ``Codigo_Negociacao``; the class
+        accumulator gathers the company's trading ON/PN symbols (units and BDRs
+        are skipped by ``_share_kind``) so the cap knows what to price (ADR 0014).
+        """
         securities: dict[str, _Security] = {}
+        classes: dict[str, _ClassAccumulator] = {}
         with archive.open(self._securities_member) as member:
             reader = csv.DictReader(
                 io.TextIOWrapper(member, encoding=_ENCODING), delimiter=_DELIMITER
@@ -195,15 +288,28 @@ class CvmCompanyRegistry:
                 cnpj = (row.get("CNPJ_Companhia") or "").strip()
                 if not ticker or not cnpj:
                     continue
+                trading = not (row.get("Data_Fim_Negociacao") or "").strip()
                 candidate = _Security(
-                    cnpj=cnpj,
-                    trading=not (row.get("Data_Fim_Negociacao") or "").strip(),
-                    version=_int(row.get("Versao")),
+                    cnpj=cnpj, trading=trading, version=_int(row.get("Versao"))
                 )
                 current = securities.get(ticker)
                 if current is None or _prefer(candidate, current):
                     securities[ticker] = candidate
-        return securities
+
+                if not trading:
+                    continue
+                valor = row.get("Valor_Mobiliario") or ""
+                kind = _share_kind(valor)
+                if kind is not None:
+                    classes.setdefault(cnpj, _ClassAccumulator()).add(kind, ticker)
+                elif _is_unit(valor):
+                    # A unit-only filer (Klabin) names its classes in the bundle.
+                    accumulator = classes.setdefault(cnpj, _ClassAccumulator())
+                    for symbol, unit_kind in _unit_classes(
+                        row.get("Composicao_BDR_Unit") or ""
+                    ):
+                        accumulator.add(unit_kind, symbol)
+        return securities, classes
 
 
 def _int(value: str | None) -> int:

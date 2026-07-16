@@ -9,7 +9,9 @@ demand instead of being hard-coded (``cvm_codes.py``).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from smaug.portfolio.domain.share_classes import ShareClass
 
 
 @dataclass(frozen=True)
@@ -22,3 +24,7 @@ class CompanyIdentity:
     denom: str  # company name (``Nome_Empresarial``)
     cvm_sector: str  # CVM ``Setor_Atividade`` — a single, coarse activity label
     situation: str  # ``Situacao_Registro_CVM`` (e.g. "Ativo", "Cancelado")
+    # The company's listed ON/PN classes (from the FCA securities member), whose
+    # prices summed capitalize it (ADR 0014). Empty when the FCA lists no plain
+    # ON/PN equity (e.g. a BDR- or unit-only line); the cap then stays null.
+    share_classes: tuple[ShareClass, ...] = field(default_factory=tuple)

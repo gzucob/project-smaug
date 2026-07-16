@@ -35,6 +35,8 @@ _SEC_COLS = (
     "Codigo_Negociacao",
     "Mercado",
     "Data_Fim_Negociacao",
+    "Valor_Mobiliario",
+    "Composicao_BDR_Unit",
 )
 
 
@@ -251,3 +253,91 @@ async def test_registry_reproduces_the_curated_nine(tmp_path: Path) -> None:
 
     assert {t: i.cd_cvm for t, i in resolved.items()} == TICKER_TO_CVM_CODE
     assert {t: i.cnpj for t, i in resolved.items()} == TICKER_TO_CNPJ
+
+
+def _cadastre_row(cnpj: str, code: str) -> dict[str, str]:
+    return {
+        "CNPJ_Companhia": cnpj,
+        "Versao": "1",
+        "Nome_Empresarial": "TEST S.A.",
+        "Codigo_CVM": code,
+        "Situacao_Registro_CVM": "Ativo",
+        "Setor_Atividade": "Diversos",
+    }
+
+
+def _classes(identity: object) -> set[tuple[str, str]]:
+    return {(c.symbol, c.kind.value) for c in identity.share_classes}  # type: ignore[attr-defined]
+
+
+async def test_share_classes_from_explicit_rows_and_from_a_unit_composition(
+    tmp_path: Path,
+) -> None:
+    explicit = "10.000.000/0001-00"  # files ON + PN rows directly
+    unit_only = "20.000.000/0001-00"  # files only the unit (like Klabin)
+    _write_fca_zip(
+        tmp_path,
+        geral=[_cadastre_row(explicit, "000111"), _cadastre_row(unit_only, "000222")],
+        securities=[
+            {
+                "CNPJ_Companhia": explicit,
+                "Codigo_Negociacao": "ABCD3",
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": "Ações Ordinárias",
+            },
+            {
+                "CNPJ_Companhia": explicit,
+                "Codigo_Negociacao": "ABCD4",
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": "Ações Preferenciais",
+            },
+            {
+                "CNPJ_Companhia": unit_only,
+                "Codigo_Negociacao": "WXYZ11",
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": "Units",
+                "Composicao_BDR_Unit": "1 WXYZ3 + 4 WXYZ4",
+            },
+        ],
+    )
+    registry = _registry(tmp_path)
+
+    a = await registry.resolve("ABCD3")
+    assert a is not None
+    assert _classes(a) == {("ABCD3", "common"), ("ABCD4", "preferred")}
+
+    unit = await registry.resolve("WXYZ11")
+    assert unit is not None
+    assert _classes(unit) == {("WXYZ3", "common"), ("WXYZ4", "preferred")}
+
+
+async def test_two_classes_of_the_same_kind_yield_no_classes(tmp_path: Path) -> None:
+    # Per-kind filed counts cannot price two PN classes without double-counting, so
+    # an ambiguous company gets no classes (the cap stays a named null), not a guess.
+    cnpj = "30.000.000/0001-00"
+    _write_fca_zip(
+        tmp_path,
+        geral=[_cadastre_row(cnpj, "000333")],
+        securities=[
+            {
+                "CNPJ_Companhia": cnpj,
+                "Codigo_Negociacao": sym,
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": kind,
+            }
+            for sym, kind in (
+                ("EFGH3", "Ações Ordinárias"),
+                ("EFGH4", "Ações Preferenciais"),
+                ("EFGH5", "Ações Preferenciais Classe A"),
+            )
+        ],
+    )
+
+    identity = await _registry(tmp_path).resolve("EFGH3")
+
+    assert identity is not None
+    assert identity.share_classes == ()

@@ -25,20 +25,20 @@ from decimal import Decimal
 
 from smaug.analysis.domain.financials import ShareCounts
 from smaug.analysis.domain.indicators import NullReason
-from smaug.portfolio.domain.share_classes import listed_classes
+from smaug.portfolio.domain.share_classes import ShareClass
 
 
 def capitalize(
-    ticker: str,
+    classes: tuple[ShareClass, ...],
     counts: ShareCounts | None,
     prices: Mapping[str, Decimal | None],
 ) -> tuple[Decimal | None, NullReason | None]:
-    """Capitalize ``ticker``'s company from its class prices and filed counts.
+    """Capitalize a company from its listed ``classes``, prices and filed counts.
 
+    ``classes`` are the company's ON/PN classes (curated or FCA-resolved);
     ``prices`` is keyed by class symbol (``PETR3``, ``PETR4``). Returns the cap
     and ``None``, or ``None`` and the reason it could not be built.
     """
-    classes = listed_classes(ticker)
     if not classes:
         # No composition on file for this ticker: we do not know what shares to
         # price, so the cap is unknown rather than guessed.
