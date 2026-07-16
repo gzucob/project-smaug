@@ -33,6 +33,7 @@ from smaug.analysis.domain.financials import (
 )
 from smaug.analysis.domain.indicators import Indicators
 from smaug.portfolio.domain.sectors import Sector, sector_of
+from smaug.shared.errors import UnknownTickerError
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 _REFERENCE = json.loads((_FIXTURES / "reference_platforms.json").read_text("utf-8"))
@@ -155,6 +156,16 @@ def test_no_closed_year_pays_out_more_than_the_company_is_worth(ticker: str) -> 
         )
 
 
+def _is_bank(ticker: str) -> bool:
+    # The sector representatives sit outside the static nine-ticker portfolio
+    # map; none of them is a bank, so an unknown ticker reads as "not a bank"
+    # rather than an error.
+    try:
+        return sector_of(ticker) is Sector.BANK
+    except UnknownTickerError:
+        return False
+
+
 def _roe_tickers() -> list[str]:
     """Tickers whose 2025 ROE the platform publishes and we compare (#45).
 
@@ -166,7 +177,7 @@ def _roe_tickers() -> list[str]:
         if "roe" in years.get("2025", {})
         and _reason(ticker, "2025", "roe") is None
         and "2024" in _INPUTS.get(ticker, {})
-        and sector_of(ticker) is not Sector.BANK
+        and not _is_bank(ticker)
     )
 
 
@@ -194,6 +205,19 @@ def test_roe_divides_by_the_closing_balance_like_the_platforms(ticker: str) -> N
 
     on_closing = float(result / closing)
     on_average = float(result / ((opening + closing) / 2))
+
+    # The platform publishes ROE to two decimals of a percent (a step of 0.0001
+    # as a fraction). When the two candidate bases sit closer together than that
+    # step, the published cell cannot tell them apart — the same
+    # no-information-to-compare reasoning that keeps `roa` out of the gate.
+    # HAPV3 2025 is the live case: −0.2938% (closing) vs −0.2925% (average)
+    # against a published −0.29%.
+    if abs(on_closing - on_average) < 0.0001:
+        pytest.skip(
+            f"{ticker} 2025: closing ({on_closing:.4%}) and average "
+            f"({on_average:.4%}) ROE differ by less than the platform's "
+            f"rounding step — the cell cannot discriminate the basis"
+        )
 
     assert abs(on_closing - published) < abs(on_average - published), (
         f"{ticker} 2025: the average-balance ROE ({on_average:.2%}) is now closer to "

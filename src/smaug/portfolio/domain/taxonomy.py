@@ -81,9 +81,7 @@ B3_TAXONOMY: dict[str, Classification] = {
     "TOTS3": Classification(
         "Tecnologia da Informação", "Programas e Serviços", "Programas e Serviços"
     ),
-    "VIVT3": Classification(
-        "Comunicações", "Telecomunicações", "Telecomunicações"
-    ),
+    "VIVT3": Classification("Comunicações", "Telecomunicações", "Telecomunicações"),
 }
 
 
