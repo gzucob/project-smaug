@@ -78,12 +78,20 @@ class IndicatorsResponse(BaseModel):
     null_reasons: dict[str, str]
 
 
+class ClassificationResponse(BaseModel):
+    """The B3 economic taxonomy: setor → subsetor → segmento (ADR 0024)."""
+
+    setor: str
+    subsetor: str | None
+    segmento: str | None
+
+
 class AnalysisResponse(BaseModel):
     """One ticker's analysis for a single view: provenance + indicators."""
 
     ticker: str
     view: str
-    sector: str
+    classification: ClassificationResponse
     reference_date: date
     computed_at: datetime
     price: Decimal | None
@@ -104,7 +112,11 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
     return AnalysisResponse(
         ticker=analysis.ticker,
         view=analysis.view,
-        sector=analysis.sector.value,
+        classification=ClassificationResponse(
+            setor=analysis.classification.setor,
+            subsetor=analysis.classification.subsetor,
+            segmento=analysis.classification.segmento,
+        ),
         reference_date=analysis.reference_date,
         computed_at=analysis.computed_at,
         price=analysis.price,

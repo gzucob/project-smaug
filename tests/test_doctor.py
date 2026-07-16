@@ -15,7 +15,9 @@ from smaug.analysis.domain.indicators import (
     NullReason,
     indicator_names,
 )
-from smaug.portfolio.domain.sectors import Sector
+from smaug.portfolio.domain.taxonomy import Classification
+
+_DEFAULT_CLASSIFICATION = Classification("Commodities")
 
 
 class FakeRepo:
@@ -47,11 +49,11 @@ def _analysis(
     view: AnalysisView,
     reference_date: date,
     indicators: Indicators,
-    sector: Sector = Sector.COMMODITY,
+    classification: Classification = _DEFAULT_CLASSIFICATION,
 ) -> TickerAnalysis:
     return TickerAnalysis(
         ticker=ticker,
-        sector=sector,
+        classification=classification,
         reference_date=reference_date,
         computed_at=datetime(2026, 7, 10, tzinfo=UTC),
         indicators=indicators,
@@ -114,7 +116,9 @@ async def test_doctor_names_missing_price_never_a_bare_null() -> None:
                     view=VIEW_CLOSED_YEAR,
                     reference_date=date(2024, 12, 31),
                     indicators=indicators,
-                    sector=Sector.BANK,
+                    classification=Classification(
+                        "Financeiro", "Intermediários Financeiros", "Bancos"
+                    ),
                 )
             ]
         }

@@ -16,6 +16,17 @@ export type SectorKey =
 
 export type ViewKind = "ttm_live" | "closed_year";
 
+/**
+ * B3 economic taxonomy (setor → subsetor → segmento), mirroring the API's
+ * `ClassificationResponse`. `subsetor`/`segmento` are null under the CVM
+ * single-level fallback for a ticker outside the snapshot (ADR 0024).
+ */
+export interface Classification {
+  setor: string;
+  subsetor: string | null;
+  segmento: string | null;
+}
+
 export interface Indicators {
   roe: Decimalish;
   roa: Decimalish;
@@ -63,7 +74,7 @@ export type IndicatorKey = keyof Indicators;
 export interface Analysis {
   ticker: string;
   view: ViewKind | string;
-  sector: SectorKey | string;
+  classification: Classification;
   reference_date: string; // ISO date
   computed_at: string; // ISO datetime
   price: Decimalish;

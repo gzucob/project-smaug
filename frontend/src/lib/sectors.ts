@@ -3,7 +3,7 @@
  * hue (a CSS variable from globals.css) used consistently across the UI as a
  * data-encoding system. Labels are PT-BR (user-facing text convention).
  */
-import type { SectorKey } from "@/lib/types";
+import type { Classification, SectorKey } from "@/lib/types";
 
 export interface SectorMeta {
   key: SectorKey;
@@ -33,6 +33,27 @@ export function sectorMeta(key: string): SectorMeta {
 
 export function sectorColor(key: string): string {
   return `var(${sectorMeta(key).colorVar})`;
+}
+
+/**
+ * Map a B3 classification (or the CVM single-level fallback) to one of the five
+ * gemstone hues. The gem system stays the visual encoding; the real three-level
+ * taxonomy is what the UI now *shows* (ADR 0024). Matches by folded substring so
+ * it works for both B3 labels ("Financeiro" + "Bancos") and CVM ones ("Bancos",
+ * "Papel e Celulose").
+ */
+export function gemKey(c: Classification): SectorKey {
+  const t = `${c.setor} ${c.subsetor ?? ""} ${c.segmento ?? ""}`
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase();
+  if (/segur|previd|capitaliza/.test(t)) return "insurer";
+  if (/banco|intermedi|financeir/.test(t)) return "bank";
+  if (/utilidade|energia|saneamento|agua/.test(t)) return "utility";
+  if (/materiais basicos|petroleo|minera|mineral|siderur|metalur/.test(t)) {
+    return "commodity";
+  }
+  return "industry";
 }
 
 /** The target portfolio in stable order (mirrors PORTFOLIO in sectors.py). */

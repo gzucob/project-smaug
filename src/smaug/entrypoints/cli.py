@@ -65,6 +65,7 @@ from smaug.portfolio.domain.sectors import (
     portfolio_tickers,
     sector_from_cvm,
 )
+from smaug.portfolio.domain.taxonomy import Classification, classify
 from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
@@ -130,6 +131,22 @@ def _sector_resolver(
         if identity is None:
             raise UnknownTickerError(ticker)
         return sector_from_cvm(identity.cvm_sector)
+
+    return resolve
+
+
+def _classification_resolver(
+    identities: dict[str, CompanyIdentity],
+) -> Callable[[str], Classification]:
+    """The B3 ``Classification`` for a ticker: snapshot, else the CVM fallback."""
+
+    def resolve(ticker: str) -> Classification:
+        identity = identities.get(ticker)
+        cvm_sector = identity.cvm_sector if identity is not None else None
+        classification = classify(ticker, cvm_sector)
+        if classification is None:
+            raise UnknownTickerError(ticker)
+        return classification
 
     return resolve
 
@@ -330,20 +347,21 @@ async def _run_analyze(tickers: tuple[str, ...]) -> int:
     session_factory = create_session_factory(engine)
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
-            resolver = _sector_resolver(
-                await _registry_identities(settings, http, tickers)
-            )
+            identities = await _registry_identities(settings, http, tickers)
+            # The reader keeps a five-value Sector (the internal regime hint); the
+            # stored analysis carries the B3 Classification (ADR 0024). Both are
+            # built from the same resolved identities.
             use_case = AnalyzePortfolioUseCase(
                 reader=MongoFundamentalsReader(
                     mongo[settings.mongo_db]["raw_ingestions"],
-                    sector_resolver=resolver,
+                    sector_resolver=_sector_resolver(identities),
                 ),
                 price_provider=_build_price_provider(settings, http),
                 repository=SqlAlchemyAnalysisRepository(session_factory),
                 shares_reader=MongoSharesReader(
                     mongo[settings.mongo_db]["raw_ingestions"]
                 ),
-                sector_resolver=resolver,
+                classification_resolver=_classification_resolver(identities),
             )
             analyses = await use_case.execute(tickers)
     finally:
@@ -458,8 +476,8 @@ def format_analysis(analyses: list[TickerAnalysis]) -> str:
             else ""
         )
         lines.append(
-            f"\n{a.ticker} [{a.sector.value}] {a.view} — ref {a.reference_date} "
-            f"— price {_num(a.price)}{basis}"
+            f"\n{a.ticker} [{a.classification.setor}] {a.view} "
+            f"— ref {a.reference_date} — price {_num(a.price)}{basis}"
         )
         lines.append(
             f"  ROE {_pct(i.roe)}  ROA {_pct(i.roa)}  net margin {_pct(i.net_margin)}"

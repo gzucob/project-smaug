@@ -27,7 +27,12 @@ class TickerAnalysisRow(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     ticker: Mapped[str] = mapped_column(String(12), index=True)
     view: Mapped[str] = mapped_column(String(16), index=True)  # ttm_live | closed_year
-    sector: Mapped[str] = mapped_column(String(20))
+    # B3 economic taxonomy (ADR 0024). ``setor`` is always present (B3 snapshot or
+    # the CVM single-level fallback); ``subsetor``/``segmento`` are NULL under the
+    # fallback. Replaces the old five-value ``sector`` column.
+    setor: Mapped[str] = mapped_column(String(64), index=True)
+    subsetor: Mapped[str | None] = mapped_column(String(64))
+    segmento: Mapped[str | None] = mapped_column(String(64))
     reference_date: Mapped[date] = mapped_column(Date)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     price: Mapped[Decimal | None] = mapped_column(Numeric)

@@ -1,6 +1,7 @@
 import { IndicatorGrid } from "@/components/IndicatorGrid";
 import { ViewBadge } from "@/components/ViewBadge";
 import { dateTime, monthYear, price, toNum, yearOf } from "@/lib/format";
+import { gemKey } from "@/lib/sectors";
 import type { Analysis } from "@/lib/types";
 
 /**
@@ -59,7 +60,7 @@ export function ViewPanel({
 
       <IndicatorGrid
         indicators={analysis.indicators}
-        sector={analysis.sector}
+        sector={gemKey(analysis.classification)}
         history={history}
         ttm={ttm}
       />

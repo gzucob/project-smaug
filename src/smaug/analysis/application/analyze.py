@@ -45,19 +45,28 @@ from smaug.analysis.domain.ports import (
     SharesReader,
 )
 from smaug.analysis.domain.ttm import build_ttm
-from smaug.portfolio.domain.sectors import Sector, sector_of
 from smaug.portfolio.domain.share_classes import listed_classes
-from smaug.shared.errors import BrapiError
+from smaug.portfolio.domain.taxonomy import Classification, classify
+from smaug.shared.errors import BrapiError, UnknownTickerError
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
 
 Clock = Callable[[], datetime]
 
-# How a ticker's display/fallback ``Sector`` is resolved. Defaults to the curated
-# nine (``sector_of``); the CLI passes a registry-backed resolver so an on-demand
-# ticker gets a sector too (its applicability still rides on ``filed_regime``).
-SectorResolver = Callable[[str], Sector]
+# How a ticker's B3 ``Classification`` is resolved for the stored analysis.
+# Defaults to the committed snapshot; the CLI passes a registry-backed resolver
+# so an on-demand ticker outside it degrades to the CVM single level (ADR 0024).
+ClassificationResolver = Callable[[str], Classification]
+
+
+def _default_classification(ticker: str) -> Classification:
+    """Snapshot-only resolver: the committed B3 taxonomy, or an unknown ticker."""
+    classification = classify(ticker, cvm_sector=None)
+    if classification is None:
+        raise UnknownTickerError(ticker)
+    return classification
+
 
 # Both views are priced on what the shares actually traded at: the live TTM on the
 # current quote, each closed year on that year's nominal average (ADR 0018). The
@@ -98,14 +107,14 @@ class AnalyzePortfolioUseCase:
         shares_reader: SharesReader,
         *,
         clock: Clock = _utc_now,
-        sector_resolver: SectorResolver = sector_of,
+        classification_resolver: ClassificationResolver = _default_classification,
     ) -> None:
         self._reader = reader
         self._price_provider = price_provider
         self._repository = repository
         self._shares_reader = shares_reader
         self._clock = clock
-        self._sector_resolver = sector_resolver
+        self._classification_resolver = classification_resolver
 
     async def execute(self, tickers: Iterable[str]) -> list[TickerAnalysis]:
         results: list[TickerAnalysis] = []
@@ -120,7 +129,7 @@ class AnalyzePortfolioUseCase:
             logger.warning("No CVM fundamentals for %s; skipping", ticker)
             return []
 
-        sector = self._sector_resolver(ticker)
+        classification = self._classification_resolver(ticker)
         computed_at = self._clock()
         # The live quote prices the TTM view only; each closed year prices on its
         # own year history (ADR 0012), so it is not needed there at all.
@@ -128,14 +137,14 @@ class AnalyzePortfolioUseCase:
 
         analyses: list[TickerAnalysis] = []
         ttm = await self._ttm_analysis(
-            ticker, sector, quarters, annuals, quote, computed_at
+            ticker, classification, quarters, annuals, quote, computed_at
         )
         if ttm is not None:
             analyses.append(ttm)
         for annual in annuals:  # oldest → newest
             analyses.append(
                 await self._closed_year_analysis(
-                    ticker, sector, annual, annuals, computed_at
+                    ticker, classification, annual, annuals, computed_at
                 )
             )
 
@@ -147,7 +156,7 @@ class AnalyzePortfolioUseCase:
     async def _ttm_analysis(
         self,
         ticker: str,
-        sector: Sector,
+        classification: Classification,
         quarters: list[StandardizedFinancials],
         annuals: list[StandardizedFinancials],
         quote: MarketData,
@@ -163,7 +172,7 @@ class AnalyzePortfolioUseCase:
         market = await self._market_now(ticker, year, quote)
         return TickerAnalysis(
             ticker=ticker,
-            sector=sector,
+            classification=classification,
             reference_date=current.reference_date,
             computed_at=computed_at,
             indicators=compute(current, previous, market),
@@ -178,7 +187,7 @@ class AnalyzePortfolioUseCase:
     async def _closed_year_analysis(
         self,
         ticker: str,
-        sector: Sector,
+        classification: Classification,
         annual: StandardizedFinancials,
         annuals: list[StandardizedFinancials],
         computed_at: datetime,
@@ -189,7 +198,7 @@ class AnalyzePortfolioUseCase:
         market, adjusted_avg = await self._market_for_year(ticker, year)
         return TickerAnalysis(
             ticker=ticker,
-            sector=sector,
+            classification=classification,
             reference_date=annual.reference_date,
             computed_at=computed_at,
             indicators=compute(annual, previous, market),

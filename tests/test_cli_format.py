@@ -20,6 +20,7 @@ from smaug.entrypoints.cli import (
 from smaug.ingestion.application.ingest import FetchOutcome, OutcomeStatus
 from smaug.ingestion.application.report import CompletenessReportUseCase
 from smaug.portfolio.domain.sectors import Sector
+from smaug.portfolio.domain.taxonomy import Classification
 from tests.fakes import FakeRawIngestionRepository, load_fixture, make_snapshot
 
 
@@ -72,7 +73,11 @@ def test_should_render_analysis_with_view_tag() -> None:
     analyses = [
         TickerAnalysis(
             ticker="PETR4",
-            sector=Sector.COMMODITY,
+            classification=Classification(
+                "Petróleo, Gás e Biocombustíveis",
+                "Petróleo, Gás e Biocombustíveis",
+                "Exploração, Refino e Distribuição",
+            ),
             reference_date=date(2024, 12, 31),
             computed_at=datetime(2026, 7, 8, tzinfo=UTC),
             indicators=Indicators(pe=Decimal("11.4")),

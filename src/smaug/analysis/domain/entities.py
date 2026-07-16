@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Literal
 
 from smaug.analysis.domain.indicators import Indicators
-from smaug.portfolio.domain.sectors import Sector
+from smaug.portfolio.domain.taxonomy import Classification
 
 # The two analysis perspectives the system produces for each ticker:
 # the live trailing-twelve-months snapshot and one row per closed fiscal year.
@@ -22,7 +22,11 @@ class TickerAnalysis:
     """Indicators for one ticker, tagged with the inputs' provenance."""
 
     ticker: str
-    sector: Sector
+    # The B3 economic taxonomy (setor → subsetor → segmento), or the CVM
+    # single-level fallback for a ticker outside the snapshot (ADR 0024). Replaces
+    # the old five-value ``Sector`` enum, which survives only as an internal
+    # regime hint on ``StandardizedFinancials``.
+    classification: Classification
     reference_date: date  # CVM period the fundamentals came from
     computed_at: datetime
     indicators: Indicators
