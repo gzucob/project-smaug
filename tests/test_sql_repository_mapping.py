@@ -12,13 +12,15 @@ from decimal import Decimal
 from smaug.analysis.domain.entities import VIEW_TTM, TickerAnalysis
 from smaug.analysis.domain.indicators import Indicators, NullReason
 from smaug.analysis.infrastructure.sql_repository import _to_entity, _to_row
-from smaug.portfolio.domain.sectors import Sector
+from smaug.portfolio.domain.taxonomy import Classification
 
 
 def _analysis() -> TickerAnalysis:
     return TickerAnalysis(
         ticker="BBAS3",
-        sector=Sector.BANK,
+        classification=Classification(
+            "Financeiro", "Intermediários Financeiros", "Bancos"
+        ),
         reference_date=date(2024, 12, 31),
         computed_at=datetime(2026, 7, 10, tzinfo=UTC),
         view=VIEW_TTM,

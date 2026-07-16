@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { HistoryCharts } from "@/components/HistoryCharts";
 import { HistoryStrip } from "@/components/HistoryStrip";
-import { SectorBadge } from "@/components/SectorBadge";
+import { ClassificationBadge } from "@/components/ClassificationBadge";
 import { ViewPanel } from "@/components/ViewPanel";
 import { VaultOffline } from "@/components/VaultOffline";
 import { fetchTicker } from "@/lib/api";
 import { count, money, price, yearOf } from "@/lib/format";
+import { gemKey } from "@/lib/sectors";
 import type { Analysis } from "@/lib/types";
 
 export async function generateMetadata({ params }: { params: Promise<{ symbol: string }> }) {
@@ -72,7 +73,7 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
             {result.data.ticker}
           </h1>
           <div className="mt-4">
-            <SectorBadge sector={reference.sector} />
+            <ClassificationBadge classification={reference.classification} />
           </div>
         </div>
         <div className="rise text-right" style={{ animationDelay: "120ms" }}>
@@ -135,7 +136,7 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
             </span>
             <span className="h-px flex-1 bg-gradient-to-r from-gold-500/30 to-transparent" />
           </h2>
-          <HistoryCharts history={history} sector={reference.sector} ttm={ttm} />
+          <HistoryCharts history={history} sector={gemKey(reference.classification)} ttm={ttm} />
           {ttm && (
             <p className="mt-3 text-xs text-ink-600">
               A última barra, tracejada, são os últimos 12 meses — uma janela móvel, não um
@@ -155,7 +156,7 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
             </span>
             <span className="h-px flex-1 bg-gradient-to-r from-gold-500/30 to-transparent" />
           </h2>
-          <HistoryStrip history={history} sector={reference.sector} />
+          <HistoryStrip history={history} sector={gemKey(reference.classification)} />
         </section>
       )}
     </div>

@@ -16,7 +16,7 @@ from smaug.analysis.domain.entities import (
 )
 from smaug.analysis.domain.indicators import Indicators, NullReason
 from smaug.analysis.infrastructure.sqlalchemy_models import TickerAnalysisRow
-from smaug.portfolio.domain.sectors import Sector
+from smaug.portfolio.domain.taxonomy import Classification
 
 
 def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
@@ -24,7 +24,9 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
     return TickerAnalysisRow(
         ticker=analysis.ticker,
         view=analysis.view,
-        sector=analysis.sector.value,
+        setor=analysis.classification.setor,
+        subsetor=analysis.classification.subsetor,
+        segmento=analysis.classification.segmento,
         reference_date=analysis.reference_date,
         computed_at=analysis.computed_at,
         price=analysis.price,
@@ -75,7 +77,7 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
 def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
     return TickerAnalysis(
         ticker=row.ticker,
-        sector=Sector(row.sector),
+        classification=Classification(row.setor, row.subsetor, row.segmento),
         reference_date=row.reference_date,
         computed_at=row.computed_at,
         price=row.price,
