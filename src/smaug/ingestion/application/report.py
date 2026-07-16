@@ -13,13 +13,17 @@ accounts (code/name/value) for one period. A missing signal is a Phase 1
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
 from smaug.ingestion.domain.repositories import RawIngestionRepository
 from smaug.portfolio.domain.sectors import Sector, sector_of
+
+# Curated nine by default; the CLI injects a registry-backed resolver so the
+# report can describe an on-demand ticker too.
+SectorResolver = Callable[[str], Sector]
 
 # --- brapi sector-directed field expectations (plan §6.1) ------------------
 _NON_FINANCIAL_FIELDS: tuple[str, ...] = (
@@ -195,10 +199,12 @@ class CompletenessReportUseCase:
         modules: Sequence[str],
         *,
         source: str = "brapi",
+        sector_resolver: SectorResolver = sector_of,
     ) -> None:
         self._repository = repository
         self._modules = tuple(modules)
         self._profile = _profile_for(source)
+        self._sector_resolver = sector_resolver
 
     async def execute(self, tickers: Iterable[str]) -> CompletenessReport:
         reports: list[TickerReport] = []
@@ -209,7 +215,7 @@ class CompletenessReportUseCase:
         )
 
     async def _report_ticker(self, ticker: str) -> TickerReport:
-        sector = sector_of(ticker)
+        sector = self._sector_resolver(ticker)
         presences: list[ModulePresence] = []
         payloads: list[Mapping[str, Any]] = []
         timestamps: list[datetime] = []
