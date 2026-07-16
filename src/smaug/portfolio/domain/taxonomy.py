@@ -65,6 +65,25 @@ B3_TAXONOMY: dict[str, Classification] = {
     "KLBN11": Classification(
         "Materiais Básicos", "Madeira e Papel", "Papel e Celulose"
     ),
+    # Sector representatives — one liquid name per B3 setor econômico not covered
+    # by the nine, ingested to broaden the fidelity comparison across sectors.
+    "ABEV3": Classification(
+        "Consumo não Cíclico", "Bebidas", "Cervejas e Refrigerantes"
+    ),
+    "LREN3": Classification(
+        "Consumo Cíclico", "Comércio", "Tecidos, Vestuário e Calçados"
+    ),
+    "HAPV3": Classification(
+        "Saúde",
+        "Serviços Médico-Hospitalares, Análises e Diagnósticos",
+        "Serviços Médico-Hospitalares, Análises e Diagnósticos",
+    ),
+    "TOTS3": Classification(
+        "Tecnologia da Informação", "Programas e Serviços", "Programas e Serviços"
+    ),
+    "VIVT3": Classification(
+        "Comunicações", "Telecomunicações", "Telecomunicações"
+    ),
 }
 
 
