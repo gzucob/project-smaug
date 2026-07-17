@@ -62,8 +62,11 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.bvps == Decimal(10)  # 6000 / 600 shares
     assert ind.net_debt == Decimal(1500)  # 2000 - 500
     assert ind.net_debt_to_ebitda == Decimal("0.9375")  # 1500 / 1600
+    assert ind.net_debt_to_ebit == Decimal("1.25")  # 1500 / 1200 annual EBIT
+    assert ind.net_debt_to_equity == Decimal("0.25")  # 1500 / 6000
     assert ind.debt_to_equity == Decimal(2000) / Decimal(6000)  # gross debt / equity
     assert ind.liabilities_to_assets == Decimal("0.5")  # (12000 - 6000) / 12000
+    assert ind.equity_to_assets == Decimal("0.5")  # 6000 / 12000, the complement
     assert ind.current_ratio == Decimal(2)
     assert ind.revenue_growth == Decimal("0.25")
     assert ind.net_income_growth == Decimal("0.2")
@@ -76,6 +79,7 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.payout == Decimal(600) / Decimal(900)  # dividends / net income
     assert ind.dividend_yield == Decimal("0.05")  # 600 / 12000
     assert ind.ev_ebitda == Decimal("8.4375")  # (12000 + 1500) / 1600
+    assert ind.ev_ebit == Decimal("11.25")  # (12000 + 1500) / 1200 annual EBIT
     assert ind.fcf == Decimal(1200)  # annualized (1000 - 100)
     assert ind.price_to_fcf == Decimal(10)  # 12000 / 1200
     assert ind.fcf_yield == Decimal("0.1")  # 1200 / 12000
@@ -246,8 +250,11 @@ def test_bank_null_reasons_name_each_cause() -> None:
     # denominator (equity + net debt) inherits the net-debt verdict.
     assert ind.null_reasons["net_debt"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["net_debt_to_ebitda"] is NullReason.INAPPLICABLE_REGIME
+    assert ind.null_reasons["net_debt_to_ebit"] is NullReason.INAPPLICABLE_REGIME
+    assert ind.null_reasons["net_debt_to_equity"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["debt_to_equity"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["ev_ebitda"] is NullReason.INAPPLICABLE_REGIME
+    assert ind.null_reasons["ev_ebit"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["ebitda_margin"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["roic"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["current_ratio"] is NullReason.INAPPLICABLE_REGIME
@@ -293,15 +300,78 @@ def test_insurer_null_reasons_split_by_regime() -> None:
     assert ind.null_reasons["gross_margin"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["ebit_margin"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["ebitda_margin"] is NullReason.INAPPLICABLE_REGIME
-    # Absent at the source — the insurer schema files no debt line:
+    # Absent at the source. This insurer filed no cash either, so the net-debt
+    # family — which for an INSURANCE filer derives from cash alone (#103) — is
+    # blamed on the cash, while the *gross* debt ratio keeps blaming the
+    # borrowings line the schema does not have:
     assert ind.null_reasons["net_debt"] is NullReason.SOURCE_ACCOUNT_ABSENT
     assert ind.null_reasons["net_debt_to_ebitda"] is NullReason.SOURCE_ACCOUNT_ABSENT
     assert ind.null_reasons["debt_to_equity"] is NullReason.SOURCE_ACCOUNT_ABSENT
     assert ind.null_reasons["ev_ebitda"] is NullReason.SOURCE_ACCOUNT_ABSENT
-    assert ind.null_reasons["roic"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    # ROIC is inapplicable outright (#103): a cash-rich insurer's invested
+    # capital collapses toward zero, so the null precedes any input check.
+    assert ind.null_reasons["roic"] is NullReason.INAPPLICABLE_REGIME
     # Its balance sheet *does* carry the current/non-current split a bank lacks:
     assert ind.current_ratio == Decimal(2)  # 6000 / 3000
     assert "current_ratio" not in ind.null_reasons
+
+
+def test_insurer_net_debt_is_the_cash_negated() -> None:
+    # #103: the insurance schema has no borrowings line, so net debt is what
+    # remains of the definition — 0 − cash. BBSE3 must surface the same economic
+    # fact CXSE3 (filing as a corporate holding) already showed. EV and the
+    # net-debt family follow; ROIC's invested capital (equity + net debt) too.
+    insurer = StandardizedFinancials(
+        reference_date=date(2024, 12, 31),
+        sector=Sector.INSURER,
+        total_assets=Decimal(50000),
+        equity=Decimal(9000),
+        net_income=Decimal(2500),
+        revenue=Decimal(4000),
+        ebit=Decimal(3000),
+        cash=Decimal(8000),
+        filed_regime=AccountingRegime.INSURANCE,
+        unmapped_fields=_FINANCIAL_UNMAPPED,
+    )
+    ind = compute(insurer, None, MarketData(market_cap=Decimal(30000)))
+
+    assert ind.net_debt == Decimal(-8000)  # net cash, as the platforms publish
+    assert ind.enterprise_value == Decimal(22000)  # 30000 − 8000
+    assert ind.net_debt_to_equity == Decimal(-8000) / Decimal(9000)
+    assert ind.net_debt_to_ebit == Decimal(-8000) / Decimal(3000)
+    assert ind.ev_ebit == Decimal(22000) / Decimal(3000)
+    assert ind.equity_to_assets == Decimal("0.18")  # 9000 / 50000
+    # ROIC does NOT follow: invested capital (equity + net debt = 9000 − 8000)
+    # collapses toward zero for a cash-rich insurer and the ratio explodes
+    # (BBSE3 2025 came out 1,918%) — inapplicable, same verdict as the bank's.
+    assert ind.roic is None
+    assert ind.null_reasons["roic"] is NullReason.INAPPLICABLE_REGIME
+    # The gross-debt ratio stays null — there is no borrowings line to read:
+    assert ind.debt_to_equity is None
+    assert ind.null_reasons["debt_to_equity"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    # EBITDA-based members of the family stay unmapped for this regime:
+    assert ind.net_debt_to_ebitda is None
+    assert ind.null_reasons["net_debt_to_ebitda"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+
+
+def test_insurer_net_debt_family_blames_the_market_input_not_the_debt_line() -> None:
+    # The attribution shift of #103: with net debt derived from cash, an
+    # insurer's null ev_ebit must name what actually broke (the missing cap) —
+    # not the borrowings line its schema never had.
+    insurer = StandardizedFinancials(
+        reference_date=date(2024, 12, 31),
+        sector=Sector.INSURER,
+        equity=Decimal(9000),
+        ebit=Decimal(3000),
+        cash=Decimal(8000),
+        filed_regime=AccountingRegime.INSURANCE,
+        unmapped_fields=_FINANCIAL_UNMAPPED,
+    )
+    ind = compute(insurer, None, MarketData())  # no cap
+
+    assert ind.ev_ebit is None
+    assert ind.null_reasons["ev_ebit"] is NullReason.MISSING_PRICE
+    assert ind.null_reasons["enterprise_value"] is NullReason.MISSING_PRICE
 
 
 def test_applicability_follows_the_filed_regime_not_the_sector() -> None:

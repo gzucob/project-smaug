@@ -90,6 +90,18 @@ def _negated(value: Decimal | None) -> Decimal | None:
 
 
 def _net_debt(financials: StandardizedFinancials) -> Decimal | None:
+    """Total debt net of cash — for an insurer, simply the cash, negated.
+
+    The insurance schema files no borrowings line at all (2.01.04 is
+    "Capitalização" there, ADR 0015), so what remains of the definition is
+    ``0 − cash``. Suppressing it instead surfaced the same economic fact for
+    one insurer and hid it for the other: CXSE3 files as a corporate holding
+    and showed its net cash while BBSE3 could not (#103). The platforms
+    publish it for both.
+    """
+    regime = financials.filed_regime or expected_regime(financials.sector)
+    if regime is AccountingRegime.INSURANCE:
+        return None if financials.cash is None else -financials.cash
     if financials.total_debt is None:
         return None
     return financials.total_debt - (financials.cash or Decimal(0))
@@ -119,8 +131,11 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
             "ebitda_margin",
             "net_debt",
             "net_debt_to_ebitda",
+            "net_debt_to_ebit",
+            "net_debt_to_equity",
             "debt_to_equity",
             "ev_ebitda",
+            "ev_ebit",
             "enterprise_value",
             "roic",
             "current_ratio",
@@ -132,6 +147,11 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
             "gross_margin",
             "ebit_margin",
             "ebitda_margin",
+            # With net debt = −cash (#103), invested capital (equity + net debt)
+            # collapses toward zero for a cash-rich insurer and the ratio
+            # explodes — BBSE3's 2025 ROIC came out 1,918%. Same verdict as the
+            # bank's: the denominator inherits the net-debt degeneracy.
+            "roic",
         }
     )
     | _BANK_ONLY,
@@ -202,8 +222,11 @@ _NEEDS: dict[str, _Needs] = {
     "bvps": _Needs(accounts=("equity",), shares=True),
     "net_debt": _Needs(accounts=("total_debt",)),
     "net_debt_to_ebitda": _Needs(accounts=("total_debt", "ebitda")),
+    "net_debt_to_ebit": _Needs(accounts=("total_debt", "ebit")),
+    "net_debt_to_equity": _Needs(accounts=("total_debt", "equity")),
     "debt_to_equity": _Needs(accounts=("total_debt", "equity")),
     "liabilities_to_assets": _Needs(accounts=("total_assets", "equity")),
+    "equity_to_assets": _Needs(accounts=("equity", "total_assets")),
     "current_ratio": _Needs(accounts=("current_assets", "current_liabilities")),
     "revenue_growth": _Needs(accounts=("revenue",), prior="revenue"),
     "net_income_growth": _Needs(accounts=("net_income",), prior="net_income"),
@@ -231,6 +254,7 @@ _NEEDS: dict[str, _Needs] = {
     "payout": _Needs(accounts=("dividends_paid", "net_income")),
     "dividend_yield": _Needs(accounts=("dividends_paid",), cap=True),
     "ev_ebitda": _Needs(accounts=("total_debt", "ebitda"), cap=True),
+    "ev_ebit": _Needs(accounts=("total_debt", "ebit"), cap=True),
     "fcf": _Needs(accounts=("cfo", "capex")),
     "price_to_fcf": _Needs(accounts=("cfo", "capex"), cap=True),
     "fcf_yield": _Needs(accounts=("cfo", "capex"), cap=True),
@@ -245,6 +269,24 @@ _NEEDS: dict[str, _Needs] = {
     "enterprise_value": _Needs(accounts=("total_debt",), cap=True),
     "shares": _Needs(shares=True),
 }
+
+# The indicators built on ``_net_debt``. Their ``total_debt`` requirement shifts
+# with the definition: an insurance-regime filer's net debt derives from cash
+# alone (#103), so for these — and only these — a null is attributed against
+# ``cash``, never against the borrowings line the schema does not have.
+# ``debt_to_equity`` stays out (gross debt genuinely needs the filed line), and
+# ``roic`` needs no entry: it is inapplicable for the insurer outright.
+_NET_DEBT_DERIVED = frozenset(
+    {
+        "net_debt",
+        "net_debt_to_ebitda",
+        "net_debt_to_ebit",
+        "net_debt_to_equity",
+        "ev_ebitda",
+        "ev_ebit",
+        "enterprise_value",
+    }
+)
 
 
 def _classify(
@@ -268,7 +310,14 @@ def _classify(
     """
     if name in inapplicable:
         return NullReason.INAPPLICABLE_REGIME
+    regime = f.filed_regime or expected_regime(f.sector)
     for account in needs.accounts:
+        if (
+            account == "total_debt"
+            and name in _NET_DEBT_DERIVED
+            and regime is AccountingRegime.INSURANCE
+        ):
+            account = "cash"  # the insurer's net debt derives from cash (#103)
         if getattr(f, account) is None:
             if account in f.unmapped_fields:
                 return NullReason.SOURCE_ACCOUNT_UNMAPPED
@@ -386,8 +435,11 @@ def compute(
         bvps=_div(f.equity, market.shares),
         net_debt=net_debt,
         net_debt_to_ebitda=_div(net_debt, annual_ebitda),
+        net_debt_to_ebit=_div(net_debt, annual_ebit),
+        net_debt_to_equity=_div(net_debt, f.equity),
         debt_to_equity=_div(f.total_debt, f.equity),
         liabilities_to_assets=_div(_sub(f.total_assets, f.equity), f.total_assets),
+        equity_to_assets=_div(f.equity, f.total_assets),
         current_ratio=_div(f.current_assets, f.current_liabilities),
         revenue_growth=_growth(f.revenue, prev_revenue),
         net_income_growth=_growth(f.net_income, prev_net_income),
@@ -404,6 +456,7 @@ def compute(
         payout=_div(f.dividends_paid, f.net_income),
         dividend_yield=_div(f.dividends_paid, cap),
         ev_ebitda=_div(enterprise_value, annual_ebitda),
+        ev_ebit=_div(enterprise_value, annual_ebit),
         fcf=annual_fcf,
         price_to_fcf=_div(cap, annual_fcf),
         fcf_yield=_div(annual_fcf, cap),

@@ -52,8 +52,11 @@ class IndicatorsResponse(BaseModel):
     bvps: Decimal | None
     net_debt: Decimal | None
     net_debt_to_ebitda: Decimal | None
+    net_debt_to_ebit: Decimal | None
+    net_debt_to_equity: Decimal | None
     debt_to_equity: Decimal | None
     liabilities_to_assets: Decimal | None
+    equity_to_assets: Decimal | None
     current_ratio: Decimal | None
     revenue_growth: Decimal | None
     net_income_growth: Decimal | None
@@ -66,6 +69,7 @@ class IndicatorsResponse(BaseModel):
     payout: Decimal | None
     dividend_yield: Decimal | None
     ev_ebitda: Decimal | None
+    ev_ebit: Decimal | None
     fcf: Decimal | None
     price_to_fcf: Decimal | None
     fcf_yield: Decimal | None
