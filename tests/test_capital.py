@@ -117,6 +117,17 @@ def _factors(**by_year: int) -> dict[int, Decimal]:
     )
 
 
+def _factors_with_composition(
+    composition: list[int], **by_year: int
+) -> dict[int, Decimal]:
+    from smaug.analysis.domain.capital import restatement_factors
+
+    return restatement_factors(
+        {int(year.lstrip("y")): Decimal(count) for year, count in by_year.items()},
+        [Decimal(total) for total in composition],
+    )
+
+
 def test_a_clean_double_is_restated_across_the_bonus() -> None:
     # BBAS3's 2023 bonus: 2:1, exact to the digit. The pre-bonus years double.
     factors = _factors(
@@ -167,10 +178,51 @@ def test_factors_compound_across_two_actions() -> None:
     assert factors[2022] == Decimal(1)
 
 
-def test_a_composite_action_in_one_year_is_missed_and_documented() -> None:
-    # VIVT3 2024: a 2:1 split and a 43.9 M cancellation land in the same FRE
-    # year — the combined ratio (1.9734) is dirty, so nothing restates. The
-    # limitation is recorded in ADR 0027; this test pins the behaviour so a
-    # future fix flips it knowingly.
-    factors = _factors(y2023=1_652_588_360, y2024=3_261_287_392)
+def test_a_composite_action_is_restated_via_the_composition() -> None:
+    # VIVT3: the FRE fuses a 2:1 split with a same-year cancellation (1.9734, dirty),
+    # so the FRE year alone cannot restate. The composition is dated by quarter and
+    # filed in units, so the split reads clean there (1,630,643,696 -> 3,261,287,392
+    # = x2); pre-split years now restate (ADR 0028 — was the missed case of ADR 0027,
+    # which this test used to pin).
+    factors = _factors_with_composition(
+        [1_630_643_696, 3_261_287_392], y2023=1_652_588_360, y2024=3_261_287_392
+    )
+    assert factors[2023] == Decimal(2)
+    assert factors[2024] == Decimal(1)
+
+
+def test_a_clean_fre_ratio_ignores_the_composition() -> None:
+    # BBAS3-shaped: the FRE ratio is already a clean x2, so the composition is never
+    # consulted — the factor stays 2, not 4 (no double count).
+    factors = _factors_with_composition(
+        [2_865_417_020, 5_730_834_040], y2022=2_865_417_020, y2023=5_730_834_040
+    )
+    assert factors[2022] == Decimal(2)
+
+
+def test_a_composition_split_does_not_restate_a_share_decrease() -> None:
+    # A dirty *shrinking* FRE ratio is a cancellation, never restated (ADR 0027):
+    # the composition is only consulted for a share-increasing dirty ratio, so a
+    # clean x2 sitting in the series cannot pull a buyback into a restatement.
+    factors = _factors_with_composition(
+        [500_000_000, 1_000_000_000], y2023=1_000_000_000, y2024=950_249_000
+    )
     assert factors[2023] == Decimal(1)
+
+
+def test_a_thousands_scale_composition_contributes_nothing() -> None:
+    # The reader drops thousands-scale rows before this point, so the series is
+    # empty for such a filer: a dirty increasing FRE ratio has nothing to recover
+    # from and stays factor 1 (LREN3's series is entirely thousands).
+    factors = _factors_with_composition([], y2023=1_652_588_360, y2024=3_261_287_392)
+    assert factors[2023] == Decimal(1)
+
+
+def test_a_composition_split_needs_a_unique_match() -> None:
+    from smaug.analysis.domain.capital import _composition_split
+
+    # Two clean x2 pairs both land on the target: ambiguous, so nothing is returned.
+    series = [Decimal(1_000), Decimal(2_000), Decimal(1_000), Decimal(2_000)]
+    assert _composition_split(series, Decimal(2_000)) is None
+    # A single clean x2 landing on the target resolves.
+    assert _composition_split([Decimal(1_000), Decimal(2_000)], Decimal(2_000)) == 2

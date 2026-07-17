@@ -1,6 +1,6 @@
 # 0027 — The per-share history is split-adjusted onto the current base
 
-- **Status:** Accepted
+- **Status:** Superseded by [0028](0028-composition-detects-a-composite-split.md)
 - **Date:** 2026-07-16
 
 ## Context

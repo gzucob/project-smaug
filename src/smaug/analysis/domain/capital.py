@@ -21,7 +21,7 @@ scale — which, at 1000x, would be a far larger error than the one it corrects.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from decimal import ROUND_HALF_EVEN, Decimal
 
 from smaug.analysis.domain.financials import CapitalComposition, ShareCounts
@@ -143,8 +143,45 @@ def _clean_ratio(earlier: Decimal, later: Decimal) -> Decimal | None:
     return None
 
 
+# How closely a composition split's post-action total must match the FRE year's
+# count for the two to be the same event. They are near-simultaneous post-split
+# readings, so the match is tight; a loose bound would let an unrelated level pass.
+_COMPOSITION_MATCH_TOLERANCE = Decimal("0.005")
+
+
+def _composition_split(
+    units_series: Sequence[Decimal], later: Decimal
+) -> Decimal | None:
+    """A clean *share-increasing* action in the composition that explains ``later``.
+
+    ADR 0028: a split approved between a fiscal year-end and the FRE's approval
+    date lands in the wrong FRE year and combines with a same-year cancellation, so
+    the FRE-year ratio comes out dirty (VIVT3 2024: 1.9734). The composition member
+    is dated by the real quarter, so the split shows there as a clean ratio — but
+    only where the member is filed **in units**: a thousands-scale row is rounded
+    and its ratios cannot be exact to the share (LREN3's buyback would look like a
+    clean 19/20). ``units_series`` is therefore the units-scale rows only, in date
+    order.
+
+    Returns the clean ratio of the one consecutive pair that both is a
+    share-increasing corporate action (``> 1``, exact to the share) and lands on
+    ``later`` — the FRE's post-jump count, the reliable anchor. A cancellation
+    (ratio ``< 1``) never restates (ADR 0027). ``None`` unless exactly one pair
+    qualifies, so an ambiguous series changes nothing.
+    """
+    matches = [
+        ratio
+        for earlier, post in zip(units_series, units_series[1:], strict=False)
+        if (ratio := _clean_ratio(earlier, post)) is not None
+        and ratio > 1
+        and abs(post - later) / later <= _COMPOSITION_MATCH_TOLERANCE
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def restatement_factors(
     issued_by_year: Mapping[int, Decimal],
+    composition_units: Sequence[Decimal] = (),
 ) -> dict[int, Decimal]:
     """The factor that restates each year's counts onto the latest year's base.
 
@@ -158,13 +195,23 @@ def restatement_factors(
     buyback cancellation) contribute factor 1: those shares moved between owners,
     and restating them would rewrite a dilution as a corporate action. The latest
     year is the base and always maps to 1.
+
+    ``composition_units`` — the units-scale composition totals in date order —
+    recovers the split the FRE hides when it combines a split with a same-year
+    cancellation (ADR 0028): a dirty but *share-increasing* FRE ratio is retried
+    against the composition, where the split reads clean. It is only ever consulted
+    for such ratios, so a clean FRE ratio (BBAS3, LREN3's bonus, SANEPAR) and a
+    share-*decreasing* one (a cancellation) behave exactly as before.
     """
     factors: dict[int, Decimal] = {}
     running = Decimal(1)
     ordered = sorted(issued_by_year, reverse=True)
     for year, previous_year in zip(ordered, ordered[1:], strict=False):
         factors[year] = running
-        ratio = _clean_ratio(issued_by_year[previous_year], issued_by_year[year])
+        earlier, later = issued_by_year[previous_year], issued_by_year[year]
+        ratio = _clean_ratio(earlier, later)
+        if ratio is None and later > earlier:
+            ratio = _composition_split(composition_units, later)
         if ratio is not None:
             running *= ratio
     if ordered:
