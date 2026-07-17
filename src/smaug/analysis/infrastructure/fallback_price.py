@@ -9,7 +9,10 @@ chains sit behind it, wired at the composition root.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from smaug.analysis.domain.financials import MarketData, YearPrices
+from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.ports import CurrentQuoteProvider, PriceHistoryProvider
 from smaug.shared.errors import BrapiError
 from smaug.shared.logging import get_logger
@@ -39,24 +42,42 @@ class FallbackQuoteProvider:
 
 
 class FallbackPriceHistory:
-    """A ``PriceHistoryProvider`` that falls back when the primary has no year price."""
+    """A ``PriceHistoryProvider`` chain: try each source until one has a price.
 
-    def __init__(
-        self, primary: PriceHistoryProvider, fallback: PriceHistoryProvider
-    ) -> None:
-        self._primary = primary
-        self._fallback = fallback
+    Takes an ordered list of providers (Yahoo first, then any contracted source —
+    ADR 0013 / #67); the contracted slot is wired in only when its key is set, so
+    the chain is one, two, or three deep without any code change here. Each source
+    is tried in turn and the first with a usable year price wins; a source that
+    raises at the transport layer (a ``BrapiError``) is logged and skipped.
+
+    When *no* source has a price, the empty result carries a reason only if every
+    source that answered agreed the symbol is unknown
+    (``PRICE_SYMBOL_NOT_FOUND``): that is a real delisting/rename (#64). If any
+    source recognised the symbol but merely had no data for the year, the null
+    stays a plain (transient) gap.
+    """
+
+    def __init__(self, providers: Sequence[PriceHistoryProvider]) -> None:
+        if not providers:
+            raise ValueError("FallbackPriceHistory needs at least one provider")
+        self._providers = tuple(providers)
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:
-        try:
-            prices = await self._primary.year_prices(ticker, year)
+        reasons: list[NullReason | None] = []
+        for provider in self._providers:
+            try:
+                prices = await provider.year_prices(ticker, year)
+            except BrapiError as exc:
+                logger.warning(
+                    "History source %d for %s failed (%s); trying next",
+                    year,
+                    ticker,
+                    exc,
+                )
+                continue
             if prices.adjusted_avg is not None:
                 return prices
-        except BrapiError as exc:
-            logger.warning(
-                "Primary history %d for %s failed (%s); trying fallback",
-                year,
-                ticker,
-                exc,
-            )
-        return await self._fallback.year_prices(ticker, year)
+            reasons.append(prices.null_reason)
+        if reasons and all(r is NullReason.PRICE_SYMBOL_NOT_FOUND for r in reasons):
+            return YearPrices(null_reason=NullReason.PRICE_SYMBOL_NOT_FOUND)
+        return YearPrices()

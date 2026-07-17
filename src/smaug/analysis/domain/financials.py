@@ -174,7 +174,14 @@ class YearPrices:
     ``nominal_avg`` is the mean of daily closes; ``adjusted_avg`` is the mean of
     dividend-adjusted closes (the total-return series the platforms price
     historical multiples on). For heavy payers the two diverge a lot.
+
+    ``null_reason`` explains an *empty* result (both averages ``None``):
+    ``PRICE_SYMBOL_NOT_FOUND`` when the source rejected the symbol itself (a
+    delisted/renamed ticker — #64), ``None`` for a plain gap (the symbol is known
+    but had no trading in the window). It lets a fallback chain tell "nobody knows
+    this symbol" apart from "this source just had no data for the year".
     """
 
     nominal_avg: Decimal | None = None
     adjusted_avg: Decimal | None = None
+    null_reason: NullReason | None = None

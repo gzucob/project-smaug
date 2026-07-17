@@ -23,6 +23,7 @@ from smaug.analysis.application.doctor import (
 )
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.indicators import NullReason
+from smaug.analysis.domain.ports import PriceHistoryProvider
 from smaug.analysis.infrastructure.brapi_price import BrapiPriceProvider
 from smaug.analysis.infrastructure.composite_price import CompositePriceProvider
 from smaug.analysis.infrastructure.fallback_price import (
@@ -344,15 +345,19 @@ def _build_price_provider(
     brapi = BrapiPriceProvider(
         settings.brapi_base_url, settings.brapi_token.get_secret_value(), http
     )
+    # History chain (ADR 0013 / #67): Yahoo first, brapi next. A contracted source
+    # (EODHD/Twelve Data) drops in as a third link here once its key is configured —
+    # the chain takes any number of providers, so no other code changes.
+    history: list[PriceHistoryProvider] = [
+        YahooPriceHistory(settings.yahoo_base_url, http),
+        brapi,
+    ]
     return CompositePriceProvider(
         quote=FallbackQuoteProvider(
             primary=YahooQuoteProvider(settings.yahoo_base_url, http),
             fallback=brapi,
         ),
-        history=FallbackPriceHistory(
-            primary=YahooPriceHistory(settings.yahoo_base_url, http),
-            fallback=brapi,
-        ),
+        history=FallbackPriceHistory(history),
     )
 
 

@@ -31,6 +31,10 @@ class NullReason(StrEnum):
     * ``MISSING_PRICE`` / ``MISSING_SHARE_COUNT`` / ``MISSING_PRIOR_PERIOD`` —
       an upstream input from another source is missing (brapi price, FRE share
       count, the prior year's ingestion), split so a report can say *which*.
+      ``MISSING_PRICE`` is the *transient* price miss (a vendor gap for a year);
+      ``PRICE_SYMBOL_NOT_FOUND`` is its non-transient sibling — every price source
+      rejected the symbol itself (a delisted/renamed ticker with no override), so
+      the null is structural, not a passing outage (#64).
     * ``ZERO_DENOMINATOR`` — every input is present, but the ratio is undefined
       because its denominator is zero (a holding filing revenue = 0 nulls
       P/Receita and the margins; a year with ~zero earnings nulls P/E, payout).
@@ -45,6 +49,7 @@ class NullReason(StrEnum):
     SOURCE_ACCOUNT_UNMAPPED = "source_account_unmapped"
     SOURCE_ACCOUNT_ABSENT = "source_account_absent"
     MISSING_PRICE = "missing_price"
+    PRICE_SYMBOL_NOT_FOUND = "price_symbol_not_found"
     MISSING_SHARE_COUNT = "missing_share_count"
     MISSING_PRIOR_PERIOD = "missing_prior_period"
     ZERO_DENOMINATOR = "zero_denominator"

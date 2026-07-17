@@ -294,6 +294,12 @@ class AnalyzePortfolioUseCase:
             )
             prices[symbol] = year_prices.nominal_avg
         cap, cap_null_reason = capitalize(classes, counts, prices)
+        if cap is None and own.null_reason is not None:
+            # The history chain knows *why* there is no price: the symbol is unknown
+            # everywhere (delisted/renamed). Prefer that structural cause over the
+            # generic MISSING_PRICE the cap reports, so the null is non-transient in
+            # ``smaug doctor`` (#64).
+            cap_null_reason = own.null_reason
         market = MarketData(
             price=own.nominal_avg,
             market_cap=cap,

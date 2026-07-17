@@ -110,10 +110,14 @@ async def main() -> None:
         classes_of = _classes_resolver(identities)
         reader = MongoFundamentalsReader(collection, sector_resolver=sector_of)
         history = FallbackPriceHistory(
-            primary=YahooPriceHistory(settings.yahoo_base_url, http),
-            fallback=BrapiPriceProvider(
-                settings.brapi_base_url, settings.brapi_token.get_secret_value(), http
-            ),
+            [
+                YahooPriceHistory(settings.yahoo_base_url, http),
+                BrapiPriceProvider(
+                    settings.brapi_base_url,
+                    settings.brapi_token.get_secret_value(),
+                    http,
+                ),
+            ]
         )
         tickers = (*portfolio_tickers(), *REPRESENTATIVES)
         for ticker in tickers:
