@@ -30,7 +30,11 @@ from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
-from smaug.analysis.domain.capital import outstanding_counts, restatement_factors
+from smaug.analysis.domain.capital import (
+    filed_scale,
+    outstanding_counts,
+    restatement_factors,
+)
 from smaug.analysis.domain.financials import CapitalComposition, ShareCounts
 from smaug.portfolio.domain.share_classes import shares_per_unit
 from smaug.shared.logging import get_logger
@@ -190,7 +194,8 @@ class MongoSharesReader:
             )
             net = issued
         factors = restatement_factors(
-            {y: c.total for y, c in by_year.items() if c.total is not None}
+            {y: c.total for y, c in by_year.items() if c.total is not None},
+            await self._composition_units_series(ticker, by_year),
         )
         factor = factors.get(served, Decimal(1))
         if factor != 1:
@@ -286,3 +291,44 @@ class MongoSharesReader:
                 treasury_total=_dec(payload.get("treasury_total_shares")),
             )
         return by_year
+
+    async def _composition_units_series(
+        self, ticker: str, issued_by_year: dict[int, ShareCounts]
+    ) -> list[Decimal]:
+        """The composition's issued totals per filed period, units-scale rows only.
+
+        Feeds the split detection of ADR 0028. The **full quarter-by-quarter**
+        series, not the latest-per-year one: a split and a same-year cancellation
+        only separate at quarter granularity (VIVT3's 2:1 shows between 2025-Q1 and
+        2025-Q2, where the FRE year already fuses them). Each period's scale is
+        reconciled against that year's FRE total (ADR 0017) and a thousands-scale
+        row is dropped — its rounding forbids the exact-to-the-share ratio the
+        detection depends on (LREN3's buyback would round to a false 19/20).
+        """
+        cursor = self._collection.find(
+            {"ticker": ticker, "source": "cvm", "module": TREASURY_MODULE}
+        ).sort("fetched_at", 1)
+        best: dict[str, tuple[int, Decimal]] = {}  # reference_date -> (version, total)
+        async for document in cursor:
+            payload = document.get("payload")
+            if not isinstance(payload, Mapping):
+                continue
+            reference_date = payload.get("reference_date")
+            total = _positive(payload.get("total_shares"))
+            if not isinstance(reference_date, str) or total is None:
+                continue
+            version = payload.get("version")
+            rank = version if isinstance(version, int) else 0
+            if reference_date in best and rank < best[reference_date][0]:
+                continue
+            best[reference_date] = (rank, total)
+        series: list[Decimal] = []
+        for reference_date in sorted(best):
+            year = _year_of(reference_date)
+            filed = issued_by_year.get(year) if year is not None else None
+            if filed is None or filed.total is None:
+                continue
+            total = best[reference_date][1]
+            if filed_scale(filed.total, total) == Decimal(1):  # units, not thousands
+                series.append(total)
+        return series
