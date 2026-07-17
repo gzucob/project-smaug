@@ -7,10 +7,12 @@ import httpx
 import pytest
 
 from smaug.analysis.domain.financials import MarketData
+from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.infrastructure.yahoo_price import (
     YahooPriceHistory,
     YahooQuoteProvider,
 )
+from smaug.portfolio.domain import market_symbols
 from smaug.shared.errors import BrapiTimeoutError
 
 
@@ -78,8 +80,9 @@ async def test_year_prices_skips_null_slots() -> None:
     assert prices.nominal_avg == Decimal(20)  # (10 + 30) / 2
 
 
-async def test_year_prices_null_when_symbol_unknown() -> None:
-    # A delisted / unknown ticker: Yahoo answers 404 -> expected null, no crash.
+async def test_year_prices_symbol_not_found_is_named_non_transient() -> None:
+    # A delisted / unknown ticker: Yahoo answers 404 -> a *named* null (#64), not a
+    # bare one, so a fallback chain and smaug doctor can tell it from a gap.
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, json={"chart": {"result": None, "error": {}}})
 
@@ -89,6 +92,39 @@ async def test_year_prices_null_when_symbol_unknown() -> None:
 
     assert prices.nominal_avg is None
     assert prices.adjusted_avg is None
+    assert prices.null_reason is NullReason.PRICE_SYMBOL_NOT_FOUND
+
+
+async def test_year_prices_other_http_error_stays_a_bare_gap() -> None:
+    # A transient non-404 (e.g. 500): expected null with no reason, so the chain
+    # treats it as a gap rather than a delisting.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={})
+
+    async with _mock_client(handler) as http:
+        provider = YahooPriceHistory("https://query1.finance.yahoo.com", http)
+        prices = await provider.year_prices("PETR4", 2024)
+
+    assert prices.null_reason is None
+
+
+async def test_year_prices_uses_the_market_symbol_override() -> None:
+    # A renamed ticker resolves to the overridden Yahoo symbol, not its own (#64).
+    market_symbols.TICKER_SYMBOL_OVERRIDES["OLDX3"] = "NEWX3"
+    try:
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/v8/finance/chart/NEWX3.SA"
+            body = _chart([_ts(2024, 6, 3)], [40], [30])
+            return httpx.Response(200, json=body)
+
+        async with _mock_client(handler) as http:
+            provider = YahooPriceHistory("https://query1.finance.yahoo.com", http)
+            prices = await provider.year_prices("OLDX3", 2024)
+
+        assert prices.nominal_avg == Decimal(40)
+    finally:
+        del market_symbols.TICKER_SYMBOL_OVERRIDES["OLDX3"]
 
 
 async def test_year_prices_null_when_no_result() -> None:

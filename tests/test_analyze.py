@@ -425,6 +425,38 @@ async def test_analyze_prices_closed_year_without_the_live_quote() -> None:
     assert ttm.indicators.pe is None
 
 
+async def test_delisted_closed_year_names_the_price_null_non_transient() -> None:
+    # No price source knows the symbol (delisted/renamed, #64): the history chain
+    # returns a PRICE_SYMBOL_NOT_FOUND null, and the closed-year cap-multiples must
+    # carry that structural cause rather than a transient MISSING_PRICE — so
+    # smaug doctor tells a delisting apart from a passing Yahoo gap.
+    quarters = _quarters(
+        Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(6000)
+    )
+    annual_2024 = StandardizedFinancials(
+        reference_date=date(2024, 12, 31),
+        sector=Sector.COMMODITY,
+        period_start=date(2024, 1, 1),
+        net_income=Decimal(600),
+        equity=Decimal(3600),
+    )
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"PETR4": quarters}, annuals={"PETR4": [annual_2024]}),
+        FakePrice(year=YearPrices(null_reason=NullReason.PRICE_SYMBOL_NOT_FOUND)),
+        repo,
+        FakeShares({2024: _counts(common=800, preferred=400)}),
+    )
+
+    await use_case.execute(["PETR4"])
+    views = {(a.view, a.reference_date): a for a in repo.saved}
+
+    y2024 = views[("closed_year", date(2024, 12, 31))]
+    assert y2024.price is None
+    assert y2024.indicators.pe is None
+    assert y2024.indicators.null_reasons["pe"] is NullReason.PRICE_SYMBOL_NOT_FOUND
+
+
 async def test_analyze_skips_when_fewer_than_four_quarters() -> None:
     two = _quarters(Sector.COMMODITY, net_income=Decimal(300))[:2]
     use_case = AnalyzePortfolioUseCase(

@@ -22,6 +22,8 @@ from typing import Any
 import httpx
 
 from smaug.analysis.domain.financials import MarketData, YearPrices
+from smaug.analysis.domain.indicators import NullReason
+from smaug.portfolio.domain.market_symbols import market_symbol
 from smaug.shared.errors import BrapiTimeoutError
 from smaug.shared.logging import get_logger
 
@@ -47,8 +49,12 @@ def _avg(values: list[Decimal]) -> Decimal | None:
 
 
 def _yahoo_symbol(ticker: str) -> str:
-    """Map a B3 ticker to its Yahoo symbol (``PETR4`` → ``PETR4.SA``)."""
-    return f"{ticker}.SA"
+    """Map a B3 ticker to its Yahoo symbol (``PETR4`` → ``PETR4.SA``).
+
+    Goes through the portfolio override map first, so a renamed/delisted ticker
+    can point at the symbol Yahoo actually carries its history under (#64).
+    """
+    return f"{market_symbol(ticker)}.SA"
 
 
 class YahooQuoteProvider:
@@ -121,8 +127,22 @@ class YahooPriceHistory:
                 f"transport failure fetching Yahoo history for {symbol}: {exc!r}"
             ) from exc
 
+        if response.status_code == httpx.codes.NOT_FOUND:
+            # Yahoo answers 404 for a symbol it does not know — a delisted/renamed
+            # ticker with no override. A *non-transient* null, distinct from a mere
+            # gap: report the cause so the chain and ``smaug doctor`` can tell them
+            # apart (#64).
+            logger.warning(
+                "Yahoo history %d for %s: symbol not found (HTTP 404); "
+                "delisted/renamed? — add a market-symbol override",
+                year,
+                symbol,
+            )
+            return YearPrices(null_reason=NullReason.PRICE_SYMBOL_NOT_FOUND)
+
         if response.status_code != httpx.codes.OK:
-            # Unknown symbol (delisted) or a bad window: expected null, not a crash.
+            # A transient/bad window: expected null, not a crash. No reason recorded,
+            # so the chain treats it as a gap this source could not fill.
             logger.warning(
                 "Yahoo history %d for %s: HTTP %d; year multiples will be null",
                 year,
