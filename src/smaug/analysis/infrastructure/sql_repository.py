@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import date
-from typing import cast
+from collections.abc import Iterable
+from datetime import date, datetime
+from typing import NamedTuple, cast
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from smaug.analysis.domain.entities import (
     VIEW_CLOSED_YEAR,
     VIEW_TTM,
     AnalysisView,
+    PruneResult,
     TickerAnalysis,
 )
 from smaug.analysis.domain.indicators import Indicators, NullReason
@@ -153,6 +155,32 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
     )
 
 
+class _RunKey(NamedTuple):
+    """The identity and recency of one stored run, for prune selection."""
+
+    id: int
+    ticker: str
+    view: str
+    reference_date: date
+    computed_at: datetime
+
+
+def _latest_ids(runs: Iterable[_RunKey]) -> set[int]:
+    """The row ids to keep: the newest run per (ticker, view, reference_date).
+
+    Mirrors the reads' latest-per-cell rule (newest ``computed_at``), with the row
+    ``id`` as a deterministic tie-break so pruning is reproducible even in the
+    (practically impossible — ``computed_at`` is one instant per run) case of a tie.
+    """
+    best: dict[tuple[str, str, date], tuple[datetime, int]] = {}
+    for run in runs:
+        cell = (run.ticker, run.view, run.reference_date)
+        candidate = (run.computed_at, run.id)
+        if cell not in best or candidate > best[cell]:
+            best[cell] = candidate
+    return {row_id for _, row_id in best.values()}
+
+
 class SqlAlchemyAnalysisRepository:
     """Persists analyses and reads back the latest per ticker."""
 
@@ -213,3 +241,29 @@ class SqlAlchemyAnalysisRepository:
                 seen.add(row.reference_date)
                 by_year.append(_to_entity(row))
         return sorted(by_year, key=lambda a: a.reference_date)
+
+    async def prune(self) -> PruneResult:
+        """Delete every superseded run, keeping only the latest per cell (#71).
+
+        The keep set is computed in Python (``_latest_ids``) from a lean projection
+        of the table rather than in SQL — the table is small (hundreds of rows) and
+        a pure helper is unit-testable without a database, which CI has none of.
+        """
+        keys = select(
+            TickerAnalysisRow.id,
+            TickerAnalysisRow.ticker,
+            TickerAnalysisRow.view,
+            TickerAnalysisRow.reference_date,
+            TickerAnalysisRow.computed_at,
+        )
+        async with self._session_factory() as session:
+            runs = [_RunKey(*row) for row in (await session.execute(keys)).all()]
+            keep = _latest_ids(runs)
+            if keep:
+                await session.execute(
+                    delete(TickerAnalysisRow).where(TickerAnalysisRow.id.not_in(keep))
+                )
+                await session.commit()
+        # Every row is either kept or deleted, so this is exact — no need to read a
+        # driver-specific rowcount back.
+        return PruneResult(deleted=len(runs) - len(keep), kept=len(keep))

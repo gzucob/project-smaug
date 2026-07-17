@@ -10,7 +10,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Protocol
 
-from smaug.analysis.domain.entities import TickerAnalysis
+from smaug.analysis.domain.entities import PruneResult, TickerAnalysis
 from smaug.analysis.domain.financials import (
     MarketData,
     ShareCounts,
@@ -115,4 +115,13 @@ class AnalysisRepository(Protocol):
     async def history(self, ticker: str) -> list[TickerAnalysis]:
         """Closed-year analyses for a ticker: latest computation per fiscal year,
         oldest → newest."""
+        ...
+
+    async def prune(self) -> PruneResult:
+        """Delete superseded runs, keeping only the latest per cell (#71).
+
+        A cell is one (ticker, view, reference_date); the kept row is its newest
+        ``computed_at`` — exactly what the reads above already surface, so pruning
+        reclaims space without changing any read. A deliberate maintenance action,
+        never a side effect of ``analyze``."""
         ...

@@ -431,6 +431,36 @@ async def _run_doctor(tickers: tuple[str, ...]) -> int:
     return 0
 
 
+@app.command()
+def prune() -> None:
+    """Delete superseded analysis runs, keeping only the latest per cell (#71).
+
+    ``ticker_analysis`` is append-only: every ``analyze`` inserts fresh rows and the
+    reads already take the latest per (ticker, view, reference_date). This reclaims
+    the space the older, shadowed runs hold. ``doctor`` and the API are unchanged —
+    they ignore those rows anyway. A deliberate maintenance action, never a side
+    effect of ``analyze``.
+    """
+    exit_code = _guarded(_run_prune())
+    raise typer.Exit(code=exit_code)
+
+
+async def _run_prune() -> int:
+    settings = get_settings()
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    try:
+        result = await SqlAlchemyAnalysisRepository(session_factory).prune()
+    finally:
+        await engine.dispose()
+
+    print(
+        f"Pruned {result.deleted} superseded run(s); "
+        f"kept {result.kept} latest-per-cell row(s)."
+    )
+    return 0
+
+
 def _format_collection_log(outcomes: list[FetchOutcome]) -> str:
     """Human-readable collection log (plan §5.1)."""
     counts: dict[OutcomeStatus, int] = {}
