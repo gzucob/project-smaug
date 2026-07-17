@@ -323,6 +323,36 @@ def test_standardize_takes_controllers_share_wide_cash_and_dividends() -> None:
     assert f.dfc_period_start == date(2025, 1, 1)
 
 
+def test_standardize_minority_search_skips_a_grandchild_reserve_line() -> None:
+    # TOTS3's real BPP (#118): the capital reserves file "2.03.02.09 — Prêmio na
+    # Compra de Participação de Não Controladores" (a negative reserve) BEFORE the
+    # real minority block 2.03.09. A descendant-scoped name search read that
+    # reserve as the minority interest, so controllers = total − (−24323) came out
+    # LARGER than the consolidated total. Only direct children of the total may
+    # carry the split.
+    by_module = {
+        "BPP": {
+            "accounts": [
+                _acc("2.03", "Patrimônio Líquido Consolidado", "4987121"),
+                _acc(
+                    "2.03.02.09",
+                    "Prêmio na Compra de Participação de Não Controladores",
+                    "-24323",
+                ),
+                _acc(
+                    "2.03.09",
+                    "Participação dos Acionistas Não Controladores",
+                    "305769",
+                ),
+            ]
+        },
+    }
+
+    f = standardize(by_module, Sector.INDUSTRY, date(2024, 12, 31))
+
+    assert f.equity == Decimal("4681352")  # 4987121 - 305769, never - (-24323)
+
+
 def _dre(accounts: list[dict[str, Any]]) -> dict[str, Any]:
     return {"DRE": {"accounts": accounts}}
 

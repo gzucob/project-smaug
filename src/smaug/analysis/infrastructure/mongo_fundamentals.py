@@ -150,6 +150,33 @@ def _child_by_name(accounts: Accounts, parent: str, needle: str) -> Decimal | No
     return None
 
 
+def _direct_child_by_name(
+    accounts: Accounts, parent: str, needle: str
+) -> Decimal | None:
+    """Like ``_child_by_name``, but only ``parent``'s *direct* children match.
+
+    The controllers'/minority pair is always filed one level under its total
+    (3.11.01/3.11.02, 2.03.09, a bank's 2.07.02), while a deeper descendant can
+    carry the same words and mean something else entirely: TOTS3's capital
+    reserves file ``2.03.02.09 — Prêmio na Compra de Participação de Não
+    Controladores`` *before* the real minority block 2.03.09, and the prefix
+    match read that reserve as the minority interest — reporting a controllers'
+    equity larger than the consolidated total (#118). The bank lines keep the
+    descendant-scoped ``_child_by_name``: their needles deliberately read at
+    depths that are not stable across filers (ADR 0021).
+    """
+    prefix = f"{parent}."
+    depth = parent.count(".") + 1
+    folded = _fold(needle)
+    for account in accounts:
+        code = str(account.get("code", ""))
+        if not code.startswith(prefix) or code.count(".") != depth:
+            continue
+        if folded in _fold(str(account.get("name", ""))):
+            return _dec(account.get("quantity"))
+    return None
+
+
 def _controllers_share(
     accounts: Accounts,
     *,
@@ -162,8 +189,9 @@ def _controllers_share(
     Platforms report the controllers' equity/earnings, not the consolidated total
     that still carries the minority interest. The split is exposed in two shapes:
     an explicit "attributed to the controller" sub-line (banks), or a total plus a
-    "non-controlling" sub-line (most companies). Both are read as children of the
-    total (``_child_by_name``): prefer the explicit line, else fall back on the
+    "non-controlling" sub-line (most companies). Both are read as direct children
+    of the total (``_direct_child_by_name``): prefer the explicit line, else fall
+    back on the
     accounting identity ``controllers = total − minority``, which an absent
     minority line reduces to the total — the no-split-filed case.
 
@@ -180,8 +208,8 @@ def _controllers_share(
         return None
     total_value = _dec(total.get("quantity"))
     parent = str(total.get("code", ""))
-    explicit = _child_by_name(accounts, parent, controllers)
-    minority_value = _child_by_name(accounts, parent, minority)
+    explicit = _direct_child_by_name(accounts, parent, controllers)
+    minority_value = _direct_child_by_name(accounts, parent, minority)
 
     derived: Decimal | None = None
     if total_value is not None:
