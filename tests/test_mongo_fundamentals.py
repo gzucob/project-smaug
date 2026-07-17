@@ -74,6 +74,58 @@ def test_standardize_nonfinancial_pulls_every_line() -> None:
     assert f.capex == Decimal("190")  # 150 + 40 PP&E/intangible outflows only
 
 
+def test_standardize_sums_the_plural_and_split_dep_amort_lines() -> None:
+    # The real shapes that made EBITDA null or undercounted (#114): LREN3/VIVT3/
+    # SAPR11 file the plural "Depreciações e amortizações" (no singular substring
+    # to match), and HAPV3/TAEE11 split the right-of-use charge into sibling
+    # lines — HAPV3's 2025 DFP has no combined line at all. KLBN11 files
+    # depletion separately. All must be summed; the financing section's
+    # "Amortização de empréstimos" (6.03) and a bank-shaped "custo amortizado"
+    # line must not be.
+    by_module = {
+        "DRE": {
+            "accounts": [
+                _acc("3.01", "Receita de Venda de Bens e/ou Serviços", "900"),
+                _acc("3.05", "Resultado Antes do Resultado Financeiro", "200"),
+            ]
+        },
+        "DFC": {
+            "accounts": [
+                _acc("6.01", "Caixa Líquido Atividades Operacionais", "500"),
+                _acc("6.01.01.02", "Depreciações e Amortizações", "80"),
+                _acc("6.01.01.03", "Amortização de direito de uso", "15"),
+                _acc("6.01.01.16", "Depreciação de direito de uso", "5"),
+                _acc("6.01.01.17", "Exaustão dos ativos biológicos", "10"),
+                # Not D&A: a repayment, and an amortized-cost financial line.
+                _acc("6.01.01.20", "Ativos financeiros ao custo amortizado", "999"),
+                _acc("6.03.02", "Amortizações de Financiamentos", "-305"),
+            ]
+        },
+    }
+
+    f = standardize(by_module, Sector.COMMODITY, date(2024, 12, 31))
+
+    assert f.dep_amort == Decimal("110")  # 80 + 15 + 5 + 10
+    assert f.ebitda == Decimal("310")  # ebit 200 + D&A 110
+
+
+def test_standardize_does_not_double_count_a_dep_amort_breakdown() -> None:
+    # A parent D&A line and its own sub-lines: only the parent is summed.
+    by_module = {
+        "DFC": {
+            "accounts": [
+                _acc("6.01.01.02", "Depreciações e amortizações", "100"),
+                _acc("6.01.01.02.01", "Depreciação de imobilizado", "70"),
+                _acc("6.01.01.02.02", "Amortização de intangível", "30"),
+            ]
+        },
+    }
+
+    f = standardize(by_module, Sector.COMMODITY, date(2024, 12, 31))
+
+    assert f.dep_amort == Decimal("100")
+
+
 def test_standardize_applies_currency_size_to_absolute_reais() -> None:
     # CVM reports in thousands; the mapper must scale to keep market ratios sane.
     by_module = {

@@ -286,6 +286,51 @@ def _dividends_paid(dfc: Accounts) -> Decimal | None:
     return total if found else None
 
 
+# The D&A add-back's folded-name needles. "deprecia" covers the singular and the
+# plural in one prefix — LREN3, VIVT3 and SAPR11 file "Depreciações e
+# amortizações", which a singular-substring search read as absent (#114).
+# "amortizac" (never the looser "amortiza") keeps the financial lines out:
+# "ativos financeiros ao custo amortizado" sits in a 6.01 too. "exaust" is
+# depletion, which KLBN11 files as its own line — Dados de Mercado's EBITDA
+# leaves that line out (its KLBN11 2024 margin is 33.7% vs our 43.1%), but
+# depletion is the D of a pulp company's DD&A and Klabin's own reported 2024
+# EBITDA margin (~41%) sides with including it.
+_DEP_AMORT_NEEDLES = ("deprecia", "amortizac", "exaust")
+
+
+def _dep_amort(dfc: Accounts) -> Decimal | None:
+    """Depreciation, amortization and depletion — the DFC's operating add-backs.
+
+    Summed over the operating section (6.01.*) rather than read off one line,
+    because the charge is not always one line: HAPV3 and TAEE11 file the
+    right-of-use depreciation as a sibling of the main D&A line, and HAPV3's
+    2025 DFP has no combined line at all — only "Amortização de direito de uso"
+    plus "Depreciação de direito de uso". The 6.01 scope is what keeps the
+    financing section's "Amortização de empréstimos" (a debt repayment, not a
+    charge) out of EBITDA. A line nested under an already-summed one is skipped
+    so a parent and its breakdown are never double-counted.
+    """
+    total = Decimal(0)
+    found = False
+    summed: list[str] = []
+    for account in dfc:
+        code = str(account.get("code", ""))
+        if not code.startswith("6.01"):
+            continue
+        if any(code.startswith(f"{parent}.") for parent in summed):
+            continue
+        name = _fold(str(account.get("name", "")))
+        if not any(needle in name for needle in _DEP_AMORT_NEEDLES):
+            continue
+        value = _dec(account.get("quantity"))
+        if value is None:
+            continue
+        total += value
+        found = True
+        summed.append(code)
+    return total if found else None
+
+
 def _capex(dfc: Accounts) -> Decimal | None:
     """Cash spent on PP&E and intangibles (DFC investing section, 6.02.*).
 
@@ -553,7 +598,7 @@ def _as_corporate(
 ) -> StandardizedFinancials:
     """The standard chart of accounts — and what CXSE3 files, despite its sector."""
     ebit = _mul(_by_code(dre, "3.05"), dre_s)  # before financial result/taxes
-    dep_amort = _mul(_by_name(dfc, "depreciacao"), dfc_s)  # cash-flow add-back
+    dep_amort = _mul(_dep_amort(dfc), dfc_s)  # cash-flow add-backs, summed
     ebitda = (
         _sum(ebit, dep_amort) if ebit is not None and dep_amort is not None else None
     )
