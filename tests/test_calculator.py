@@ -354,6 +354,36 @@ def test_insurer_net_debt_is_the_cash_negated() -> None:
     assert ind.null_reasons["net_debt_to_ebitda"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
 
 
+def test_declared_dividend_basis_computes_alongside_the_paid_one() -> None:
+    # #104: the declared basis (DMPL charge) and the paid basis (DFC outflow)
+    # answer different questions and are published side by side — the same dual
+    # pattern ADR 0026 set for the statement slices.
+    financials = replace(
+        _nonfinancial(),
+        dividends_declared=Decimal(450),
+        dmpl_period_start=date(2024, 1, 1),
+    )
+    market = MarketData(price=Decimal(12), market_cap=Decimal(12000))
+
+    ind = compute(financials, None, market)
+
+    assert ind.payout == Decimal(600) / Decimal(900)  # paid basis, unchanged
+    assert ind.payout_declared == Decimal("0.5")  # 450 / 900
+    assert ind.dividend_yield == Decimal("0.05")  # 600 / 12000
+    assert ind.dividend_yield_declared == Decimal("0.0375")  # 450 / 12000
+    assert ind.dividends_declared == Decimal(450)  # headline, as filed
+
+
+def test_a_missing_dmpl_row_blames_the_declared_account() -> None:
+    ind = compute(_nonfinancial(), None, MarketData(market_cap=Decimal(12000)))
+
+    assert ind.payout_declared is None
+    assert ind.null_reasons["payout_declared"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    assert ind.null_reasons["dividends_declared"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    # The paid basis is untouched by the declared one going missing:
+    assert ind.payout is not None
+
+
 def test_insurer_net_debt_family_blames_the_market_input_not_the_debt_line() -> None:
     # The attribution shift of #103: with net debt derived from cash, an
     # insurer's null ev_ebit must name what actually broke (the missing cap) —

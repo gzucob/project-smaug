@@ -56,8 +56,10 @@ export const INDICATORS: IndicatorSpec[] = [
   { key: "price_to_assets", label: "P/Ativo", hint: "Valor de mercado / ativo total", group: "Múltiplos de mercado", format: multiple },
   { key: "price_to_ebit", label: "P/EBIT", hint: "Valor de mercado / lucro operacional (EBIT)", group: "Múltiplos de mercado", format: multiple },
   { key: "price_to_working_capital", label: "P/Cap. giro", hint: "Valor de mercado / capital de giro (ativo circ. − passivo circ.)", group: "Múltiplos de mercado", format: multiple },
-  { key: "payout", label: "Payout", hint: "Proventos pagos / lucro líquido — fatia do lucro distribuída", group: "Múltiplos de mercado", format: pct },
-  { key: "dividend_yield", label: "Dividend yield", hint: "Proventos / valor de mercado", group: "Múltiplos de mercado", format: pct },
+  { key: "payout", label: "Payout (pago)", hint: "Proventos pagos em caixa no período / lucro líquido", group: "Múltiplos de mercado", format: pct },
+  { key: "payout_declared", label: "Payout (declarado)", hint: "Proventos declarados contra o patrimônio no período (DMPL) / lucro líquido — a base que as empresas reportam", group: "Múltiplos de mercado", format: pct },
+  { key: "dividend_yield", label: "Dividend yield (pago)", hint: "Proventos pagos em caixa / valor de mercado", group: "Múltiplos de mercado", format: pct },
+  { key: "dividend_yield_declared", label: "Dividend yield (declarado)", hint: "Proventos declarados no período (DMPL) / valor de mercado", group: "Múltiplos de mercado", format: pct },
   { key: "ev_ebitda", label: "EV/EBITDA", hint: "Valor da firma / EBITDA", group: "Múltiplos de mercado", format: multiple },
   { key: "ev_ebit", label: "EV/EBIT", hint: "Valor da firma / lucro operacional (EBIT)", group: "Múltiplos de mercado", format: multiple },
 

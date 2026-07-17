@@ -412,6 +412,115 @@ def _dre(accounts: list[dict[str, Any]]) -> dict[str, Any]:
     return {"DRE": {"accounts": accounts}}
 
 
+def _macc(code: str, name: str, column: str | None, qty: str) -> dict[str, Any]:
+    """A DMPL matrix cell: one account row under one equity column."""
+    cell = _acc(code, name, qty)
+    cell["column"] = column
+    return cell
+
+
+def test_standardize_reads_declared_dividends_from_the_dmpl() -> None:
+    # #104: the declared basis. Shaped on BBDC4's real 2024 DMPL, whose column
+    # HEADERS are shifted (the controllers' total sits under "Participação dos
+    # Não Controladores" and the consolidated total under an unnamed column), so
+    # the row's figure must be read structurally — the largest absolute cell —
+    # never by the column's name. Positive rows ("dividendos prescritos", a
+    # return to equity) and the treasury rows stay out.
+    by_module = {
+        "DMPL": {
+            "period_start_date": "2024-01-01",
+            "accounts": [
+                _macc("5.04.06", "Dividendos", "Lucros ou Prejuízos Acumulados", "0"),
+                _macc(
+                    "5.04.07",
+                    "Juros sobre Capital Próprio",
+                    "Outros Resultados Abrangentes",  # shifted: really controllers'
+                    "-11283288",
+                ),
+                _macc(
+                    "5.04.07",
+                    "Juros sobre Capital Próprio",
+                    "Patrimônio Líquido Consolidado",  # shifted: really minority
+                    "-435571",
+                ),
+                _macc(
+                    "5.04.07",
+                    "Juros sobre Capital Próprio",
+                    None,  # shifted: really the consolidated total
+                    "-11718859",
+                ),
+                # A prescribed dividend RETURNS to equity — never netted in.
+                _macc(
+                    "5.04.08",
+                    "Dividendos Prescritos",
+                    "Lucros ou Prejuízos Acumulados",
+                    "120000",
+                ),
+                # Treasury transactions live under 5.04 too — not a declaration.
+                _macc(
+                    "5.04.04",
+                    "Ações em Tesouraria Adquiridas",
+                    "Reservas de Capital, Opções Outorgadas e Ações em Tesouraria",
+                    "-224377",
+                ),
+            ],
+        },
+    }
+
+    f = standardize(by_module, Sector.BANK, date(2024, 12, 31))
+
+    assert f.dividends_declared == Decimal("11718859")  # the row's largest cell
+    assert f.dmpl_period_start == date(2024, 1, 1)
+
+
+def test_standardize_sums_the_dividend_and_jcp_declaration_rows() -> None:
+    # A filer that declares both: the two 5.04 rows sum (VIVT3's shape).
+    by_module = {
+        "DMPL": {
+            "accounts": [
+                _macc("5.04.06", "Dividendos", "Patrimônio Líquido", "-1500000"),
+                _macc(
+                    "5.04.06",
+                    "Dividendos",
+                    "Lucros ou Prejuízos Acumulados",
+                    "-1500000",
+                ),
+                _macc(
+                    "5.04.07",
+                    "Juros sobre Capital Próprio",
+                    "Patrimônio Líquido",
+                    "-3105000",
+                ),
+            ],
+        },
+    }
+
+    f = standardize(by_module, Sector.INDUSTRY, date(2024, 12, 31))
+
+    assert f.dividends_declared == Decimal("4605000")  # 1.5m + 3.105m, positive
+
+
+def test_standardize_declared_is_zero_when_the_dmpl_declares_nothing() -> None:
+    # A filed DMPL with no 5.04 dividend/JCP row is an economic ZERO — the
+    # company declared nothing in the period. Reading it as null would void
+    # every TTM window containing one quiet quarter. Null is reserved for the
+    # DMPL itself being absent from the mirror.
+    filed_quiet = {
+        "DMPL": {
+            "accounts": [
+                _macc("5.01", "Saldos Iniciais", "Patrimônio Líquido", "1000"),
+            ]
+        },
+    }
+    no_dmpl: dict[str, Any] = {}
+
+    quiet = standardize(filed_quiet, Sector.INDUSTRY, date(2024, 12, 31))
+    absent = standardize(no_dmpl, Sector.INDUSTRY, date(2024, 12, 31))
+
+    assert quiet.dividends_declared == Decimal("0")
+    assert absent.dividends_declared is None
+
+
 def test_standardize_derives_net_income_when_the_controllers_split_is_filed_blank() -> (
     None
 ):
@@ -764,6 +873,47 @@ async def test_reader_takes_the_accumulated_column_of_an_itr(reverse: bool) -> N
 
     assert quarter.revenue == Decimal("900")
     assert quarter.period_start == date(2024, 1, 1)  # the span the value belongs to
+
+
+def _dmpl_filing(balance_type: str, jcp: str) -> dict[str, Any]:
+    return {
+        "payload": {
+            "reference_date": "2024-12-31",
+            "document_type": "DFP",
+            "version": 1,
+            "balance_type": balance_type,
+            "ordem_exerc": "ULTIMO",
+            "accounts": [
+                {
+                    "code": "5.04.07",
+                    "name": "Juros sobre Capital Próprio",
+                    "column": "Patrimônio Líquido",
+                    "quantity": jcp,
+                }
+            ],
+        },
+        "module": "DMPL",
+        "fetched_at": datetime(2026, 7, 2, tzinfo=UTC),
+    }
+
+
+async def test_the_declared_dividends_come_from_the_parent_dmpl() -> None:
+    # #104: the parent's declaration is what the listed shareholders receive, and
+    # the parent DMPL has no minority column to shift — so it beats the
+    # consolidated statement that ordinarily outranks it.
+    reader = MongoFundamentalsReader(
+        _FakeCollection(
+            [
+                _dmpl_filing("consolidated", "-11718859"),  # minority included
+                _dmpl_filing("individual", "-11283288"),  # the parent's charge
+            ]
+        )
+    )
+
+    annual = await reader.annual("BBDC4")
+
+    assert annual is not None
+    assert annual.dividends_declared == Decimal("11283288")
 
 
 async def test_reader_uses_the_individual_statement_when_it_is_all_there_is() -> None:

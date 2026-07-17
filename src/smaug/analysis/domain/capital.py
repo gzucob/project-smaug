@@ -73,17 +73,14 @@ def outstanding_counts(
     if scale is None:
         return None
 
-    treasury = (
-        composition.treasury_common,
-        composition.treasury_preferred,
-        composition.treasury_total,
-    )
-    # BBDC4's 2022 composition files a *negative* treasury count. A company cannot
-    # hold fewer than none of its own shares, so the filing is not readable — and
-    # subtracting it would silently *inflate* the company instead.
-    if any(count is not None and count < 0 for count in treasury):
-        return None
-
+    # BBDC4 files *negative* treasury counts (2022, Q1-2024). Decided from the
+    # filings themselves (#88): the magnitude is the balance and the sign is
+    # noise. The DMPL's treasury cost trail settles it — BBDC4 sold its entire
+    # 2021 lot (R$666,702k) during 2022 and bought a new one costing R$224,377k,
+    # which it sold whole during 2023 (composition 2023 = 0/0). That cost over
+    # the filed |16,318k| shares is R$13.75/share, the 2022 market price; and a
+    # movement reading is arithmetically impossible for Q1-2024, whose opening
+    # balance was zero. So the count is read as its absolute value.
     net = ShareCounts(
         common=_net(issued.common, composition.treasury_common, scale),
         preferred=_net(issued.preferred, composition.treasury_preferred, scale),
@@ -104,10 +101,14 @@ def outstanding_counts(
 def _net(
     issued: Decimal | None, treasury: Decimal | None, scale: Decimal
 ) -> Decimal | None:
-    """One class's outstanding count. A class the filer does not have stays ``None``."""
+    """One class's outstanding count. A class the filer does not have stays ``None``.
+
+    ``abs()`` because a treasury *balance* cannot be negative — the sign on
+    BBDC4's filings is noise, not meaning (see ``outstanding_counts``).
+    """
     if issued is None:
         return None
-    return issued if treasury is None else issued - treasury * scale
+    return issued if treasury is None else issued - abs(treasury) * scale
 
 
 # A corporate action on the whole share base (split, grupamento, bonificação)

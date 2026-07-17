@@ -41,7 +41,9 @@ _DRE_FLOW_FIELDS = (
     "gross_profit",
 )
 _DFC_FLOW_FIELDS = ("dep_amort", "dividends_paid", "cfo", "capex")
-_FLOW_FIELDS = _DRE_FLOW_FIELDS + _DFC_FLOW_FIELDS
+# The DMPL is year-to-date like the DFC, on its own span (#104).
+_DMPL_FLOW_FIELDS = ("dividends_declared",)
+_FLOW_FIELDS = _DRE_FLOW_FIELDS + _DFC_FLOW_FIELDS + _DMPL_FLOW_FIELDS
 _TTM_QUARTERS = 4
 _ISOLATED_SPAN_MONTHS = 3
 
@@ -75,9 +77,15 @@ def _isolate_year(
     for period in periods:
         dre_span = _months(period.period_start, period.reference_date)
         dfc_span = _months(period.dfc_period_start, period.reference_date)
+        dmpl_span = _months(period.dmpl_period_start, period.reference_date)
         flows: Flows = {}
         for name in _FLOW_FIELDS:
-            span = dfc_span if name in _DFC_FLOW_FIELDS else dre_span
+            if name in _DFC_FLOW_FIELDS:
+                span = dfc_span
+            elif name in _DMPL_FLOW_FIELDS:
+                span = dmpl_span
+            else:
+                span = dre_span
             value = getattr(period, name)
             if span is not None and span > _ISOLATED_SPAN_MONTHS:
                 # Year-to-date: isolate against the running cumulative, then
@@ -168,6 +176,8 @@ def build_ttm(
         current_liabilities=stock_source.current_liabilities,
         total_debt=stock_source.total_debt,
         dividends_paid=summed["dividends_paid"],
+        dividends_declared=summed["dividends_declared"],
+        dmpl_period_start=period_start,
         cfo=summed["cfo"],
         capex=summed["capex"],
         # Null-cause provenance (#30) travels with the window: same filer, same

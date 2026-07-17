@@ -34,7 +34,7 @@ from smaug.analysis.domain.financials import (
 )
 from smaug.portfolio.domain.sectors import Sector, sector_of
 
-_STATEMENTS = ("BPA", "BPP", "DRE", "DFC")
+_STATEMENTS = ("BPA", "BPP", "DRE", "DFC", "DMPL")
 
 # The mirror stores every filing and chooses none of them (ADR 0016), so the
 # choice is made here: the reported period rather than its comparative, the latest
@@ -331,6 +331,55 @@ def _dep_amort(dfc: Accounts) -> Decimal | None:
     return total if found else None
 
 
+# The DMPL rows that carry a dividend/JCP declaration, inside 5.04 ("Transações
+# de Capital com os Sócios"). Matched by folded name; the 5.04 scope keeps the
+# treasury rows (5.04.04/05) and the reserve destinations (5.06.*) out, and the
+# negative-sign filter keeps "dividendos prescritos" (a *return* to equity,
+# positive) from netting the declaration down.
+_DECLARED_PREFIX = "5.04"
+_DECLARED_NEEDLES = ("dividendo", "juros sobre capital", "capital proprio")
+
+
+def _dividends_declared(dmpl: Accounts) -> Decimal | None:
+    """Dividends + JCP declared against equity in the period (DMPL 5.04 rows).
+
+    The DMPL is a matrix — each account repeats once per equity column — and the
+    column *names* cannot be trusted: BBDC4's filing shifts them (its R$166bn
+    controllers' equity sits under "Participação dos Não Controladores", and the
+    consolidated total under an unnamed column). So the row's figure is read
+    structurally: a declaration posts one-signed cells, and the largest absolute
+    cell is the row's total column. Read from the parent-only statement wherever
+    it exists (see ``_load``) — the parent's declaration is what the listed
+    shareholders receive, and the parent DMPL has no minority column to shift.
+
+    Returned positive. ``None`` only when the DMPL itself is absent; a filed
+    DMPL with no declaration row is an economic **zero** — the company declared
+    nothing in the period — not a missing input, and reading it as null would
+    void every TTM window containing one quiet quarter. Note the basis is
+    *declared during the period*: a dividend the AGM approves months after
+    year-end lands in the next year's DMPL, so a filer that declares mostly
+    after closing (rather than as intra-year JCP) still shows the gap the
+    platforms' "of the exercise" attribution closes by hand.
+    """
+    if not dmpl:
+        return None
+    rows: dict[tuple[str, str], Decimal] = {}
+    for account in dmpl:
+        code = str(account.get("code", ""))
+        if not code.startswith(_DECLARED_PREFIX):
+            continue
+        name = _fold(str(account.get("name", "")))
+        if not any(needle in name for needle in _DECLARED_NEEDLES):
+            continue
+        value = _dec(account.get("quantity"))
+        if value is None or value >= 0:
+            continue
+        key = (code, name)
+        if key not in rows or abs(value) > abs(rows[key]):
+            rows[key] = value
+    return sum((abs(value) for value in rows.values()), Decimal(0))
+
+
 def _capex(dfc: Accounts) -> Decimal | None:
     """Cash spent on PP&E and intangibles (DFC investing section, 6.02.*).
 
@@ -470,6 +519,7 @@ def standardize(
     bpp, bpp_s = _accounts(by_module, "BPP"), _scale(by_module, "BPP")
     dre, dre_s = _accounts(by_module, "DRE"), _scale(by_module, "DRE")
     dfc, dfc_s = _accounts(by_module, "DFC"), _scale(by_module, "DFC")
+    dmpl, dmpl_s = _accounts(by_module, "DMPL"), _scale(by_module, "DMPL")
 
     filed_regime = _filed_regime(dre)
 
@@ -490,6 +540,8 @@ def standardize(
         revenue=_mul(_by_code(dre, "3.01"), dre_s),
         gross_profit=_mul(_by_code(dre, "3.03"), dre_s),
         dividends_paid=_mul(_dividends_paid(dfc), dfc_s),
+        dividends_declared=_mul(_dividends_declared(dmpl), dmpl_s),
+        dmpl_period_start=_period_start(by_module, "DMPL"),
         cfo=_mul(_by_code(dfc, "6.01"), dfc_s),  # net operating cash flow
         capex=_mul(_capex(dfc), dfc_s),
         filed_regime=filed_regime,
@@ -668,6 +720,11 @@ class MongoFundamentalsReader:
         # ones that carry the result the bank itself reports (see ``_bank_dre``).
         parent_dre: dict[str, Mapping[str, Any]] = {}
         parent_best: dict[str, tuple[int, int, int, datetime]] = {}
+        # The parent-only DMPL, preferred for EVERY filer: the parent's declared
+        # dividends are what the listed shareholders receive, and the parent
+        # statement has no minority column for a shifted header to hide (#104).
+        parent_dmpl: dict[str, Mapping[str, Any]] = {}
+        parent_dmpl_best: dict[str, tuple[int, int, int, datetime]] = {}
         for doc in docs:
             payload = doc.get("payload")
             module = doc.get("module")
@@ -695,11 +752,17 @@ class MongoFundamentalsReader:
                 if ref not in parent_best or rank > parent_best[ref]:
                     parent_best[ref] = rank
                     parent_dre[ref] = payload
+            if module == "DMPL" and payload.get("balance_type") == "individual":
+                if ref not in parent_dmpl_best or rank > parent_dmpl_best[ref]:
+                    parent_dmpl_best[ref] = rank
+                    parent_dmpl[ref] = payload
 
         for ref, modules in by_period.items():
             bank_dre = _bank_dre(modules.get("DRE"), parent_dre.get(ref))
             if bank_dre is not None:
                 modules["DRE"] = bank_dre
+            if ref in parent_dmpl:
+                modules["DMPL"] = parent_dmpl[ref]
 
         return [
             (doc_type.get(ref), standardize(modules, sector, date.fromisoformat(ref)))

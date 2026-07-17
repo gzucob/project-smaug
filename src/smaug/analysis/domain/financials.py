@@ -59,6 +59,9 @@ class StandardizedFinancials:
     # quarters — so DFC-sourced flows (D&A, dividends) must be isolated on their
     # own span, not the DRE's.
     dfc_period_start: date | None = None
+    # Start of the DMPL flow period — same reasoning as the DFC's: the equity
+    # movements are filed year-to-date, on their own span.
+    dmpl_period_start: date | None = None
     total_assets: Decimal | None = None
     equity: Decimal | None = None  # attributable to controlling shareholders
     net_income: Decimal | None = None  # attributable to controlling shareholders
@@ -79,6 +82,12 @@ class StandardizedFinancials:
     current_liabilities: Decimal | None = None
     total_debt: Decimal | None = None
     dividends_paid: Decimal | None = None  # dividends + JCP paid to controllers
+    # Dividends + JCP the parent DECLARED against equity during the period (DMPL
+    # 5.04 rows, positive). The paid figure above is the cash that left in the
+    # period — often the prior year's profit; the declared figure is the charge
+    # the company itself reports payout on (#104). Year-to-date like the DFC,
+    # isolated on ``dmpl_period_start``.
+    dividends_declared: Decimal | None = None
     # Cash-flow flows (DFC, year-to-date basis — isolated on ``dfc_period_start``).
     cfo: Decimal | None = None  # net cash from operating activities (DFC 6.01)
     capex: Decimal | None = None  # purchases of PP&E + intangibles (positive outflow)

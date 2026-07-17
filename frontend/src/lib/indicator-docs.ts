@@ -693,7 +693,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "O numerador vem dos proventos efetivamente pagos no fluxo de caixa do exercício, que podem se referir ao resultado do ano anterior. Em anos de mudança de política, descasa do payout 'declarado'.",
+      "O numerador vem dos proventos efetivamente pagos no fluxo de caixa do exercício, que podem se referir ao resultado do ano anterior. A base que as empresas reportam é a declarada — publicada ao lado como payout_declared (#104).",
   },
   dividend_yield: {
     formula: "Proventos pagos no exercício ÷ Valor de mercado",
@@ -720,6 +720,50 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
     caveat:
       "No histórico de anos fechados o denominador é o preço médio ajustado por proventos daquele exercício; nos últimos 12 meses é o preço nominal atual. Ver docs/adr/0001.",
+  },
+  payout_declared: {
+    formula: "Proventos declarados no exercício (DMPL) ÷ Lucro líquido",
+    what: "Fatia do lucro que a empresa DECLAROU distribuir dentro do exercício — dividendos e JCP debitados do patrimônio na DMPL. É a base sobre a qual as próprias empresas (e as plataformas) reportam o payout.",
+    strongIn: [
+      {
+        where: "Intermediários Financeiros (bancos)",
+        why: "bancos declaram JCP ao longo do próprio exercício: o payout declarado casa com o que o banco anuncia (Bradesco reporta ~62% para 2024; a base paga lia ~34%)",
+      },
+      {
+        where: "Comparações com o payout 'oficial' da empresa",
+        why: "elimina o descasamento de um ano entre declarar e pagar que contamina a base de caixa",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas que deliberam o dividendo na assembleia do ano seguinte",
+        why: "a declaração cai na DMPL do ano seguinte, então parte do provento 'do exercício' aparece um ano depois — a atribuição perfeita exige a proposta da administração, que não está nos dados estruturados",
+      },
+    ],
+    caveat:
+      "Mede o que foi declarado DURANTE o exercício, não o que foi atribuído A ELE: um dividendo aprovado em assembleia meses após o fechamento entra no ano da aprovação. A base paga (payout) continua publicada ao lado.",
+  },
+  dividend_yield_declared: {
+    formula: "Proventos declarados no exercício (DMPL) ÷ Valor de mercado",
+    what: "O retorno em proventos medido pelo que foi declarado no período, em vez do caixa que saiu. Para quem declara e paga em anos diferentes, é o yield que antecipa o dinheiro a receber.",
+    strongIn: [
+      {
+        where: "Intermediários Financeiros (bancos)",
+        why: "o JCP declarado no ano é a remuneração daquele ano; o caixa às vezes só sai no exercício seguinte",
+      },
+      {
+        where: "Comparações com o yield publicado pelas plataformas",
+        why: "as plataformas atribuem proventos ao exercício declarado, não ao ano do pagamento",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas que deliberam dividendos na assembleia do ano seguinte",
+        why: "a parcela deliberada depois do fechamento cai no ano seguinte da DMPL — o yield declarado subestima o 'do exercício' dessas empresas",
+      },
+    ],
+    caveat:
+      "Mesma ressalva do payout declarado: a régua é a data da declaração, não o exercício de competência. No histórico de anos fechados o denominador é o preço médio do exercício; no TTM é o preço atual.",
   },
   ev_ebitda: {
     formula: "(Valor de mercado + Dívida líquida) ÷ EBITDA anualizado",
@@ -909,6 +953,25 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o pagamento se refere com frequência ao resultado do exercício anterior, então o valor descasa do lucro exibido ao lado",
       },
     ],
+  },
+
+  dividends_declared: {
+    formula: "Proventos declarados no exercício (DMPL 5.04, dividendos + JCP)",
+    what: "O valor que a controladora debitou do patrimônio como remuneração aos acionistas durante o período — a contrapartida 'de competência' do caixa pago que a coluna dividends mostra.",
+    strongIn: [
+      {
+        where: "Intermediários Financeiros, Energia Elétrica",
+        why: "onde declarar e pagar caem em anos diferentes, a série declarada é a que casa com o lucro do mesmo ano",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas que deliberam o dividendo na assembleia do ano seguinte",
+        why: "a declaração pós-fechamento aparece no ano seguinte — leia a série, não o ponto",
+      },
+    ],
+    caveat:
+      "Lido da DMPL da controladora (individual), que é o que os acionistas listados recebem; sem coluna de minoritários para confundir. Quando só existe a DMPL consolidada, o total pode incluir a fatia declarada aos minoritários das controladas.",
   },
 
   // ------------------------------------------------------------ escala ---

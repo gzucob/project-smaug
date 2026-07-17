@@ -97,6 +97,13 @@ class Indicators:
     price_to_working_capital: Decimal | None = None
     payout: Decimal | None = None  # dividends paid / net income
     dividend_yield: Decimal | None = None
+    # The declared basis (#104): dividends + JCP the parent charged against
+    # equity in the period (DMPL), not the cash that left (DFC). The two answer
+    # different questions — the cash paid in a year was often declared on the
+    # prior year's profit — and the declared one is what companies and the
+    # reference platforms report payout on.
+    payout_declared: Decimal | None = None  # dividends declared / net income
+    dividend_yield_declared: Decimal | None = None
     ev_ebitda: Decimal | None = None
     ev_ebit: Decimal | None = None
     # Free cash flow (CFO − capex)
@@ -118,6 +125,7 @@ class Indicators:
     net_income: Decimal | None = None  # controllers' slice — pairs with eps
     net_income_total: Decimal | None = None  # consolidated, minority included
     dividends: Decimal | None = None
+    dividends_declared: Decimal | None = None  # DMPL charge, not the DFC cash
     # Scale figures (absolute reais / a share count) — the market-side inputs the
     # calculator already builds its multiples from, persisted so the front-end can
     # show them at the top of a ticker page. ``market_cap`` is the sum over the

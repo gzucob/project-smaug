@@ -68,6 +68,8 @@ class IndicatorsResponse(BaseModel):
     price_to_working_capital: Decimal | None
     payout: Decimal | None
     dividend_yield: Decimal | None
+    payout_declared: Decimal | None
+    dividend_yield_declared: Decimal | None
     ev_ebitda: Decimal | None
     ev_ebit: Decimal | None
     fcf: Decimal | None
@@ -80,6 +82,7 @@ class IndicatorsResponse(BaseModel):
     net_income: Decimal | None
     net_income_total: Decimal | None
     dividends: Decimal | None
+    dividends_declared: Decimal | None
     market_cap: Decimal | None
     enterprise_value: Decimal | None
     shares: Decimal | None

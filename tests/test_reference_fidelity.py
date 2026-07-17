@@ -69,7 +69,12 @@ def _financials(raw: dict[str, Any]) -> StandardizedFinancials:
         value = raw[field.name]
         if value is None:
             typed[field.name] = None
-        elif field.name in ("reference_date", "period_start", "dfc_period_start"):
+        elif field.name in (
+            "reference_date",
+            "period_start",
+            "dfc_period_start",
+            "dmpl_period_start",
+        ):
             typed[field.name] = date.fromisoformat(value)
         elif field.name == "sector":
             typed[field.name] = Sector(value)
