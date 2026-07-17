@@ -99,3 +99,73 @@ def test_a_treasury_stake_that_swallows_a_class_voids_the_reading() -> None:
         )
         is None
     )
+
+
+# --- restatement onto the current share base (ADR 0027) ---
+
+
+def _factors(**by_year: int) -> dict[int, Decimal]:
+    from smaug.analysis.domain.capital import restatement_factors
+
+    return restatement_factors(
+        {int(year.lstrip("y")): Decimal(count) for year, count in by_year.items()}
+    )
+
+
+def test_a_clean_double_is_restated_across_the_bonus() -> None:
+    # BBAS3's 2023 bonus: 2:1, exact to the digit. The pre-bonus years double.
+    factors = _factors(
+        y2021=2_865_417_020,
+        y2022=2_865_417_020,
+        y2023=5_730_834_040,
+        y2024=5_730_834_040,
+    )
+    assert factors[2021] == Decimal(2)
+    assert factors[2022] == Decimal(2)
+    assert factors[2023] == Decimal(1)
+    assert factors[2024] == Decimal(1)
+
+
+def test_a_grupamento_is_found_through_the_inverse_ratio() -> None:
+    # HAPV3's 2025 grupamento: 15:1, exact within the fraction the company
+    # rounded away (7,539,463,263 / 15 = 502,630,884.2).
+    factors = _factors(y2024=7_539_463_263, y2025=502_630_884)
+    assert factors[2025] == Decimal(1)
+    assert factors[2024] == 1 / Decimal(15)
+
+
+def test_a_fractional_bonus_is_restated() -> None:
+    # LREN3's 2024 bonificação: 1 new share per 10 held — ×1.1 = 11/10.
+    factors = _factors(y2023=963_226_993, y2024=1_059_549_692)
+    assert factors[2023] == Decimal(11) / Decimal(10)
+
+
+def test_a_dirty_ratio_is_an_issuance_and_does_not_restate() -> None:
+    # HAPV3's 2022 merger multiplied the count by 1.8354 — those shares went to
+    # other owners; restating them would rewrite a dilution as a bonus.
+    factors = _factors(y2021=3_891_569_750, y2022=7_142_378_316)
+    assert factors[2021] == Decimal(1)
+
+
+def test_a_buyback_cancellation_does_not_restate() -> None:
+    # LREN3 2025 cancelled ~52.7 M treasury shares — a dirty 0.95, not an action
+    # on the whole base.
+    factors = _factors(y2024=1_059_549_692, y2025=1_006_845_095)
+    assert factors[2024] == Decimal(1)
+
+
+def test_factors_compound_across_two_actions() -> None:
+    # A 2:1 bonus followed by a 3:1 split: the oldest year carries both.
+    factors = _factors(y2020=100_000_000, y2021=200_000_000, y2022=600_000_000)
+    assert factors[2020] == Decimal(6)
+    assert factors[2021] == Decimal(3)
+    assert factors[2022] == Decimal(1)
+
+
+def test_a_composite_action_in_one_year_is_missed_and_documented() -> None:
+    # VIVT3 2024: a 2:1 split and a 43.9 M cancellation land in the same FRE
+    # year — the combined ratio (1.9734) is dirty, so nothing restates. The
+    # limitation is recorded in ADR 0027; this test pins the behaviour so a
+    # future fix flips it knowingly.
+    factors = _factors(y2023=1_652_588_360, y2024=3_261_287_392)
+    assert factors[2023] == Decimal(1)

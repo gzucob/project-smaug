@@ -30,7 +30,7 @@ from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
-from smaug.analysis.domain.capital import outstanding_counts
+from smaug.analysis.domain.capital import outstanding_counts, restatement_factors
 from smaug.analysis.domain.financials import CapitalComposition, ShareCounts
 from smaug.portfolio.domain.share_classes import shares_per_unit
 from smaug.shared.logging import get_logger
@@ -105,10 +105,10 @@ def _year_of(reference_date: Any) -> int | None:
         return None
 
 
-def _serve[Filed](
+def _served_year[Filed](
     by_year: dict[int, Filed], ticker: str, year: int, what: str
-) -> Filed | None:
-    """The filing that stands for ``year``, or the nearest earlier one on file.
+) -> int | None:
+    """The filed year that stands for ``year``, or the nearest earlier one on file.
 
     Say so when it is not the year asked for: a year priced on an adjacent year's
     shares is an approximation, and a silent approximation is indistinguishable from
@@ -122,7 +122,22 @@ def _serve[Filed](
         logger.info(
             "No %d %s filing for %s; using the %d one", year, what, ticker, served
         )
-    return by_year[served]
+    return served
+
+
+def _scaled(counts: ShareCounts, factor: Decimal) -> ShareCounts:
+    """``counts`` restated onto the current share base (ADR 0027)."""
+    if factor == 1:
+        return counts
+
+    def apply(count: Decimal | None) -> Decimal | None:
+        return None if count is None else count * factor
+
+    return ShareCounts(
+        common=apply(counts.common),
+        preferred=apply(counts.preferred),
+        total=apply(counts.total),
+    )
 
 
 class MongoSharesReader:
@@ -144,17 +159,27 @@ class MongoSharesReader:
         return filed.total
 
     async def counts(self, ticker: str, year: int) -> ShareCounts | None:
-        """The issued classes net of the shares the company holds in treasury.
+        """The issued classes net of treasury, restated onto the current base.
 
         When the treasury composition cannot be read — no filing for the year, or a
         scale that will not reconcile against the FRE (ADR 0017) — the issued count
         is served as it stands and the approximation is logged. It over-counts by
         the buyback (a few percent), where a treasury figure subtracted at a guessed
         scale could be off by a thousand.
+
+        The counts served for a year that predates a split/bonus/grupamento are
+        multiplied onto the **current** share base (ADR 0027): the per-share series
+        stays continuous, and the count pairs with the price source — Yahoo
+        back-adjusts every close for splits, so an as-filed pre-bonus count against
+        an adjusted price undercounted BBAS3's pre-2023 caps by exactly the bonus.
+        The as-filed reading stays derivable: the mirror keeps every filing, and the
+        factor is recomputed from it on every read, never stored.
         """
-        issued = await self._issued(ticker, year)
-        if issued is None:
+        by_year = await self._by_year(ticker)
+        served = _served_year(by_year, ticker, year, "capital")
+        if served is None:
             return None
+        issued = by_year[served]
         net = outstanding_counts(issued, await self._composition(ticker, year))
         if net is None:
             logger.info(
@@ -163,14 +188,24 @@ class MongoSharesReader:
                 ticker,
                 year,
             )
-            return issued
-        return net
-
-    async def _issued(self, ticker: str, year: int) -> ShareCounts | None:
-        return _serve(await self._by_year(ticker), ticker, year, "capital")
+            net = issued
+        factors = restatement_factors(
+            {y: c.total for y, c in by_year.items() if c.total is not None}
+        )
+        factor = factors.get(served, Decimal(1))
+        if factor != 1:
+            logger.info(
+                "Restating %s %d share counts onto the current base (x%s, ADR 0027)",
+                ticker,
+                served,
+                factor,
+            )
+        return _scaled(net, factor)
 
     async def _composition(self, ticker: str, year: int) -> CapitalComposition | None:
-        return _serve(await self._compositions(ticker), ticker, year, "composition")
+        compositions = await self._compositions(ticker)
+        served = _served_year(compositions, ticker, year, "composition")
+        return None if served is None else compositions[served]
 
     async def _by_year(self, ticker: str) -> dict[int, ShareCounts]:
         """The capital composition that supersedes the rest, per year.

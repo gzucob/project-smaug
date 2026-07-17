@@ -138,11 +138,7 @@
     },
     "HAPV3": {
       "2024": {
-        "eps": -1.29, "bvps": 96.84, "roe": -0.0133, "net_margin": -0.0225, "gross_margin": 0.1142,
-        "except": {
-          "eps": "(c) share base: HAPV3 executed a 15:1 reverse split (grupamento, approved 2025-04-30, trading adjusted 2025-06-06). We divide 2024 by the ~7.41 bn shares filed *for* 2024; the platform restates all history onto the current 502,630,884 issued (it publishes that single count for both years). ours/platform = 1/14.75 ≈ 1/15 net of treasury — the count, not the numerator (margins and ROE agree to 0.3%). Not a defect on either side: the as-filed vs restated decision is #76.",
-          "bvps": "(c) share base — the same grupamento restatement as eps (#76)."
-        }
+        "eps": -1.29, "bvps": 96.84, "roe": -0.0133, "net_margin": -0.0225, "gross_margin": 0.1142
       },
       "2025": {
         "eps": -0.28, "bvps": 95.99, "roe": -0.0029, "net_margin": -0.0045, "gross_margin": 0.1179,
@@ -157,14 +153,14 @@
         "eps": 1.19, "bvps": 10.70, "roe": 0.1111, "net_margin": 0.0829, "gross_margin": 0.6056,
         "except": {
           "eps": "(c) share base: the whole gap is the count — eps and bvps carry the same ours/platform ratio within each year (0.956 in 2024, 1.024 in 2025) while margins and ROE agree to 0.02%. The direction *flips* between years, so no fixed treasury stake explains it; it fits the platform dividing every year by the *current* issued count (its HAPV3 page shows one count for all years; its BBSE3 2025 cell divides by issued) while we serve each year's outstanding as filed (ADR 0017). The as-filed vs restated choice is #76.",
-          "bvps": "(c) share base — same count-only ratio as eps (#76)."
+          "bvps": "(c) share base — same count-only ratio as eps (ADR 0017/0027)."
         }
       },
       "2025": {
         "eps": 1.45, "bvps": 10.39, "roe": 0.1394, "net_margin": 0.0921, "gross_margin": 0.6171,
         "except": {
-          "eps": "(c) share base — see 2024; the sign flips because 2025's outstanding sits below the current issued count the platform uses everywhere (#76).",
-          "bvps": "(c) share base — as eps (#76)."
+          "eps": "(c) share base — see 2024; the sign flips because 2025's outstanding sits below the current issued count the platform uses everywhere (ADR 0017/0027).",
+          "bvps": "(c) share base — as eps (ADR 0017/0027)."
         }
       }
     },
@@ -174,8 +170,8 @@
         "except": {
           "gross_margin": "(b) basis — cause UNKNOWN, recorded loudly: 1.19% apart against a 1% tolerance, while 2025 agrees to 0.01% with the same mapping, so the mapping is not the gap. Leading hypothesis, unverified: the platform reads 2024 from the 2025 filing's restated comparative (the 2025 DFP restates 2024 with Dimensa as a discontinued operation) while we read the 2024 filing as filed.",
           "net_margin": "(b) basis — the minority slice is no longer the gap (ADR 0026: 2025 agrees to 0.01% on the total basis), yet 2024 stays 5.9% apart even on the platform's own total basis (735,443/5,224,007 = 0.1408 vs its 0.1496). Same one-year-only shape as gross_margin, and the same leading hypothesis: the restated-comparative 2024, with Dimensa discontinued. Unverified.",
-          "eps": "(c) share base: a ~2% count gap, barely over tolerance — the same current-issued vs as-filed-outstanding family as LREN3 (#76).",
-          "bvps": "(c) share base: the '~9% equity numerator' this cell used to record was our #118 defect (a grandchild reserve line, 2.03.02.09, read as the minority block); fixed, what remains is eps's own ~2.3% count gap (585.9M ours vs ~599.4M implied) — the same family as eps (#76)."
+          "eps": "(c) share base: a ~2% count gap, barely over tolerance — the same current-issued vs per-year-outstanding family as LREN3 (ADR 0017/0027; TOTS3 has no split to restate).",
+          "bvps": "(c) share base: the '~9% equity numerator' this cell used to record was our #118 defect (a grandchild reserve line, 2.03.02.09, read as the minority block); fixed, what remains is eps's own ~2.3% count gap (585.9M ours vs ~599.4M implied) — the same family as eps (ADR 0017/0027)."
         }
       },
       "2025": {

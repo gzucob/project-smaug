@@ -21,7 +21,8 @@ scale — which, at 1000x, would be a far larger error than the one it corrects.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from collections.abc import Mapping
+from decimal import ROUND_HALF_EVEN, Decimal
 
 from smaug.analysis.domain.financials import CapitalComposition, ShareCounts
 
@@ -107,3 +108,64 @@ def _net(
     if issued is None:
         return None
     return issued if treasury is None else issued - treasury * scale
+
+
+# A corporate action on the whole share base (split, grupamento, bonificação)
+# multiplies the count by a *clean* small rational, exact to the share — BBAS3's
+# 2023 bonus is ×2 to the digit, SANEPAR's 2020 is ×3, HAPVIDA's 2025 grupamento
+# is ÷15 within the fraction the company rounded away. A real issuance is dirty:
+# HAPVIDA's 2022 merger multiplied the count by 1.8354. The denominator bound and
+# the relative tolerance draw that line; the ADR (0027) records the residual risk
+# of an issuance landing on a clean ratio to the share, which nothing filed can
+# distinguish from a bonus.
+_MAX_RATIO_DENOMINATOR = 20
+_RATIO_TOLERANCE = Decimal("1e-6")
+
+
+def _clean_ratio(earlier: Decimal, later: Decimal) -> Decimal | None:
+    """``later / earlier`` as a clean small rational, or ``None`` if it is dirty.
+
+    Tested on whichever side of 1 the ratio falls, so a 1:100 grupamento (whose
+    *numerator* is small) is found through its inverse.
+    """
+    if earlier <= 0 or later <= 0 or earlier == later:
+        return None
+    big, small = (later, earlier) if later > earlier else (earlier, later)
+    for denominator in range(1, _MAX_RATIO_DENOMINATOR + 1):
+        q = Decimal(denominator)
+        p = (big * q / small).to_integral_value(rounding=ROUND_HALF_EVEN)
+        if p <= q:
+            continue
+        if abs(big * q - small * p) / (big * q) <= _RATIO_TOLERANCE:
+            ratio = p / q
+            return ratio if later > earlier else 1 / ratio
+    return None
+
+
+def restatement_factors(
+    issued_by_year: Mapping[int, Decimal],
+) -> dict[int, Decimal]:
+    """The factor that restates each year's counts onto the latest year's base.
+
+    The closed-year per-share history is split-adjusted (ADR 0027): a year that
+    predates a split/bonus/grupamento has its counts multiplied forward so the
+    LPA/VPA series is continuous, and so the count pairs with the price series —
+    Yahoo back-adjusts every close for splits, and an as-filed count against an
+    adjusted price undercounted BBAS3's pre-bonus caps by exactly the bonus.
+
+    Consecutive filed years whose ratio is *not* clean (a real issuance, a
+    buyback cancellation) contribute factor 1: those shares moved between owners,
+    and restating them would rewrite a dilution as a corporate action. The latest
+    year is the base and always maps to 1.
+    """
+    factors: dict[int, Decimal] = {}
+    running = Decimal(1)
+    ordered = sorted(issued_by_year, reverse=True)
+    for year, previous_year in zip(ordered, ordered[1:], strict=False):
+        factors[year] = running
+        ratio = _clean_ratio(issued_by_year[previous_year], issued_by_year[year])
+        if ratio is not None:
+            running *= ratio
+    if ordered:
+        factors[ordered[-1]] = running
+    return factors
