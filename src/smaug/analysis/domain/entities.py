@@ -18,6 +18,19 @@ VIEW_CLOSED_YEAR: AnalysisView = "closed_year"
 
 
 @dataclass(frozen=True)
+class PruneResult:
+    """Outcome of pruning superseded analysis runs (#71).
+
+    ``deleted`` is how many stale rows were removed; ``kept`` is how many latest-
+    per-(ticker, view, reference_date) rows remain — after a prune this equals the
+    number of distinct cells the reads already surface.
+    """
+
+    deleted: int
+    kept: int
+
+
+@dataclass(frozen=True)
 class TickerAnalysis:
     """Indicators for one ticker, tagged with the inputs' provenance."""
 
