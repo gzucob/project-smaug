@@ -122,10 +122,11 @@ async def test_the_latest_period_of_the_year_carries_the_treasury_balance() -> N
     assert await reader.outstanding("WEGE3", 2024) == Decimal(4_195_537_378)
 
 
-async def test_an_unreadable_composition_serves_the_issued_count() -> None:
-    # BBDC4 files a negative treasury count for 2022 (#88). Unknown treasury is not
-    # zero treasury, but it is not a reason to lose the company's share count either:
-    # the issued figure stands, over-count and all, and the reader logs it (ADR 0017).
+async def test_a_negative_treasury_composition_nets_by_its_magnitude() -> None:
+    # BBDC4 files a negative treasury count for 2022 (#88). The magnitude is the
+    # balance and the sign is noise (the DMPL cost trail corroborates it — see
+    # ``outstanding_counts``), so the reader nets it like any other treasury:
+    # 10,658,488,028 issued − |16,318| thousand = 10,642,170,028 outstanding.
     reader = MongoSharesReader(
         FakeCollection(
             [
@@ -143,7 +144,7 @@ async def test_an_unreadable_composition_serves_the_issued_count() -> None:
         )
     )
 
-    assert await reader.outstanding("BBDC4", 2022) == Decimal(10_658_488_028)
+    assert await reader.outstanding("BBDC4", 2022) == Decimal(10_642_170_028)
 
 
 async def test_the_highest_filed_version_supersedes_the_rest() -> None:

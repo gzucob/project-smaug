@@ -63,6 +63,9 @@ export interface Indicators {
   price_to_working_capital: Decimalish;
   payout: Decimalish;
   dividend_yield: Decimalish;
+  // Declared basis (#104): the DMPL equity charge, not the DFC cash outflow.
+  payout_declared: Decimalish;
+  dividend_yield_declared: Decimalish;
   ev_ebitda: Decimalish;
   ev_ebit: Decimalish;
   fcf: Decimalish;
@@ -76,6 +79,7 @@ export interface Indicators {
   net_income: Decimalish;
   net_income_total: Decimalish;
   dividends: Decimalish;
+  dividends_declared: Decimalish;
   market_cap: Decimalish;
   enterprise_value: Decimalish;
   shares: Decimalish;

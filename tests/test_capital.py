@@ -73,16 +73,21 @@ def test_treasury_of_a_thousands_filer_is_scaled_before_subtracting() -> None:
     assert counts.total == Decimal(4_168_931_764)
 
 
-def test_a_negative_treasury_count_voids_the_reading() -> None:
-    # BBDC4's 2022 composition files a negative treasury count. Subtracting it would
-    # *inflate* the company; a company cannot hold fewer than none of its own shares.
-    assert (
-        outstanding_counts(
-            _issued(5_338_393_881, 5_320_094_147, 10_658_488_028),
-            _filed(10_658_488, common=-8_089, preferred=-8_229),
-        )
-        is None
+def test_a_negative_treasury_count_is_read_as_its_magnitude() -> None:
+    # BBDC4's 2022 composition files its treasury count with a NEGATIVE sign
+    # (-8,089 / -8,229 thousands). Decided from the filing itself (#88): the
+    # magnitude is the balance and the sign is noise — the DMPL's cost trail
+    # shows the 2022-bought lot (R$224,377k over these |16,318k| shares =
+    # R$13.75/share, the 2022 price) was exactly what 2023 sold down to zero.
+    counts = outstanding_counts(
+        _issued(5_338_393_881, 5_320_094_147, 10_658_488_028),
+        _filed(10_658_488, common=-8_089, preferred=-8_229),
     )
+
+    assert counts is not None
+    assert counts.common == Decimal(5_330_304_881)  # issued − |8,089| thousand
+    assert counts.preferred == Decimal(5_311_865_147)
+    assert counts.total == Decimal(10_642_170_028)
 
 
 def test_no_composition_on_file_yields_none() -> None:

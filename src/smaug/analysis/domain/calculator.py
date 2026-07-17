@@ -253,6 +253,8 @@ _NEEDS: dict[str, _Needs] = {
     "cost_of_risk": _Needs(accounts=("loan_loss_provision", "loan_book")),
     "payout": _Needs(accounts=("dividends_paid", "net_income")),
     "dividend_yield": _Needs(accounts=("dividends_paid",), cap=True),
+    "payout_declared": _Needs(accounts=("dividends_declared", "net_income")),
+    "dividend_yield_declared": _Needs(accounts=("dividends_declared",), cap=True),
     "ev_ebitda": _Needs(accounts=("total_debt", "ebitda"), cap=True),
     "ev_ebit": _Needs(accounts=("total_debt", "ebit"), cap=True),
     "fcf": _Needs(accounts=("cfo", "capex")),
@@ -262,6 +264,7 @@ _NEEDS: dict[str, _Needs] = {
     "net_income": _Needs(accounts=("net_income",)),
     "net_income_total": _Needs(accounts=("net_income_total",)),
     "dividends": _Needs(accounts=("dividends_paid",)),
+    "dividends_declared": _Needs(accounts=("dividends_declared",)),
     # Scale figures. ``enterprise_value`` = cap + net debt, so it needs the cap and
     # the debt line net debt is built from; it is also in the bank inapplicable set,
     # so a bank's null is named INAPPLICABLE_REGIME before its inputs are checked.
@@ -455,6 +458,8 @@ def compute(
         cost_of_risk=_negated(_div(annual_provision, f.loan_book)),
         payout=_div(f.dividends_paid, f.net_income),
         dividend_yield=_div(f.dividends_paid, cap),
+        payout_declared=_div(f.dividends_declared, f.net_income),
+        dividend_yield_declared=_div(f.dividends_declared, cap),
         ev_ebitda=_div(enterprise_value, annual_ebitda),
         ev_ebit=_div(enterprise_value, annual_ebit),
         fcf=annual_fcf,
@@ -464,6 +469,7 @@ def compute(
         net_income=f.net_income,
         net_income_total=f.net_income_total,
         dividends=f.dividends_paid,
+        dividends_declared=f.dividends_declared,
         market_cap=cap,
         enterprise_value=enterprise_value,
         shares=market.shares,

@@ -45,6 +45,45 @@ _ENDS = (
 )
 
 
+def test_ttm_isolates_the_declared_dividends_on_the_dmpl_span() -> None:
+    # #104: the DMPL is year-to-date like the DFC, on its own span. Four YTD
+    # figures (100, 250, 400 within one year, then Q1 of the next at 80) must
+    # isolate to 100+150+150... — here two full years make it simple: the last
+    # four isolated quarters are 150 (Q2), 150 (Q3), 200 (Q4, from the annual),
+    # and 80 (the new year's Q1) = 580.
+    year1 = [
+        replace(
+            _q(
+                date(2025, m, d),
+                revenue=Decimal(1000),
+                period_start=date(2025, m - 2, 1),
+            ),
+            dividends_declared=ytd,
+            dmpl_period_start=date(2025, 1, 1),
+        )
+        for (m, d), ytd in zip(
+            [(3, 31), (6, 30), (9, 30)],
+            [Decimal(100), Decimal(250), Decimal(400)],
+            strict=True,
+        )
+    ]
+    annual = replace(
+        _q(date(2025, 12, 31), revenue=Decimal(4000), period_start=date(2025, 1, 1)),
+        dividends_declared=Decimal(600),  # the year's total → Q4 = 600 − 400
+        dmpl_period_start=date(2025, 1, 1),
+    )
+    q1_next = replace(
+        _q(date(2026, 3, 31), revenue=Decimal(1000), period_start=date(2026, 1, 1)),
+        dividends_declared=Decimal(80),
+        dmpl_period_start=date(2026, 1, 1),
+    )
+
+    ttm = build_ttm(year1 + [q1_next], annual)
+
+    assert ttm is not None
+    assert ttm.dividends_declared == Decimal(580)  # 150 + 150 + 200 + 80
+
+
 def test_ttm_sums_isolated_flows_and_takes_latest_stocks() -> None:
     quarters = [_q(e, revenue=Decimal(1000), net_income=Decimal(100)) for e in _ENDS]
     quarters[-1] = _q(
