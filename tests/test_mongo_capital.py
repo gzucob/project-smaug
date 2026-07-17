@@ -359,3 +359,51 @@ async def test_outstanding_is_none_without_any_capital_document() -> None:
     reader = MongoSharesReader(FakeCollection([]))
 
     assert await reader.outstanding("PETR4", 2025) is None
+
+
+async def test_a_pre_bonus_year_is_served_on_the_current_base() -> None:
+    # BBAS3's 2023 2:1 bonus (ADR 0027): the 2022 closed year serves 5.73 bn,
+    # not the 2.87 bn filed — Yahoo back-adjusts the 2022 closes for the bonus,
+    # and the count has to sit on the same base as the price it multiplies.
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc("BBAS3", 2022, 2_865_417_020),
+                _doc("BBAS3", 2023, 5_730_834_040),
+            ]
+        )
+    )
+
+    assert await reader.outstanding("BBAS3", 2022) == Decimal(5_730_834_040)
+    counts = await reader.counts("BBAS3", 2022)
+    assert counts is not None
+    assert counts.common == Decimal(5_730_834_040)
+
+
+async def test_the_current_year_is_its_own_base() -> None:
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc("BBAS3", 2022, 2_865_417_020),
+                _doc("BBAS3", 2023, 5_730_834_040),
+            ]
+        )
+    )
+
+    assert await reader.outstanding("BBAS3", 2023) == Decimal(5_730_834_040)
+
+
+async def test_treasury_is_netted_before_the_restatement_factor() -> None:
+    # The composition is filed at its year's own base: net first, restate after.
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc("ACME3", 2022, 1_000_000),
+                _doc("ACME3", 2023, 2_000_000),
+                _composition("ACME3", "2022-12-31", 1_000_000, common=100_000),
+            ]
+        )
+    )
+
+    # (1,000,000 issued − 100,000 treasury) × 2 — never (1,000,000 × 2 − 100,000).
+    assert await reader.outstanding("ACME3", 2022) == Decimal(1_800_000)
