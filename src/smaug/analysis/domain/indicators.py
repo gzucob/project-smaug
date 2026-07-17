@@ -79,8 +79,11 @@ class Indicators:
     # Leverage / liquidity
     net_debt: Decimal | None = None
     net_debt_to_ebitda: Decimal | None = None
+    net_debt_to_ebit: Decimal | None = None
+    net_debt_to_equity: Decimal | None = None
     debt_to_equity: Decimal | None = None  # gross debt / equity
     liabilities_to_assets: Decimal | None = None  # (assets − equity) / assets
+    equity_to_assets: Decimal | None = None  # complement, as the platforms show it
     current_ratio: Decimal | None = None
     # Growth (needs a prior comparable period)
     revenue_growth: Decimal | None = None
@@ -95,6 +98,7 @@ class Indicators:
     payout: Decimal | None = None  # dividends paid / net income
     dividend_yield: Decimal | None = None
     ev_ebitda: Decimal | None = None
+    ev_ebit: Decimal | None = None
     # Free cash flow (CFO − capex)
     fcf: Decimal | None = None  # annualized free cash flow, in absolute reais
     price_to_fcf: Decimal | None = None

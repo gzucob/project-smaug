@@ -47,8 +47,11 @@ export interface Indicators {
   bvps: Decimalish;
   net_debt: Decimalish;
   net_debt_to_ebitda: Decimalish;
+  net_debt_to_ebit: Decimalish;
+  net_debt_to_equity: Decimalish;
   debt_to_equity: Decimalish;
   liabilities_to_assets: Decimalish;
+  equity_to_assets: Decimalish;
   current_ratio: Decimalish;
   revenue_growth: Decimalish;
   net_income_growth: Decimalish;
@@ -61,6 +64,7 @@ export interface Indicators {
   payout: Decimalish;
   dividend_yield: Decimalish;
   ev_ebitda: Decimalish;
+  ev_ebit: Decimalish;
   fcf: Decimalish;
   price_to_fcf: Decimalish;
   fcf_yield: Decimalish;

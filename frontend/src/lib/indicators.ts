@@ -43,8 +43,11 @@ export const INDICATORS: IndicatorSpec[] = [
 
   { key: "net_debt", label: "Dívida líquida", hint: "Dívida total − caixa e aplicações", group: "Alavancagem & Liquidez", format: money },
   { key: "net_debt_to_ebitda", label: "Dív. líq./EBITDA", hint: "Anos de EBITDA para quitar a dívida líquida", group: "Alavancagem & Liquidez", format: multiple },
+  { key: "net_debt_to_ebit", label: "Dív. líq./EBIT", hint: "Anos de lucro operacional (EBIT) para quitar a dívida líquida", group: "Alavancagem & Liquidez", format: multiple },
+  { key: "net_debt_to_equity", label: "Dív. líq./PL", hint: "Dívida líquida / patrimônio líquido — alavancagem líquida de caixa", group: "Alavancagem & Liquidez", format: multiple },
   { key: "debt_to_equity", label: "Dív. bruta/PL", hint: "Dívida total / patrimônio líquido", group: "Alavancagem & Liquidez", format: multiple },
   { key: "liabilities_to_assets", label: "Passivo/Ativo", hint: "Passivo total / ativo total — fatia dos ativos financiada por terceiros", group: "Alavancagem & Liquidez", format: pct },
+  { key: "equity_to_assets", label: "PL/Ativo", hint: "Patrimônio líquido / ativo total — fatia dos ativos financiada pelos sócios", group: "Alavancagem & Liquidez", format: pct },
   { key: "current_ratio", label: "Liquidez corrente", hint: "Ativo circulante / passivo circulante", group: "Alavancagem & Liquidez", format: multiple },
 
   { key: "pe", label: "P/L", hint: "Preço / lucro", group: "Múltiplos de mercado", format: multiple },
@@ -56,6 +59,7 @@ export const INDICATORS: IndicatorSpec[] = [
   { key: "payout", label: "Payout", hint: "Proventos pagos / lucro líquido — fatia do lucro distribuída", group: "Múltiplos de mercado", format: pct },
   { key: "dividend_yield", label: "Dividend yield", hint: "Proventos / valor de mercado", group: "Múltiplos de mercado", format: pct },
   { key: "ev_ebitda", label: "EV/EBITDA", hint: "Valor da firma / EBITDA", group: "Múltiplos de mercado", format: multiple },
+  { key: "ev_ebit", label: "EV/EBIT", hint: "Valor da firma / lucro operacional (EBIT)", group: "Múltiplos de mercado", format: multiple },
 
   { key: "fcf", label: "Fluxo de caixa livre", hint: "Caixa operacional − investimentos em ativos (CAPEX)", group: "Fluxo de caixa", format: money },
   { key: "price_to_fcf", label: "P/FCL", hint: "Valor de mercado / fluxo de caixa livre", group: "Fluxo de caixa", format: multiple },

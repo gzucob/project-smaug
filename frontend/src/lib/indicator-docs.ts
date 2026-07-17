@@ -140,10 +140,10 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     weakIn: [
       {
         where: "Todo o setor Financeiro",
-        why: "dívida é insumo operacional, não financiamento; separar capital próprio de terceiros não faz sentido",
+        why: "dívida é insumo operacional, não financiamento; separar capital próprio de terceiros não faz sentido — e numa seguradora rica em caixa o capital investido (PL − caixa) beira zero e o índice explode",
       },
     ],
-    naSectors: ["bank"],
+    naSectors: FINANCIAL,
     caveat:
       "O NOPAT usa a alíquota estatutária fixa de 34% (IRPJ 25% + CSLL 9%), não a alíquota efetiva de cada empresa — uma aproximação deliberada, registrada em docs/adr/0002.",
   },
@@ -414,6 +414,52 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
     naSectors: ["bank"],
   },
+  net_debt_to_ebit: {
+    formula: "Dívida líquida ÷ EBIT anualizado",
+    what: "Quantos anos de lucro operacional seriam necessários para zerar a dívida líquida. Mais conservador que a versão sobre EBITDA, porque o EBIT já desconta a depreciação — o desgaste que um dia vira CAPEX.",
+    strongIn: [
+      {
+        where: "Mineração, Siderurgia, Exploração e Refino",
+        why: "em negócios de reinvestimento pesado o EBITDA superestima a capacidade de pagamento; o EBIT corrige boa parte disso",
+      },
+      {
+        where: "Bens Industriais, Consumo Cíclico",
+        why: "complementa o Dív. líq./EBITDA: quando os dois divergem muito, a depreciação é o motivo — e merece atenção",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Todo o setor Financeiro",
+        why: "num banco não há dívida líquida a medir; numa seguradora o valor existe (é o caixa, negativo), mas anos-de-EBIT para 'quitar' um caixa não é uma leitura útil",
+      },
+    ],
+    naSectors: ["bank"],
+    caveat:
+      "Para uma seguradora a dívida líquida é o caixa negado (#103): o índice sai negativo e mede folga, não endividamento.",
+  },
+  net_debt_to_equity: {
+    formula: "Dívida líquida ÷ Patrimônio líquido",
+    what: "Alavancagem líquida do caixa: quanto de dívida (já descontado o caixa) a empresa carrega para cada real de capital próprio. É a versão desta família que as plataformas destacam.",
+    strongIn: [
+      {
+        where: "Energia Elétrica, Telecomunicações, Construção Civil",
+        why: "responde direto 'a dívida é grande para o tamanho do capital próprio?' sem o ruído do caixa parado no ativo",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Todo o setor Financeiro",
+        why: "num banco a alavancagem é o negócio e é regulada por Basileia, não por este índice",
+      },
+      {
+        where: "Empresas com PL negativo",
+        why: "o índice muda de sinal e deixa de ser ordenável",
+      },
+    ],
+    naSectors: ["bank"],
+    caveat:
+      "Para uma seguradora a dívida líquida é o caixa negado (#103): o índice negativo significa caixa líquido, não dívida.",
+  },
   debt_to_equity: {
     formula: "Dívida total ÷ Patrimônio líquido",
     what: "Quanto de capital de terceiros a empresa usa para cada real de capital próprio. Alavancagem financeira em sua forma mais crua.",
@@ -452,6 +498,26 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       {
         where: "Comparar um banco com uma indústria",
         why: "um banco opera perto de 90% e é saudável; uma indústria em 90% está à beira do abismo. O número só compara dentro do subsetor",
+      },
+    ],
+  },
+  equity_to_assets: {
+    formula: "Patrimônio líquido ÷ Ativo total",
+    what: "Fatia dos ativos financiada pelos próprios sócios — o complemento aritmético do Passivo/Ativo. Quanto maior, menos a empresa depende de capital de terceiros.",
+    strongIn: [
+      {
+        where: "Intermediários Financeiros, Previdência e Seguros",
+        why: "sobrevive a qualquer estrutura de balanço: mesmo sem 'dívida' clássica, mostra o colchão de capital próprio sobre o ativo",
+      },
+      {
+        where: "Comparações entre subsetores muito diferentes",
+        why: "não depende de a empresa ter dívida no sentido clássico — é a régua de solidez mais universal desta seção",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Comparar um banco com uma indústria",
+        why: "um banco saudável opera perto de 10%; uma indústria em 10% está à beira do abismo. O número só compara dentro do subsetor",
       },
     ],
   },
@@ -676,6 +742,32 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       {
         where: "Subsetores de capex pesado e recorrente",
         why: "o EBITDA ignora o reinvestimento obrigatório; um EV/EBITDA baixo pode esconder um FCL nulo",
+      },
+    ],
+    naSectors: ["bank"],
+  },
+
+  ev_ebit: {
+    formula: "(Valor de mercado + Dívida líquida) ÷ EBIT anualizado",
+    what: "Quanto custa a empresa inteira por real de lucro operacional. Como o EV/EBITDA, é neutro à estrutura de capital — mas o EBIT já desconta a depreciação, então pune menos quem precisa reinvestir pouco e expõe quem precisa reinvestir muito.",
+    strongIn: [
+      {
+        where: "Mineração, Siderurgia, Exploração e Refino",
+        why: "nos subsetores de capex pesado é o múltiplo mais honesto: o EV/EBITDA baixo deles frequentemente esconde um reinvestimento obrigatório enorme",
+      },
+      {
+        where: "Bens Industriais, Consumo Cíclico",
+        why: "compara operações com políticas de depreciação e endividamentos diferentes numa régua única",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Todo o setor Financeiro",
+        why: "num banco não há EBIT nem dívida líquida com significado; numa seguradora o EV existe (#103), mas juros são operacionais e o múltiplo compara mal",
+      },
+      {
+        where: "Empresas com EBIT próximo de zero",
+        why: "o múltiplo explode ou inverte de sinal — não significa que a ação esteja cara",
       },
     ],
     naSectors: ["bank"],
