@@ -578,6 +578,20 @@ def _as_bank(
     here — the parent filing's chart of accounts (ADR 0019) deducts it before the
     3.03 spread — which is why ``gross_profit`` for a bank is net of it, and why the
     calculator adds it back to get the interest margin.
+
+    Índice de Basileia (capital adequacy) is deliberately **not** built here (issue
+    #102, ANL-33) — its inputs are regulatory, not accounting. The numerator is the
+    Patrimônio de Referência (Nível I + Nível II under BACEN Res. 4.192, with
+    prudential adjustments) and the denominator is the RWA (Ativos Ponderados pelo
+    Risco); neither is a CVM statement account. A probe of the raw mirror
+    (2026-07-17) found both banks file exactly BPA/BPP/DRE/DFC/DMPL/DRA/DVA + FRE
+    capital: the BPP equity block (2.07.*) is the ordinary Patrimônio Líquido, not
+    the Patrimônio de Referência; the only "capital principal" strings are the
+    accounting footprint of one hybrid instrument (its interest/redemption lines in
+    the DFC/DMPL); "ponderado pelo risco"/RWA appears nowhere. The ratio lives only
+    in the bank's Pillar 3 / gerenciamento-de-capital notes, which the mirror does
+    not ingest (ADR 0016), so it is left unpublished rather than added as a
+    permanently-null column.
     """
     return replace(
         base,
