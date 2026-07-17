@@ -8,10 +8,12 @@ snapshot of its own output.
 
 A divergence we accept must be written down, cell by cell, in the fixture's ``except``
 block, with the reason. Several of them turn out to be the *platform's* mistake — it
-prices a unit's bundle against a per-share earnings figure (#38), and it mixes the
-consolidated result into ratios whose per-share sibling uses the controllers' line.
-Writing the reason down is what keeps that distinction visible; widening a tolerance
-would erase it.
+prices a unit's bundle against a per-share earnings figure (#38). Its margins and ROE,
+on the other hand, are not a mistake but a **basis**: they pair the consolidated total
+with the consolidated denominator, while its per-share figures use the controllers'
+slice (ADR 0026) — so each platform cell is compared against our column of the *same*
+basis (``_OUR_COLUMN``). Writing the reason down is what keeps these distinctions
+visible; widening a tolerance would erase them.
 """
 
 from __future__ import annotations
@@ -43,6 +45,16 @@ _TOLERANCES: dict[str, float] = {
     name: value
     for name, value in _REFERENCE["tolerances"].items()
     if not name.startswith("_")
+}
+
+# The platform's whole-firm ratios are published on the consolidated total —
+# minority interest included — while its per-share figures use the controllers'
+# slice (decoded to four decimals in ADR 0026). Each published cell compares
+# against our column of the same basis; a name not mapped here compares against
+# the column of its own name.
+_OUR_COLUMN: dict[str, str] = {
+    "net_margin": "net_margin_total",
+    "roe": "roe_total",
 }
 
 
@@ -104,7 +116,7 @@ def test_our_indicator_matches_the_reference_platform(
     ticker: str, year: str, indicator: str, published: float
 ) -> None:
     reason = _reason(ticker, year, indicator)
-    ours = getattr(_ours(ticker, year), indicator)
+    ours = getattr(_ours(ticker, year), _OUR_COLUMN.get(indicator, indicator))
 
     if reason is not None:
         # A recorded divergence still has to *be* one: if the cell now agrees, the
@@ -197,11 +209,12 @@ def test_roe_divides_by_the_closing_balance_like_the_platforms(ticker: str) -> N
     # value per share for them equals the two-year average equity (BBAS3: 185.0 bn /
     # 5.73 bn shares = 32.29 against its published 32.21). That is exactly the
     # anomaly #93 records — the platform's bank equity column, not our basis.
+    # On the platform's own basis — the consolidated total (ADR 0026).
     published = _REFERENCE["tickers"][ticker]["2025"]["roe"]
     exported = _INPUTS[ticker]
-    result = Decimal(exported["2025"]["financials"]["net_income"])
-    closing = Decimal(exported["2025"]["financials"]["equity"])
-    opening = Decimal(exported["2024"]["financials"]["equity"])
+    result = Decimal(exported["2025"]["financials"]["net_income_total"])
+    closing = Decimal(exported["2025"]["financials"]["equity_total"])
+    opening = Decimal(exported["2024"]["financials"]["equity_total"])
 
     on_closing = float(result / closing)
     on_average = float(result / ((opening + closing) / 2))

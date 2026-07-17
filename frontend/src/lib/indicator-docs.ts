@@ -62,7 +62,25 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "Smaug divide pelo PL de fechamento do período, não pelo PL médio do período. Em anos de forte emissão ou recompra o número diverge de plataformas que usam a média.",
+      "Smaug divide pelo PL de fechamento do período, não pelo PL médio do período. Em anos de forte emissão ou recompra o número diverge de plataformas que usam a média. Este ROE usa a fatia dos controladores nos dois lados da fração; a variante consolidada é o roe_total (ADR 0026).",
+  },
+  roe_total: {
+    formula: "Lucro líquido consolidado (anualizado) ÷ Patrimônio líquido consolidado",
+    what: "O mesmo ROE, medido sobre o grupo inteiro: lucro e patrimônio incluem a participação dos acionistas minoritários das controladas. É a base que as plataformas de referência publicam como ROE.",
+    strongIn: [
+      {
+        where: "Grupos com controladas relevantes não integrais (bebidas, mineração, software)",
+        why: "responde 'quanto o grupo consolidado rende', enquanto o roe responde 'quanto rende a fatia do acionista da holding' — em grupos integrais os dois coincidem",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas sem minoritários relevantes",
+        why: "é numericamente igual ao roe — a coluna só acrescenta informação onde há participação minoritária material",
+      },
+    ],
+    caveat:
+      "Numerador e denominador vêm da mesma fatia (o total consolidado), nunca misturados com a fatia dos controladores — a regra de pareamento do ADR 0026.",
   },
   roa: {
     formula: "Lucro líquido (anualizado) ÷ Ativo total",
@@ -81,6 +99,24 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       {
         where: "Programas e Serviços, Serviços Diversos",
         why: "o ativo contábil é pequeno frente ao valor gerado — o ROA fica artificialmente alto e não compara com nada",
+      },
+    ],
+    caveat:
+      "Este ROA divide o lucro dos controladores pelo ativo total consolidado — fatias diferentes nos dois lados. A variante de fatia única é o roa_total (ADR 0026).",
+  },
+  roa_total: {
+    formula: "Lucro líquido consolidado (anualizado) ÷ Ativo total",
+    what: "O ROA em fatia única: o lucro do grupo inteiro (minoritários incluídos) sobre o ativo que esse mesmo grupo inteiro opera. Como o ativo total só existe consolidado, esta é a versão internamente consistente do índice.",
+    strongIn: [
+      {
+        where: "Grupos com controladas relevantes não integrais",
+        why: "o ativo consolidado inclui 100% das controladas, então o lucro que o divide deve incluir 100% do resultado delas — mesma fatia em cima e embaixo",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas sem minoritários relevantes",
+        why: "é numericamente igual ao roa — a coluna só acrescenta informação onde há participação minoritária material",
       },
     ],
   },
@@ -132,6 +168,24 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       {
         where: "Holdings Diversificadas, Exploração de Imóveis",
         why: "resultado dominado por equivalência patrimonial ou reavaliação de ativos, não pela receita",
+      },
+    ],
+    caveat:
+      "Esta margem usa o lucro dos controladores sobre a receita consolidada — fatias diferentes. A versão de fatia única, que as plataformas publicam, é a net_margin_total (ADR 0026).",
+  },
+  net_margin_total: {
+    formula: "Lucro líquido consolidado ÷ Receita líquida (mesmo período, sem anualizar)",
+    what: "A margem líquida em fatia única: o lucro do grupo inteiro (minoritários incluídos) sobre a receita, que só existe consolidada. É a margem que as plataformas de referência publicam.",
+    strongIn: [
+      {
+        where: "Grupos com controladas relevantes não integrais",
+        why: "a receita inclui 100% das vendas das controladas, então o lucro que a divide deve incluir 100% do resultado delas — mesma fatia em cima e embaixo",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas sem minoritários relevantes",
+        why: "é numericamente igual à net_margin — a coluna só acrescenta informação onde há participação minoritária material",
       },
     ],
   },
@@ -718,7 +772,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
   },
   net_income: {
     formula: "Lucro líquido atribuído aos controladores",
-    what: "O resultado final do exercício, já descontada a parcela dos acionistas minoritários das controladas.",
+    what: "O resultado final do exercício, já descontada a parcela dos acionistas minoritários das controladas. É a fatia que pareia com o LPA; o total consolidado é o net_income_total (ADR 0026).",
     strongIn: [
       {
         where: "Intermediários Financeiros, Energia Elétrica",
@@ -729,6 +783,22 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       {
         where: "Holdings Diversificadas, Exploração e Refino",
         why: "impairments, hedge e venda de ativos podem dominar o resultado de um ano isolado",
+      },
+    ],
+  },
+  net_income_total: {
+    formula: "Lucro líquido consolidado do período (DRE 3.11, como arquivado)",
+    what: "O resultado do grupo inteiro, incluindo a parcela dos acionistas minoritários das controladas. É o numerador das variantes _total (ADR 0026); em grupos integrais coincide com o net_income.",
+    strongIn: [
+      {
+        where: "Grupos com controladas relevantes não integrais",
+        why: "mostra quanto o conglomerado gerou como um todo, antes de repartir com os sócios minoritários das controladas",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas sem minoritários relevantes",
+        why: "é numericamente igual ao net_income — a coluna só acrescenta informação onde há participação minoritária material",
       },
     ],
   },

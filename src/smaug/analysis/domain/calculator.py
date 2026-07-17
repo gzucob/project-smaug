@@ -188,9 +188,12 @@ class _Needs:
 
 _NEEDS: dict[str, _Needs] = {
     "roe": _Needs(accounts=("net_income", "equity")),
+    "roe_total": _Needs(accounts=("net_income_total", "equity_total")),
     "roa": _Needs(accounts=("net_income", "total_assets")),
+    "roa_total": _Needs(accounts=("net_income_total", "total_assets")),
     "roic": _Needs(accounts=("ebit", "equity", "total_debt")),
     "net_margin": _Needs(accounts=("net_income", "revenue")),
+    "net_margin_total": _Needs(accounts=("net_income_total", "revenue")),
     "gross_margin": _Needs(accounts=("gross_profit", "revenue")),
     "ebit_margin": _Needs(accounts=("ebit", "revenue")),
     "ebitda_margin": _Needs(accounts=("ebitda", "revenue")),
@@ -233,6 +236,7 @@ _NEEDS: dict[str, _Needs] = {
     "fcf_yield": _Needs(accounts=("cfo", "capex"), cap=True),
     "revenue": _Needs(accounts=("revenue",)),
     "net_income": _Needs(accounts=("net_income",)),
+    "net_income_total": _Needs(accounts=("net_income_total",)),
     "dividends": _Needs(accounts=("dividends_paid",)),
     # Scale figures. ``enterprise_value`` = cap + net debt, so it needs the cap and
     # the debt line net debt is built from; it is also in the bank inapplicable set,
@@ -333,6 +337,7 @@ def compute(
     # ``_INAPPLICABLE_BY_REGIME``, which now drives the value as well as the reason.
     cap = market.market_cap
     annual_net_income = _annualized(f.net_income, f)
+    annual_net_income_total = _annualized(f.net_income_total, f)
     annual_revenue = _annualized(f.revenue, f)
     annual_ebit = _annualized(f.ebit, f)
     annual_ebitda = _annualized(f.ebitda, f)
@@ -367,9 +372,12 @@ def compute(
 
     indicators = Indicators(
         roe=_div(annual_net_income, f.equity),
+        roe_total=_div(annual_net_income_total, f.equity_total),
         roa=_div(annual_net_income, f.total_assets),
+        roa_total=_div(annual_net_income_total, f.total_assets),
         roic=_div(nopat, invested_capital),
         net_margin=_div(f.net_income, f.revenue),
+        net_margin_total=_div(f.net_income_total, f.revenue),
         gross_margin=_div(f.gross_profit, f.revenue),
         ebit_margin=_div(f.ebit, f.revenue),
         ebitda_margin=_div(f.ebitda, f.revenue),
@@ -401,6 +409,7 @@ def compute(
         fcf_yield=_div(annual_fcf, cap),
         revenue=f.revenue,
         net_income=f.net_income,
+        net_income_total=f.net_income_total,
         dividends=f.dividends_paid,
         market_cap=cap,
         enterprise_value=enterprise_value,

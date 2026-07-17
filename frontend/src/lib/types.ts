@@ -28,10 +28,17 @@ export interface Classification {
 }
 
 export interface Indicators {
+  // The whole-firm ratios come on both statement slices (ADR 0026): the bare
+  // name pairs the controllers' result with the controllers' equity, and the
+  // `_total` variant pairs the consolidated total (minoritários included) —
+  // the basis the reference platforms publish for margins and ROE.
   roe: Decimalish;
+  roe_total: Decimalish;
   roa: Decimalish;
+  roa_total: Decimalish;
   roic: Decimalish;
   net_margin: Decimalish;
+  net_margin_total: Decimalish;
   gross_margin: Decimalish;
   ebit_margin: Decimalish;
   ebitda_margin: Decimalish;
@@ -63,6 +70,7 @@ export interface Indicators {
   cost_of_risk: Decimalish;
   revenue: Decimalish;
   net_income: Decimalish;
+  net_income_total: Decimalish;
   dividends: Decimalish;
   market_cap: Decimalish;
   enterprise_value: Decimalish;

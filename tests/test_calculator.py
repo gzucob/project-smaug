@@ -85,6 +85,41 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.dividends == Decimal(600)
 
 
+def test_total_slice_variants_pair_slice_with_slice() -> None:
+    # ADR 0026: the `_total` variants divide the consolidated result (minority
+    # included) by the consolidated denominator; the bare names keep the
+    # controllers' slice on both sides. Neither mixes.
+    financials = replace(
+        _nonfinancial(),
+        net_income_total=Decimal(1080),  # annualized -> 1440
+        equity_total=Decimal(7200),
+    )
+    market = MarketData(
+        price=Decimal(12), market_cap=Decimal(12000), shares=Decimal(600)
+    )
+
+    ind = compute(financials, None, market)
+
+    assert ind.roe == Decimal("0.2")  # controllers': 1200 / 6000
+    assert ind.roe_total == Decimal("0.2")  # total/total: 1440 / 7200
+    assert ind.roa_total == Decimal("0.12")  # 1440 / 12000
+    assert ind.net_margin == Decimal("0.3")  # 900 / 3000, period ratio
+    assert ind.net_margin_total == Decimal("0.36")  # 1080 / 3000
+    assert ind.net_income_total == Decimal(1080)  # headline: as filed
+    # eps stays on the controllers' slice — the count is their instrument.
+    assert ind.eps == Decimal(2)  # 1200 / 600, never 1440 / 600
+
+
+def test_total_slice_null_is_blamed_on_its_own_account() -> None:
+    financials = _nonfinancial()  # no net_income_total / equity_total read
+    ind = compute(financials, None, MarketData())
+
+    assert ind.roe_total is None
+    assert ind.net_margin_total is None
+    assert ind.null_reasons["roe_total"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    assert ind.null_reasons["net_margin_total"] is NullReason.SOURCE_ACCOUNT_ABSENT
+
+
 def test_closed_year_leaves_annualization_a_no_op() -> None:
     # A December reference date is a full 12-month period, so annualizing (×12/12)
     # must leave the flows untouched — this is what makes the DFP closed-year view
