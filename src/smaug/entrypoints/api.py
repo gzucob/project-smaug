@@ -38,9 +38,12 @@ class IndicatorsResponse(BaseModel):
     """
 
     roe: Decimal | None
+    roe_total: Decimal | None
     roa: Decimal | None
+    roa_total: Decimal | None
     roic: Decimal | None
     net_margin: Decimal | None
+    net_margin_total: Decimal | None
     gross_margin: Decimal | None
     ebit_margin: Decimal | None
     ebitda_margin: Decimal | None
@@ -71,6 +74,7 @@ class IndicatorsResponse(BaseModel):
     cost_of_risk: Decimal | None
     revenue: Decimal | None
     net_income: Decimal | None
+    net_income_total: Decimal | None
     dividends: Decimal | None
     market_cap: Decimal | None
     enterprise_value: Decimal | None

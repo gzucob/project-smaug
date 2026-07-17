@@ -54,11 +54,21 @@ class NullReason(StrEnum):
 class Indicators:
     """Fundamental + market indicators for one ticker at one point in time."""
 
-    # Profitability
+    # Profitability. The ratios that mix a result with a whole-firm denominator
+    # are published on both statement slices (ADR 0026): the bare name pairs the
+    # controllers' result with the controllers' equity (the listed shares' own
+    # return), and the ``_total`` variant pairs the consolidated total — minority
+    # included — with the consolidated denominator, which is the basis the
+    # reference platforms publish for margins and ROE. Per-share and cap-based
+    # indicators have no ``_total`` variant: the share count and the cap are the
+    # controllers' instruments, so a total numerator would mix slices.
     roe: Decimal | None = None
+    roe_total: Decimal | None = None  # total net income / total equity
     roa: Decimal | None = None
+    roa_total: Decimal | None = None  # total net income / total assets
     roic: Decimal | None = None  # NOPAT (EBIT·(1−tax)) / invested capital
     net_margin: Decimal | None = None
+    net_margin_total: Decimal | None = None  # total net income / revenue
     gross_margin: Decimal | None = None
     ebit_margin: Decimal | None = None
     ebitda_margin: Decimal | None = None
@@ -101,7 +111,8 @@ class Indicators:
     # per-year evolution of revenue / earnings / dividends, which the ratios alone
     # cannot reconstruct.
     revenue: Decimal | None = None
-    net_income: Decimal | None = None
+    net_income: Decimal | None = None  # controllers' slice — pairs with eps
+    net_income_total: Decimal | None = None  # consolidated, minority included
     dividends: Decimal | None = None
     # Scale figures (absolute reais / a share count) — the market-side inputs the
     # calculator already builds its multiples from, persisted so the front-end can

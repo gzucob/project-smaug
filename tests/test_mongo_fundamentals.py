@@ -318,6 +318,9 @@ def test_standardize_takes_controllers_share_wide_cash_and_dividends() -> None:
 
     assert f.equity == Decimal("900")  # 1000 consolidated - 100 minority
     assert f.net_income == Decimal("180")  # explicit controllers line
+    # Both slices travel together (ADR 0026): the totals as filed, minority in.
+    assert f.equity_total == Decimal("1000")
+    assert f.net_income_total == Decimal("200")
     assert f.cash == Decimal("500")  # 1.01.01 + 1.01.02
     assert f.dividends_paid == Decimal("50")  # abs, minority line excluded
     assert f.dfc_period_start == date(2025, 1, 1)

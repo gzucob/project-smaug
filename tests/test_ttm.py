@@ -61,6 +61,27 @@ def test_ttm_sums_isolated_flows_and_takes_latest_stocks() -> None:
     assert ttm.period_start == date(2025, 4, 1)  # 12 months back → annualization no-op
 
 
+def test_ttm_sums_the_total_slice_flow_and_takes_its_stock_from_the_latest() -> None:
+    # ADR 0026: the consolidated-total slice travels like its controllers'
+    # sibling — the income total is a flow (summed), the equity total a stock.
+    quarters = [
+        replace(
+            _q(e, net_income=Decimal(100)),
+            net_income_total=Decimal(110),
+        )
+        for e in _ENDS
+    ]
+    quarters[-1] = replace(
+        quarters[-1], equity=Decimal(6000), equity_total=Decimal(6600)
+    )
+
+    ttm = build_ttm(quarters, None)
+
+    assert ttm is not None
+    assert ttm.net_income_total == Decimal(440)  # 4 × 110, minority included
+    assert ttm.equity_total == Decimal(6600)  # stock: latest quarter, not summed
+
+
 def test_ttm_carries_the_null_cause_provenance() -> None:
     # filed_regime / unmapped_fields (#30) must survive the TTM assembly, or the
     # live view would lose the ability to attribute its nulls.

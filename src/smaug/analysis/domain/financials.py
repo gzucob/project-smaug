@@ -62,6 +62,13 @@ class StandardizedFinancials:
     total_assets: Decimal | None = None
     equity: Decimal | None = None  # attributable to controlling shareholders
     net_income: Decimal | None = None  # attributable to controlling shareholders
+    # The consolidated totals the controllers' figures above are sliced from —
+    # minority interest included (DRE 3.11, BPP 2.03 as filed). Carried alongside
+    # because both slices are published numbers answering different questions
+    # (ADR 0026): the controllers' slice is what accrues to the listed shares,
+    # the total is what the consolidated group earned/owns.
+    net_income_total: Decimal | None = None
+    equity_total: Decimal | None = None
     revenue: Decimal | None = None
     gross_profit: Decimal | None = None
     ebit: Decimal | None = None

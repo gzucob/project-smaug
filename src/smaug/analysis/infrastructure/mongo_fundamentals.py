@@ -223,19 +223,29 @@ def _controllers_share(
     return derived
 
 
-def _net_income(dre: Accounts) -> Decimal | None:
-    """Net income attributable to the controlling shareholders (DRE)."""
-    total: Mapping[str, Any] | None = None
+def _net_income_total_account(dre: Accounts) -> Mapping[str, Any] | None:
+    """The DRE's bottom-line account — the consolidated total, minority included."""
     for name in _NET_INCOME_TOTAL_NAMES:
         total = _account_by_name(dre, name)
         if total is not None:
-            break
+            return total
+    return None
+
+
+def _net_income(dre: Accounts) -> Decimal | None:
+    """Net income attributable to the controlling shareholders (DRE)."""
     return _controllers_share(
         dre,
-        total=total,
+        total=_net_income_total_account(dre),
         controllers="socios da empresa controladora",
         minority="socios nao controladores",
     )
+
+
+def _net_income_total(dre: Accounts) -> Decimal | None:
+    """The consolidated bottom line as filed (ADR 0026's total basis)."""
+    total = _net_income_total_account(dre)
+    return None if total is None else _dec(total.get("quantity"))
 
 
 def _equity(bpp: Accounts) -> Decimal | None:
@@ -246,6 +256,11 @@ def _equity(bpp: Accounts) -> Decimal | None:
         controllers="atribuido ao controlador",
         minority="nao controladores",
     )
+
+
+def _equity_total(bpp: Accounts) -> Decimal | None:
+    """The consolidated equity as filed, minority block included (ADR 0026)."""
+    return _by_name(bpp, "patrimonio liquido")
 
 
 def _dividends_paid(dfc: Accounts) -> Decimal | None:
@@ -422,6 +437,11 @@ def standardize(
         total_assets=_mul(_by_code(bpa, "1"), bpa_s),
         equity=_mul(_equity(bpp), bpp_s),
         net_income=_mul(_net_income(dre), dre_s),
+        # Both slices travel together (ADR 0026). For a bank the DRE here is the
+        # parent filing (ADR 0019), so its "total" is the parent bottom line —
+        # the figure the bank itself reports.
+        equity_total=_mul(_equity_total(bpp), bpp_s),
+        net_income_total=_mul(_net_income_total(dre), dre_s),
         revenue=_mul(_by_code(dre, "3.01"), dre_s),
         gross_profit=_mul(_by_code(dre, "3.03"), dre_s),
         dividends_paid=_mul(_dividends_paid(dfc), dfc_s),

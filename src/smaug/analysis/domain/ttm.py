@@ -33,7 +33,13 @@ from smaug.analysis.domain.financials import StandardizedFinancials
 # Flows summed over the window; EBITDA is recomposed from EBIT+D&A. DRE flows are
 # isolated on the DRE span, DFC flows (D&A, dividends) on the DFC span — the two
 # statements use different period bases in the CVM files.
-_DRE_FLOW_FIELDS = ("revenue", "net_income", "ebit", "gross_profit")
+_DRE_FLOW_FIELDS = (
+    "revenue",
+    "net_income",
+    "net_income_total",
+    "ebit",
+    "gross_profit",
+)
 _DFC_FLOW_FIELDS = ("dep_amort", "dividends_paid", "cfo", "capex")
 _FLOW_FIELDS = _DRE_FLOW_FIELDS + _DFC_FLOW_FIELDS
 _TTM_QUARTERS = 4
@@ -149,7 +155,9 @@ def build_ttm(
         dfc_period_start=period_start,  # the TTM flows are already isolated+summed
         total_assets=stock_source.total_assets,
         equity=stock_source.equity,
+        equity_total=stock_source.equity_total,
         net_income=summed["net_income"],
+        net_income_total=summed["net_income_total"],
         revenue=summed["revenue"],
         gross_profit=summed["gross_profit"],
         ebit=summed["ebit"],
