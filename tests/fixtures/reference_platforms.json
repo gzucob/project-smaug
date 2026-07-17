@@ -186,15 +186,15 @@
           "gross_margin": "(b) basis — cause UNKNOWN, recorded loudly: 1.19% apart against a 1% tolerance, while 2025 agrees to 0.01% with the same mapping, so the mapping is not the gap. Leading hypothesis, unverified: the platform reads 2024 from the 2025 filing's restated comparative (TOTVS acquired through 2024–2025) while we read the 2024 filing as filed.",
           "net_margin": "(a) statement slice — minority interest, see ABEV3/WEGE3 (#116). The largest of the family (8.2%): TOTVS's non-wholly-owned subsidiaries carry a material minority slice.",
           "eps": "(c) share base: a ~2% count gap, barely over tolerance — the same current-issued vs as-filed-outstanding family as LREN3 (#76).",
-          "bvps": "(a) statement slice, mostly: eps agrees to ~2% while bvps is ~9% apart, so the gap is the equity numerator, not the count. Ours is the controllers' slice (2.03 minus the non-controlling block, #78); the platform's implied equity is leaner still. Which pairing is right is #116's decision."
+          "bvps": "(c) share base: the '~9% equity numerator' this cell used to record was our #118 defect (a grandchild reserve line, 2.03.02.09, read as the minority block); fixed, what remains is eps's own ~2.3% count gap (585.9M ours vs ~599.4M implied) — the same family as eps (#76).",
+          "roe": "(a) statement slice: the platform's roe is total/total — 735,443/4,987,121 = 0.14747 reproduces its 0.1475 exactly — while ours pairs the controllers' income with the controllers' equity (#116). Recorded only now: the #118 equity inflation used to deflate our roe into the 3% tolerance."
         }
       },
       "2025": {
         "eps": 1.49, "bvps": 8.52, "roe": 0.1691, "net_margin": 0.1595, "gross_margin": 0.7026,
         "except": {
           "net_margin": "(a) statement slice — minority interest, see 2024 (#116).",
-          "bvps": "(a) statement slice — the equity numerator, see 2024 (#116).",
-          "roe": "(a) statement slice: follows net_margin and bvps — the consolidated-vs-controllers' pairing sits on both sides of the fraction (#116). 2024 lands inside the 3% tolerance, so only this year is recorded."
+          "roe": "(a) statement slice: total/total reproduces the platform exactly here too — 920,742/5,443,457 = 0.16915 vs its 0.1691 — while ours is controllers'/controllers' (#116). See 2024."
         }
       }
     },
