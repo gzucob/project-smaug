@@ -1,6 +1,6 @@
 """TTM assembly: sum isolated quarter flows, latest stocks, derive the missing Q4."""
 
-from dataclasses import replace
+from dataclasses import fields, replace
 from datetime import date
 from decimal import Decimal
 
@@ -119,6 +119,71 @@ def test_ttm_sums_the_total_slice_flow_and_takes_its_stock_from_the_latest() -> 
     assert ttm is not None
     assert ttm.net_income_total == Decimal(440)  # 4 × 110, minority included
     assert ttm.equity_total == Decimal(6600)  # stock: latest quarter, not summed
+
+
+def test_ttm_sums_the_bank_dre_lines_and_takes_the_loan_book_as_a_stock() -> None:
+    # #140: the bank lines (ADR 0021) were absent from the TTM flow list, so the
+    # three bank indicators were null on the live view and only there. Expenses
+    # stay signed as filed — summing must not flip them.
+    quarters = [
+        replace(
+            _q(e),
+            gross_profit=Decimal(1000),
+            loan_loss_provision=Decimal(-200),
+            fee_income=Decimal(300),
+            personnel_expense=Decimal(-250),
+            admin_expense=Decimal(-150),
+            loan_book=Decimal(50_000),
+        )
+        for e in _ENDS
+    ]
+    quarters[-1] = replace(quarters[-1], loan_book=Decimal(56_000))
+
+    ttm = build_ttm(quarters, None)
+
+    assert ttm is not None
+    assert ttm.gross_profit == Decimal(4000)
+    assert ttm.loan_loss_provision == Decimal(-800)  # negative as filed
+    assert ttm.fee_income == Decimal(1200)
+    assert ttm.personnel_expense == Decimal(-1000)
+    assert ttm.admin_expense == Decimal(-600)
+    assert ttm.loan_book == Decimal(56_000)  # stock: latest quarter, not summed
+
+
+def test_ttm_sums_the_insurer_dre_lines() -> None:
+    # Same hole as the bank's (#140): #98 would have hit it the moment it landed.
+    quarters = [
+        replace(
+            _q(e),
+            earned_premium=Decimal(900),
+            claims_incurred=Decimal(-400),
+        )
+        for e in _ENDS
+    ]
+
+    ttm = build_ttm(quarters, None)
+
+    assert ttm is not None
+    assert ttm.earned_premium == Decimal(3600)
+    assert ttm.claims_incurred == Decimal(-1600)  # negative as filed
+
+
+def test_ttm_carries_every_numeric_account_it_is_given() -> None:
+    # The assembly names each account explicitly, which is how the bank lines went
+    # missing for a year (#140). Fill every numeric field and assert none is
+    # dropped, so a newly mapped account fails here instead of on a screen.
+    numeric = [
+        f.name for f in fields(StandardizedFinancials) if f.type == "Decimal | None"
+    ]
+    assert "loan_book" in numeric  # the annotation is read as text — fail loudly
+    filled = {name: Decimal(100) for name in numeric}
+    quarters = [replace(_q(e), **filled) for e in _ENDS]
+
+    ttm = build_ttm(quarters, None)
+
+    assert ttm is not None
+    dropped = [name for name in numeric if getattr(ttm, name) is None]
+    assert dropped == []
 
 
 def test_ttm_carries_the_null_cause_provenance() -> None:
