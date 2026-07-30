@@ -83,9 +83,29 @@ export interface Indicators {
   market_cap: Decimalish;
   enterprise_value: Decimalish;
   shares: Decimalish;
+  // Why each null is null (ADR 0008). A key absent from the map is a null with
+  // no recorded cause — "unclassified", a reportable status of its own (#47).
+  null_reasons: Partial<Record<string, NullReason>>;
 }
 
-export type IndicatorKey = keyof Indicators;
+/**
+ * The calculator's enumerable causes for a null (`NullReason` in
+ * `analysis/domain/indicators.py`). The front-end never infers these: it used
+ * to mirror the sector guards by hand, which is the duplication #30 flagged
+ * and #54 removed.
+ */
+export type NullReason =
+  | "inapplicable_regime"
+  | "source_account_unmapped"
+  | "source_account_absent"
+  | "missing_price"
+  | "price_symbol_not_found"
+  | "missing_share_count"
+  | "missing_prior_period"
+  | "zero_denominator";
+
+/** Every indicator field — `null_reasons` is metadata about them, not one of them. */
+export type IndicatorKey = Exclude<keyof Indicators, "null_reasons">;
 
 export interface Analysis {
   ticker: string;

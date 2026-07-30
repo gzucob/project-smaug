@@ -17,6 +17,7 @@ import { LAST_12M_SHORT, signOf, toNum, yearOf } from "@/lib/format";
 import { indicatorDoc } from "@/lib/indicator-docs";
 import { INDICATOR_GROUPS, groupColor, specByKey, specsByGroup } from "@/lib/indicators";
 import type { IndicatorSpec } from "@/lib/indicators";
+import { reasonCopy } from "@/lib/null-reasons";
 import type { Analysis, IndicatorKey, Indicators } from "@/lib/types";
 
 export function IndicatorGrid({
@@ -79,6 +80,7 @@ export function IndicatorGrid({
           series={seriesFor(openKey)}
           accent={groupColor(openSpec.group)}
           sector={sector}
+          nullReason={indicators.null_reasons?.[openKey]}
           onSelectKey={setOpenKey}
           onClose={() => setOpenKey(null)}
         />
@@ -101,6 +103,10 @@ function IndicatorCell({
   const raw = indicators[spec.key];
   const text = spec.format(raw);
   const missing = toNum(raw) === null;
+  // The API says *why* a null is null; the cell used to render every one of
+  // them as a bare "n/d", which reads as "not applicable" even when the honest
+  // answer is "we did not compute it" (#54).
+  const reason = missing ? reasonCopy(indicators.null_reasons?.[spec.key]) : null;
 
   let valueColor = "var(--color-ink-50)";
   if (missing) valueColor = "var(--color-ink-600)";
@@ -136,7 +142,15 @@ function IndicatorCell({
       <div className="nums mt-1 text-lg font-semibold leading-tight" style={{ color: valueColor }}>
         {text}
       </div>
-      {missing && <div className="text-[0.6rem] text-ink-600">n/d</div>}
+      {reason && (
+        <div
+          className="text-[0.6rem]"
+          style={{ color: reason.intentional ? "var(--color-ink-600)" : "var(--color-gold-600)" }}
+          title={reason.long}
+        >
+          {reason.short}
+        </div>
+      )}
     </div>
   );
 }

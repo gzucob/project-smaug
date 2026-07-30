@@ -71,6 +71,13 @@ not in the fonts.
   base URL is `NEXT_PUBLIC_API_BASE` (default `http://localhost:8000`). Because
   fetching is server-side there is **no CORS surface** — do not add
   client-side calls to the API.
+- **A null is never explained by the front-end.** The API sends `null_reasons`
+  (ADR 0008) naming why each indicator is null; render it through
+  `lib/null-reasons.ts` and distinguish a deliberate n/d (`inapplicable_regime`,
+  `zero_denominator`) from a gap of ours (missing price, unmapped account),
+  which is coloured as the warning it is. The old `naSectors` field mirrored the
+  calculator's guards by hand and was deleted in #54 — do not reintroduce a
+  second source for a fact the API already states.
 - `lib/api.ts` returns a **non-throwing `ApiResult` discriminated union**.
   Pages must render the `VaultOffline` empty state on `ok: false` (backend down
   or 404) instead of throwing.
@@ -116,9 +123,18 @@ a sparkline inside a dense indicator cell was tried and rejected in #31 — a
 22px stroke with no axis and no reference told the reader nothing that the
 number above it did not.
 
-- **`recharts`** draws the indicator drill-down (`IndicatorChart`). It is
-  imported through **`next/dynamic`** from `IndicatorDetail`, because ~115 kB
-  is a third of the ticker page and nobody needs it until a modal opens.
+- **`recharts`** draws every chart, through the single `IndicatorChart`
+  component — the drill-down and the ticker page's annual cards alike. It costs
+  ~115 kB on the ticker page's first load; that is the price of a readable
+  scale, paid once.
+- `IndicatorChart` is a Client Component and `HistoryCharts` a Server one, so
+  the formatter crosses that boundary **by name** (`FormatKind` +
+  `axisFormatter`), never as a function — React cannot serialize one, and the
+  page 500s if you try.
+- **Never hand a formatter straight to a Recharts `tickFormatter`.** It calls
+  back with `(value, index)`, and this project's formatters take
+  `(value, digits)` — the index lands in `digits` and each tick down the axis
+  grows a decimal ("0%", "20,0%", "40,00%"). Wrap it in a one-argument lambda.
 - Colours, fonts and grid strokes come from the same `@theme` tokens as
   everything else — pass `var(--color-…)` into Recharts props; never a hex.
 - **Recharts' own animations stay off** (`isAnimationActive={false}`): they run
@@ -130,9 +146,9 @@ number above it did not.
 - **A TTM window is never drawn as one more closed exercise**: it keeps a
   hollow/dashed basis of its own, and it is excluded from the average, the
   min/max and any other statistic over the exercises.
-- The hand-rolled SVG charts (`YearBars`, `Sparkline`, `HistoryCharts`,
-  `HistoryStrip`) still serve the ticker page's overview strips. Leave them —
-  a small trend next to a headline figure is a different job from a drill-down.
+- `Sparkline` (hand-rolled SVG) survives in `HistoryStrip` only: a trend line
+  next to a headline figure is a different job from a chart meant to be read.
+  `YearBars` is gone — #34 replaced it everywhere.
 
 ## Motion
 

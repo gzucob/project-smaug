@@ -9,10 +9,11 @@
  *   Where the two diverge (ROE over closing equity, ROIC over a flat 34% tax
  *   rate) the divergence is recorded in `caveat` rather than smoothed over.
  * - **Relevance is expressed against B3's subsectors**, which are finer than the
- *   five sectors Smaug classifies internally. `naSectors` is the narrower,
- *   mechanical fact: the sectors for which the calculator returns `None`.
+ *   five sectors Smaug classifies internally. Whether an indicator is null for a
+ *   given company is *not* restated here: the API answers that per analysis, in
+ *   `null_reasons` (#54). This file explains meaning; it does not mirror guards.
  */
-import type { IndicatorKey, SectorKey } from "@/lib/types";
+import type { IndicatorKey } from "@/lib/types";
 
 /** A subsector (or family of them) plus the reason the indicator behaves that way. */
 export interface RelevanceNote {
@@ -27,14 +28,9 @@ export interface IndicatorDoc {
   what: string;
   strongIn: RelevanceNote[];
   weakIn: RelevanceNote[];
-  /** Sectors where the calculator deliberately returns nothing. */
-  naSectors?: SectorKey[];
   /** A fidelity note: where Smaug's number can differ from a reference platform. */
   caveat?: string;
 }
-
-/** Banks and insurers file under a financial-institution structure. */
-const FINANCIAL: SectorKey[] = ["bank", "insurer"];
 
 export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
   // ------------------------------------------------------- rentabilidade ---
@@ -143,7 +139,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "dívida é insumo operacional, não financiamento; separar capital próprio de terceiros não faz sentido — e numa seguradora rica em caixa o capital investido (PL − caixa) beira zero e o índice explode",
       },
     ],
-    naSectors: FINANCIAL,
     caveat:
       "O NOPAT usa a alíquota estatutária fixa de 34% (IRPJ 25% + CSLL 9%), não a alíquota efetiva de cada empresa — uma aproximação deliberada, registrada em docs/adr/0002.",
   },
@@ -212,7 +207,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o custo é reconhecido por evolução de obra, então a margem bruta oscila com o cronograma, não com a rentabilidade",
       },
     ],
-    naSectors: ["insurer"],
   },
   ebit_margin: {
     formula: "EBIT (lucro operacional) ÷ Receita líquida",
@@ -233,7 +227,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "juros são receita e despesa operacionais — excluí-los descaracteriza o resultado",
       },
     ],
-    naSectors: ["insurer"],
   },
   ebitda_margin: {
     formula: "EBITDA ÷ Receita líquida",
@@ -258,7 +251,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "mesma razão do EBIT: juros são operacionais",
       },
     ],
-    naSectors: FINANCIAL,
   },
   asset_turnover: {
     formula: "Receita líquida (anualizada) ÷ Ativo total",
@@ -387,7 +379,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "captação é o insumo do negócio, não um passivo a ser quitado — a conta não tem sentido econômico",
       },
     ],
-    naSectors: ["bank"],
   },
   net_debt_to_ebitda: {
     formula: "Dívida líquida ÷ EBITDA anualizado",
@@ -412,7 +403,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "não há dívida líquida a medir",
       },
     ],
-    naSectors: ["bank"],
   },
   net_debt_to_ebit: {
     formula: "Dívida líquida ÷ EBIT anualizado",
@@ -433,7 +423,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "num banco não há dívida líquida a medir; numa seguradora o valor existe (é o caixa, negativo), mas anos-de-EBIT para 'quitar' um caixa não é uma leitura útil",
       },
     ],
-    naSectors: ["bank"],
     caveat:
       "Para uma seguradora a dívida líquida é o caixa negado (#103): o índice sai negativo e mede folga, não endividamento.",
   },
@@ -456,7 +445,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o índice muda de sinal e deixa de ser ordenável",
       },
     ],
-    naSectors: ["bank"],
     caveat:
       "Para uma seguradora a dívida líquida é o caixa negado (#103): o índice negativo significa caixa líquido, não dívida.",
   },
@@ -479,7 +467,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o índice muda de sinal e deixa de ser ordenável",
       },
     ],
-    naSectors: ["bank"],
   },
   liabilities_to_assets: {
     formula: "(Ativo total − Patrimônio líquido) ÷ Ativo total",
@@ -540,7 +527,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "operam de propósito com liquidez corrente abaixo de 1, financiados por fornecedores e por receita previsível — não é sinal de aperto",
       },
     ],
-    naSectors: ["bank"],
   },
 
   // ------------------------------------------------ múltiplos de mercado ---
@@ -667,7 +653,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "não há circulante clássico a subtrair",
       },
     ],
-    naSectors: ["bank"],
   },
   payout: {
     formula: "Proventos pagos no exercício ÷ Lucro líquido",
@@ -788,7 +773,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o EBITDA ignora o reinvestimento obrigatório; um EV/EBITDA baixo pode esconder um FCL nulo",
       },
     ],
-    naSectors: ["bank"],
   },
 
   ev_ebit: {
@@ -814,7 +798,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o múltiplo explode ou inverte de sinal — não significa que a ação esteja cara",
       },
     ],
-    naSectors: ["bank"],
   },
 
   // -------------------------------------------------------- fluxo de caixa ---
@@ -1008,7 +991,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "a dívida líquida negativa (caixa maior que a dívida) encolhe o EV abaixo do valor de mercado",
       },
     ],
-    naSectors: ["bank"],
     caveat:
       "Nulo para um banco: depósito é funding, não dívida, então não há dívida líquida a somar (ADR 0022).",
   },
@@ -1046,7 +1028,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "parte relevante do lucro vem de tarifas e seguros, que a margem financeira não enxerga — olhe o índice de eficiência ao lado",
       },
     ],
-    naSectors: ["insurer", "utility", "commodity", "industry"],
     caveat:
       "Dividimos pelo ativo total, não pelos ativos rentáveis: o CVM não separa uns dos outros na demonstração estruturada. Isso subestima a margem em relação ao número que o próprio banco publica.",
   },
@@ -1066,7 +1047,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "um banco de varejo carrega milhares de agências e nunca terá a eficiência de um banco de atacado — o índice compara mal fora do mesmo perfil",
       },
     ],
-    naSectors: ["insurer", "utility", "commodity", "industry"],
     caveat:
       "Os bancos publicam um índice gerencial, com ajustes próprios. O nosso sai direto da demonstração, então costuma ficar alguns pontos acima do divulgado.",
   },
@@ -1085,7 +1065,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "a provisão responde a mudanças de política de crédito e a eventos setoriais — só a série de vários anos mostra a tendência",
       },
     ],
-    naSectors: ["insurer", "utility", "commodity", "industry"],
   },
 };
 

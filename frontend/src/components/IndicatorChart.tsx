@@ -26,6 +26,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { axisFormatter, valueFormatter } from "@/lib/indicators";
+import type { FormatKind } from "@/lib/indicators";
 
 export type ChartMode = "bars" | "line";
 
@@ -51,19 +53,24 @@ export function IndicatorChart({
   values,
   ghostLast,
   color,
-  format,
+  formatKind,
   mode,
   average,
+  height = 264,
 }: {
   labels: string[];
   values: (number | null)[];
   ghostLast: boolean;
   color: string;
-  format: (n: number) => string;
+  /** Named, not passed: a Server Component parent cannot hand over a function. */
+  formatKind: FormatKind;
   mode: ChartMode;
   /** Mean of the closed exercises, drawn as the reference line. */
   average: number | null;
+  height?: number;
 }) {
+  const format = axisFormatter(formatKind);
+  const readable = valueFormatter(formatKind);
   const lastIndex = values.length - 1;
   const data: Point[] = labels.map((label, i) => {
     const value = values[i] ?? null;
@@ -82,7 +89,7 @@ export function IndicatorChart({
 
   return (
     <div className="w-full">
-      <ResponsiveContainer width="100%" height={264}>
+      <ResponsiveContainer width="100%" height={height}>
         {/* The right margin holds the last x label ("12 meses"), which sits on
             the plot edge in line mode and would otherwise be clipped. */}
         <ComposedChart data={data} margin={{ top: 10, right: 34, bottom: 2, left: 2 }}>
@@ -118,7 +125,7 @@ export function IndicatorChart({
               <ChartTooltip
                 label={typeof props.label === "string" ? props.label : ""}
                 value={pointOf(data, props.label)}
-                format={format}
+                format={readable}
                 color={color}
               />
             )}

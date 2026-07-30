@@ -11,28 +11,25 @@
  * a picker, so comparing P/L against P/VP costs one click instead of a round
  * trip through the grid.
  */
-import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { FiAlertTriangle, FiBarChart2, FiChevronDown, FiTrendingUp, FiX } from "react-icons/fi";
+import { IndicatorChart } from "@/components/IndicatorChart";
 import type { ChartMode } from "@/components/IndicatorChart";
-import { DASH, money } from "@/lib/format";
+import { DASH } from "@/lib/format";
 import type { IndicatorDoc, RelevanceNote } from "@/lib/indicator-docs";
-import { INDICATOR_GROUPS, specsByGroup } from "@/lib/indicators";
+import {
+  INDICATOR_GROUPS,
+  INDICATORS,
+  formatKindOf,
+  specsByGroup,
+  valueFormatter,
+} from "@/lib/indicators";
 import type { IndicatorSpec } from "@/lib/indicators";
+import { reasonCopy } from "@/lib/null-reasons";
 import { sectorMeta } from "@/lib/sectors";
-import type { IndicatorKey, SectorKey } from "@/lib/types";
-
-// Recharts is ~115 kB — a third of the ticker page. It is only ever needed once
-// the reader opens a drill-down, so it loads with the modal, not with the page.
-const IndicatorChart = dynamic(
-  () => import("@/components/IndicatorChart").then((m) => m.IndicatorChart),
-  {
-    ssr: false,
-    loading: () => <div className="h-[264px]" aria-hidden />,
-  },
-);
+import type { IndicatorKey, NullReason } from "@/lib/types";
 
 export interface IndicatorSeries {
   labels: string[];
@@ -47,6 +44,7 @@ export function IndicatorDetail({
   series,
   accent,
   sector,
+  nullReason,
   onSelectKey,
   onClose,
 }: {
@@ -55,14 +53,31 @@ export function IndicatorDetail({
   series: IndicatorSeries;
   accent: string;
   sector: string;
+  /** Set when this indicator is null in the view the reader came from. */
+  nullReason: NullReason | undefined;
   onSelectKey: (key: IndicatorKey) => void;
   onClose: () => void;
 }) {
   const [mode, setMode] = useState<ChartMode>("bars");
+  const panelRef = useRef<HTMLDivElement>(null);
 
+  // Esc closes; ←/→ walk the indicator list in the order the grid shows it, so
+  // scanning a group does not mean reopening the picker for each one.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      // The picker has its own arrow behaviour; leave it alone while focused.
+      if (document.activeElement instanceof HTMLSelectElement) return;
+      const at = INDICATORS.findIndex((s) => s.key === spec.key);
+      if (at < 0) return;
+      const step = e.key === "ArrowRight" ? 1 : -1;
+      const next = (at + step + INDICATORS.length) % INDICATORS.length;
+      e.preventDefault();
+      onSelectKey(INDICATORS[next].key);
     };
     document.addEventListener("keydown", onKey);
     const { overflow } = document.body.style;
@@ -71,15 +86,42 @@ export function IndicatorDetail({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = overflow;
     };
-  }, [onClose]);
+  }, [onClose, onSelectKey, spec.key]);
 
-  // Axis and tooltip labels drop the "R$ " prefix to save width, as in HistoryCharts.
-  const isMoney = spec.format === money;
-  const fmt = (n: number) => (isMoney ? spec.format(n).replace("R$ ", "") : spec.format(n));
+  // Focus moves into the dialog on open and returns to whatever opened it, so a
+  // keyboard reader is not dropped back at the top of a 29-cell grid.
+  useEffect(() => {
+    const opener = document.activeElement;
+    panelRef.current?.focus();
+    return () => {
+      if (opener instanceof HTMLElement) opener.focus();
+    };
+  }, []);
+
+  // Tab cycles inside the dialog while it is open.
+  const onKeyDownTrap = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Tab") return;
+    const focusable = panelRef.current?.querySelectorAll<HTMLElement>(
+      'button, select, [href], input, [tabindex]:not([tabindex="-1"])',
+    );
+    if (!focusable || focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  const formatKind = formatKindOf(spec);
+  const fmt = valueFormatter(formatKind);
   const fmtOrDash = (n: number | null) => (n === null ? DASH : fmt(n));
 
   const plottable = series.values.filter((v) => v !== null).length;
-  const notApplicable = doc.naSectors?.includes(sector as SectorKey) ?? false;
+  const reason = nullReason ? reasonCopy(nullReason) : null;
 
   // The reference statistics describe the closed exercises only. The TTM window
   // overlaps the last one and is not a comparable period, so averaging it in
@@ -112,10 +154,13 @@ export function IndicatorDetail({
         // `overflow-hidden` — with no scrollbar anywhere, which is the bug this
         // whole modal had. Pinning the row makes the columns scroll instead.
         className="modal-panel panel relative my-auto w-full max-w-3xl p-6 sm:p-7 lg:grid lg:max-h-[88vh] lg:max-w-6xl lg:grid-cols-2 lg:grid-rows-[minmax(0,1fr)] lg:gap-8 lg:overflow-hidden lg:p-8"
+        ref={panelRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={spec.label}
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={onKeyDownTrap}
       >
         <button
           type="button"
@@ -164,12 +209,16 @@ export function IndicatorDetail({
           </div>
         </header>
 
-        {notApplicable && (
+        {reason && (
           <div className="mt-5 flex gap-3 rounded-xl border border-gold-500/15 bg-vault-850 p-3.5">
             <FiAlertTriangle className="mt-0.5 shrink-0 text-gold-500" size={15} />
             <p className="text-xs leading-relaxed text-ink-400">
-              Não se aplica a {sectorMeta(sector).label.toLowerCase()}. O cálculo retorna{" "}
-              <span className="nums">n/d</span> de propósito — veja &ldquo;Onde engana&rdquo;.
+              <span className="text-ink-200">
+                {reason.intentional ? "Sem valor de propósito" : "Sem valor por falta de dado"} (
+                {sectorMeta(sector).label.toLowerCase()}):
+              </span>{" "}
+              {reason.long}
+              {reason.intentional && <> Veja &ldquo;Onde engana&rdquo;.</>}
             </p>
           </div>
         )}
@@ -214,7 +263,7 @@ export function IndicatorDetail({
                   values={series.values}
                   ghostLast={series.ghostLast}
                   color={accent}
-                  format={fmt}
+                  formatKind={formatKind}
                   mode={mode}
                   average={average}
                 />
