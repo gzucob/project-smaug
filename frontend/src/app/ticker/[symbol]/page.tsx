@@ -150,7 +150,7 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
             </span>
             <span className="h-px flex-1 bg-gradient-to-r from-gold-500/30 to-transparent" />
           </h2>
-          <HistoryStrip history={history} sector={gemKey(reference.classification)} />
+          <HistoryStrip history={history} />
         </section>
       )}
     </div>

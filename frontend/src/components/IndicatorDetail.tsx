@@ -113,6 +113,17 @@ export function IndicatorDetail({
   const current = series.values[series.values.length - 1] ?? null;
   const currentLabel = series.labels[series.labels.length - 1];
 
+  const heroColor =
+    current === null
+      ? "var(--color-ink-600)"
+      : spec.signed
+        ? current > 0
+          ? "var(--color-up)"
+          : current < 0
+            ? "var(--color-down)"
+            : "var(--color-ink-200)"
+        : "var(--color-ink-50)";
+
   // The change against the closed exercise. In a cell this was a bare arrow with
   // nothing naming the other side; here both ends fit ("7,5% → 5,4%").
   const from = toNum(previous);
@@ -204,10 +215,20 @@ export function IndicatorDetail({
             competed with the number they exist to qualify. */}
         <div className="mt-5">
           <div className="flex flex-wrap items-baseline gap-x-3">
-            <span className="nums text-4xl font-semibold leading-none" style={{ color: accent }}>
+            {/* Direction is coloured only where the sign means something: a
+                growth of −2,3% is bad news, a P/L of 8,24× is neither. Same
+                rule the grid cell applies. */}
+            <span className="nums text-4xl font-semibold leading-none" style={{ color: heroColor }}>
               {fmtOrDash(current)}
             </span>
-            {change && <span className="nums text-sm text-ink-400">{change.text}</span>}
+            {change && (
+              <span
+                className="nums text-sm"
+                style={{ color: change.to >= change.from ? "var(--color-up)" : "var(--color-down)" }}
+              >
+                {change.text}
+              </span>
+            )}
           </div>
           <p className="mt-1.5 text-xs text-ink-500">
             {currentLabel}

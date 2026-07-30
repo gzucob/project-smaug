@@ -13,6 +13,11 @@
  * The TTM point keeps a visual basis of its own (hollow bar / dashed segment):
  * it is a 12-month window, not one more closed exercise, and averaging it into
  * the reference line would quietly change what the line means.
+ *
+ * **Colour marks direction, not identity** (#145): a bar or line is blue above
+ * zero and red below it, in every chart. `color` is left for the things that
+ * have no direction — the average's reference line — where the group or sector
+ * hue still says which family the reader is looking at.
  */
 import {
   Bar,
@@ -61,6 +66,7 @@ export function IndicatorChart({
   labels: string[];
   values: (number | null)[];
   ghostLast: boolean;
+  /** Non-directional accent — the average's reference line. Marks use up/down. */
   color: string;
   /** Named, not passed: a Server Component parent cannot hand over a function. */
   formatKind: FormatKind;
@@ -126,7 +132,6 @@ export function IndicatorChart({
                 label={typeof props.label === "string" ? props.label : ""}
                 value={pointOf(data, props.label)}
                 format={readable}
-                color={color}
               />
             )}
           />
@@ -135,15 +140,18 @@ export function IndicatorChart({
 
           {mode === "bars" && (
             <Bar dataKey="value" isAnimationActive={false} radius={[3, 3, 0, 0]} maxBarSize={54}>
-              {data.map((d) => (
-                <Cell
-                  key={d.label}
-                  fill={(d.value ?? 0) < 0 ? "var(--color-down)" : color}
-                  fillOpacity={d.ghost ? 0.16 : 0.85}
-                  stroke={d.ghost ? color : undefined}
-                  strokeDasharray={d.ghost ? "3 2" : undefined}
-                />
-              ))}
+              {data.map((d) => {
+                const mark = (d.value ?? 0) < 0 ? "var(--color-down)" : "var(--color-up)";
+                return (
+                  <Cell
+                    key={d.label}
+                    fill={mark}
+                    fillOpacity={d.ghost ? 0.16 : 0.85}
+                    stroke={d.ghost ? mark : undefined}
+                    strokeDasharray={d.ghost ? "3 2" : undefined}
+                  />
+                );
+              })}
             </Bar>
           )}
 
@@ -152,9 +160,9 @@ export function IndicatorChart({
               <Line
                 dataKey="closed"
                 type="monotone"
-                stroke={color}
+                stroke="var(--color-up)"
                 strokeWidth={2}
-                dot={{ r: 3, fill: color, stroke: "none" }}
+                dot={{ r: 3, fill: "var(--color-up)", stroke: "none" }}
                 activeDot={{ r: 4.5 }}
                 isAnimationActive={false}
                 connectNulls={false}
@@ -162,11 +170,16 @@ export function IndicatorChart({
               <Line
                 dataKey="live"
                 type="monotone"
-                stroke={color}
+                stroke="var(--color-up)"
                 strokeWidth={2}
                 strokeDasharray="5 4"
                 strokeOpacity={0.75}
-                dot={{ r: 3, fill: "var(--color-vault-900)", stroke: color, strokeWidth: 1.5 }}
+                dot={{
+                  r: 3,
+                  fill: "var(--color-vault-900)",
+                  stroke: "var(--color-up)",
+                  strokeWidth: 1.5,
+                }}
                 activeDot={{ r: 4.5 }}
                 isAnimationActive={false}
                 connectNulls={false}
@@ -222,18 +235,17 @@ function ChartTooltip({
   label,
   value,
   format,
-  color,
 }: {
   label: string;
   value: Point | undefined;
   format: (n: number) => string;
-  color: string;
 }) {
   if (!value) return null;
+  const mark = (value.value ?? 0) < 0 ? "var(--color-down)" : "var(--color-up)";
   return (
     <div className="panel px-3 py-2 text-xs shadow-lg">
       <div className="text-[0.68rem] uppercase tracking-wide text-ink-500">{label}</div>
-      <div className="nums mt-0.5 text-sm font-semibold" style={{ color }}>
+      <div className="nums mt-0.5 text-sm font-semibold" style={{ color: mark }}>
         {value.value === null ? "n/d" : format(value.value)}
       </div>
       {value.ghost && (

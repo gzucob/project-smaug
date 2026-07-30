@@ -52,8 +52,13 @@
   --color-pastel-aqua: #9ed4d8; /* Fluxo de caixa */
   --color-pastel-sage: #b6cf9e; /* Banco */
 
-  /* --- Signal (up / down) --- */
-  --color-up: #37d99a;
+  /* --- Signal (up / down) -------------------------------------------------
+     Blue and red, not green and red: protanopia and deuteranopia — the common
+     forms of colour blindness — are precisely a red/green confusion, so the
+     usual financial palette is the one pair that fails them. Blue against red
+     survives. These two carry *direction* wherever it exists: the data marks,
+     a delta, and the favourable/treacherous markers in the indicator docs. */
+  --color-up: #4c8dff;
   --color-down: #ff5d6c;
 
   /* --- Fonts (wired to next/font in layout.tsx) --- */

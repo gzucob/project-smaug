@@ -1,6 +1,5 @@
 import { Sparkline } from "@/components/Sparkline";
 import { DASH, multiple, pct, toNum, yearOf } from "@/lib/format";
-import { sectorColor } from "@/lib/sectors";
 import type { Analysis, IndicatorKey } from "@/lib/types";
 
 const TRENDS: { key: IndicatorKey; label: string; format: (v: number | null) => string }[] = [
@@ -10,8 +9,7 @@ const TRENDS: { key: IndicatorKey; label: string; format: (v: number | null) => 
 ];
 
 /** Closed-year history: trend sparklines + a per-year timeline. */
-export function HistoryStrip({ history, sector }: { history: Analysis[]; sector: string }) {
-  const color = sectorColor(sector);
+export function HistoryStrip({ history }: { history: Analysis[] }) {
   const years = history.map((h) => yearOf(h.reference_date));
 
   return (
@@ -36,7 +34,15 @@ export function HistoryStrip({ history, sector }: { history: Analysis[]; sector:
                 )}
               </div>
               <div className="nums text-2xl font-semibold text-ink-50">{t.format(latest)}</div>
-              <Sparkline values={series} color={color} width={220} height={44} />
+              {/* The trend line is data, so it takes the directional colour
+                  like every other mark (#145); the sector hue stays on the
+                  badge and the classification. */}
+              <Sparkline
+                values={series}
+                color={delta !== null && delta < 0 ? "var(--color-down)" : "var(--color-up)"}
+                width={220}
+                height={44}
+              />
               <div className="flex justify-between text-[0.6rem] text-ink-600">
                 <span>{years[0]}</span>
                 <span>{years[years.length - 1]}</span>
