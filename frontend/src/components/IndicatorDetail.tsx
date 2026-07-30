@@ -17,23 +17,23 @@ import { createPortal } from "react-dom";
 import { FiAlertTriangle, FiBarChart2, FiChevronDown, FiTrendingUp, FiX } from "react-icons/fi";
 import { IndicatorChart } from "@/components/IndicatorChart";
 import type { ChartMode } from "@/components/IndicatorChart";
-import { DASH } from "@/lib/format";
+import { IndicatorPicker } from "@/components/IndicatorPicker";
+import { DASH, toNum } from "@/lib/format";
 import type { IndicatorDoc, RelevanceNote } from "@/lib/indicator-docs";
 import {
   BASIS_HINT,
   BASIS_LABEL,
-  INDICATOR_GROUPS,
   INDICATORS,
   basisOf,
   basisPair,
+  deltaText,
   formatKindOf,
-  specsByGroup,
   valueFormatter,
 } from "@/lib/indicators";
 import type { Basis, IndicatorSpec } from "@/lib/indicators";
 import { reasonCopy } from "@/lib/null-reasons";
 import { sectorMeta } from "@/lib/sectors";
-import type { IndicatorKey, NullReason } from "@/lib/types";
+import type { Decimalish, IndicatorKey, NullReason } from "@/lib/types";
 
 export interface IndicatorSeries {
   labels: string[];
@@ -49,6 +49,8 @@ export function IndicatorDetail({
   accent,
   sector,
   nullReason,
+  previous,
+  previousLabel,
   onSelectKey,
   onClose,
 }: {
@@ -59,10 +61,14 @@ export function IndicatorDetail({
   sector: string;
   /** Set when this indicator is null in the view the reader came from. */
   nullReason: NullReason | undefined;
+  /** Same indicator on the latest closed exercise, for the change tile. */
+  previous: Decimalish;
+  previousLabel: string | null;
   onSelectKey: (key: IndicatorKey) => void;
   onClose: () => void;
 }) {
   const [mode, setMode] = useState<ChartMode>("bars");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
   // Esc closes; ←/→ walk the indicator list in the order the grid shows it, so
@@ -74,8 +80,8 @@ export function IndicatorDetail({
         return;
       }
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-      // The picker has its own arrow behaviour; leave it alone while focused.
-      if (document.activeElement instanceof HTMLSelectElement) return;
+      // While the picker's list is open, the arrows belong to it.
+      if (pickerOpen) return;
       // A `_total` column is not in the grid's list; walk from its controllers'
       // sibling so the arrows keep working while reading the consolidated basis.
       const gridKey = basisPair(spec.key)?.controllers ?? spec.key;
@@ -93,7 +99,7 @@ export function IndicatorDetail({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = overflow;
     };
-  }, [onClose, onSelectKey, spec.key]);
+  }, [onClose, onSelectKey, spec.key, pickerOpen]);
 
   // Focus moves into the dialog on open and returns to whatever opened it, so a
   // keyboard reader is not dropped back at the top of a 29-cell grid.
@@ -144,6 +150,17 @@ export function IndicatorDetail({
   const current = series.values[series.values.length - 1] ?? null;
   const currentLabel = series.labels[series.labels.length - 1];
 
+  // The change against the closed exercise. In a cell this was a bare arrow with
+  // nothing naming the other side; here both ends fit ("7,5% → 5,4%").
+  const from = toNum(previous);
+  const change =
+    current !== null && from !== null && previousLabel
+      ? (() => {
+          const text = deltaText(formatKind, current, from);
+          return text ? { text, from, to: current } : null;
+        })()
+      : null;
+
   // Rendered into <body>: `position: fixed` anchors to the nearest *transformed*
   // ancestor rather than to the window, and this modal has two — the `.rise`
   // entrance (which keeps `translateY(0)` under `forwards`) and `.panel-hover`
@@ -188,34 +205,15 @@ export function IndicatorDetail({
           <div className="flex items-start gap-3">
             <span className="mt-1.5 h-8 w-[3px] rounded-full" style={{ backgroundColor: accent }} />
             <div>
-              {/* The native select sizes itself to its widest option, which would
-                  strand the chevron far from the title — so it sits invisible on
-                  top of the label and keeps its keyboard and mobile behaviour. */}
-              <div className="group/pick relative inline-flex items-center gap-1.5 rounded-md focus-within:outline-1 focus-within:outline-gold-500">
-                <h3 className="font-display text-2xl text-ink-50 transition-colors group-hover/pick:text-gold-300">
-                  {spec.label}
-                </h3>
-                <FiChevronDown className="text-ink-500" size={15} />
-                <select
-                  // The picker lists grid indicators only, so while reading a
-                  // `_total` column it shows that column's controllers' sibling
-                  // — the basis toggle below is what states which slice it is.
-                  value={pair?.controllers ?? spec.key}
-                  onChange={(e) => onSelectKey(e.target.value as IndicatorKey)}
-                  aria-label="Trocar de indicador"
-                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                >
-                  {INDICATOR_GROUPS.map((group) => (
-                    <optgroup key={group} label={group}>
-                      {specsByGroup(group).map((s) => (
-                        <option key={s.key} value={s.key}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-              </div>
+              {/* Lists grid indicators only, so while reading a `_total` column
+                  it shows that column's controllers' sibling — the basis toggle
+                  below is what states which slice is on screen. */}
+              <IndicatorPicker
+                value={pair?.controllers ?? spec.key}
+                label={spec.label}
+                onChange={onSelectKey}
+                onOpenChange={setPickerOpen}
+              />
               <p className="mt-0.5 text-xs" style={{ color: accent }}>
                 {spec.group}
               </p>
@@ -266,6 +264,13 @@ export function IndicatorDetail({
                   dashColor={average === null ? undefined : accent}
                   hint="Média aritmética dos exercícios fechados — a janela de 12 meses fica de fora, por não ser um período comparável."
                 />
+                {change && (
+                  <Stat
+                    label={`vs exercício ${previousLabel}`}
+                    value={change.text}
+                    detail={`${fmt(change.from)} → ${fmt(change.to)}`}
+                  />
+                )}
                 <Stat
                   label="Mín · Máx"
                   value={
@@ -353,6 +358,7 @@ function Stat({
   color,
   hint,
   dashColor,
+  detail,
 }: {
   label: string;
   value: string;
@@ -360,6 +366,8 @@ function Stat({
   hint?: string;
   /** Draws the chart's dashed reference line as this stat's legend. */
   dashColor?: string;
+  /** A second line under the value — the two ends of a change, say. */
+  detail?: string;
 }) {
   return (
     <div className="rounded-lg border border-gold-500/8 bg-vault-850 px-3 py-2" title={hint}>
@@ -378,6 +386,7 @@ function Stat({
       >
         {value}
       </div>
+      {detail && <div className="nums mt-0.5 text-[0.62rem] text-ink-600">{detail}</div>}
     </div>
   );
 }

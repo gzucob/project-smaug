@@ -71,11 +71,12 @@ not in the fonts.
   base URL is `NEXT_PUBLIC_API_BASE` (default `http://localhost:8000`). Because
   fetching is server-side there is **no CORS surface** — do not add
   client-side calls to the API.
-- **The ticker page carries one indicator grid**, the twelve-month window, with
-  each cell's change against the latest closed exercise beside its value. It
-  used to stack a second, identical grid for that exercise; comparing 29 numbers
-  by eye is not a comparison, and the per-indicator series is a click away in
-  the drill-down (#32).
+- **The ticker page carries one indicator grid**, the twelve-month window. It
+  used to stack a second, identical grid for the latest closed exercise;
+  comparing 29 numbers by eye is not a comparison (#32).
+- **The change against that exercise lives in the drill-down**, as a stat naming
+  both ends (`9,6% → 7,5%`), not in the cell. A bare `▼ 2,1 p.p.` under a value
+  states a magnitude without saying what it was measured against.
 - **A delta is stated in the unit the reader thinks in** (`deltaText`): a ratio
   shown as `%` moves in **percentage points**, a multiple in `×`, money in
   relative terms. A delta that rounds away at the shown precision is not
@@ -112,6 +113,12 @@ not in the fonts.
 
 - **Server-first.** Add `"use client"` only where interactivity is required
   (e.g. `TickerSearch`, which navigates on submit — no client-side data fetch).
+- **No native `<select>` for a menu the design system owns.** Its dropdown is
+  drawn by the operating system — type, row height and `optgroup` styling are
+  unreachable from CSS, and on this panel it reads as a foreign object (#143).
+  `IndicatorPicker` is the in-app pattern: `role="listbox"`, arrow/Enter/Esc
+  handling, outside-click dismissal, focus returned to the trigger. Reuse it
+  rather than reaching for the native element again.
 - **Dynamic (per-sector) colours use inline `style` with `var(--color-…)`**,
   since Tailwind cannot know a runtime value; static colours use utilities.
 - The brand mark is **`DragonMark`** (react-icons `GiSpikedDragonHead`,

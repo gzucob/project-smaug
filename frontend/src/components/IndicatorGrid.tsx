@@ -112,6 +112,8 @@ export function IndicatorGrid({
           accent={groupColor(openSpec.group)}
           sector={sector}
           nullReason={indicators.null_reasons?.[openKey]}
+          previous={compare?.[openKey] ?? null}
+          previousLabel={compareLabel}
           onSelectKey={setOpenKey}
           onClose={() => setOpenKey(null)}
         />
@@ -139,15 +141,6 @@ function IndicatorCell({
   const text = spec.format(raw);
   const missing = toNum(raw) === null;
 
-  // The change against the closed exercise, in the unit the reader thinks in.
-  // A delta against `n/d` is not zero, so a missing side suppresses it entirely.
-  const now = toNum(raw);
-  const then = compare ? toNum(compare[spec.key]) : null;
-  const delta =
-    now !== null && then !== null ? deltaText(formatKindOf(spec), now, then) : null;
-  const deltaHint = `Variação frente ao exercício de ${compareLabel} (${spec.format(
-    compare?.[spec.key] ?? null,
-  )})`;
   // The API says *why* a null is null; the cell used to render every one of
   // them as a bare "n/d", which reads as "not applicable" even when the honest
   // answer is "we did not compute it" (#54).
@@ -192,15 +185,11 @@ function IndicatorCell({
         </div>
       </div>
 
-      <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5">
-        <span className="nums text-lg font-semibold leading-tight" style={{ color: valueColor }}>
-          {text}
-        </span>
-        {delta && (
-          <span className="nums text-[0.62rem] text-ink-500" title={deltaHint}>
-            {delta}
-          </span>
-        )}
+      {/* The value alone. The change against the closed exercise lives in the
+          drill-down, where both sides can be named — beside the value it was a
+          bare "▼ 2,1 p.p." with nothing saying what it was measured against. */}
+      <div className="nums mt-1 text-lg font-semibold leading-tight" style={{ color: valueColor }}>
+        {text}
       </div>
       {reason && (
         <div
