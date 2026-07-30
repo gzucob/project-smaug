@@ -1,5 +1,6 @@
+import { HistoryTable } from "@/components/HistoryTable";
 import { Sparkline } from "@/components/Sparkline";
-import { DASH, multiple, pct, toNum, yearOf } from "@/lib/format";
+import { DASH, pct, toNum, yearOf } from "@/lib/format";
 import type { Analysis, IndicatorKey } from "@/lib/types";
 
 const TRENDS: { key: IndicatorKey; label: string; format: (v: number | null) => string }[] = [
@@ -8,7 +9,15 @@ const TRENDS: { key: IndicatorKey; label: string; format: (v: number | null) => 
   { key: "dividend_yield", label: "Dividend yield", format: (v) => (v === null ? DASH : pct(v)) },
 ];
 
-/** Closed-year history: trend sparklines + a per-year timeline. */
+/**
+ * Closed-year history: trend sparklines over a headline figure, then the
+ * year-by-year table.
+ *
+ * The sparklines stay hand-rolled SVG on purpose — a trend line *beside* a
+ * headline number is a different job from a chart meant to be read, which is
+ * what the drill-down is for. The per-year card strip that used to close this
+ * section is now `HistoryTable`.
+ */
 export function HistoryStrip({ history }: { history: Analysis[] }) {
   const years = history.map((h) => yearOf(h.reference_date));
 
@@ -52,30 +61,7 @@ export function HistoryStrip({ history }: { history: Analysis[] }) {
         })}
       </div>
 
-      <div className="overflow-x-auto">
-        <div className="flex min-w-max gap-3">
-          {history.map((h) => (
-            <div key={h.reference_date} className="panel min-w-[140px] flex-1 p-4">
-              <div className="font-display text-lg text-ink-100">{yearOf(h.reference_date)}</div>
-              <div className="mt-3 flex flex-col gap-1.5 text-xs">
-                <Row label="ROE" value={pct(h.indicators.roe)} />
-                <Row label="Marg. líq." value={pct(h.indicators.net_margin)} />
-                <Row label="P/L" value={multiple(h.indicators.pe)} />
-                <Row label="DY" value={pct(h.indicators.dividend_yield)} />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-ink-600">{label}</span>
-      <span className="nums text-ink-100">{value}</span>
+      <HistoryTable history={history} />
     </div>
   );
 }
