@@ -340,6 +340,88 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
   },
+  revenue_cagr_5y: {
+    formula: "(Receita do exercício ÷ Receita de 5 exercícios antes) ^ (1/5) − 1",
+    what: "O crescimento anual composto da receita ao longo de cinco anos: a taxa constante que levaria da receita de cinco exercícios atrás até a de hoje. Responde o que o crescimento ano a ano não responde — se a trajetória sobe, ou se um ano atípico só desfez a queda do anterior.",
+    strongIn: [
+      {
+        where: "Mineração, Siderurgia, Exploração e Refino, Agropecuária",
+        why: "é justamente onde a variação anual engana: a janela de cinco anos atravessa um ciclo de preço inteiro e mostra a tendência por baixo dele",
+      },
+      {
+        where: "Programas e Serviços, Saúde",
+        why: "negócios de composição: a taxa composta é a linguagem em que a própria empresa descreve sua meta",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas com menos de seis exercícios fechados na base",
+        why: "a janela não fecha e o indicador vem nulo — de propósito: encurtá-la em silêncio faria a taxa dizer algo diferente do que o nome promete",
+      },
+      {
+        where: "Empresas que fizeram aquisição ou cisão relevante na janela",
+        why: "a taxa mistura crescimento orgânico com mudança de perímetro, e os dois extremos não descrevem a mesma empresa",
+      },
+    ],
+    caveat:
+      "A janela é nossa escolha e as plataformas de referência discordam dela: publicam \"CAGR 5A\" sobre janelas diferentes, o que explica boa parte da divergência contra elas. Aqui os extremos ficam a cinco exercícios de distância (seis pontos), e só os exercícios fechados entram — a janela de 12 meses não é um exercício. Só os dois extremos entram na conta: o caminho entre eles é invisível, e uma queda seguida de recuperação lê igual a um crescimento constante.",
+  },
+  ebitda_cagr_5y: {
+    formula: "(EBITDA do exercício ÷ EBITDA de 5 exercícios antes) ^ (1/5) − 1",
+    what: "O crescimento anual composto do EBITDA em cinco anos. Comparado ao da receita, diz se o crescimento veio acompanhado de ganho de margem operacional ou apesar da perda dela.",
+    strongIn: [
+      {
+        where: "Energia Elétrica, Água e Saneamento, Telecomunicações",
+        why: "negócios de ativo pesado onde o EBITDA é a medida usual de geração — e onde os contratos tornam a série suave o bastante para uma taxa composta significar algo",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Intermediários Financeiros, Previdência e Seguros",
+        why: "o EBITDA não é definido sob o regime financeiro; o indicador vem nulo por regime, não por falta de dado",
+      },
+    ],
+    caveat:
+      "Herda a ressalva do EBITDA: nosso EBITDA soma a depreciação e amortização da DFC ao EBIT, então onde essa linha falta na origem os dois extremos podem não ser calculados da mesma forma.",
+  },
+  ebit_cagr_5y: {
+    formula: "(EBIT do exercício ÷ EBIT de 5 exercícios antes) ^ (1/5) − 1",
+    what: "O crescimento anual composto do lucro operacional em cinco anos — a versão do CAGR de EBITDA que já carrega o custo do ativo imobilizado.",
+    strongIn: [
+      {
+        where: "Bens Industriais, Comércio, Máquinas e Equipamentos",
+        why: "captura o poder de precificação da operação sem o efeito da estrutura de capital ou do regime fiscal",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Previdência e Seguros",
+        why: "o EBIT é degenerado sob o regime de seguros (ADR 0010) — o resultado financeiro é operação, não financiamento",
+      },
+    ],
+  },
+  net_income_cagr_5y: {
+    formula: "(Lucro líquido do exercício ÷ Lucro de 5 exercícios antes) ^ (1/5) − 1",
+    what: "O crescimento anual composto do lucro dos controladores em cinco anos. É a taxa que mais se aproxima do que o acionista de longo prazo experimentou.",
+    strongIn: [
+      {
+        where: "Intermediários Financeiros, Energia Elétrica",
+        why: "lucro recorrente e previsível: a taxa composta descreve bem a capacidade de geração",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas que deram prejuízo em algum dos dois extremos da janela",
+        why: "não existe taxa composta a partir de um extremo negativo ou zero — vem nulo, nomeado como non_positive_endpoint, em vez de um número inventado",
+      },
+      {
+        where: "Holdings Diversificadas, Exploração e Refino",
+        why: "impairments e venda de ativos podem dominar justamente um dos dois anos que definem a taxa",
+      },
+    ],
+    caveat:
+      "Como só os extremos contam, um ano-base deprimido infla a taxa permanentemente: uma empresa que saiu de um ano ruim aparece como grande crescedora até esse ano sair da janela.",
+  },
   net_income_growth: {
     formula: "(Lucro atual − Lucro anterior) ÷ |Lucro anterior|",
     what: "Variação do lucro líquido frente ao período anterior comparável.",
@@ -918,6 +1000,72 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       {
         where: "Empresas sem minoritários relevantes",
         why: "é numericamente igual ao net_income — a coluna só acrescenta informação onde há participação minoritária material",
+      },
+    ],
+  },
+  total_assets: {
+    formula: "Ativo total do balanço (BPA 1), no instante de fechamento",
+    what: "Tudo que a empresa controla: caixa, recebíveis, estoques, imobilizado e intangível. É o denominador do ROA, do giro do ativo e do P/Ativo, publicado em reais para que a série possa ser lida por si.",
+    strongIn: [
+      {
+        where: "Intermediários Financeiros, Previdência e Seguros",
+        why: "no regime financeiro o balanço é o próprio negócio — o ativo mede o tamanho da operação melhor que a receita",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Programas e Serviços, Serviços Educacionais",
+        why: "o ativo mais valioso é a marca e o time, que não entram no balanço: o total subestima a empresa",
+      },
+    ],
+  },
+  total_liabilities: {
+    formula: "Ativo total − Patrimônio líquido consolidado",
+    what: "O que a empresa deve a terceiros: fornecedores, dívida financeira, tributos, provisões. Lido contra o ativo total, mostra que fatia do que a empresa controla foi financiada por fora.",
+    strongIn: [
+      {
+        where: "Construção Civil, Energia Elétrica, Transporte",
+        why: "setores de ativo pesado e financiamento longo: a trajetória do passivo contra a do ativo é a história da alavancagem",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Intermediários Financeiros",
+        why: "o passivo de um banco são os depósitos dos clientes — insumo do negócio, não endividamento; o total é enorme por construção e não indica risco",
+      },
+    ],
+    caveat:
+      "Subtraímos o patrimônio consolidado, não o dos controladores: a participação dos minoritários é patrimônio, não capital de terceiros. Por isso este número não é exatamente o numerador do Passivo/Ativo, que subtrai a fatia dos controladores — os dois diferem justamente pelos minoritários (#149).",
+  },
+  equity: {
+    formula: "Patrimônio líquido atribuído aos controladores (BPP 2.03, como arquivado)",
+    what: "O capital dos sócios da empresa listada: o que sobraria depois de quitar todo o passivo, já descontada a parcela dos minoritários das controladas. É o numerador do VPA e o denominador do ROE.",
+    strongIn: [
+      {
+        where: "Intermediários Financeiros, Previdência e Seguros",
+        why: "é o capital regulatório que limita quanto o banco empresta ou a seguradora subscreve",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas com recompras agressivas ou prejuízo acumulado",
+        why: "o PL encolhe por decisão de capital, não por piora operacional — e perto de zero todos os índices construídos sobre ele explodem",
+      },
+    ],
+  },
+  equity_total: {
+    formula: "Patrimônio líquido consolidado, minoritários incluídos",
+    what: "O capital próprio do grupo inteiro. É o denominador das variantes _total (ADR 0026) e o que subtraímos do ativo para chegar ao passivo total; em grupos integrais coincide com o equity.",
+    strongIn: [
+      {
+        where: "Grupos com controladas relevantes não integrais",
+        why: "mostra o capital próprio que sustenta o balanço consolidado, que é o balanço publicado",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas sem minoritários relevantes",
+        why: "é numericamente igual ao equity — a coluna só acrescenta informação onde a participação minoritária é material",
       },
     ],
   },

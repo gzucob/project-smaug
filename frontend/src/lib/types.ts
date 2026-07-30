@@ -55,6 +55,12 @@ export interface Indicators {
   current_ratio: Decimalish;
   revenue_growth: Decimalish;
   net_income_growth: Decimalish;
+  // Compounded annual growth over a stated window (#144): the endpoints sit five
+  // closed exercises apart, so six are needed and a shorter history is null.
+  revenue_cagr_5y: Decimalish;
+  ebitda_cagr_5y: Decimalish;
+  ebit_cagr_5y: Decimalish;
+  net_income_cagr_5y: Decimalish;
   pe: Decimalish;
   pb: Decimalish;
   psr: Decimalish;
@@ -80,6 +86,12 @@ export interface Indicators {
   net_income_total: Decimalish;
   dividends: Decimalish;
   dividends_declared: Decimalish;
+  // Balance-sheet scale in absolute reais (#142) — the ratios divide these away,
+  // so a chart of the two sides of the balance sheet needs the sides themselves.
+  total_assets: Decimalish;
+  total_liabilities: Decimalish;
+  equity: Decimalish;
+  equity_total: Decimalish;
   market_cap: Decimalish;
   enterprise_value: Decimalish;
   shares: Decimalish;
@@ -102,7 +114,8 @@ export type NullReason =
   | "price_symbol_not_found"
   | "missing_share_count"
   | "missing_prior_period"
-  | "zero_denominator";
+  | "zero_denominator"
+  | "non_positive_endpoint";
 
 /** Every indicator field — `null_reasons` is metadata about them, not one of them. */
 export type IndicatorKey = Exclude<keyof Indicators, "null_reasons">;

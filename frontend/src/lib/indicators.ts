@@ -88,6 +88,13 @@ export const INDICATORS: IndicatorSpec[] = [
 
   { key: "revenue_growth", label: "Cresc. receita", hint: "Variação da receita frente ao ano anterior", group: "Crescimento", format: signedPct, signed: true },
   { key: "net_income_growth", label: "Cresc. lucro", hint: "Variação do lucro frente ao ano anterior", group: "Crescimento", format: signedPct, signed: true },
+  // Compounded over a stated window (#144): the endpoints sit five closed
+  // exercises apart. The window is in the label because "CAGR 5A" means
+  // different spans at different reference platforms.
+  { key: "revenue_cagr_5y", label: "CAGR receita 5a", hint: "Crescimento anual composto da receita em 5 anos — extremos a 5 exercícios de distância", group: "Crescimento", format: signedPct, signed: true },
+  { key: "ebitda_cagr_5y", label: "CAGR EBITDA 5a", hint: "Crescimento anual composto do EBITDA em 5 anos", group: "Crescimento", format: signedPct, signed: true },
+  { key: "ebit_cagr_5y", label: "CAGR EBIT 5a", hint: "Crescimento anual composto do lucro operacional em 5 anos", group: "Crescimento", format: signedPct, signed: true },
+  { key: "net_income_cagr_5y", label: "CAGR lucro 5a", hint: "Crescimento anual composto do lucro líquido em 5 anos", group: "Crescimento", format: signedPct, signed: true },
 
   { key: "net_debt", label: "Dívida líquida", hint: "Dívida total − caixa e aplicações", group: "Alavancagem & Liquidez", format: money },
   { key: "net_debt_to_ebitda", label: "Dív. líq./EBITDA", hint: "Anos de EBITDA para quitar a dívida líquida", group: "Alavancagem & Liquidez", format: multiple },

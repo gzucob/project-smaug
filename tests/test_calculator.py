@@ -532,3 +532,91 @@ def test_zero_denominator_null_is_named() -> None:
     assert ind.payout is None  # dividends / 0
     assert ind.null_reasons["payout"] is NullReason.ZERO_DENOMINATOR
     assert ind.null_reasons["pe"] is NullReason.ZERO_DENOMINATOR  # cap / 0
+
+
+def _closed_year(year: int, **accounts: Decimal | None) -> StandardizedFinancials:
+    """One closed exercise — a full 12 months, so nothing is annualized."""
+    return replace(
+        _nonfinancial(),
+        reference_date=date(year, 12, 31),
+        period_start=date(year, 1, 1),
+        **accounts,
+    )
+
+
+def _rising_history(values: list[Decimal | None]) -> list[StandardizedFinancials]:
+    """Closed exercises ending in 2024, one per value, oldest -> newest."""
+    first = 2024 - len(values) + 1
+    return [
+        _closed_year(first + offset, revenue=value, net_income=value)
+        for offset, value in enumerate(values)
+    ]
+
+
+def test_cagr_compounds_between_the_endpoints_five_exercises_apart() -> None:
+    # Revenue doubling over the window: 2^(1/5) - 1 = 14.87% a year. Only the two
+    # endpoints count, so the noise in between must not move the rate.
+    history = _rising_history(
+        [
+            Decimal(1000),
+            Decimal(5000),
+            Decimal(200),
+            Decimal(3000),
+            Decimal(1),
+            Decimal(2000),
+        ]
+    )
+    ind = compute(history[-1], history[-2], MarketData(), history)
+
+    assert ind.revenue_cagr_5y is not None
+    assert round(float(ind.revenue_cagr_5y), 4) == 0.1487
+
+
+def test_cagr_is_null_until_the_window_closes() -> None:
+    # Five exercises span four years of variation, not five. Shortening the window
+    # in silence would make the number mean something other than its name (#144).
+    history = _rising_history([Decimal(1000)] * 5)
+    ind = compute(history[-1], history[-2], MarketData(), history)
+
+    assert ind.revenue_cagr_5y is None
+    assert ind.null_reasons["revenue_cagr_5y"] is NullReason.MISSING_PRIOR_PERIOD
+
+
+def test_cagr_refuses_a_non_positive_endpoint() -> None:
+    # A loss in the base year has no compounded rate: two negative endpoints would
+    # report a deepening loss as growth.
+    history = _rising_history(
+        [
+            Decimal(-500),
+            Decimal(100),
+            Decimal(200),
+            Decimal(300),
+            Decimal(400),
+            Decimal(-900),
+        ]
+    )
+    ind = compute(history[-1], history[-2], MarketData(), history)
+
+    assert ind.net_income_cagr_5y is None
+    assert ind.null_reasons["net_income_cagr_5y"] is NullReason.NON_POSITIVE_ENDPOINT
+
+
+def test_cagr_needs_no_history_to_compute_the_rest() -> None:
+    # The default empty history must not break a caller that has no series: every
+    # other indicator still computes, and the rates alone go null.
+    ind = compute(_nonfinancial(), None, MarketData(market_cap=Decimal(12000)))
+
+    assert ind.revenue_cagr_5y is None
+    assert ind.roe is not None
+
+
+def test_balance_sheet_liabilities_exclude_the_minority_interest() -> None:
+    # Minority interest is equity, not third-party capital: the liabilities side
+    # subtracts the consolidated equity, not the controllers' slice (#149).
+    f = replace(_nonfinancial(), equity=Decimal(6000), equity_total=Decimal(6500))
+    ind = compute(f, None, MarketData())
+
+    assert ind.total_assets == Decimal(12000)
+    assert ind.total_liabilities == Decimal(5500)
+    assert ind.equity == Decimal(6000)
+    assert ind.equity_total == Decimal(6500)

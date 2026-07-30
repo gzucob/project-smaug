@@ -101,6 +101,19 @@ def _prior_year_annual(
     return None
 
 
+def _annuals_through(
+    annuals: list[StandardizedFinancials], year: int
+) -> list[StandardizedFinancials]:
+    """The closed exercises up to and including ``year``, oldest → newest.
+
+    A compounded rate looks backwards from the row it belongs to (#144). Handing
+    the whole series to every closed year would give the 2020 row a rate computed
+    partly from 2021–2024 — a figure nobody could have read in 2020, and one that
+    would change every time a newer year is ingested.
+    """
+    return [a for a in annuals if a.reference_date.year <= year]
+
+
 class AnalyzePortfolioUseCase:
     """Compute and store the TTM + closed-year indicators for a set of tickers."""
 
@@ -182,7 +195,10 @@ class AnalyzePortfolioUseCase:
             classification=classification,
             reference_date=current.reference_date,
             computed_at=computed_at,
-            indicators=compute(current, previous, market),
+            # The whole closed series: a compounded rate runs over exercises, and
+            # the TTM window is not one (#144), so its CAGR is the one the last
+            # closed year carries.
+            indicators=compute(current, previous, market, annuals),
             price=quote.price,
             # A live quote has no adjusted counterpart: nothing has been paid out
             # since it, so there is nothing to adjust it by.
@@ -203,12 +219,16 @@ class AnalyzePortfolioUseCase:
         year = annual.reference_date.year
         previous = _prior_year_annual(annuals, year)
         market, adjusted_avg = await self._market_for_year(ticker, year)
+        # Only the exercises up to and including this one: a 2020 row must be
+        # computed from what was knowable in 2020, or its compounded rate would
+        # be built from years that had not happened yet (#144).
+        elapsed = _annuals_through(annuals, year)
         return TickerAnalysis(
             ticker=ticker,
             classification=classification,
             reference_date=annual.reference_date,
             computed_at=computed_at,
-            indicators=compute(annual, previous, market),
+            indicators=compute(annual, previous, market, elapsed),
             price=market.price,
             price_adjusted=adjusted_avg,
             price_basis=_CLOSED_YEAR_BASIS if market.price is not None else None,

@@ -56,8 +56,13 @@ const COPY: Record<NullReason, ReasonCopy> = {
   },
   missing_prior_period: {
     short: "sem período anterior",
-    long: "O período anterior não foi ingerido, então a variação não pode ser apurada.",
+    long: "O histórico não cobre a janela que este indicador precisa — falta o período anterior para a variação, ou faltam exercícios fechados para fechar a janela do crescimento composto.",
     intentional: false,
+  },
+  non_positive_endpoint: {
+    short: "extremo não positivo",
+    long: "Um dos dois extremos da janela é zero ou negativo, e não existe taxa composta a partir daí — a razão entre eles não tem raiz real, e entre dois negativos ela reportaria um prejuízo que aumentou como se fosse crescimento.",
+    intentional: true,
   },
 };
 
