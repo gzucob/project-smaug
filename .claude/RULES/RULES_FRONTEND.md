@@ -93,6 +93,18 @@ not in the fonts.
   dragon SVGs.
 - **No attention-grabbing UI.** No pulsing "live" badges. The analysis-view
   label is a calm pill: `TTM · 12 meses` / `Exercício {year}` (`ViewBadge`).
+- **Any overlay renders through `createPortal` into `document.body`.**
+  `position: fixed` anchors to the nearest *transformed* ancestor rather than to
+  the window, and this app has two on the ticker page — `.rise` (whose `forwards`
+  fill keeps `translateY(0)` applied after the animation ends) and `.panel-hover`
+  while the pointer is on a card. In place, the indicator modal inherited the
+  card's box instead of the viewport's, pushing its own top out of reach with
+  nothing left to scroll. A portal is the fix; do not chase it with z-index.
+- A modal that can outgrow the screen caps its height and lets its **content**
+  scroll, never the page behind it (the body is locked while it is open). Under
+  a CSS grid that means `grid-rows-[minmax(0,1fr)]` plus `min-h-0` on the
+  scrolling child — an `auto` row is sized by its content, overshoots the cap
+  and is clipped with no scrollbar anywhere.
 
 ## Charts
 

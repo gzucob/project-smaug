@@ -14,6 +14,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { FiAlertTriangle, FiBarChart2, FiChevronDown, FiTrendingUp, FiX } from "react-icons/fi";
 import type { ChartMode } from "@/components/IndicatorChart";
 import { DASH, money } from "@/lib/format";
@@ -90,21 +91,44 @@ export function IndicatorDetail({
   const current = series.values[series.values.length - 1] ?? null;
   const currentLabel = series.labels[series.labels.length - 1];
 
-  return (
+  // Rendered into <body>: `position: fixed` anchors to the nearest *transformed*
+  // ancestor rather than to the window, and this modal has two — the `.rise`
+  // entrance (which keeps `translateY(0)` under `forwards`) and `.panel-hover`
+  // on the card. In place, the backdrop inherited the card's box, took its
+  // height instead of the viewport's, and pushed the panel's top out of reach
+  // with nothing left to scroll.
+  return createPortal(
     <div
       className="modal-backdrop fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-vault-950/85 p-4 sm:p-8"
       onClick={onClose}
       role="presentation"
     >
+      {/* On a landscape screen the tall single column ran past the viewport, so
+          past ~1024px the panel turns into a rectangle: chart on one side, the
+          reference doc on the other, each scrolling on its own. */}
       <div
-        className="modal-panel panel my-auto w-full max-w-3xl p-6 sm:p-7"
+        // `grid-rows-[minmax(0,1fr)]`: without it the row is sized by its
+        // content, overshoots the panel's max height and gets clipped by
+        // `overflow-hidden` — with no scrollbar anywhere, which is the bug this
+        // whole modal had. Pinning the row makes the columns scroll instead.
+        className="modal-panel panel relative my-auto w-full max-w-3xl p-6 sm:p-7 lg:grid lg:max-h-[88vh] lg:max-w-6xl lg:grid-cols-2 lg:grid-rows-[minmax(0,1fr)] lg:gap-8 lg:overflow-hidden lg:p-8"
         role="dialog"
         aria-modal="true"
         aria-label={spec.label}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* ------------------------------------------------------- header --- */}
-        <header className="flex items-start justify-between gap-4">
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Fechar"
+          className="absolute right-5 top-5 z-10 rounded-lg border border-gold-500/10 bg-vault-900 p-2 text-ink-500 transition-colors hover:border-gold-500/30 hover:text-ink-200 sm:right-6 sm:top-6"
+        >
+          <FiX size={16} />
+        </button>
+
+        {/* ------------------------------------------------ chart column --- */}
+        <div className="lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+        <header className="flex items-start justify-between gap-4 pr-12">
           <div className="flex items-start gap-3">
             <span className="mt-1.5 h-8 w-[3px] rounded-full" style={{ backgroundColor: accent }} />
             <div>
@@ -138,14 +162,6 @@ export function IndicatorDetail({
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Fechar"
-            className="rounded-lg border border-gold-500/10 p-2 text-ink-500 transition-colors hover:border-gold-500/30 hover:text-ink-200"
-          >
-            <FiX size={16} />
-          </button>
         </header>
 
         {notApplicable && (
@@ -216,12 +232,14 @@ export function IndicatorDetail({
             </p>
           )}
         </section>
+        </div>
 
-        <div className="hairline my-6" />
+        <div className="hairline my-6 lg:hidden" />
 
-        {/* ---------------------------------------------------------- doc --- */}
-        <section className="flex flex-col gap-6">
-          <div>
+        {/* -------------------------------------------------- doc column --- */}
+        <section className="flex flex-col gap-6 lg:min-h-0 lg:overflow-y-auto lg:pr-2">
+          {/* Clears the close button, which floats over this column on `lg`. */}
+          <div className="lg:pr-10">
             <h4 className="mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-ink-500">
               Fórmula
             </h4>
@@ -254,7 +272,8 @@ export function IndicatorDetail({
           )}
         </section>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
