@@ -551,8 +551,8 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
   },
   liabilities_to_assets: {
-    formula: "(Ativo total − Patrimônio líquido) ÷ Ativo total",
-    what: "Fatia dos ativos financiada por terceiros. É o indicador de alavancagem que sobrevive a qualquer estrutura de balanço.",
+    formula: "(Ativo total − Patrimônio líquido consolidado) ÷ Ativo total",
+    what: "Fatia dos ativos financiada por capital de terceiros — é exatamente o Passivo total sobre o Ativo total. Desconta o patrimônio consolidado, e não só o dos controladores: a participação dos minoritários é patrimônio, não dívida. É o indicador de alavancagem que sobrevive a qualquer estrutura de balanço.",
     strongIn: [
       {
         where: "Intermediários Financeiros, Previdência e Seguros",
@@ -571,8 +571,8 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
   },
   equity_to_assets: {
-    formula: "Patrimônio líquido ÷ Ativo total",
-    what: "Fatia dos ativos financiada pelos próprios sócios — o complemento aritmético do Passivo/Ativo. Quanto maior, menos a empresa depende de capital de terceiros.",
+    formula: "Patrimônio líquido dos controladores ÷ Ativo total",
+    what: "Fatia dos ativos que cabe aos acionistas da empresa listada. Quanto maior, menos ela depende de capital de terceiros. Não é o complemento do Passivo/Ativo: somados, os dois não dão 100% — o que falta é a participação dos minoritários nas controladas, que não é dívida nem é dos controladores.",
     strongIn: [
       {
         where: "Intermediários Financeiros, Previdência e Seguros",
