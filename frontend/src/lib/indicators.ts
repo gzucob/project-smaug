@@ -110,8 +110,8 @@ export const INDICATORS: IndicatorSpec[] = [
   { key: "net_debt_to_ebit", label: "Dív. líq./EBIT", hint: "Anos de lucro operacional (EBIT) para quitar a dívida líquida", group: "Alavancagem & Liquidez", format: multiple },
   { key: "net_debt_to_equity", label: "Dív. líq./PL", hint: "Dívida líquida / patrimônio líquido — alavancagem líquida de caixa", group: "Alavancagem & Liquidez", format: multiple },
   { key: "debt_to_equity", label: "Dív. bruta/PL", hint: "Dívida total / patrimônio líquido", group: "Alavancagem & Liquidez", format: multiple },
-  { key: "liabilities_to_assets", label: "Passivo/Ativo", hint: "Passivo total / ativo total — fatia dos ativos financiada por terceiros", group: "Alavancagem & Liquidez", format: pct },
-  { key: "equity_to_assets", label: "PL/Ativo", hint: "Patrimônio líquido / ativo total — fatia dos ativos financiada pelos sócios", group: "Alavancagem & Liquidez", format: pct },
+  { key: "liabilities_to_assets", label: "Passivo/Ativo", hint: "Passivo total / ativo total — fatia dos ativos financiada por capital de terceiros", group: "Alavancagem & Liquidez", format: pct },
+  { key: "equity_to_assets", label: "PL/Ativo", hint: "PL dos controladores / ativo total — não é o complemento do Passivo/Ativo: o que falta entre os dois é a fatia dos minoritários", group: "Alavancagem & Liquidez", format: pct },
   { key: "current_ratio", label: "Liquidez corrente", hint: "Ativo circulante / passivo circulante", group: "Alavancagem & Liquidez", format: multiple },
 
   { key: "pe", label: "P/L", hint: "Preço / lucro", group: "Múltiplos de mercado", format: multiple },

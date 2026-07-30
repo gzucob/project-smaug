@@ -266,7 +266,7 @@ _NEEDS: dict[str, _Needs] = {
     "net_debt_to_ebit": _Needs(accounts=("total_debt", "ebit")),
     "net_debt_to_equity": _Needs(accounts=("total_debt", "equity")),
     "debt_to_equity": _Needs(accounts=("total_debt", "equity")),
-    "liabilities_to_assets": _Needs(accounts=("total_assets", "equity")),
+    "liabilities_to_assets": _Needs(accounts=("total_assets", "equity_total")),
     "equity_to_assets": _Needs(accounts=("equity", "total_assets")),
     "current_ratio": _Needs(accounts=("current_assets", "current_liabilities")),
     "revenue_growth": _Needs(accounts=("revenue",), prior="revenue"),
@@ -539,7 +539,12 @@ def compute(
         net_debt_to_ebit=_div(net_debt, annual_ebit),
         net_debt_to_equity=_div(net_debt, f.equity),
         debt_to_equity=_div(f.total_debt, f.equity),
-        liabilities_to_assets=_div(_sub(f.total_assets, f.equity), f.total_assets),
+        # Third-party capital only: the minority interest is equity (CPC 26), so
+        # the consolidated slice is what comes off the assets (ADR 0029). This is
+        # ``total_liabilities`` over the assets, by construction.
+        liabilities_to_assets=_div(
+            _sub(f.total_assets, f.equity_total), f.total_assets
+        ),
         equity_to_assets=_div(f.equity, f.total_assets),
         current_ratio=_div(f.current_assets, f.current_liabilities),
         revenue_growth=_growth(f.revenue, prev_revenue),

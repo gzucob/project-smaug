@@ -96,8 +96,11 @@ class Indicators:
     net_debt_to_ebit: Decimal | None = None
     net_debt_to_equity: Decimal | None = None
     debt_to_equity: Decimal | None = None  # gross debt / equity
-    liabilities_to_assets: Decimal | None = None  # (assets − equity) / assets
-    equity_to_assets: Decimal | None = None  # complement, as the platforms show it
+    # The two sit on deliberately different slices and are NOT complements: what
+    # they leave between them is the minority interest, which is neither a
+    # creditor's claim nor the listed shareholders' (ADR 0029).
+    liabilities_to_assets: Decimal | None = None  # (assets − equity_total) / assets
+    equity_to_assets: Decimal | None = None  # controllers' equity / assets
     current_ratio: Decimal | None = None
     # Growth (needs a prior comparable period)
     revenue_growth: Decimal | None = None

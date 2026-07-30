@@ -21,7 +21,8 @@ def _nonfinancial() -> StandardizedFinancials:
         reference_date=_Q3,
         sector=Sector.COMMODITY,
         total_assets=Decimal(12000),
-        equity=Decimal(6000),
+        equity=Decimal(6000),  # controllers'; the group's is 6600 — 600 is minority
+        equity_total=Decimal(6600),
         net_income=Decimal(900),  # annualized -> 1200
         revenue=Decimal(3000),  # annualized -> 4000
         gross_profit=Decimal(1500),
@@ -65,8 +66,12 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.net_debt_to_ebit == Decimal("1.25")  # 1500 / 1200 annual EBIT
     assert ind.net_debt_to_equity == Decimal("0.25")  # 1500 / 6000
     assert ind.debt_to_equity == Decimal(2000) / Decimal(6000)  # gross debt / equity
-    assert ind.liabilities_to_assets == Decimal("0.5")  # (12000 - 6000) / 12000
-    assert ind.equity_to_assets == Decimal("0.5")  # 6000 / 12000, the complement
+    # ADR 0029: the two sit on different slices and are NOT complements. Third-party
+    # capital comes off the CONSOLIDATED equity (minority interest is equity, not
+    # debt); the equity share is the controllers'. What they leave between them —
+    # here 5 pp — is the minority's 600.
+    assert ind.liabilities_to_assets == Decimal("0.45")  # (12000 - 6600) / 12000
+    assert ind.equity_to_assets == Decimal("0.5")  # 6000 / 12000, controllers'
     assert ind.current_ratio == Decimal(2)
     assert ind.revenue_growth == Decimal("0.25")
     assert ind.net_income_growth == Decimal("0.2")
@@ -115,7 +120,7 @@ def test_total_slice_variants_pair_slice_with_slice() -> None:
 
 
 def test_total_slice_null_is_blamed_on_its_own_account() -> None:
-    financials = _nonfinancial()  # no net_income_total / equity_total read
+    financials = replace(_nonfinancial(), net_income_total=None, equity_total=None)
     ind = compute(financials, None, MarketData())
 
     assert ind.roe_total is None
@@ -620,3 +625,12 @@ def test_balance_sheet_liabilities_exclude_the_minority_interest() -> None:
     assert ind.total_liabilities == Decimal(5500)
     assert ind.equity == Decimal(6000)
     assert ind.equity_total == Decimal(6500)
+    # The ratio is the published figure over the published assets, so a reader can
+    # check it on the screen (ADR 0029) — which is what it was not before.
+    assert ind.liabilities_to_assets == ind.total_liabilities / ind.total_assets
+    # And the pair does not close to 1: the 500 of minority interest is neither a
+    # creditor's claim nor the listed shareholders'. Stated as the identity in
+    # reais, which is exact — the same claim over the assets only holds to the
+    # Decimal context's precision.
+    assert ind.total_liabilities + ind.equity + Decimal(500) == ind.total_assets
+    assert ind.liabilities_to_assets + ind.equity_to_assets < Decimal(1)
