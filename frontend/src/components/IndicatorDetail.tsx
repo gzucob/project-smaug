@@ -2,21 +2,34 @@
 
 /**
  * Modal drill-down for a single indicator: its evolution across the closed-year
- * history (plus the TTM window as a trailing ghost bar) and the reference doc —
+ * history (plus the TTM window as a trailing ghost point) and the reference doc —
  * formula as computed, what it measures, and where it carries meaning across the
  * B3 subsectors.
  *
  * One modal serves both indicator grids on the page: the series and the doc are
- * properties of the indicator, not of the view it was clicked from.
+ * properties of the indicator, not of the view it was clicked from. The title is
+ * a picker, so comparing P/L against P/VP costs one click instead of a round
+ * trip through the grid.
  */
-import { useEffect } from "react";
-import { FiAlertTriangle, FiX } from "react-icons/fi";
-import { YearBars } from "@/components/YearBars";
-import { money } from "@/lib/format";
+import { useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { FiAlertTriangle, FiBarChart2, FiChevronDown, FiTrendingUp, FiX } from "react-icons/fi";
+import { IndicatorChart } from "@/components/IndicatorChart";
+import type { ChartMode } from "@/components/IndicatorChart";
+import { DASH } from "@/lib/format";
 import type { IndicatorDoc, RelevanceNote } from "@/lib/indicator-docs";
+import {
+  INDICATOR_GROUPS,
+  INDICATORS,
+  formatKindOf,
+  specsByGroup,
+  valueFormatter,
+} from "@/lib/indicators";
 import type { IndicatorSpec } from "@/lib/indicators";
+import { reasonCopy } from "@/lib/null-reasons";
 import { sectorMeta } from "@/lib/sectors";
-import type { SectorKey } from "@/lib/types";
+import type { IndicatorKey, NullReason } from "@/lib/types";
 
 export interface IndicatorSeries {
   labels: string[];
@@ -31,6 +44,8 @@ export function IndicatorDetail({
   series,
   accent,
   sector,
+  nullReason,
+  onSelectKey,
   onClose,
 }: {
   spec: IndicatorSpec;
@@ -38,11 +53,31 @@ export function IndicatorDetail({
   series: IndicatorSeries;
   accent: string;
   sector: string;
+  /** Set when this indicator is null in the view the reader came from. */
+  nullReason: NullReason | undefined;
+  onSelectKey: (key: IndicatorKey) => void;
   onClose: () => void;
 }) {
+  const [mode, setMode] = useState<ChartMode>("bars");
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Esc closes; ←/→ walk the indicator list in the order the grid shows it, so
+  // scanning a group does not mean reopening the picker for each one.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      // The picker has its own arrow behaviour; leave it alone while focused.
+      if (document.activeElement instanceof HTMLSelectElement) return;
+      const at = INDICATORS.findIndex((s) => s.key === spec.key);
+      if (at < 0) return;
+      const step = e.key === "ArrowRight" ? 1 : -1;
+      const next = (at + step + INDICATORS.length) % INDICATORS.length;
+      e.preventDefault();
+      onSelectKey(INDICATORS[next].key);
     };
     document.addEventListener("keydown", onKey);
     const { overflow } = document.body.style;
@@ -51,79 +86,192 @@ export function IndicatorDetail({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = overflow;
     };
-  }, [onClose]);
+  }, [onClose, onSelectKey, spec.key]);
 
-  // Bar labels drop the "R$ " prefix to save width, as in HistoryCharts.
-  const isMoney = spec.format === money;
-  const barFormat = (n: number) =>
-    isMoney ? spec.format(n).replace("R$ ", "") : spec.format(n);
+  // Focus moves into the dialog on open and returns to whatever opened it, so a
+  // keyboard reader is not dropped back at the top of a 29-cell grid.
+  useEffect(() => {
+    const opener = document.activeElement;
+    panelRef.current?.focus();
+    return () => {
+      if (opener instanceof HTMLElement) opener.focus();
+    };
+  }, []);
+
+  // Tab cycles inside the dialog while it is open.
+  const onKeyDownTrap = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Tab") return;
+    const focusable = panelRef.current?.querySelectorAll<HTMLElement>(
+      'button, select, [href], input, [tabindex]:not([tabindex="-1"])',
+    );
+    if (!focusable || focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  const formatKind = formatKindOf(spec);
+  const fmt = valueFormatter(formatKind);
+  const fmtOrDash = (n: number | null) => (n === null ? DASH : fmt(n));
 
   const plottable = series.values.filter((v) => v !== null).length;
-  const notApplicable = doc.naSectors?.includes(sector as SectorKey) ?? false;
+  const reason = nullReason ? reasonCopy(nullReason) : null;
 
-  return (
+  // The reference statistics describe the closed exercises only. The TTM window
+  // overlaps the last one and is not a comparable period, so averaging it in
+  // would weight the most recent months twice.
+  const closed = series.values
+    .slice(0, series.ghostLast ? -1 : undefined)
+    .filter((v): v is number => v !== null);
+  const average = closed.length ? closed.reduce((a, b) => a + b, 0) / closed.length : null;
+  const current = series.values[series.values.length - 1] ?? null;
+  const currentLabel = series.labels[series.labels.length - 1];
+
+  // Rendered into <body>: `position: fixed` anchors to the nearest *transformed*
+  // ancestor rather than to the window, and this modal has two — the `.rise`
+  // entrance (which keeps `translateY(0)` under `forwards`) and `.panel-hover`
+  // on the card. In place, the backdrop inherited the card's box, took its
+  // height instead of the viewport's, and pushed the panel's top out of reach
+  // with nothing left to scroll.
+  return createPortal(
     <div
       className="modal-backdrop fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-vault-950/85 p-4 sm:p-8"
       onClick={onClose}
       role="presentation"
     >
+      {/* On a landscape screen the tall single column ran past the viewport, so
+          past ~1024px the panel turns into a rectangle: chart on one side, the
+          reference doc on the other, each scrolling on its own. */}
       <div
-        className="modal-panel panel my-auto w-full max-w-3xl p-6 sm:p-7"
+        // `grid-rows-[minmax(0,1fr)]`: without it the row is sized by its
+        // content, overshoots the panel's max height and gets clipped by
+        // `overflow-hidden` — with no scrollbar anywhere, which is the bug this
+        // whole modal had. Pinning the row makes the columns scroll instead.
+        className="modal-panel panel relative my-auto w-full max-w-3xl p-6 sm:p-7 lg:grid lg:max-h-[88vh] lg:max-w-6xl lg:grid-cols-2 lg:grid-rows-[minmax(0,1fr)] lg:gap-8 lg:overflow-hidden lg:p-8"
+        ref={panelRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={spec.label}
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={onKeyDownTrap}
       >
-        {/* ------------------------------------------------------- header --- */}
-        <header className="flex items-start justify-between gap-4">
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Fechar"
+          className="absolute right-5 top-5 z-10 rounded-lg border border-gold-500/10 bg-vault-900 p-2 text-ink-500 transition-colors hover:border-gold-500/30 hover:text-ink-200 sm:right-6 sm:top-6"
+        >
+          <FiX size={16} />
+        </button>
+
+        {/* ------------------------------------------------ chart column --- */}
+        <div className="lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+        <header className="flex items-start justify-between gap-4 pr-12">
           <div className="flex items-start gap-3">
             <span className="mt-1.5 h-8 w-[3px] rounded-full" style={{ backgroundColor: accent }} />
             <div>
-              <h3 className="font-display text-2xl text-ink-50">{spec.label}</h3>
+              {/* The native select sizes itself to its widest option, which would
+                  strand the chevron far from the title — so it sits invisible on
+                  top of the label and keeps its keyboard and mobile behaviour. */}
+              <div className="group/pick relative inline-flex items-center gap-1.5 rounded-md focus-within:outline-1 focus-within:outline-gold-500">
+                <h3 className="font-display text-2xl text-ink-50 transition-colors group-hover/pick:text-gold-300">
+                  {spec.label}
+                </h3>
+                <FiChevronDown className="text-ink-500" size={15} />
+                <select
+                  value={spec.key}
+                  onChange={(e) => onSelectKey(e.target.value as IndicatorKey)}
+                  aria-label="Trocar de indicador"
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                >
+                  {INDICATOR_GROUPS.map((group) => (
+                    <optgroup key={group} label={group}>
+                      {specsByGroup(group).map((s) => (
+                        <option key={s.key} value={s.key}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
               <p className="mt-0.5 text-xs" style={{ color: accent }}>
                 {spec.group}
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Fechar"
-            className="rounded-lg border border-gold-500/10 p-2 text-ink-500 transition-colors hover:border-gold-500/30 hover:text-ink-200"
-          >
-            <FiX size={16} />
-          </button>
         </header>
 
-        {notApplicable && (
+        {reason && (
           <div className="mt-5 flex gap-3 rounded-xl border border-gold-500/15 bg-vault-850 p-3.5">
             <FiAlertTriangle className="mt-0.5 shrink-0 text-gold-500" size={15} />
             <p className="text-xs leading-relaxed text-ink-400">
-              Não se aplica a {sectorMeta(sector).label.toLowerCase()}. O cálculo retorna{" "}
-              <span className="nums">n/d</span> de propósito — veja &ldquo;Onde engana&rdquo;.
+              <span className="text-ink-200">
+                {reason.intentional ? "Sem valor de propósito" : "Sem valor por falta de dado"} (
+                {sectorMeta(sector).label.toLowerCase()}):
+              </span>{" "}
+              {reason.long}
+              {reason.intentional && <> Veja &ldquo;Onde engana&rdquo;.</>}
             </p>
           </div>
         )}
 
         {/* -------------------------------------------------------- chart --- */}
         <section className="mt-6">
-          <h4 className="mb-3 text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-ink-500">
-            Evolução
-          </h4>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h4 className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-ink-500">
+              Evolução
+            </h4>
+            {plottable >= 2 && <ModeToggle mode={mode} onChange={setMode} accent={accent} />}
+          </div>
+
           {plottable >= 2 ? (
             <>
-              <div className="rounded-xl border border-gold-500/8 bg-vault-900/40 px-3 pb-1 pt-4">
-                <YearBars
+              <div className="mb-3 grid gap-2 sm:grid-cols-3">
+                <Stat
+                  label={`Atual · ${currentLabel}`}
+                  value={fmtOrDash(current)}
+                  color={accent}
+                />
+                <Stat
+                  label="Média dos exercícios"
+                  value={fmtOrDash(average)}
+                  dashColor={average === null ? undefined : accent}
+                  hint="Média aritmética dos exercícios fechados — a janela de 12 meses fica de fora, por não ser um período comparável."
+                />
+                <Stat
+                  label="Mín · Máx"
+                  value={
+                    closed.length
+                      ? `${fmt(Math.min(...closed))} · ${fmt(Math.max(...closed))}`
+                      : DASH
+                  }
+                  hint="Menor e maior valor entre os exercícios fechados."
+                />
+              </div>
+
+              <div className="rounded-xl border border-gold-500/8 bg-vault-900/40 px-2 pb-2 pt-3">
+                <IndicatorChart
                   labels={series.labels}
                   values={series.values}
-                  color={accent}
-                  format={barFormat}
                   ghostLast={series.ghostLast}
+                  color={accent}
+                  formatKind={formatKind}
+                  mode={mode}
+                  average={average}
                 />
               </div>
               {series.ghostLast && (
                 <p className="mt-2 text-[0.68rem] text-ink-600">
-                  A barra tracejada são os últimos 12 meses, não um exercício fechado.
+                  O traço tracejado são os últimos 12 meses — uma janela móvel, não um
+                  exercício fechado.
                 </p>
               )}
             </>
@@ -133,12 +281,14 @@ export function IndicatorDetail({
             </p>
           )}
         </section>
+        </div>
 
-        <div className="hairline my-6" />
+        <div className="hairline my-6 lg:hidden" />
 
-        {/* ---------------------------------------------------------- doc --- */}
-        <section className="flex flex-col gap-6">
-          <div>
+        {/* -------------------------------------------------- doc column --- */}
+        <section className="flex flex-col gap-6 lg:min-h-0 lg:overflow-y-auto lg:pr-2">
+          {/* Clears the close button, which floats over this column on `lg`. */}
+          <div className="lg:pr-10">
             <h4 className="mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-ink-500">
               Fórmula
             </h4>
@@ -171,6 +321,78 @@ export function IndicatorDetail({
           )}
         </section>
       </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** One reference figure next to the chart — the context a lone reading lacks. */
+function Stat({
+  label,
+  value,
+  color,
+  hint,
+  dashColor,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+  hint?: string;
+  /** Draws the chart's dashed reference line as this stat's legend. */
+  dashColor?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-gold-500/8 bg-vault-850 px-3 py-2" title={hint}>
+      <div className="flex items-center gap-1.5 text-[0.62rem] uppercase tracking-wide text-ink-600">
+        {dashColor && (
+          <span
+            className="h-0 w-3.5 shrink-0"
+            style={{ borderTop: `2px dashed ${dashColor}`, opacity: 0.7 }}
+          />
+        )}
+        {label}
+      </div>
+      <div
+        className="nums mt-0.5 text-base font-semibold"
+        style={{ color: color ?? "var(--color-ink-200)" }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function ModeToggle({
+  mode,
+  onChange,
+  accent,
+}: {
+  mode: ChartMode;
+  onChange: (mode: ChartMode) => void;
+  accent: string;
+}) {
+  const item = (value: ChartMode, label: string, icon: ReactNode) => {
+    const on = mode === value;
+    return (
+      <button
+        type="button"
+        aria-label={label}
+        aria-pressed={on}
+        onClick={() => onChange(value)}
+        className="rounded-md px-2 py-1 transition-colors focus-visible:outline-1 focus-visible:outline-gold-500"
+        style={{
+          backgroundColor: on ? "var(--color-vault-800)" : "transparent",
+          color: on ? accent : "var(--color-ink-600)",
+        }}
+      >
+        {icon}
+      </button>
+    );
+  };
+  return (
+    <div className="flex gap-0.5 rounded-lg border border-gold-500/8 p-0.5">
+      {item("bars", "Ver em barras", <FiBarChart2 size={14} />)}
+      {item("line", "Ver em linha", <FiTrendingUp size={14} />)}
     </div>
   );
 }

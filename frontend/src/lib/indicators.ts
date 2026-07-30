@@ -104,6 +104,64 @@ export function groupColor(group: IndicatorGroup): string {
   return `var(${GROUP_COLOR_VARS[group]})`;
 }
 
+/**
+ * A formatter named rather than passed.
+ *
+ * `IndicatorChart` is a Client Component and `HistoryCharts` is a Server one,
+ * and a function cannot cross that boundary — React has no way to serialize it.
+ * So the chart takes the formatter's *name* and resolves it on its own side.
+ */
+export type FormatKind = "pct" | "signedPct" | "multiple" | "price" | "money";
+
+export function formatKindOf(spec: IndicatorSpec): FormatKind {
+  if (spec.format === money) return "money";
+  if (spec.format === price) return "price";
+  if (spec.format === multiple) return "multiple";
+  if (spec.format === signedPct) return "signedPct";
+  return "pct";
+}
+
+/**
+ * Formatter for an axis tick: the currency prefix is dropped, since "R$ 15,00"
+ * wraps onto two lines in a tick's width and the card's own label already says
+ * what the unit is.
+ *
+ * Every branch wraps its formatter in a one-argument lambda **on purpose**.
+ * Recharts calls `tickFormatter(value, index)`, and these formatters take
+ * `(value, digits)` — handing them over bare makes the index land in `digits`,
+ * so each tick down the axis grows a decimal place ("0%", "20,0%", "40,00%").
+ */
+export function axisFormatter(kind: FormatKind): (n: number) => string {
+  switch (kind) {
+    case "money":
+      return (n) => money(n).replace("R$ ", "");
+    case "price":
+      return (n) => price(n).replace("R$ ", "");
+    case "multiple":
+      return (n) => multiple(n);
+    case "signedPct":
+      return (n) => signedPct(n);
+    case "pct":
+      return (n) => pct(n);
+  }
+}
+
+/** Formatter for a value read on its own — tooltip, stat tile — unit included. */
+export function valueFormatter(kind: FormatKind): (n: number) => string {
+  switch (kind) {
+    case "money":
+      return (n) => money(n);
+    case "price":
+      return (n) => price(n);
+    case "multiple":
+      return (n) => multiple(n);
+    case "signedPct":
+      return (n) => signedPct(n);
+    case "pct":
+      return (n) => pct(n);
+  }
+}
+
 export function specsByGroup(group: IndicatorGroup): IndicatorSpec[] {
   return INDICATORS.filter((s) => s.group === group);
 }

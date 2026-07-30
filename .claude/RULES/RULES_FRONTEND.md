@@ -19,6 +19,8 @@ already-computed results.
   wired in `postcss.config.mjs`.
 - Fonts come through `next/font/google` (self-hosted at build). Icons come from
   **`react-icons`** — do not hand-roll SVG icons.
+- Charts come from **`recharts`**, and only where a reading needs a real scale
+  (see *Charts* below).
 
 Restate this stack before proposing a new dependency or restructuring.
 
@@ -69,6 +71,13 @@ not in the fonts.
   base URL is `NEXT_PUBLIC_API_BASE` (default `http://localhost:8000`). Because
   fetching is server-side there is **no CORS surface** — do not add
   client-side calls to the API.
+- **A null is never explained by the front-end.** The API sends `null_reasons`
+  (ADR 0008) naming why each indicator is null; render it through
+  `lib/null-reasons.ts` and distinguish a deliberate n/d (`inapplicable_regime`,
+  `zero_denominator`) from a gap of ours (missing price, unmapped account),
+  which is coloured as the warning it is. The old `naSectors` field mirrored the
+  calculator's guards by hand and was deleted in #54 — do not reintroduce a
+  second source for a fact the API already states.
 - `lib/api.ts` returns a **non-throwing `ApiResult` discriminated union**.
   Pages must render the `VaultOffline` empty state on `ok: false` (backend down
   or 404) instead of throwing.
@@ -91,6 +100,55 @@ not in the fonts.
   dragon SVGs.
 - **No attention-grabbing UI.** No pulsing "live" badges. The analysis-view
   label is a calm pill: `TTM · 12 meses` / `Exercício {year}` (`ViewBadge`).
+- **Any overlay renders through `createPortal` into `document.body`.**
+  `position: fixed` anchors to the nearest *transformed* ancestor rather than to
+  the window, and this app has two on the ticker page — `.rise` (whose `forwards`
+  fill keeps `translateY(0)` applied after the animation ends) and `.panel-hover`
+  while the pointer is on a card. In place, the indicator modal inherited the
+  card's box instead of the viewport's, pushing its own top out of reach with
+  nothing left to scroll. A portal is the fix; do not chase it with z-index.
+- A modal that can outgrow the screen caps its height and lets its **content**
+  scroll, never the page behind it (the body is locked while it is open). Under
+  a CSS grid that means `grid-rows-[minmax(0,1fr)]` plus `min-h-0` on the
+  scrolling child — an `auto` row is sized by its content, overshoots the cap
+  and is clipped with no scrollbar anywhere.
+
+## Charts
+
+A number only means something against a ruler. Any chart that a reader is meant
+to *read* — not merely glance at — carries a value axis, grid lines, the zero
+baseline and, where it exists, a reference the series is compared to (the
+asset's own historical average). **A miniature without a scale is decoration**:
+a sparkline inside a dense indicator cell was tried and rejected in #31 — a
+22px stroke with no axis and no reference told the reader nothing that the
+number above it did not.
+
+- **`recharts`** draws every chart, through the single `IndicatorChart`
+  component — the drill-down and the ticker page's annual cards alike. It costs
+  ~115 kB on the ticker page's first load; that is the price of a readable
+  scale, paid once.
+- `IndicatorChart` is a Client Component and `HistoryCharts` a Server one, so
+  the formatter crosses that boundary **by name** (`FormatKind` +
+  `axisFormatter`), never as a function — React cannot serialize one, and the
+  page 500s if you try.
+- **Never hand a formatter straight to a Recharts `tickFormatter`.** It calls
+  back with `(value, index)`, and this project's formatters take
+  `(value, digits)` — the index lands in `digits` and each tick down the axis
+  grows a decimal ("0%", "20,0%", "40,00%"). Wrap it in a one-argument lambda.
+- Colours, fonts and grid strokes come from the same `@theme` tokens as
+  everything else — pass `var(--color-…)` into Recharts props; never a hex.
+- **Recharts' own animations stay off** (`isAnimationActive={false}`): they run
+  well past the 300ms UI budget and sit outside the `prefers-reduced-motion`
+  CSS guard, which cannot reach them.
+- The value axis snaps to round 1/2/2.5/5 steps and always spans zero
+  (`axisScale` in `IndicatorChart`). A bar cut off below its baseline
+  overstates the variation.
+- **A TTM window is never drawn as one more closed exercise**: it keeps a
+  hollow/dashed basis of its own, and it is excluded from the average, the
+  min/max and any other statistic over the exercises.
+- `Sparkline` (hand-rolled SVG) survives in `HistoryStrip` only: a trend line
+  next to a headline figure is a different job from a chart meant to be read.
+  `YearBars` is gone — #34 replaced it everywhere.
 
 ## Motion
 

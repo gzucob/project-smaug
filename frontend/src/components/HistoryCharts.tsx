@@ -1,25 +1,23 @@
-import { YearBars } from "@/components/YearBars";
-import { LAST_12M_SHORT, money, pct, price, toNum, yearOf } from "@/lib/format";
+import { IndicatorChart } from "@/components/IndicatorChart";
+import { LAST_12M_SHORT, toNum, yearOf } from "@/lib/format";
+import type { FormatKind } from "@/lib/indicators";
 import { sectorColor } from "@/lib/sectors";
 import type { Analysis, IndicatorKey } from "@/lib/types";
-
-/** Compact money for a bar's top label — drops the "R$ " to save width. */
-const barMoney = (n: number) => money(n).replace("R$ ", "");
 
 type ChartSpec = {
   key: IndicatorKey;
   label: string;
   hint: string;
-  format: (n: number) => string;
+  kind: FormatKind;
 };
 
 const CHARTS: ChartSpec[] = [
-  { key: "revenue", label: "Receita", hint: "Receita líquida do exercício", format: barMoney },
-  { key: "net_income", label: "Lucro líquido", hint: "Lucro atribuído aos controladores", format: barMoney },
-  { key: "dividends", label: "Dividendos", hint: "Proventos pagos no exercício", format: barMoney },
-  { key: "eps", label: "LPA", hint: "Lucro por ação", format: (n) => price(n) },
-  { key: "fcf", label: "Fluxo de caixa livre", hint: "Caixa operacional − CAPEX", format: barMoney },
-  { key: "roe", label: "ROE", hint: "Retorno sobre o patrimônio", format: (n) => pct(n) },
+  { key: "revenue", label: "Receita", hint: "Receita líquida do exercício", kind: "money" },
+  { key: "net_income", label: "Lucro líquido", hint: "Lucro atribuído aos controladores", kind: "money" },
+  { key: "dividends", label: "Dividendos", hint: "Proventos pagos no exercício", kind: "money" },
+  { key: "eps", label: "LPA", hint: "Lucro por ação", kind: "price" },
+  { key: "fcf", label: "Fluxo de caixa livre", hint: "Caixa operacional − CAPEX", kind: "money" },
+  { key: "roe", label: "ROE", hint: "Retorno sobre o patrimônio", kind: "pct" },
 ];
 
 /**
@@ -27,6 +25,9 @@ const CHARTS: ChartSpec[] = [
  * with the trailing-twelve-months window appended as a dashed ghost bar so the
  * most recent reading sits next to the trajectory that produced it — without
  * ever passing for a closed exercise.
+ *
+ * This stays a Server Component: only `IndicatorChart` is a client boundary,
+ * and it receives plain serializable data.
  */
 export function HistoryCharts({
   history,
@@ -51,12 +52,15 @@ export function HistoryCharts({
             <span className="text-xs font-semibold uppercase tracking-wide text-ink-500">
               {c.label}
             </span>
-            <YearBars
+            <IndicatorChart
               labels={labels}
               values={values}
               color={color}
-              format={c.format}
+              formatKind={c.kind}
               ghostLast={ttm !== null}
+              mode="bars"
+              average={null}
+              height={170}
             />
           </div>
         );
