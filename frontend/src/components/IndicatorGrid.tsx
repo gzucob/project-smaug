@@ -79,6 +79,7 @@ export function IndicatorGrid({
           series={seriesFor(openKey)}
           accent={groupColor(openSpec.group)}
           sector={sector}
+          onSelectKey={setOpenKey}
           onClose={() => setOpenKey(null)}
         />
       )}

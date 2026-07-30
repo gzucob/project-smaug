@@ -19,6 +19,8 @@ already-computed results.
   wired in `postcss.config.mjs`.
 - Fonts come through `next/font/google` (self-hosted at build). Icons come from
   **`react-icons`** — do not hand-roll SVG icons.
+- Charts come from **`recharts`**, and only where a reading needs a real scale
+  (see *Charts* below).
 
 Restate this stack before proposing a new dependency or restructuring.
 
@@ -91,6 +93,34 @@ not in the fonts.
   dragon SVGs.
 - **No attention-grabbing UI.** No pulsing "live" badges. The analysis-view
   label is a calm pill: `TTM · 12 meses` / `Exercício {year}` (`ViewBadge`).
+
+## Charts
+
+A number only means something against a ruler. Any chart that a reader is meant
+to *read* — not merely glance at — carries a value axis, grid lines, the zero
+baseline and, where it exists, a reference the series is compared to (the
+asset's own historical average). **A miniature without a scale is decoration**:
+a sparkline inside a dense indicator cell was tried and rejected in #31 — a
+22px stroke with no axis and no reference told the reader nothing that the
+number above it did not.
+
+- **`recharts`** draws the indicator drill-down (`IndicatorChart`). It is
+  imported through **`next/dynamic`** from `IndicatorDetail`, because ~115 kB
+  is a third of the ticker page and nobody needs it until a modal opens.
+- Colours, fonts and grid strokes come from the same `@theme` tokens as
+  everything else — pass `var(--color-…)` into Recharts props; never a hex.
+- **Recharts' own animations stay off** (`isAnimationActive={false}`): they run
+  well past the 300ms UI budget and sit outside the `prefers-reduced-motion`
+  CSS guard, which cannot reach them.
+- The value axis snaps to round 1/2/2.5/5 steps and always spans zero
+  (`axisScale` in `IndicatorChart`). A bar cut off below its baseline
+  overstates the variation.
+- **A TTM window is never drawn as one more closed exercise**: it keeps a
+  hollow/dashed basis of its own, and it is excluded from the average, the
+  min/max and any other statistic over the exercises.
+- The hand-rolled SVG charts (`YearBars`, `Sparkline`, `HistoryCharts`,
+  `HistoryStrip`) still serve the ticker page's overview strips. Leave them —
+  a small trend next to a headline figure is a different job from a drill-down.
 
 ## Motion
 

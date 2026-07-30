@@ -2,21 +2,36 @@
 
 /**
  * Modal drill-down for a single indicator: its evolution across the closed-year
- * history (plus the TTM window as a trailing ghost bar) and the reference doc —
+ * history (plus the TTM window as a trailing ghost point) and the reference doc —
  * formula as computed, what it measures, and where it carries meaning across the
  * B3 subsectors.
  *
  * One modal serves both indicator grids on the page: the series and the doc are
- * properties of the indicator, not of the view it was clicked from.
+ * properties of the indicator, not of the view it was clicked from. The title is
+ * a picker, so comparing P/L against P/VP costs one click instead of a round
+ * trip through the grid.
  */
-import { useEffect } from "react";
-import { FiAlertTriangle, FiX } from "react-icons/fi";
-import { YearBars } from "@/components/YearBars";
-import { money } from "@/lib/format";
+import dynamic from "next/dynamic";
+import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import { FiAlertTriangle, FiBarChart2, FiChevronDown, FiTrendingUp, FiX } from "react-icons/fi";
+import type { ChartMode } from "@/components/IndicatorChart";
+import { DASH, money } from "@/lib/format";
 import type { IndicatorDoc, RelevanceNote } from "@/lib/indicator-docs";
+import { INDICATOR_GROUPS, specsByGroup } from "@/lib/indicators";
 import type { IndicatorSpec } from "@/lib/indicators";
 import { sectorMeta } from "@/lib/sectors";
-import type { SectorKey } from "@/lib/types";
+import type { IndicatorKey, SectorKey } from "@/lib/types";
+
+// Recharts is ~115 kB — a third of the ticker page. It is only ever needed once
+// the reader opens a drill-down, so it loads with the modal, not with the page.
+const IndicatorChart = dynamic(
+  () => import("@/components/IndicatorChart").then((m) => m.IndicatorChart),
+  {
+    ssr: false,
+    loading: () => <div className="h-[264px]" aria-hidden />,
+  },
+);
 
 export interface IndicatorSeries {
   labels: string[];
@@ -31,6 +46,7 @@ export function IndicatorDetail({
   series,
   accent,
   sector,
+  onSelectKey,
   onClose,
 }: {
   spec: IndicatorSpec;
@@ -38,8 +54,11 @@ export function IndicatorDetail({
   series: IndicatorSeries;
   accent: string;
   sector: string;
+  onSelectKey: (key: IndicatorKey) => void;
   onClose: () => void;
 }) {
+  const [mode, setMode] = useState<ChartMode>("bars");
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -53,13 +72,23 @@ export function IndicatorDetail({
     };
   }, [onClose]);
 
-  // Bar labels drop the "R$ " prefix to save width, as in HistoryCharts.
+  // Axis and tooltip labels drop the "R$ " prefix to save width, as in HistoryCharts.
   const isMoney = spec.format === money;
-  const barFormat = (n: number) =>
-    isMoney ? spec.format(n).replace("R$ ", "") : spec.format(n);
+  const fmt = (n: number) => (isMoney ? spec.format(n).replace("R$ ", "") : spec.format(n));
+  const fmtOrDash = (n: number | null) => (n === null ? DASH : fmt(n));
 
   const plottable = series.values.filter((v) => v !== null).length;
   const notApplicable = doc.naSectors?.includes(sector as SectorKey) ?? false;
+
+  // The reference statistics describe the closed exercises only. The TTM window
+  // overlaps the last one and is not a comparable period, so averaging it in
+  // would weight the most recent months twice.
+  const closed = series.values
+    .slice(0, series.ghostLast ? -1 : undefined)
+    .filter((v): v is number => v !== null);
+  const average = closed.length ? closed.reduce((a, b) => a + b, 0) / closed.length : null;
+  const current = series.values[series.values.length - 1] ?? null;
+  const currentLabel = series.labels[series.labels.length - 1];
 
   return (
     <div
@@ -79,7 +108,31 @@ export function IndicatorDetail({
           <div className="flex items-start gap-3">
             <span className="mt-1.5 h-8 w-[3px] rounded-full" style={{ backgroundColor: accent }} />
             <div>
-              <h3 className="font-display text-2xl text-ink-50">{spec.label}</h3>
+              {/* The native select sizes itself to its widest option, which would
+                  strand the chevron far from the title — so it sits invisible on
+                  top of the label and keeps its keyboard and mobile behaviour. */}
+              <div className="group/pick relative inline-flex items-center gap-1.5 rounded-md focus-within:outline-1 focus-within:outline-gold-500">
+                <h3 className="font-display text-2xl text-ink-50 transition-colors group-hover/pick:text-gold-300">
+                  {spec.label}
+                </h3>
+                <FiChevronDown className="text-ink-500" size={15} />
+                <select
+                  value={spec.key}
+                  onChange={(e) => onSelectKey(e.target.value as IndicatorKey)}
+                  aria-label="Trocar de indicador"
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                >
+                  {INDICATOR_GROUPS.map((group) => (
+                    <optgroup key={group} label={group}>
+                      {specsByGroup(group).map((s) => (
+                        <option key={s.key} value={s.key}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
               <p className="mt-0.5 text-xs" style={{ color: accent }}>
                 {spec.group}
               </p>
@@ -107,23 +160,53 @@ export function IndicatorDetail({
 
         {/* -------------------------------------------------------- chart --- */}
         <section className="mt-6">
-          <h4 className="mb-3 text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-ink-500">
-            Evolução
-          </h4>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h4 className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-ink-500">
+              Evolução
+            </h4>
+            {plottable >= 2 && <ModeToggle mode={mode} onChange={setMode} accent={accent} />}
+          </div>
+
           {plottable >= 2 ? (
             <>
-              <div className="rounded-xl border border-gold-500/8 bg-vault-900/40 px-3 pb-1 pt-4">
-                <YearBars
+              <div className="mb-3 grid gap-2 sm:grid-cols-3">
+                <Stat
+                  label={`Atual · ${currentLabel}`}
+                  value={fmtOrDash(current)}
+                  color={accent}
+                />
+                <Stat
+                  label="Média dos exercícios"
+                  value={fmtOrDash(average)}
+                  dashColor={average === null ? undefined : accent}
+                  hint="Média aritmética dos exercícios fechados — a janela de 12 meses fica de fora, por não ser um período comparável."
+                />
+                <Stat
+                  label="Mín · Máx"
+                  value={
+                    closed.length
+                      ? `${fmt(Math.min(...closed))} · ${fmt(Math.max(...closed))}`
+                      : DASH
+                  }
+                  hint="Menor e maior valor entre os exercícios fechados."
+                />
+              </div>
+
+              <div className="rounded-xl border border-gold-500/8 bg-vault-900/40 px-2 pb-2 pt-3">
+                <IndicatorChart
                   labels={series.labels}
                   values={series.values}
-                  color={accent}
-                  format={barFormat}
                   ghostLast={series.ghostLast}
+                  color={accent}
+                  format={fmt}
+                  mode={mode}
+                  average={average}
                 />
               </div>
               {series.ghostLast && (
                 <p className="mt-2 text-[0.68rem] text-ink-600">
-                  A barra tracejada são os últimos 12 meses, não um exercício fechado.
+                  O traço tracejado são os últimos 12 meses — uma janela móvel, não um
+                  exercício fechado.
                 </p>
               )}
             </>
@@ -171,6 +254,77 @@ export function IndicatorDetail({
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+/** One reference figure next to the chart — the context a lone reading lacks. */
+function Stat({
+  label,
+  value,
+  color,
+  hint,
+  dashColor,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+  hint?: string;
+  /** Draws the chart's dashed reference line as this stat's legend. */
+  dashColor?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-gold-500/8 bg-vault-850 px-3 py-2" title={hint}>
+      <div className="flex items-center gap-1.5 text-[0.62rem] uppercase tracking-wide text-ink-600">
+        {dashColor && (
+          <span
+            className="h-0 w-3.5 shrink-0"
+            style={{ borderTop: `2px dashed ${dashColor}`, opacity: 0.7 }}
+          />
+        )}
+        {label}
+      </div>
+      <div
+        className="nums mt-0.5 text-base font-semibold"
+        style={{ color: color ?? "var(--color-ink-200)" }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function ModeToggle({
+  mode,
+  onChange,
+  accent,
+}: {
+  mode: ChartMode;
+  onChange: (mode: ChartMode) => void;
+  accent: string;
+}) {
+  const item = (value: ChartMode, label: string, icon: ReactNode) => {
+    const on = mode === value;
+    return (
+      <button
+        type="button"
+        aria-label={label}
+        aria-pressed={on}
+        onClick={() => onChange(value)}
+        className="rounded-md px-2 py-1 transition-colors focus-visible:outline-1 focus-visible:outline-gold-500"
+        style={{
+          backgroundColor: on ? "var(--color-vault-800)" : "transparent",
+          color: on ? accent : "var(--color-ink-600)",
+        }}
+      >
+        {icon}
+      </button>
+    );
+  };
+  return (
+    <div className="flex gap-0.5 rounded-lg border border-gold-500/8 p-0.5">
+      {item("bars", "Ver em barras", <FiBarChart2 size={14} />)}
+      {item("line", "Ver em linha", <FiTrendingUp size={14} />)}
     </div>
   );
 }
