@@ -25,11 +25,59 @@ export interface IndicatorSpec {
   signed?: boolean; // color by sign of the value
 }
 
+/**
+ * The two statement slices (ADR 0026).
+ *
+ * A bare indicator name is always the **controllers'** slice — what accrues to
+ * the listed shares. Its `_total` sibling is the consolidated group, minority
+ * interest included, and it is the basis the reference platforms publish for
+ * margins and ROE. Neither is the "right" one: they answer different questions,
+ * so a screen must say which it is showing rather than pick silently.
+ */
+export type Basis = "controllers" | "total";
+
+export const BASIS_LABEL: Record<Basis, string> = {
+  controllers: "controladores",
+  total: "consolidado",
+};
+
+export const BASIS_HINT: Record<Basis, string> = {
+  controllers: "Fatia dos controladores — o que cabe às ações listadas. Pareia com LPA, VPA e os múltiplos de mercado.",
+  total: "Grupo consolidado, incluindo a parcela dos acionistas minoritários das controladas. É a base que as plataformas de referência publicam.",
+};
+
+/** Indicators published on both slices, keyed by the controllers' name. */
+const TOTAL_SIBLING: Partial<Record<IndicatorKey, IndicatorKey>> = {
+  roe: "roe_total",
+  roa: "roa_total",
+  net_margin: "net_margin_total",
+  net_income: "net_income_total",
+};
+
+const CONTROLLERS_SIBLING: Partial<Record<IndicatorKey, IndicatorKey>> = Object.fromEntries(
+  Object.entries(TOTAL_SIBLING).map(([controllers, total]) => [total, controllers]),
+);
+
+/** Both names of an indicator that has two bases — undefined when it has one. */
+export function basisPair(
+  key: IndicatorKey,
+): { controllers: IndicatorKey; total: IndicatorKey } | undefined {
+  const total = TOTAL_SIBLING[key];
+  if (total) return { controllers: key, total };
+  const controllers = CONTROLLERS_SIBLING[key];
+  if (controllers) return { controllers, total: key };
+  return undefined;
+}
+
+export function basisOf(key: IndicatorKey): Basis {
+  return CONTROLLERS_SIBLING[key] ? "total" : "controllers";
+}
+
 export const INDICATORS: IndicatorSpec[] = [
-  { key: "roe", label: "ROE", hint: "Retorno sobre o patrimônio líquido", group: "Rentabilidade", format: pct },
-  { key: "roa", label: "ROA", hint: "Retorno sobre os ativos", group: "Rentabilidade", format: pct },
+  { key: "roe", label: "ROE", hint: "Retorno sobre o patrimônio líquido (fatia dos controladores)", group: "Rentabilidade", format: pct },
+  { key: "roa", label: "ROA", hint: "Retorno sobre os ativos (lucro dos controladores)", group: "Rentabilidade", format: pct },
   { key: "roic", label: "ROIC", hint: "Retorno sobre o capital investido (NOPAT / capital investido)", group: "Rentabilidade", format: pct },
-  { key: "net_margin", label: "Margem líquida", hint: "Lucro líquido / receita", group: "Rentabilidade", format: pct },
+  { key: "net_margin", label: "Margem líquida", hint: "Lucro dos controladores / receita", group: "Rentabilidade", format: pct },
   { key: "gross_margin", label: "Margem bruta", hint: "Lucro bruto / receita", group: "Rentabilidade", format: pct },
   { key: "ebit_margin", label: "Margem EBIT", hint: "EBIT (lucro operacional) / receita", group: "Rentabilidade", format: pct },
   { key: "ebitda_margin", label: "Margem EBITDA", hint: "EBITDA / receita", group: "Rentabilidade", format: pct },
@@ -162,10 +210,24 @@ export function valueFormatter(kind: FormatKind): (n: number) => string {
   }
 }
 
+/**
+ * Display metadata for the consolidated siblings.
+ *
+ * Deliberately **not** in `INDICATORS`: they are a second basis for an existing
+ * cell, not four more cells. The grid keeps 29 cells; the drill-down resolves
+ * these through `specByKey` when the reader switches basis.
+ */
+const TOTAL_SPECS: IndicatorSpec[] = [
+  { key: "roe_total", label: "ROE", hint: "Retorno sobre o patrimônio líquido — base consolidada", group: "Rentabilidade", format: pct },
+  { key: "roa_total", label: "ROA", hint: "Retorno sobre os ativos — base consolidada", group: "Rentabilidade", format: pct },
+  { key: "net_margin_total", label: "Margem líquida", hint: "Lucro do grupo / receita — base consolidada", group: "Rentabilidade", format: pct },
+  { key: "net_income_total", label: "Lucro líquido", hint: "Resultado do grupo, com minoritários — base consolidada", group: "Rentabilidade", format: money },
+];
+
 export function specsByGroup(group: IndicatorGroup): IndicatorSpec[] {
   return INDICATORS.filter((s) => s.group === group);
 }
 
 export function specByKey(key: IndicatorKey): IndicatorSpec | undefined {
-  return INDICATORS.find((s) => s.key === key);
+  return INDICATORS.find((s) => s.key === key) ?? TOTAL_SPECS.find((s) => s.key === key);
 }

@@ -15,7 +15,15 @@ import { IndicatorDetail } from "@/components/IndicatorDetail";
 import type { IndicatorSeries } from "@/components/IndicatorDetail";
 import { LAST_12M_SHORT, signOf, toNum, yearOf } from "@/lib/format";
 import { indicatorDoc } from "@/lib/indicator-docs";
-import { INDICATOR_GROUPS, groupColor, specByKey, specsByGroup } from "@/lib/indicators";
+import {
+  BASIS_HINT,
+  BASIS_LABEL,
+  INDICATOR_GROUPS,
+  basisPair,
+  groupColor,
+  specByKey,
+  specsByGroup,
+} from "@/lib/indicators";
 import type { IndicatorSpec } from "@/lib/indicators";
 import { reasonCopy } from "@/lib/null-reasons";
 import type { Analysis, IndicatorKey, Indicators } from "@/lib/types";
@@ -49,6 +57,19 @@ export function IndicatorGrid({
     <div className="flex flex-col gap-6">
       {INDICATOR_GROUPS.map((group) => {
         const accent = groupColor(group);
+        // A section whose every cell is inapplicable to this filer's regime is
+        // not an omission to report — it is a heading that does not belong on
+        // this page ("Banco" over three dashes on an oil company). Individual
+        // n/d cells stay: each one names its cause and teaches something (#33).
+        // A gap of ours (unmapped account, missing input) never hides a section,
+        // because it is not `inapplicable_regime`.
+        const specs = specsByGroup(group);
+        const groupInapplicable = specs.every(
+          (s) =>
+            toNum(indicators[s.key]) === null &&
+            indicators.null_reasons?.[s.key] === "inapplicable_regime",
+        );
+        if (groupInapplicable) return null;
         return (
           <section key={group}>
             <h4
@@ -59,7 +80,7 @@ export function IndicatorGrid({
               {group}
             </h4>
             <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-3 xl:grid-cols-4">
-              {specsByGroup(group).map((spec) => (
+              {specs.map((spec) => (
                 <IndicatorCell
                   key={spec.key}
                   spec={spec}
@@ -108,6 +129,14 @@ function IndicatorCell({
   // answer is "we did not compute it" (#54).
   const reason = missing ? reasonCopy(indicators.null_reasons?.[spec.key]) : null;
 
+  // The consolidated slice (ADR 0026) shows up only when it would actually read
+  // differently. The test is the rendered text, not a tolerance: if both bases
+  // format to "24,2%", a second line states nothing and only costs height.
+  const pair = basisPair(spec.key);
+  const totalRaw = pair ? indicators[pair.total] : null;
+  const totalText = pair ? spec.format(totalRaw) : "";
+  const showTotal = pair !== undefined && toNum(totalRaw) !== null && totalText !== text;
+
   let valueColor = "var(--color-ink-50)";
   if (missing) valueColor = "var(--color-ink-600)";
   else if (spec.signed) {
@@ -149,6 +178,16 @@ function IndicatorCell({
           title={reason.long}
         >
           {reason.short}
+        </div>
+      )}
+
+      {showTotal && (
+        <div
+          className="mt-0.5 flex items-baseline gap-1 text-[0.6rem] text-ink-600"
+          title={BASIS_HINT.total}
+        >
+          {BASIS_LABEL.total}
+          <span className="nums text-ink-400">{totalText}</span>
         </div>
       )}
     </div>
