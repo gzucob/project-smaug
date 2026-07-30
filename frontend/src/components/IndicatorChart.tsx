@@ -46,11 +46,32 @@ interface Point {
   label: string;
   /** Every period — what the bars plot. */
   value: number | null;
+  /** The containing quantity, when this is a paired chart. */
+  envelope: number | null;
   /** Closed exercises only — the solid line. */
   closed: number | null;
   /** The TTM window and the exercise before it — the dashed tail. */
   live: number | null;
   ghost: boolean;
+}
+
+/**
+ * The larger quantity a paired chart draws `values` inside of.
+ *
+ * Two figures that are read together — revenue with net income, assets with
+ * liabilities — are drawn as nested bars rather than side by side: the envelope
+ * is the outer bar at low opacity, `values` the solid one within it, so the
+ * **empty area is the difference** (the margin, the equity). Side-by-side bars
+ * make the reader subtract two heights by eye, which is the comparison the pair
+ * exists to spare them.
+ *
+ * Both bars still take their colour from their own sign (#145), so a loss-making
+ * year turns its inner bar red and drops below the baseline while the envelope
+ * stays blue — which is precisely the year worth noticing.
+ */
+export interface EnvelopeSeries {
+  values: (number | null)[];
+  label: string;
 }
 
 export function IndicatorChart({
@@ -62,6 +83,8 @@ export function IndicatorChart({
   mode,
   average,
   height = 264,
+  envelope = null,
+  seriesLabel,
 }: {
   labels: string[];
   values: (number | null)[];
@@ -74,6 +97,10 @@ export function IndicatorChart({
   /** Mean of the closed exercises, drawn as the reference line. */
   average: number | null;
   height?: number;
+  /** The containing quantity, drawn around `values` as a hollow outer bar. */
+  envelope?: EnvelopeSeries | null;
+  /** Names `values` in the tooltip — only needed when a pair makes it ambiguous. */
+  seriesLabel?: string;
 }) {
   const format = axisFormatter(formatKind);
   const readable = valueFormatter(formatKind);
@@ -82,10 +109,21 @@ export function IndicatorChart({
     const value = values[i] ?? null;
     const ghost = ghostLast && i === lastIndex;
     const tail = ghostLast && i >= lastIndex - 1;
-    return { label, value, closed: ghost ? null : value, live: tail ? value : null, ghost };
+    return {
+      label,
+      value,
+      envelope: envelope?.values[i] ?? null,
+      closed: ghost ? null : value,
+      live: tail ? value : null,
+      ghost,
+    };
   });
 
-  const present = values.filter((v): v is number => v !== null);
+  // The axis has to contain both series, or the envelope would be clipped by a
+  // scale built for the smaller figure inside it.
+  const present = [...values, ...(envelope?.values ?? [])].filter(
+    (v): v is number => v !== null,
+  );
   // The axis always contains zero: a bar cut off below its baseline overstates
   // the variation, and on the line it is the difference between "fell" and
   // "fell to near nothing".
@@ -132,14 +170,53 @@ export function IndicatorChart({
                 label={typeof props.label === "string" ? props.label : ""}
                 value={pointOf(data, props.label)}
                 format={readable}
+                seriesLabel={seriesLabel}
+                envelopeLabel={envelope?.label}
               />
             )}
           />
 
           {min < 0 && <ReferenceLine y={0} stroke="var(--color-ink-600)" strokeWidth={1} />}
 
+          {/* The envelope rides its own x axis so Recharts centres it in the
+              category on its own, concentric with the inner bar. Bars sharing an
+              axis are laid out side by side, and no `barGap` makes two different
+              widths share a centre — they end up offset from the tick instead. */}
+          {envelope && <XAxis dataKey="label" xAxisId="envelope" hide />}
+          {mode === "bars" && envelope && (
+            <Bar
+              dataKey="envelope"
+              xAxisId="envelope"
+              isAnimationActive={false}
+              radius={[3, 3, 0, 0]}
+              maxBarSize={54}
+            >
+              {data.map((d) => {
+                const mark = (d.envelope ?? 0) < 0 ? "var(--color-down)" : "var(--color-up)";
+                return (
+                  <Cell
+                    key={d.label}
+                    fill={mark}
+                    // Faint enough to read as the container rather than as a
+                    // second reading competing with the one inside it.
+                    fillOpacity={d.ghost ? 0.07 : 0.18}
+                    stroke={mark}
+                    strokeOpacity={d.ghost ? 0.35 : 0.5}
+                    strokeDasharray={d.ghost ? "3 2" : undefined}
+                  />
+                );
+              })}
+            </Bar>
+          )}
+
           {mode === "bars" && (
-            <Bar dataKey="value" isAnimationActive={false} radius={[3, 3, 0, 0]} maxBarSize={54}>
+            <Bar
+              dataKey="value"
+              isAnimationActive={false}
+              radius={[3, 3, 0, 0]}
+              // Narrower when nested, so the envelope stays visible around it.
+              maxBarSize={envelope ? 26 : 54}
+            >
               {data.map((d) => {
                 const mark = (d.value ?? 0) < 0 ? "var(--color-down)" : "var(--color-up)";
                 return (
@@ -235,19 +312,43 @@ function ChartTooltip({
   label,
   value,
   format,
+  seriesLabel,
+  envelopeLabel,
 }: {
   label: string;
   value: Point | undefined;
   format: (n: number) => string;
+  seriesLabel?: string;
+  envelopeLabel?: string;
 }) {
   if (!value) return null;
   const mark = (value.value ?? 0) < 0 ? "var(--color-down)" : "var(--color-up)";
+  // On a paired chart the envelope is named and shown first: it is the larger
+  // quantity, and reading it before the part makes the difference legible.
+  const paired = envelopeLabel !== undefined;
   return (
     <div className="panel px-3 py-2 text-xs shadow-lg">
       <div className="text-[0.68rem] uppercase tracking-wide text-ink-500">{label}</div>
-      <div className="nums mt-0.5 text-sm font-semibold" style={{ color: mark }}>
-        {value.value === null ? "n/d" : format(value.value)}
-      </div>
+      {paired && (
+        <div className="mt-1 flex items-baseline justify-between gap-4">
+          <span className="text-[0.62rem] text-ink-500">{envelopeLabel}</span>
+          <span className="nums text-ink-200">
+            {value.envelope === null ? "n/d" : format(value.envelope)}
+          </span>
+        </div>
+      )}
+      {paired ? (
+        <div className="flex items-baseline justify-between gap-4">
+          <span className="text-[0.62rem] text-ink-500">{seriesLabel}</span>
+          <span className="nums font-semibold" style={{ color: mark }}>
+            {value.value === null ? "n/d" : format(value.value)}
+          </span>
+        </div>
+      ) : (
+        <div className="nums mt-0.5 text-sm font-semibold" style={{ color: mark }}>
+          {value.value === null ? "n/d" : format(value.value)}
+        </div>
+      )}
       {value.ghost && (
         <div className="mt-1 text-[0.62rem] text-ink-600">janela de 12 meses</div>
       )}

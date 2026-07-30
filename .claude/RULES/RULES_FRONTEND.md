@@ -44,15 +44,23 @@ Restate this stack before proposing a new dependency or restructuring.
 
 ### Colour means direction; identity is a detail
 
-`--color-up` (blue) and `--color-down` (red) carry **direction** wherever it
-exists: every data mark in a chart, a delta, a signed value, and the
-favourable/treacherous markers in the indicator docs. Blue and red rather than
-green and red on purpose — protanopia and deuteranopia are a red/green
-confusion, so the usual financial palette is the one pair that fails them.
+`--color-up` (blue) and `--color-down` (red) carry **direction where there is
+movement to see**: every data mark in a chart, and the favourable/treacherous
+markers in the indicator docs. Blue and red rather than green and red on purpose
+— protanopia and deuteranopia are a red/green confusion, so the usual financial
+palette is the one pair that fails them.
 
-Direction is coloured **only where the sign means something**. A growth of −2,3%
-is bad news; a P/L of 8,24× is neither good nor bad, and takes the neutral ink.
-`IndicatorSpec.signed` is what marks the difference.
+**A grid cell is a value, not a movement, and always takes the neutral ink** —
+including the growth and compounded-growth cells. They used to be sign-coloured
+(`IndicatorSpec.signed`, now gone), which read fine only because the signed cells
+on screen happened to be negative; the moment the CAGRs landed (#144) the grid
+grew four bright blue values among thirty cream ones and they read as alerts
+rather than as numbers. The sign is already in the glyph — `signedPct` writes the
+`+`/`−` — so colour on top of it encoded the same fact twice while competing with
+the group accent.
+
+The same applies to the drill-down's headline value: the chart beneath it is
+where its direction is coloured.
 
 ### Gemstone-per-sector encoding
 

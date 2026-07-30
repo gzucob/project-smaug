@@ -309,6 +309,21 @@ class CvmTreasurySource:
         wanted = set(self._ticker_to_cnpj.values())
         index: dict[str, list[dict[str, Any]]] = {}
         with zipfile.ZipFile(archive) as archive_file:
+            # The member is not in every year's archive: CVM began publishing the
+            # capital composition partway through the series (the 2019 DFP has no
+            # ``composicao_capital`` file, the 2020 one does). An absent member is
+            # a year that never carried the data, not a mirror that dropped it —
+            # so it yields an empty index, and each ticker then reports "not
+            # found" for the module. Raising here aborted the whole year's
+            # ingestion, which is how a 2015-2019 backfill failed outright (#63).
+            if self._member_name not in archive_file.namelist():
+                logger.info(
+                    "CVM %s %s has no %s — treasury counts unavailable for that year",
+                    self._document,
+                    self._year,
+                    self._member_name,
+                )
+                return index
             with archive_file.open(self._member_name) as member:
                 reader = csv.DictReader(
                     io.TextIOWrapper(member, encoding=_ENCODING),

@@ -76,13 +76,6 @@ export function count(v: Decimalish): string {
   return `${sign}${nf(0, 0).format(abs)}`;
 }
 
-/** Sign of a fraction for coloring; 0/null → "flat". */
-export function signOf(v: Decimalish): "up" | "down" | "flat" {
-  const n = toNum(v);
-  if (n === null || n === 0) return "flat";
-  return n > 0 ? "up" : "down";
-}
-
 /** ISO date → closed-year label ("2024") or month/year for a live period. */
 export function yearOf(iso: string): string {
   return iso?.slice(0, 4) ?? EN_DASH;

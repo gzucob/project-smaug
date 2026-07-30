@@ -17,6 +17,7 @@ No I/O, no framework — just arithmetic over ``StandardizedFinancials`` and
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any
@@ -65,6 +66,41 @@ def _growth(current: Decimal | None, previous: Decimal | None) -> Decimal | None
 
 def _sub(a: Decimal | None, b: Decimal | None) -> Decimal | None:
     return None if a is None or b is None else a - b
+
+
+# The compounded-growth window, in years of *variation* (#144). Six closed
+# exercises are needed to span five years of change, and the count is in the
+# indicator's own name (``revenue_cagr_5y``) because the reference platforms
+# publish different windows under the same "CAGR 5A" heading.
+_CAGR_YEARS = 5
+
+
+def _cagr(series: Sequence[Decimal | None]) -> Decimal | None:
+    """Compounded annual rate between the endpoints of a closed-year series.
+
+    ``series`` is the value for each closed exercise, oldest → newest, ending at
+    the period being computed. The rate is taken over the last ``_CAGR_YEARS``
+    years of variation, so it needs ``_CAGR_YEARS + 1`` exercises: a shorter
+    history yields ``None`` rather than a rate over a quietly narrower window,
+    which would not be the number the label promises.
+
+    Only the two endpoints matter — that is what "compounded" means, and it is
+    also the reading's weakness: the path between them is invisible. Both
+    endpoints must be positive, since ``(a / b) ** (1/n)`` has no real value when
+    the ratio is negative and, for two negatives, would report a loss that
+    deepened as growth.
+    """
+    if len(series) < _CAGR_YEARS + 1:
+        return None
+    start = series[-(_CAGR_YEARS + 1)]
+    end = series[-1]
+    if start is None or end is None or start <= 0 or end <= 0:
+        return None
+    # Decimal has no fractional power, and ``**`` on Decimal rejects a non-integer
+    # exponent outright. float is acceptable precision here: this is a rate shown
+    # to one decimal place, not money being added up.
+    rate = (float(end) / float(start)) ** (1 / _CAGR_YEARS) - 1
+    return Decimal(str(rate))
 
 
 def _add(a: Decimal | None, b: Decimal | None) -> Decimal | None:
@@ -204,6 +240,11 @@ class _Needs:
     cap: bool = False
     shares: bool = False
     prior: str | None = None
+    # The ``StandardizedFinancials`` field a compounded rate reads across the
+    # closed-year series. Set only for the CAGRs, whose null is attributed
+    # against the *window* — too few exercises, or an endpoint that is not
+    # positive — rather than against the current period's own accounts.
+    series: str | None = None
 
 
 _NEEDS: dict[str, _Needs] = {
@@ -230,6 +271,10 @@ _NEEDS: dict[str, _Needs] = {
     "current_ratio": _Needs(accounts=("current_assets", "current_liabilities")),
     "revenue_growth": _Needs(accounts=("revenue",), prior="revenue"),
     "net_income_growth": _Needs(accounts=("net_income",), prior="net_income"),
+    "revenue_cagr_5y": _Needs(series="revenue"),
+    "ebitda_cagr_5y": _Needs(series="ebitda"),
+    "ebit_cagr_5y": _Needs(series="ebit"),
+    "net_income_cagr_5y": _Needs(series="net_income"),
     "pe": _Needs(accounts=("net_income",), cap=True),
     "pb": _Needs(accounts=("equity",), cap=True),
     "psr": _Needs(accounts=("revenue",), cap=True),
@@ -265,6 +310,12 @@ _NEEDS: dict[str, _Needs] = {
     "net_income_total": _Needs(accounts=("net_income_total",)),
     "dividends": _Needs(accounts=("dividends_paid",)),
     "dividends_declared": _Needs(accounts=("dividends_declared",)),
+    # Balance-sheet scale. ``total_liabilities`` is assets less the consolidated
+    # equity, so it is missing whenever either side is.
+    "total_assets": _Needs(accounts=("total_assets",)),
+    "total_liabilities": _Needs(accounts=("total_assets", "equity_total")),
+    "equity": _Needs(accounts=("equity",)),
+    "equity_total": _Needs(accounts=("equity_total",)),
     # Scale figures. ``enterprise_value`` = cap + net debt, so it needs the cap and
     # the debt line net debt is built from; it is also in the bank inapplicable set,
     # so a bank's null is named INAPPLICABLE_REGIME before its inputs are checked.
@@ -298,6 +349,7 @@ def _classify(
     f: StandardizedFinancials,
     previous: StandardizedFinancials | None,
     market: MarketData,
+    history: Sequence[StandardizedFinancials],
     *,
     inapplicable: frozenset[str],
 ) -> NullReason:
@@ -314,6 +366,8 @@ def _classify(
     if name in inapplicable:
         return NullReason.INAPPLICABLE_REGIME
     regime = f.filed_regime or expected_regime(f.sector)
+    if needs.series is not None:
+        return _classify_cagr(needs.series, f, history)
     for account in needs.accounts:
         if (
             account == "total_debt"
@@ -342,11 +396,39 @@ def _classify(
     return NullReason.ZERO_DENOMINATOR
 
 
+def _classify_cagr(
+    account: str,
+    f: StandardizedFinancials,
+    history: Sequence[StandardizedFinancials],
+) -> NullReason:
+    """Attribute a null compounded rate, against the window rather than the period.
+
+    Precedence mirrors ``_classify``'s: too short a history first (the rate does
+    not exist yet for this company, whatever its accounts say), then a missing
+    endpoint, then the arithmetic dead-end — an endpoint that is not positive,
+    which is the one case where every input is present and the rate still cannot
+    be formed.
+    """
+    if len(history) < _CAGR_YEARS + 1:
+        return NullReason.MISSING_PRIOR_PERIOD
+    endpoints = (
+        getattr(history[-(_CAGR_YEARS + 1)], account),
+        getattr(history[-1], account),
+    )
+    for value in endpoints:
+        if value is None:
+            if account in f.unmapped_fields:
+                return NullReason.SOURCE_ACCOUNT_UNMAPPED
+            return NullReason.SOURCE_ACCOUNT_ABSENT
+    return NullReason.NON_POSITIVE_ENDPOINT
+
+
 def _null_reasons(
     computed: Indicators,
     f: StandardizedFinancials,
     previous: StandardizedFinancials | None,
     market: MarketData,
+    history: Sequence[StandardizedFinancials],
 ) -> dict[str, NullReason]:
     """Name the cause of every null in ``computed`` (#30).
 
@@ -364,6 +446,7 @@ def _null_reasons(
             f,
             previous,
             market,
+            history,
             inapplicable=inapplicable,
         )
     return reasons
@@ -373,12 +456,23 @@ def compute(
     current: StandardizedFinancials,
     previous: StandardizedFinancials | None,
     market: MarketData,
+    history: Sequence[StandardizedFinancials] = (),
 ) -> Indicators:
     """Compute all applicable indicators for one ticker/period.
 
     Every null field in the result carries its cause in ``null_reasons`` when
     one is classifiable — the reason is attributed here, where the null is
     produced, because only the calculator sees which input broke which ratio.
+
+    ``history`` is the closed-exercise series this period sits at the end of,
+    oldest → newest, and only the compounded rates (#144) read it. A closed-year
+    view passes the exercises up to and including its own, so a 2020 row is
+    computed from what was knowable in 2020 rather than from the whole series;
+    the TTM view passes every closed exercise, and its CAGR therefore ends at the
+    last closed year — a compounded rate is a property of the closed history, and
+    a moving 12-month window is not one more exercise to compound. Left empty by
+    default so the rates simply do not compute, which is what a caller without a
+    history should get.
     """
     f = current
     # Everything is computed from its inputs and *then* suppressed per regime (#48).
@@ -407,6 +501,10 @@ def compute(
 
     prev_revenue = previous.revenue if previous is not None else None
     prev_net_income = previous.net_income if previous is not None else None
+
+    def series(account: str) -> list[Decimal | None]:
+        """One account across the closed exercises, oldest → newest."""
+        return [getattr(annual, account) for annual in history]
 
     # The bank's spread, before the cost of default. A bank's 3.03 already deducts
     # the loan-loss provision (it sits inside the intermediation expenses in the
@@ -446,6 +544,10 @@ def compute(
         current_ratio=_div(f.current_assets, f.current_liabilities),
         revenue_growth=_growth(f.revenue, prev_revenue),
         net_income_growth=_growth(f.net_income, prev_net_income),
+        revenue_cagr_5y=_cagr(series("revenue")),
+        ebitda_cagr_5y=_cagr(series("ebitda")),
+        ebit_cagr_5y=_cagr(series("ebit")),
+        net_income_cagr_5y=_cagr(series("net_income")),
         pe=_div(cap, annual_net_income),
         pb=_div(cap, f.equity),
         psr=_div(cap, annual_revenue),
@@ -470,11 +572,16 @@ def compute(
         net_income_total=f.net_income_total,
         dividends=f.dividends_paid,
         dividends_declared=f.dividends_declared,
+        total_assets=f.total_assets,
+        total_liabilities=_sub(f.total_assets, f.equity_total),
+        equity=f.equity,
+        equity_total=f.equity_total,
         market_cap=cap,
         enterprise_value=enterprise_value,
         shares=market.shares,
     )
     indicators = _suppressed(indicators, _inapplicable(f))
     return replace(
-        indicators, null_reasons=_null_reasons(indicators, f, previous, market)
+        indicators,
+        null_reasons=_null_reasons(indicators, f, previous, market, history),
     )

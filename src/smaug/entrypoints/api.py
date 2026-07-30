@@ -60,6 +60,10 @@ class IndicatorsResponse(BaseModel):
     current_ratio: Decimal | None
     revenue_growth: Decimal | None
     net_income_growth: Decimal | None
+    revenue_cagr_5y: Decimal | None
+    ebitda_cagr_5y: Decimal | None
+    ebit_cagr_5y: Decimal | None
+    net_income_cagr_5y: Decimal | None
     pe: Decimal | None
     pb: Decimal | None
     psr: Decimal | None
@@ -83,6 +87,10 @@ class IndicatorsResponse(BaseModel):
     net_income_total: Decimal | None
     dividends: Decimal | None
     dividends_declared: Decimal | None
+    total_assets: Decimal | None
+    total_liabilities: Decimal | None
+    equity: Decimal | None
+    equity_total: Decimal | None
     market_cap: Decimal | None
     enterprise_value: Decimal | None
     shares: Decimal | None

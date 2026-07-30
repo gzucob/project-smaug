@@ -39,6 +39,14 @@ class NullReason(StrEnum):
       because its denominator is zero (a holding filing revenue = 0 nulls
       P/Receita and the margins; a year with ~zero earnings nulls P/E, payout).
       The arithmetic dead-end, named rather than left unclassified.
+    * ``NON_POSITIVE_ENDPOINT`` — ``ZERO_DENOMINATOR``'s sibling for a
+      compounded rate (#144). A CAGR raises the ratio of its two endpoints to a
+      fractional power, which has no real value unless *both* endpoints are
+      positive: a company that lost money in the first year of the window has no
+      compounded growth rate, and two negative endpoints would report a
+      deepening loss as growth. Distinct from a zero denominator because the
+      inputs are present and well-formed — it is the arithmetic, not the data,
+      that runs out.
 
     A null with no recorded reason is *unclassified* — a reportable status of
     its own (#47). With ``ZERO_DENOMINATOR`` attributed, this should not arise
@@ -53,6 +61,7 @@ class NullReason(StrEnum):
     MISSING_SHARE_COUNT = "missing_share_count"
     MISSING_PRIOR_PERIOD = "missing_prior_period"
     ZERO_DENOMINATOR = "zero_denominator"
+    NON_POSITIVE_ENDPOINT = "non_positive_endpoint"
 
 
 @dataclass(frozen=True)
@@ -93,6 +102,21 @@ class Indicators:
     # Growth (needs a prior comparable period)
     revenue_growth: Decimal | None = None
     net_income_growth: Decimal | None = None
+    # Compounded annual growth over a *stated* window (#144). The year-on-year
+    # figures above let one atypical exercise dominate the reading — a profit
+    # that fell 40% and then grew 60% reads as a 60% grower. These take the ratio
+    # of two endpoints five exercises apart: ``(this year / five years back) **
+    # (1/5) - 1``. The window is in the name on purpose, because the reference
+    # platforms disagree on what "CAGR 5A" spans and a compounded rate over an
+    # unstated window is not a number this project publishes. Null — never
+    # silently shortened — when the closed-year series is shorter than six
+    # exercises, and null when the base endpoint is not positive
+    # (``NON_POSITIVE_BASE``). Closed exercises only: the TTM window is a moving
+    # 12 months, not one more of them.
+    revenue_cagr_5y: Decimal | None = None
+    ebitda_cagr_5y: Decimal | None = None
+    ebit_cagr_5y: Decimal | None = None
+    net_income_cagr_5y: Decimal | None = None
     # Market multiples
     pe: Decimal | None = None
     pb: Decimal | None = None
@@ -131,6 +155,18 @@ class Indicators:
     net_income_total: Decimal | None = None  # consolidated, minority included
     dividends: Decimal | None = None
     dividends_declared: Decimal | None = None  # DMPL charge, not the DFC cash
+    # Balance-sheet scale (absolute reais, at the period's closing instant).
+    # Persisted for the same reason as the flows above: the ratios divide the two
+    # sides away, so what the company owns against what it owes cannot be
+    # reconstructed from ``liabilities_to_assets`` alone. ``total_liabilities``
+    # subtracts the *consolidated* equity — minority interest is equity, not
+    # third-party capital. Note this differs from ``liabilities_to_assets``,
+    # which subtracts the controllers' slice and so counts the minority as
+    # liability; the two disagree by exactly that amount (#149).
+    total_assets: Decimal | None = None
+    total_liabilities: Decimal | None = None
+    equity: Decimal | None = None  # controllers' slice — the bvps numerator
+    equity_total: Decimal | None = None  # consolidated, minority included
     # Scale figures (absolute reais / a share count) — the market-side inputs the
     # calculator already builds its multiples from, persisted so the front-end can
     # show them at the top of a ticker page. ``market_cap`` is the sum over the

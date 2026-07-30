@@ -10,7 +10,9 @@ import pytest
 
 from smaug.ingestion.infrastructure.cvm_capital import (
     CAPITAL_MODULE,
+    TREASURY_MODULE,
     CvmCapitalSource,
+    CvmTreasurySource,
 )
 from smaug.shared.errors import BrapiNotFoundError
 
@@ -170,3 +172,25 @@ async def test_fetch_raises_for_an_unmapped_ticker(tmp_path: Path) -> None:
 
     with pytest.raises(BrapiNotFoundError):
         await _source(tmp_path).fetch("WEGE3", CAPITAL_MODULE)
+
+
+async def test_treasury_fetch_reports_not_found_when_the_year_has_no_member(
+    tmp_path: Path,
+) -> None:
+    # CVM began publishing the capital composition partway through the series:
+    # the 2019 DFP archive has no ``composicao_capital`` member, the 2020 one
+    # does. An absent member must degrade to "not found" for the ticker — raising
+    # aborted the whole year, which is how the 2015-2019 backfill failed (#63).
+    archive = tmp_path / "dfp_cia_aberta_2019.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("dfp_cia_aberta_BPA_con_2019.csv", "CNPJ_CIA;DT_REFER\n")
+
+    source = CvmTreasurySource(
+        httpx.AsyncClient(),
+        {"PETR4": _PETRO},
+        year=2019,
+        cache_dir=str(tmp_path),
+    )
+
+    with pytest.raises(BrapiNotFoundError):
+        await source.fetch("PETR4", TREASURY_MODULE)
