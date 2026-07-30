@@ -92,35 +92,29 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
         ))}
       </div>
 
-      {/* ---------------------------------------------------- two views --- */}
+      {/* --------------------------------------------------- indicators --- */}
+      {/* One grid, not two. The page used to stack the twelve-month window and
+          the latest closed exercise as identical 29-cell grids — ~1500px of a
+          4800px page — and left the reader to diff them by eye. The comparison
+          now lives in the cell (a delta) and the full series is one click away
+          in the drill-down (#32). */}
       <section className="mb-14">
         <h2 className="mb-5 flex items-center gap-3 font-display text-2xl text-ink-100">
-          Duas visões
+          Indicadores
           <span className="h-px flex-1 bg-gradient-to-r from-gold-500/30 to-transparent" />
         </h2>
-        {/* Stacked, not side-by-side: at full width each grid fits four indicator
-            columns, leaving room for the per-cell chart/info affordances. */}
-        <div className="flex flex-col gap-5">
-          {ttm && (
-            <div className="rise" style={{ animationDelay: "180ms" }}>
-              <ViewPanel analysis={ttm} history={history} ttm={ttm} primary />
-            </div>
-          )}
-          {latestClosed && (
-            <div className="rise" style={{ animationDelay: "240ms" }}>
-              <ViewPanel
-                analysis={latestClosed}
-                history={history}
-                ttm={ttm}
-                primary={!ttm}
-              />
-            </div>
-          )}
+        <div className="rise" style={{ animationDelay: "180ms" }}>
+          <ViewPanel
+            analysis={reference}
+            compare={ttm ? latestClosed : null}
+            history={history}
+            ttm={ttm}
+            primary
+          />
         </div>
         {!ttm && (
           <p className="mt-4 text-sm text-ink-500">
-            Sem os últimos 12 meses para este ticker — exibindo apenas o histórico de anos
-            fechados.
+            Sem os últimos 12 meses para este ticker — exibindo o último exercício fechado.
           </p>
         )}
       </section>

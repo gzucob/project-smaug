@@ -11,29 +11,29 @@
  * a picker, so comparing P/L against P/VP costs one click instead of a round
  * trip through the grid.
  */
-import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { FiAlertTriangle, FiBarChart2, FiChevronDown, FiTrendingUp, FiX } from "react-icons/fi";
+import { Dialog, DialogPanel } from "@headlessui/react";
+import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import { FiAlertTriangle, FiBarChart2, FiTrendingUp, FiX } from "react-icons/fi";
 import { IndicatorChart } from "@/components/IndicatorChart";
 import type { ChartMode } from "@/components/IndicatorChart";
-import { DASH } from "@/lib/format";
+import { IndicatorPicker } from "@/components/IndicatorPicker";
+import { DASH, toNum } from "@/lib/format";
 import type { IndicatorDoc, RelevanceNote } from "@/lib/indicator-docs";
 import {
   BASIS_HINT,
   BASIS_LABEL,
-  INDICATOR_GROUPS,
   INDICATORS,
   basisOf,
   basisPair,
+  deltaText,
   formatKindOf,
-  specsByGroup,
   valueFormatter,
 } from "@/lib/indicators";
 import type { Basis, IndicatorSpec } from "@/lib/indicators";
 import { reasonCopy } from "@/lib/null-reasons";
 import { sectorMeta } from "@/lib/sectors";
-import type { IndicatorKey, NullReason } from "@/lib/types";
+import type { Decimalish, IndicatorKey, NullReason } from "@/lib/types";
 
 export interface IndicatorSeries {
   labels: string[];
@@ -49,6 +49,8 @@ export function IndicatorDetail({
   accent,
   sector,
   nullReason,
+  previous,
+  previousLabel,
   onSelectKey,
   onClose,
 }: {
@@ -59,23 +61,23 @@ export function IndicatorDetail({
   sector: string;
   /** Set when this indicator is null in the view the reader came from. */
   nullReason: NullReason | undefined;
+  /** Same indicator on the latest closed exercise, for the change tile. */
+  previous: Decimalish;
+  previousLabel: string | null;
   onSelectKey: (key: IndicatorKey) => void;
   onClose: () => void;
 }) {
   const [mode, setMode] = useState<ChartMode>("bars");
-  const panelRef = useRef<HTMLDivElement>(null);
 
-  // Esc closes; ←/→ walk the indicator list in the order the grid shows it, so
-  // scanning a group does not mean reopening the picker for each one.
+  // `Dialog` owns the portal, the focus trap, the scroll lock, the Esc key and
+  // returning focus to whatever opened it — all of which were hand-written here
+  // before. What stays ours is ←/→ walking the indicator list, so scanning a
+  // group does not mean reopening the picker for each one.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-        return;
-      }
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-      // The picker has its own arrow behaviour; leave it alone while focused.
-      if (document.activeElement instanceof HTMLSelectElement) return;
+      // While the picker's list is open the arrows are its own.
+      if (document.querySelector('[role="listbox"]')) return;
       // A `_total` column is not in the grid's list; walk from its controllers'
       // sibling so the arrows keep working while reading the consolidated basis.
       const gridKey = basisPair(spec.key)?.controllers ?? spec.key;
@@ -87,41 +89,8 @@ export function IndicatorDetail({
       onSelectKey(INDICATORS[next].key);
     };
     document.addEventListener("keydown", onKey);
-    const { overflow } = document.body.style;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = overflow;
-    };
-  }, [onClose, onSelectKey, spec.key]);
-
-  // Focus moves into the dialog on open and returns to whatever opened it, so a
-  // keyboard reader is not dropped back at the top of a 29-cell grid.
-  useEffect(() => {
-    const opener = document.activeElement;
-    panelRef.current?.focus();
-    return () => {
-      if (opener instanceof HTMLElement) opener.focus();
-    };
-  }, []);
-
-  // Tab cycles inside the dialog while it is open.
-  const onKeyDownTrap = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "Tab") return;
-    const focusable = panelRef.current?.querySelectorAll<HTMLElement>(
-      'button, select, [href], input, [tabindex]:not([tabindex="-1"])',
-    );
-    if (!focusable || focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onSelectKey, spec.key]);
 
   const formatKind = formatKindOf(spec);
   const fmt = valueFormatter(formatKind);
@@ -144,34 +113,40 @@ export function IndicatorDetail({
   const current = series.values[series.values.length - 1] ?? null;
   const currentLabel = series.labels[series.labels.length - 1];
 
-  // Rendered into <body>: `position: fixed` anchors to the nearest *transformed*
-  // ancestor rather than to the window, and this modal has two — the `.rise`
-  // entrance (which keeps `translateY(0)` under `forwards`) and `.panel-hover`
-  // on the card. In place, the backdrop inherited the card's box, took its
-  // height instead of the viewport's, and pushed the panel's top out of reach
-  // with nothing left to scroll.
-  return createPortal(
-    <div
-      className="modal-backdrop fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-vault-950/85 p-4 sm:p-8"
-      onClick={onClose}
-      role="presentation"
-    >
+  // The change against the closed exercise. In a cell this was a bare arrow with
+  // nothing naming the other side; here both ends fit ("7,5% → 5,4%").
+  const from = toNum(previous);
+  const change =
+    current !== null && from !== null && previousLabel
+      ? (() => {
+          const text = deltaText(formatKind, current, from);
+          return text ? { text, from, to: current } : null;
+        })()
+      : null;
+
+  // `Dialog` portals into <body> on its own, which is what this modal needs:
+  // `position: fixed` anchors to the nearest *transformed* ancestor rather than
+  // to the window, and the ticker page has two (`.rise`, whose `forwards` fill
+  // keeps a transform applied, and `.panel-hover` on the card). Anchored in
+  // place, the backdrop inherited the card's box and pushed the panel's top out
+  // of reach with nothing left to scroll.
+  return (
+    <Dialog open onClose={onClose} className="relative z-50">
+      <div
+        className="modal-backdrop fixed inset-0 flex items-start justify-center overflow-y-auto bg-vault-950/85 p-4 sm:p-8"
+        aria-hidden
+      />
       {/* On a landscape screen the tall single column ran past the viewport, so
           past ~1024px the panel turns into a rectangle: chart on one side, the
           reference doc on the other, each scrolling on its own. */}
-      <div
+      <div className="fixed inset-0 flex items-start justify-center overflow-y-auto p-4 sm:p-8">
+      <DialogPanel
         // `grid-rows-[minmax(0,1fr)]`: without it the row is sized by its
         // content, overshoots the panel's max height and gets clipped by
         // `overflow-hidden` — with no scrollbar anywhere, which is the bug this
         // whole modal had. Pinning the row makes the columns scroll instead.
         className="modal-panel panel relative my-auto w-full max-w-3xl p-6 sm:p-7 lg:grid lg:max-h-[88vh] lg:max-w-6xl lg:grid-cols-2 lg:grid-rows-[minmax(0,1fr)] lg:gap-8 lg:overflow-hidden lg:p-8"
-        ref={panelRef}
-        tabIndex={-1}
-        role="dialog"
-        aria-modal="true"
         aria-label={spec.label}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={onKeyDownTrap}
       >
         <button
           type="button"
@@ -188,34 +163,14 @@ export function IndicatorDetail({
           <div className="flex items-start gap-3">
             <span className="mt-1.5 h-8 w-[3px] rounded-full" style={{ backgroundColor: accent }} />
             <div>
-              {/* The native select sizes itself to its widest option, which would
-                  strand the chevron far from the title — so it sits invisible on
-                  top of the label and keeps its keyboard and mobile behaviour. */}
-              <div className="group/pick relative inline-flex items-center gap-1.5 rounded-md focus-within:outline-1 focus-within:outline-gold-500">
-                <h3 className="font-display text-2xl text-ink-50 transition-colors group-hover/pick:text-gold-300">
-                  {spec.label}
-                </h3>
-                <FiChevronDown className="text-ink-500" size={15} />
-                <select
-                  // The picker lists grid indicators only, so while reading a
-                  // `_total` column it shows that column's controllers' sibling
-                  // — the basis toggle below is what states which slice it is.
-                  value={pair?.controllers ?? spec.key}
-                  onChange={(e) => onSelectKey(e.target.value as IndicatorKey)}
-                  aria-label="Trocar de indicador"
-                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                >
-                  {INDICATOR_GROUPS.map((group) => (
-                    <optgroup key={group} label={group}>
-                      {specsByGroup(group).map((s) => (
-                        <option key={s.key} value={s.key}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-              </div>
+              {/* Lists grid indicators only, so while reading a `_total` column
+                  it shows that column's controllers' sibling — the basis toggle
+                  below is what states which slice is on screen. */}
+              <IndicatorPicker
+                value={pair?.controllers ?? spec.key}
+                label={spec.label}
+                onChange={onSelectKey}
+              />
               <p className="mt-0.5 text-xs" style={{ color: accent }}>
                 {spec.group}
               </p>
@@ -266,6 +221,13 @@ export function IndicatorDetail({
                   dashColor={average === null ? undefined : accent}
                   hint="Média aritmética dos exercícios fechados — a janela de 12 meses fica de fora, por não ser um período comparável."
                 />
+                {change && (
+                  <Stat
+                    label={`vs exercício ${previousLabel}`}
+                    value={change.text}
+                    detail={`${fmt(change.from)} → ${fmt(change.to)}`}
+                  />
+                )}
                 <Stat
                   label="Mín · Máx"
                   value={
@@ -340,9 +302,9 @@ export function IndicatorDetail({
             </div>
           )}
         </section>
+      </DialogPanel>
       </div>
-    </div>,
-    document.body,
+    </Dialog>
   );
 }
 
@@ -353,6 +315,7 @@ function Stat({
   color,
   hint,
   dashColor,
+  detail,
 }: {
   label: string;
   value: string;
@@ -360,6 +323,8 @@ function Stat({
   hint?: string;
   /** Draws the chart's dashed reference line as this stat's legend. */
   dashColor?: string;
+  /** A second line under the value — the two ends of a change, say. */
+  detail?: string;
 }) {
   return (
     <div className="rounded-lg border border-gold-500/8 bg-vault-850 px-3 py-2" title={hint}>
@@ -378,6 +343,7 @@ function Stat({
       >
         {value}
       </div>
+      {detail && <div className="nums mt-0.5 text-[0.62rem] text-ink-600">{detail}</div>}
     </div>
   );
 }

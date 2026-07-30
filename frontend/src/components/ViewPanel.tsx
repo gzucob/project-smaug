@@ -13,11 +13,14 @@ import type { Analysis } from "@/lib/types";
  */
 export function ViewPanel({
   analysis,
+  compare,
   history,
   ttm,
   primary = false,
 }: {
   analysis: Analysis;
+  /** The closed exercise the cells are measured against, when there is one. */
+  compare: Analysis | null;
   history: Analysis[];
   ttm: Analysis | null;
   primary?: boolean;
@@ -41,6 +44,12 @@ export function ViewPanel({
               {isTtm ? monthYear(analysis.reference_date) : yearOf(analysis.reference_date)}
             </span>
           </p>
+          {compare && (
+            <p className="mt-1 text-xs text-ink-500">
+              Variações medidas contra o exercício de{" "}
+              <span className="text-ink-400">{yearOf(compare.reference_date)}</span>
+            </p>
+          )}
         </div>
 
         <div className="text-right">
@@ -60,6 +69,8 @@ export function ViewPanel({
 
       <IndicatorGrid
         indicators={analysis.indicators}
+        compare={compare?.indicators ?? null}
+        compareLabel={compare ? yearOf(compare.reference_date) : null}
         sector={gemKey(analysis.classification)}
         history={history}
         ttm={ttm}

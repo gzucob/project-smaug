@@ -20,6 +20,8 @@ import {
   BASIS_LABEL,
   INDICATOR_GROUPS,
   basisPair,
+  deltaText,
+  formatKindOf,
   groupColor,
   specByKey,
   specsByGroup,
@@ -30,11 +32,17 @@ import type { Analysis, IndicatorKey, Indicators } from "@/lib/types";
 
 export function IndicatorGrid({
   indicators,
+  compare,
+  compareLabel,
   sector,
   history,
   ttm,
 }: {
   indicators: Indicators;
+  /** The closed exercise each cell is measured against — null on that exercise itself. */
+  compare: Indicators | null;
+  /** That exercise's year, named once in the header rather than in 29 cells. */
+  compareLabel: string | null;
   sector: string;
   history: Analysis[];
   ttm: Analysis | null;
@@ -85,6 +93,8 @@ export function IndicatorGrid({
                   key={spec.key}
                   spec={spec}
                   indicators={indicators}
+                  compare={compare}
+                  compareLabel={compareLabel}
                   accent={accent}
                   onOpen={() => setOpenKey(spec.key)}
                 />
@@ -102,6 +112,8 @@ export function IndicatorGrid({
           accent={groupColor(openSpec.group)}
           sector={sector}
           nullReason={indicators.null_reasons?.[openKey]}
+          previous={compare?.[openKey] ?? null}
+          previousLabel={compareLabel}
           onSelectKey={setOpenKey}
           onClose={() => setOpenKey(null)}
         />
@@ -113,17 +125,22 @@ export function IndicatorGrid({
 function IndicatorCell({
   spec,
   indicators,
+  compare,
+  compareLabel,
   accent,
   onOpen,
 }: {
   spec: IndicatorSpec;
   indicators: Indicators;
+  compare: Indicators | null;
+  compareLabel: string | null;
   accent: string;
   onOpen: () => void;
 }) {
   const raw = indicators[spec.key];
   const text = spec.format(raw);
   const missing = toNum(raw) === null;
+
   // The API says *why* a null is null; the cell used to render every one of
   // them as a bare "n/d", which reads as "not applicable" even when the honest
   // answer is "we did not compute it" (#54).
@@ -168,6 +185,9 @@ function IndicatorCell({
         </div>
       </div>
 
+      {/* The value alone. The change against the closed exercise lives in the
+          drill-down, where both sides can be named — beside the value it was a
+          bare "▼ 2,1 p.p." with nothing saying what it was measured against. */}
       <div className="nums mt-1 text-lg font-semibold leading-tight" style={{ color: valueColor }}>
         {text}
       </div>

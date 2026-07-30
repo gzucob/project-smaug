@@ -18,7 +18,8 @@ already-computed results.
   tokens live in `@theme` inside `src/app/globals.css`; the PostCSS plugin is
   wired in `postcss.config.mjs`.
 - Fonts come through `next/font/google` (self-hosted at build). Icons come from
-  **`react-icons`** — do not hand-roll SVG icons.
+  **`react-icons`** — do not hand-roll SVG icons. Overlays and menus come from
+  **`@headlessui/react`** (unstyled behaviour; the look is ours).
 - Charts come from **`recharts`**, and only where a reading needs a real scale
   (see *Charts* below).
 
@@ -71,6 +72,19 @@ not in the fonts.
   base URL is `NEXT_PUBLIC_API_BASE` (default `http://localhost:8000`). Because
   fetching is server-side there is **no CORS surface** — do not add
   client-side calls to the API.
+- **The ticker page carries one indicator grid**, the twelve-month window. It
+  used to stack a second, identical grid for the latest closed exercise;
+  comparing 29 numbers by eye is not a comparison (#32).
+- **The change against that exercise lives in the drill-down**, as a stat naming
+  both ends (`9,6% → 7,5%`), not in the cell. A bare `▼ 2,1 p.p.` under a value
+  states a magnitude without saying what it was measured against.
+- **A delta is stated in the unit the reader thinks in** (`deltaText`): a ratio
+  shown as `%` moves in **percentage points**, a multiple in `×`, money in
+  relative terms. A delta that rounds away at the shown precision is not
+  rendered — "▼ 0,00×" points somewhere and says nothing.
+- **A delta is never sign-coloured.** An arrow states direction, which is a
+  fact; green would state "good", which is the judgement the domain refuses to
+  make — and a rising P/L is not the same news as a rising ROE.
 - **A screen never shows a statement slice without naming it** (ADR 0026). A
   bare indicator name is the controllers' slice; `roe_total` and friends are the
   consolidated group. `lib/indicators.ts` owns the pairing (`basisPair`,
@@ -100,6 +114,20 @@ not in the fonts.
 
 - **Server-first.** Add `"use client"` only where interactivity is required
   (e.g. `TickerSearch`, which navigates on submit — no client-side data fetch).
+- **Overlays and menus come from `@headlessui/react`; the styling is ours.**
+  A native `<select>` is out — its dropdown is drawn by the operating system,
+  unreachable from CSS, foreign on this panel (#143) — and so is hand-rolling
+  the behaviour: we wrote a focus trap, a portal, a scroll lock and arrow
+  handling twice before, and the hand-rolled list still hung inside a scrolling
+  column where a longer list would have been clipped.
+  - `Dialog`/`DialogPanel` for the modal, `Listbox` for a menu; see
+    `IndicatorDetail` and `IndicatorPicker`.
+  - `anchor` positions a floating list **and portals it**, which is what keeps
+    it out of an `overflow` ancestor. Bound it with `[--anchor-max-height:…]`:
+    the anchor writes a height inline from the space available, and inline beats
+    a class, so a `max-h-*` utility is silently ignored.
+  - Style through the `data-*` attributes it exposes (`data-focus`,
+    `group-data-open`), never by re-implementing the state.
 - **Dynamic (per-sector) colours use inline `style` with `var(--color-…)`**,
   since Tailwind cannot know a runtime value; static colours use utilities.
 - The brand mark is **`DragonMark`** (react-icons `GiSpikedDragonHead`,
