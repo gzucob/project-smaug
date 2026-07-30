@@ -18,7 +18,8 @@ already-computed results.
   tokens live in `@theme` inside `src/app/globals.css`; the PostCSS plugin is
   wired in `postcss.config.mjs`.
 - Fonts come through `next/font/google` (self-hosted at build). Icons come from
-  **`react-icons`** — do not hand-roll SVG icons.
+  **`react-icons`** — do not hand-roll SVG icons. Overlays and menus come from
+  **`@headlessui/react`** (unstyled behaviour; the look is ours).
 - Charts come from **`recharts`**, and only where a reading needs a real scale
   (see *Charts* below).
 
@@ -113,12 +114,20 @@ not in the fonts.
 
 - **Server-first.** Add `"use client"` only where interactivity is required
   (e.g. `TickerSearch`, which navigates on submit — no client-side data fetch).
-- **No native `<select>` for a menu the design system owns.** Its dropdown is
-  drawn by the operating system — type, row height and `optgroup` styling are
-  unreachable from CSS, and on this panel it reads as a foreign object (#143).
-  `IndicatorPicker` is the in-app pattern: `role="listbox"`, arrow/Enter/Esc
-  handling, outside-click dismissal, focus returned to the trigger. Reuse it
-  rather than reaching for the native element again.
+- **Overlays and menus come from `@headlessui/react`; the styling is ours.**
+  A native `<select>` is out — its dropdown is drawn by the operating system,
+  unreachable from CSS, foreign on this panel (#143) — and so is hand-rolling
+  the behaviour: we wrote a focus trap, a portal, a scroll lock and arrow
+  handling twice before, and the hand-rolled list still hung inside a scrolling
+  column where a longer list would have been clipped.
+  - `Dialog`/`DialogPanel` for the modal, `Listbox` for a menu; see
+    `IndicatorDetail` and `IndicatorPicker`.
+  - `anchor` positions a floating list **and portals it**, which is what keeps
+    it out of an `overflow` ancestor. Bound it with `[--anchor-max-height:…]`:
+    the anchor writes a height inline from the space available, and inline beats
+    a class, so a `max-h-*` utility is silently ignored.
+  - Style through the `data-*` attributes it exposes (`data-focus`,
+    `group-data-open`), never by re-implementing the state.
 - **Dynamic (per-sector) colours use inline `style` with `var(--color-…)`**,
   since Tailwind cannot know a runtime value; static colours use utilities.
 - The brand mark is **`DragonMark`** (react-icons `GiSpikedDragonHead`,
