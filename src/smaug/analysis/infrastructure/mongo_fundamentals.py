@@ -20,6 +20,7 @@ Financiamentos" for a corporate filer but "Capitalização" for an insurer.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
@@ -305,6 +306,26 @@ def _dividends_paid(dfc: Accounts) -> Decimal | None:
 # EBITDA margin (~41%) sides with including it.
 _DEP_AMORT_NEEDLES = ("deprecia", "amortizac", "exaust")
 
+_PARENTHETICAL = re.compile(r"\([^)]*\)")
+
+
+def _without_parentheticals(name: str) -> str:
+    """A label with its bracketed qualifiers removed.
+
+    A needle that survives this is what the line *is*; one that only appears
+    inside the brackets is part of a list of what some other line contains
+    (#160). CXSE3 files ``Outros ajustes (Depreciação/Tributos Retidos)`` — an
+    "other adjustments" line whose bracket happens to name depreciation, mixed
+    with withheld taxes and impossible to separate. Reading it as D&A published
+    an EBITDA built on R$1.0 million of miscellany.
+
+    Of the 39 distinct D&A labels in the mirror, CXSE3's two variants are the
+    only ones whose needle lives in a bracket; every other filer leads with the
+    word. A label like "Depreciação (nota 12)" is untouched — the needle is
+    outside.
+    """
+    return _PARENTHETICAL.sub(" ", name)
+
 
 def _dep_amort(dfc: Accounts) -> Decimal | None:
     """Depreciation, amortization and depletion — the DFC's operating add-backs.
@@ -327,7 +348,9 @@ def _dep_amort(dfc: Accounts) -> Decimal | None:
             continue
         if any(code.startswith(f"{parent}.") for parent in summed):
             continue
-        name = _fold(str(account.get("name", "")))
+        # Bracketed qualifiers are stripped first: a needle that only survives
+        # inside them describes what some *other* line contains (#160).
+        name = _fold(_without_parentheticals(str(account.get("name", ""))))
         if not any(needle in name for needle in _DEP_AMORT_NEEDLES):
             continue
         value = _dec(account.get("quantity"))
