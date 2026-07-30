@@ -29,7 +29,7 @@ export function TickerSearch({ compact = false }: { compact?: boolean }) {
         aria-label="Buscar ticker"
         autoComplete="off"
         spellCheck={false}
-        className={`nums w-full rounded-xl border border-gold-500/15 bg-vault-900/80 pl-9 pr-3 uppercase tracking-wider text-ink-50 placeholder:text-ink-600 placeholder:normal-case placeholder:tracking-normal outline-none transition-all focus:border-gold-400/60 focus:bg-vault-850 focus:shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-gold-500)_18%,transparent)] ${
+        className={`nums w-full rounded-xl border border-gold-500/15 bg-vault-900/80 pl-9 pr-3 uppercase tracking-wider text-ink-50 placeholder:text-ink-600 placeholder:normal-case placeholder:tracking-normal outline-none transition-[border-color,background-color,box-shadow] duration-200 ease-[var(--ease-out-strong)] focus:border-gold-400/60 focus:bg-vault-850 focus:shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-gold-500)_18%,transparent)] ${
           compact ? "h-9 text-sm" : "h-12 text-base"
         }`}
       />
