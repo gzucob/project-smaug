@@ -109,10 +109,6 @@ class YahooPriceHistory:
     def __init__(self, base_url: str, http_client: httpx.AsyncClient) -> None:
         self._base_url = base_url.rstrip("/")
         self._http = http_client
-        # First-trade date per symbol, resolved lazily and only when a year comes
-        # back empty. A present key with a ``None`` value records "asked, and
-        # Yahoo would not say", so a symbol is never probed twice in a run.
-        self._first_trade: dict[str, datetime | None] = {}
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:
         symbol = _yahoo_symbol(ticker)
@@ -145,69 +141,22 @@ class YahooPriceHistory:
             return YearPrices(null_reason=NullReason.PRICE_SYMBOL_NOT_FOUND)
 
         if response.status_code != httpx.codes.OK:
-            # A window Yahoo will not serve. Before calling it a transient gap, ask
-            # whether the instrument even existed yet: a year that ends before its
-            # first trade is a fact about the world, not a vendor outage (#153).
-            # Yahoo answers 400 "Data doesn't exist for startDate…" here, so the
-            # status alone cannot tell the two apart.
+            # A transient/bad window: expected null, not a crash. No reason recorded,
+            # so the chain treats it as a gap this source could not fill. Whether the
+            # year *precedes the instrument* is not decidable here — Yahoo answers
+            # the same 400 either way, and its ``meta.firstTradeDate`` is the earliest
+            # date it holds data for, not the listing date (#153): TAEE4 has traded
+            # since 2006-10-27 and Yahoo's series starts in 2017. The use case makes
+            # that call from the FCA's own ``Data_Inicio_Negociacao``.
             logger.warning(
                 "Yahoo history %d for %s: HTTP %d; year multiples will be null",
                 year,
                 symbol,
                 response.status_code,
             )
-            return await self._empty_year(symbol, year)
+            return YearPrices()
 
-        prices = _parse(response.json(), year)
-        if prices.nominal_avg is None and prices.adjusted_avg is None:
-            return await self._empty_year(symbol, year)
-        return prices
-
-    async def _empty_year(self, symbol: str, year: int) -> YearPrices:
-        """Classify a year Yahoo served no prices for: pre-listing, or a gap."""
-        first_trade = await self._first_trade_date(symbol)
-        if first_trade is not None and first_trade.year > year:
-            logger.info(
-                "Yahoo history %d for %s: precedes its first trade (%s) — not listed",
-                year,
-                symbol,
-                first_trade.date(),
-            )
-            return YearPrices(null_reason=NullReason.NOT_YET_LISTED)
-        return YearPrices()
-
-    async def _first_trade_date(self, symbol: str) -> datetime | None:
-        """When ``symbol`` first traded, per Yahoo's own ``meta.firstTradeDate``.
-
-        Read from a maximal-range request, because the windowed one that just came
-        back empty cannot carry it. Cached per symbol — the answer does not change
-        within a run, and a ticker is asked for one year at a time.
-        """
-        if symbol in self._first_trade:
-            return self._first_trade[symbol]
-        self._first_trade[symbol] = None  # pessimistic: never probe twice
-        url = f"{self._base_url}/v8/finance/chart/{symbol}"
-        try:
-            response = await self._http.get(
-                url,
-                params={"range": "max", "interval": "1mo"},
-                headers={"User-Agent": _USER_AGENT},
-            )
-        except httpx.TransportError as exc:
-            # Not fatal: this call only refines a null that already exists.
-            logger.warning("Yahoo first-trade probe for %s failed: %r", symbol, exc)
-            return None
-        if response.status_code != httpx.codes.OK:
-            return None
-        results = (response.json().get("chart") or {}).get("result") or []
-        if not results:
-            return None
-        stamp = (results[0].get("meta") or {}).get("firstTradeDate")
-        if not isinstance(stamp, int | float):
-            return None
-        first_trade = datetime.fromtimestamp(stamp, UTC)
-        self._first_trade[symbol] = first_trade
-        return first_trade
+        return _parse(response.json(), year)
 
 
 def _parse(payload: dict[str, Any], year: int) -> YearPrices:

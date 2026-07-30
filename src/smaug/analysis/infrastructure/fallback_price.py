@@ -54,8 +54,7 @@ class FallbackPriceHistory:
     source that answered agreed the symbol is unknown
     (``PRICE_SYMBOL_NOT_FOUND``): that is a real delisting/rename (#64). If any
     source recognised the symbol but merely had no data for the year, the null
-    stays a plain (transient) gap. ``NOT_YET_LISTED`` is the exception to the
-    unanimity rule — see ``year_prices``.
+    stays a plain (transient) gap.
     """
 
     def __init__(self, providers: Sequence[PriceHistoryProvider]) -> None:
@@ -79,13 +78,6 @@ class FallbackPriceHistory:
             if prices.adjusted_avg is not None:
                 return prices
             reasons.append(prices.null_reason)
-        # ``NOT_YET_LISTED`` needs no agreement, unlike the unknown symbol below:
-        # it is a claim about the *instrument* rather than about one source's
-        # coverage. A source that proves the year precedes the first trade has
-        # settled it — no other source can hold a price for a year in which the
-        # instrument did not exist, and we only get here because none did (#153).
-        if any(r is NullReason.NOT_YET_LISTED for r in reasons):
-            return YearPrices(null_reason=NullReason.NOT_YET_LISTED)
         if reasons and all(r is NullReason.PRICE_SYMBOL_NOT_FOUND for r in reasons):
             return YearPrices(null_reason=NullReason.PRICE_SYMBOL_NOT_FOUND)
         return YearPrices()

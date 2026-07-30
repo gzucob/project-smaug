@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Coroutine
+from datetime import date
 from decimal import Decimal
 from typing import Any, cast
 
@@ -61,6 +62,7 @@ from smaug.ingestion.infrastructure.repositories import BeanieRawIngestionReposi
 from smaug.ingestion.infrastructure.routed_source import RoutedDataSource
 from smaug.portfolio.domain.company import CompanyIdentity
 from smaug.portfolio.domain.cvm_codes import TICKER_TO_CNPJ, TICKER_TO_CVM_CODE
+from smaug.portfolio.domain.listings import listed_since
 from smaug.portfolio.domain.sectors import (
     PORTFOLIO,
     Sector,
@@ -150,6 +152,25 @@ def _classification_resolver(
         if classification is None:
             raise UnknownTickerError(ticker)
         return classification
+
+    return resolve
+
+
+def _listed_since_resolver(
+    identities: dict[str, CompanyIdentity],
+) -> Callable[[str], date | None]:
+    """When a ticker was listed: curated for the nine, else the FCA (#153).
+
+    Curated first for the same reason the classes are — the nine never trigger an
+    FCA download, so the registry holds nothing for them.
+    """
+
+    def resolve(ticker: str) -> date | None:
+        curated = listed_since(ticker)
+        if curated is not None:
+            return curated
+        identity = identities.get(ticker)
+        return identity.listed_since if identity is not None else None
 
     return resolve
 
@@ -385,6 +406,7 @@ async def _run_analyze(tickers: tuple[str, ...]) -> int:
                 ),
                 classification_resolver=_classification_resolver(identities),
                 classes_resolver=_classes_resolver(identities),
+                listed_since_resolver=_listed_since_resolver(identities),
             )
             analyses = await use_case.execute(tickers)
     finally:
