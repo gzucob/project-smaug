@@ -194,6 +194,63 @@ export function axisFormatter(kind: FormatKind): (n: number) => string {
   }
 }
 
+/**
+ * The change from a closed exercise to the current window, in the unit the
+ * reader thinks in.
+ *
+ * A ratio already rendered as a percentage moves in **percentage points**: ROE
+ * from 24% to 26% is `+2 p.p.`, not `+8%` — that would be the percent change of
+ * a percent, a number nobody wants. A multiple moves in `×`. Money and
+ * per-share figures have no natural unit of change, so they move in relative
+ * terms.
+ *
+ * Returns null when the comparison is not a number: either side missing, or a
+ * relative change measured against zero.
+ */
+export function deltaText(kind: FormatKind, current: number, previous: number): string | null {
+  const raw = current - previous;
+  const decimals = (n: number, digits: number) =>
+    new Intl.NumberFormat("pt-BR", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    }).format(Math.abs(n));
+  // A change that rounds away at the shown precision is not a change worth an
+  // arrow: "▼ 0,00×" points somewhere and says nothing.
+  const vanishes = (n: number, digits: number) => Number(Math.abs(n).toFixed(digits)) === 0;
+
+  switch (kind) {
+    case "pct":
+    case "signedPct": {
+      const points = raw * 100;
+      if (vanishes(points, 1)) return null;
+      return `${signOf(points)}${decimals(points, 1)} p.p.`;
+    }
+    case "multiple":
+      if (vanishes(raw, 2)) return null;
+      return `${signOf(raw)}${decimals(raw, 2)}×`;
+    case "money":
+    case "price": {
+      if (previous === 0) return null;
+      const ratio = (raw / Math.abs(previous)) * 100;
+      if (vanishes(ratio, 1)) return null;
+      return `${signOf(ratio)}${decimals(ratio, 1)}%`;
+    }
+  }
+}
+
+/**
+ * The arrow, never a colour.
+ *
+ * Direction is a fact; "good" is a judgement the domain refuses to make, and a
+ * rising P/L is not the same news as a rising ROE. Green here would quietly
+ * decide that for the reader.
+ */
+function signOf(n: number): string {
+  if (n > 0) return "▲ ";
+  if (n < 0) return "▼ ";
+  return "";
+}
+
 /** Formatter for a value read on its own — tooltip, stat tile — unit included. */
 export function valueFormatter(kind: FormatKind): (n: number) => string {
   switch (kind) {

@@ -20,6 +20,8 @@ import {
   BASIS_LABEL,
   INDICATOR_GROUPS,
   basisPair,
+  deltaText,
+  formatKindOf,
   groupColor,
   specByKey,
   specsByGroup,
@@ -30,11 +32,17 @@ import type { Analysis, IndicatorKey, Indicators } from "@/lib/types";
 
 export function IndicatorGrid({
   indicators,
+  compare,
+  compareLabel,
   sector,
   history,
   ttm,
 }: {
   indicators: Indicators;
+  /** The closed exercise each cell is measured against — null on that exercise itself. */
+  compare: Indicators | null;
+  /** That exercise's year, named once in the header rather than in 29 cells. */
+  compareLabel: string | null;
   sector: string;
   history: Analysis[];
   ttm: Analysis | null;
@@ -85,6 +93,8 @@ export function IndicatorGrid({
                   key={spec.key}
                   spec={spec}
                   indicators={indicators}
+                  compare={compare}
+                  compareLabel={compareLabel}
                   accent={accent}
                   onOpen={() => setOpenKey(spec.key)}
                 />
@@ -113,17 +123,31 @@ export function IndicatorGrid({
 function IndicatorCell({
   spec,
   indicators,
+  compare,
+  compareLabel,
   accent,
   onOpen,
 }: {
   spec: IndicatorSpec;
   indicators: Indicators;
+  compare: Indicators | null;
+  compareLabel: string | null;
   accent: string;
   onOpen: () => void;
 }) {
   const raw = indicators[spec.key];
   const text = spec.format(raw);
   const missing = toNum(raw) === null;
+
+  // The change against the closed exercise, in the unit the reader thinks in.
+  // A delta against `n/d` is not zero, so a missing side suppresses it entirely.
+  const now = toNum(raw);
+  const then = compare ? toNum(compare[spec.key]) : null;
+  const delta =
+    now !== null && then !== null ? deltaText(formatKindOf(spec), now, then) : null;
+  const deltaHint = `Variação frente ao exercício de ${compareLabel} (${spec.format(
+    compare?.[spec.key] ?? null,
+  )})`;
   // The API says *why* a null is null; the cell used to render every one of
   // them as a bare "n/d", which reads as "not applicable" even when the honest
   // answer is "we did not compute it" (#54).
@@ -168,8 +192,15 @@ function IndicatorCell({
         </div>
       </div>
 
-      <div className="nums mt-1 text-lg font-semibold leading-tight" style={{ color: valueColor }}>
-        {text}
+      <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5">
+        <span className="nums text-lg font-semibold leading-tight" style={{ color: valueColor }}>
+          {text}
+        </span>
+        {delta && (
+          <span className="nums text-[0.62rem] text-ink-500" title={deltaHint}>
+            {delta}
+          </span>
+        )}
       </div>
       {reason && (
         <div

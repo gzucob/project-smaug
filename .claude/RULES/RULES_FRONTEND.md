@@ -71,6 +71,18 @@ not in the fonts.
   base URL is `NEXT_PUBLIC_API_BASE` (default `http://localhost:8000`). Because
   fetching is server-side there is **no CORS surface** — do not add
   client-side calls to the API.
+- **The ticker page carries one indicator grid**, the twelve-month window, with
+  each cell's change against the latest closed exercise beside its value. It
+  used to stack a second, identical grid for that exercise; comparing 29 numbers
+  by eye is not a comparison, and the per-indicator series is a click away in
+  the drill-down (#32).
+- **A delta is stated in the unit the reader thinks in** (`deltaText`): a ratio
+  shown as `%` moves in **percentage points**, a multiple in `×`, money in
+  relative terms. A delta that rounds away at the shown precision is not
+  rendered — "▼ 0,00×" points somewhere and says nothing.
+- **A delta is never sign-coloured.** An arrow states direction, which is a
+  fact; green would state "good", which is the judgement the domain refuses to
+  make — and a rising P/L is not the same news as a rising ROE.
 - **A screen never shows a statement slice without naming it** (ADR 0026). A
   bare indicator name is the controllers' slice; `roe_total` and friends are the
   consolidated group. `lib/indicators.ts` owns the pairing (`basisPair`,
