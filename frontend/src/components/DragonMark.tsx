@@ -12,14 +12,12 @@ type DragonMarkProps = {
   size?: number;
   className?: string;
   withFlame?: boolean; // stronger ember glow (hero / empty states)
-  animated?: boolean; // gentle ember pulse
 };
 
 export function DragonMark({
   size = 40,
   className,
   withFlame = false,
-  animated = false,
 }: DragonMarkProps) {
   const gid = `smaug-gold-${size}-${withFlame ? "f" : "n"}`;
   const glow = withFlame
@@ -42,7 +40,6 @@ export function DragonMark({
         role="img"
         aria-label="Smaug"
         fill={`url(#${gid})`}
-        className={animated ? "ember-pulse" : undefined}
         style={{ color: "var(--color-gold-400)", filter: glow } as CSSProperties}
       />
     </span>

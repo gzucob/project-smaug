@@ -7,7 +7,10 @@ export function Navbar() {
     <header className="sticky top-0 z-50 border-b border-gold-500/10 bg-vault-950/70 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-6xl items-center gap-4 px-5">
         <Link href="/" className="group flex items-center gap-3">
-          <DragonMark size={34} className="transition-transform duration-500 group-hover:-rotate-6" />
+          <DragonMark
+            size={34}
+            className="transition-transform duration-200 ease-[var(--ease-out-strong)] motion-safe:group-hover:-rotate-6"
+          />
           <span className="font-brand text-lg font-bold tracking-[0.28em] text-gold-molten">
             SMAUG
           </span>
