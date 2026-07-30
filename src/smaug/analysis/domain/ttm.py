@@ -39,6 +39,18 @@ _DRE_FLOW_FIELDS = (
     "net_income_total",
     "ebit",
     "gross_profit",
+    # Regime-specific DRE lines (ADR 0015/0021) — flows like any other income
+    # line, and left signed as filed: summing preserves the sign the CVM used,
+    # and the calculator is the one that knows which way to read it. Summing the
+    # bank's provision here does not double-count it against the spread: the
+    # calculator takes ``gross_profit − loan_loss_provision``, and Σ of each side
+    # separately is the same arithmetic as Σ of the difference.
+    "loan_loss_provision",
+    "fee_income",
+    "personnel_expense",
+    "admin_expense",
+    "earned_premium",
+    "claims_incurred",
 )
 _DFC_FLOW_FIELDS = ("dep_amort", "dividends_paid", "cfo", "capex")
 # The DMPL is year-to-date like the DFC, on its own span (#104).
@@ -180,6 +192,13 @@ def build_ttm(
         dmpl_period_start=period_start,
         cfo=summed["cfo"],
         capex=summed["capex"],
+        loan_loss_provision=summed["loan_loss_provision"],
+        fee_income=summed["fee_income"],
+        personnel_expense=summed["personnel_expense"],
+        admin_expense=summed["admin_expense"],
+        loan_book=stock_source.loan_book,  # a balance, like the other stocks
+        earned_premium=summed["earned_premium"],
+        claims_incurred=summed["claims_incurred"],
         # Null-cause provenance (#30) travels with the window: same filer, same
         # regime and same deliberately-skipped fields as its quarters.
         filed_regime=latest.filed_regime,
