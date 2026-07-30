@@ -395,6 +395,17 @@ def _capex(dfc: Accounts) -> Decimal | None:
     ``intangivel``. Disposals (positive inflows, e.g. "alienação de imobilizado")
     are ignored — this is gross capex, the cash-out leg of free cash flow.
     Returned positive; ``None`` when no such line exists, so FCF degrades to null.
+
+    **A line filed as zero is a value, not an absence** (#159). BBSE3 files
+    "Aquisição de imobilizado" at 0 — it is a holding of insurers and owns almost
+    no PP&E — and reading that as a missing account took free cash flow, P/FCF and
+    the FCF yield to null for six years, in which the answer is simply that it
+    invested nothing.
+
+    Hence ``<= 0`` rather than a plain label match: a *positive* line must still
+    leave the account unfound. A filer that publishes only "alienação de
+    imobilizado" has not told us its acquisitions were zero — it has told us
+    nothing about them, and answering 0 there would invent a fact.
     """
     total = Decimal(0)
     found = False
@@ -405,7 +416,7 @@ def _capex(dfc: Accounts) -> Decimal | None:
         if "imob" not in name and "intangiv" not in name:
             continue
         value = _dec(account.get("quantity"))
-        if value is not None and value < 0:
+        if value is not None and value <= 0:
             total += -value
             found = True
     return total if found else None
