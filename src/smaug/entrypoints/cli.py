@@ -21,6 +21,7 @@ from smaug.analysis.application.doctor import (
     DoctorUseCase,
     ExerciseCoverage,
 )
+from smaug.analysis.application.drift import AccountDriftUseCase, DriftReport
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.ports import PriceHistoryProvider
@@ -405,6 +406,10 @@ def doctor(
     Reads Postgres and reports, per ticker/view/exercise, the status of every
     indicator: a value, a null with a named cause, or an unclassified null. It
     never recomputes or persists.
+
+    Then a second section on a second axis: which mapped *accounts* changed
+    status across a ticker's closed years (#156). Coverage alone cannot tell a
+    stale needle from a line the filer never publishes; the transition can.
     """
     tickers = tuple(ticker) if ticker else portfolio_tickers()
     exit_code = _guarded(_run_doctor(tickers))
@@ -415,6 +420,7 @@ async def _run_doctor(tickers: tuple[str, ...]) -> int:
     settings = get_settings()
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
+    mongo = await init_database(settings)
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
             resolver = _sector_resolver(
@@ -424,10 +430,20 @@ async def _run_doctor(tickers: tuple[str, ...]) -> int:
             SqlAlchemyAnalysisRepository(session_factory), sector_resolver=resolver
         )
         report = await use_case.execute(tickers)
+        # The drift section reads the mirror, not Postgres: the standardized
+        # accounts it compares are never persisted — only the indicators derived
+        # from them are.
+        drift = await AccountDriftUseCase(
+            MongoFundamentalsReader(
+                mongo[settings.mongo_db]["raw_ingestions"], sector_resolver=resolver
+            )
+        ).execute(tickers)
     finally:
+        await mongo.close()
         await engine.dispose()
 
     print(format_doctor(report))
+    print(format_drift(drift))
     return 0
 
 
@@ -603,6 +619,53 @@ def format_doctor(report: DoctorReport) -> str:
     if unclassified:
         who = ", ".join(sorted(tickers_with_unclassified))
         lines.append(f"    !! {unclassified} unclassified nulls across: {who}")
+    return "\n".join(lines)
+
+
+def _years(years: tuple[int, ...]) -> str:
+    """Compress a year list into ranges: ``2015-2019, 2021``."""
+    if not years:
+        return "—"
+    runs: list[list[int]] = [[years[0]]]
+    for year in years[1:]:
+        if year == runs[-1][-1] + 1:
+            runs[-1].append(year)
+        else:
+            runs.append([year])
+    return ", ".join(
+        str(run[0]) if len(run) == 1 else f"{run[0]}-{run[-1]}" for run in runs
+    )
+
+
+def format_drift(report: DriftReport) -> str:
+    """Render the chart-of-accounts drift report (#156).
+
+    Ordered by ``missing_side``: an account absent from the *newer* filings comes
+    first, because a needle that has stopped working on what we ingest today is
+    more urgent than one that never reached the old chart.
+    """
+    lines: list[str] = ["", "=== smaug doctor — chart-of-accounts drift ==="]
+    order = {"newer": 0, "mixed": 1, "older": 2}
+    for ticker_drift in report.tickers:
+        if not ticker_drift.accounts:
+            continue
+        lines.append(f"\n{ticker_drift.ticker} [{_years(ticker_drift.years)}]")
+        for drift in sorted(
+            ticker_drift.accounts, key=lambda d: (order[d.missing_side], d.account)
+        ):
+            lines.append(
+                f"    {drift.account:<22} missing {_years(drift.missing):<16} "
+                f"read {_years(drift.read):<16} "
+                f"({drift.missing_side}, {drift.boundaries} "
+                f"{'boundary' if drift.boundaries == 1 else 'boundaries'})"
+            )
+    if not report.drifting:
+        lines.append("\n  (no account changed status across any ticker's closed years)")
+    else:
+        lines.append(
+            f"\n--- {report.drifting} accounts changed status. An account missing "
+            "from every year is not drift and is not listed."
+        )
     return "\n".join(lines)
 
 
