@@ -57,6 +57,19 @@ export function IndicatorGrid({
     <div className="flex flex-col gap-6">
       {INDICATOR_GROUPS.map((group) => {
         const accent = groupColor(group);
+        // A section whose every cell is inapplicable to this filer's regime is
+        // not an omission to report — it is a heading that does not belong on
+        // this page ("Banco" over three dashes on an oil company). Individual
+        // n/d cells stay: each one names its cause and teaches something (#33).
+        // A gap of ours (unmapped account, missing input) never hides a section,
+        // because it is not `inapplicable_regime`.
+        const specs = specsByGroup(group);
+        const groupInapplicable = specs.every(
+          (s) =>
+            toNum(indicators[s.key]) === null &&
+            indicators.null_reasons?.[s.key] === "inapplicable_regime",
+        );
+        if (groupInapplicable) return null;
         return (
           <section key={group}>
             <h4
@@ -67,7 +80,7 @@ export function IndicatorGrid({
               {group}
             </h4>
             <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-3 xl:grid-cols-4">
-              {specsByGroup(group).map((spec) => (
+              {specs.map((spec) => (
                 <IndicatorCell
                   key={spec.key}
                   spec={spec}
