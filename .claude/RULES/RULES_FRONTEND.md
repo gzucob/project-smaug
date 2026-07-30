@@ -78,6 +78,13 @@ not in the fonts.
 - **The change against that exercise lives in the drill-down**, as a stat naming
   both ends (`9,6% → 7,5%`), not in the cell. A bare `▼ 2,1 p.p.` under a value
   states a magnitude without saying what it was measured against.
+- **The drill-down's left column is the reading, the right column is tabbed.**
+  The value leads at full size; the references (average, min·max) are one quiet
+  line, not a card each — four cards competed with the number they exist to
+  qualify. The right column splits by the question being asked: *Entenda* (what
+  it means) and *Como calculamos* (formula and where our arithmetic departs).
+  New material goes in a tab, not stacked on: the chart must stay readable
+  alongside "onde engana", which is what a single scrolling column loses.
 - **A delta is stated in the unit the reader thinks in** (`deltaText`): a ratio
   shown as `%` moves in **percentage points**, a multiple in `×`, money in
   relative terms. A delta that rounds away at the shown precision is not

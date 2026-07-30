@@ -11,7 +11,7 @@
  * a picker, so comparing P/L against P/VP costs one click instead of a round
  * trip through the grid.
  */
-import { Dialog, DialogPanel } from "@headlessui/react";
+import { Dialog, DialogPanel, Tab, TabGroup, TabList, TabPanel, TabPanels } from "@headlessui/react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { FiAlertTriangle, FiBarChart2, FiTrendingUp, FiX } from "react-icons/fi";
@@ -198,6 +198,30 @@ export function IndicatorDetail({
           </div>
         )}
 
+        {/* ------------------------------------------------- the reading --- */}
+        {/* The value leads, because it is what the reader came for; the rest is
+            reference, and reference does not deserve a card each — four of them
+            competed with the number they exist to qualify. */}
+        <div className="mt-5">
+          <div className="flex flex-wrap items-baseline gap-x-3">
+            <span className="nums text-4xl font-semibold leading-none" style={{ color: accent }}>
+              {fmtOrDash(current)}
+            </span>
+            {change && <span className="nums text-sm text-ink-400">{change.text}</span>}
+          </div>
+          <p className="mt-1.5 text-xs text-ink-500">
+            {currentLabel}
+            {change && (
+              <>
+                {" · "}vs exercício {previousLabel}:{" "}
+                <span className="nums text-ink-400">
+                  {fmt(change.from)} → {fmt(change.to)}
+                </span>
+              </>
+            )}
+          </p>
+        </div>
+
         {/* -------------------------------------------------------- chart --- */}
         <section className="mt-6">
           <div className="mb-3 flex items-center justify-between gap-3">
@@ -209,34 +233,31 @@ export function IndicatorDetail({
 
           {plottable >= 2 ? (
             <>
-              <div className="mb-3 grid gap-2 sm:grid-cols-3">
-                <Stat
-                  label={`Atual · ${currentLabel}`}
-                  value={fmtOrDash(current)}
-                  color={accent}
-                />
-                <Stat
-                  label="Média dos exercícios"
-                  value={fmtOrDash(average)}
-                  dashColor={average === null ? undefined : accent}
-                  hint="Média aritmética dos exercícios fechados — a janela de 12 meses fica de fora, por não ser um período comparável."
-                />
-                {change && (
-                  <Stat
-                    label={`vs exercício ${previousLabel}`}
-                    value={change.text}
-                    detail={`${fmt(change.from)} → ${fmt(change.to)}`}
-                  />
-                )}
-                <Stat
-                  label="Mín · Máx"
-                  value={
-                    closed.length
+              <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-[0.68rem] text-ink-500">
+                <span
+                  className="flex items-center gap-1.5"
+                  title="Média aritmética dos exercícios fechados — a janela de 12 meses fica de fora, por não ser um período comparável."
+                >
+                  {average !== null && (
+                    <span
+                      className="h-0 w-3.5 shrink-0"
+                      style={{ borderTop: `2px dashed ${accent}`, opacity: 0.7 }}
+                    />
+                  )}
+                  média dos exercícios
+                  <span className="nums text-ink-300">{fmtOrDash(average)}</span>
+                </span>
+                <span
+                  className="flex items-center gap-1.5"
+                  title="Menor e maior valor entre os exercícios fechados."
+                >
+                  mín · máx
+                  <span className="nums text-ink-300">
+                    {closed.length
                       ? `${fmt(Math.min(...closed))} · ${fmt(Math.max(...closed))}`
-                      : DASH
-                  }
-                  hint="Menor e maior valor entre os exercícios fechados."
-                />
+                      : DASH}
+                  </span>
+                </span>
               </div>
 
               <div className="rounded-xl border border-gold-500/8 bg-vault-900/40 px-2 pb-2 pt-3">
@@ -268,83 +289,84 @@ export function IndicatorDetail({
         <div className="hairline my-6 lg:hidden" />
 
         {/* -------------------------------------------------- doc column --- */}
-        <section className="flex flex-col gap-6 lg:min-h-0 lg:overflow-y-auto lg:pr-2">
-          {/* Clears the close button, which floats over this column on `lg`. */}
-          <div className="lg:pr-10">
-            <h4 className="mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-ink-500">
-              Fórmula
-            </h4>
-            <p className="nums rounded-lg border border-gold-500/8 bg-vault-850 px-3.5 py-2.5 text-sm text-gold-300">
-              {doc.formula}
-            </p>
-          </div>
+        {/* Two tabs, split by what the reader is asking: "what does this number
+            mean" against "how did you arrive at it". The second is the audit
+            trail — formula as computed, and where our arithmetic departs from a
+            platform's — and it was crowding the first. A third ("Comparar",
+            #137) lands here when there are enough companies to compare against. */}
+        <TabGroup as="section" className="flex flex-col lg:min-h-0 lg:overflow-hidden">
+          <TabList className="mb-4 flex gap-1 pr-12">
+            {["Entenda", "Como calculamos"].map((title) => (
+              <Tab
+                key={title}
+                className="rounded-full px-3 py-1 text-[0.68rem] transition-colors focus-visible:outline-1 focus-visible:outline-gold-500 data-selected:bg-vault-800"
+              >
+                {/* Colour comes from the render prop, not a `data-selected:`
+                    utility: it collides with the base text colour and loses on
+                    stylesheet order, so the label stayed dim when selected. */}
+                {({ selected, hover }) => (
+                  <span
+                    style={{
+                      color: selected
+                        ? "var(--color-ink-100)"
+                        : hover
+                          ? "var(--color-ink-300)"
+                          : "var(--color-ink-600)",
+                    }}
+                  >
+                    {title}
+                  </span>
+                )}
+              </Tab>
+            ))}
+          </TabList>
 
-          <div>
-            <h4 className="mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-ink-500">
-              Para que serve
-            </h4>
-            <p className="text-sm leading-relaxed text-ink-200">{doc.what}</p>
-          </div>
+          <TabPanels className="lg:min-h-0 lg:overflow-y-auto lg:pr-2">
+            <TabPanel className="flex flex-col gap-6 focus:outline-none">
+              <div>
+                <h4 className="mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-ink-500">
+                  Para que serve
+                </h4>
+                <p className="text-sm leading-relaxed text-ink-200">{doc.what}</p>
+              </div>
 
-          <NoteList
-            title="Onde é mais relevante"
-            notes={doc.strongIn}
-            markerColor="var(--color-up)"
-          />
-          <NoteList title="Onde engana" notes={doc.weakIn} markerColor="var(--color-down)" hollow />
+              <NoteList
+                title="Onde é mais relevante"
+                notes={doc.strongIn}
+                markerColor="var(--color-up)"
+              />
+              <NoteList
+                title="Onde engana"
+                notes={doc.weakIn}
+                markerColor="var(--color-down)"
+                hollow
+              />
+            </TabPanel>
 
-          {doc.caveat && (
-            <div>
-              <h4 className="mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-ink-500">
-                Como o Smaug calcula
-              </h4>
-              <p className="text-xs leading-relaxed text-ink-400">{doc.caveat}</p>
-            </div>
-          )}
-        </section>
+            <TabPanel className="flex flex-col gap-6 focus:outline-none">
+              <div>
+                <h4 className="mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-ink-500">
+                  Fórmula
+                </h4>
+                <p className="nums rounded-lg border border-gold-500/8 bg-vault-850 px-3.5 py-2.5 text-sm text-gold-300">
+                  {doc.formula}
+                </p>
+              </div>
+
+              {doc.caveat && (
+                <div>
+                  <h4 className="mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-ink-500">
+                    Como o Smaug calcula
+                  </h4>
+                  <p className="text-xs leading-relaxed text-ink-400">{doc.caveat}</p>
+                </div>
+              )}
+            </TabPanel>
+          </TabPanels>
+        </TabGroup>
       </DialogPanel>
       </div>
     </Dialog>
-  );
-}
-
-/** One reference figure next to the chart — the context a lone reading lacks. */
-function Stat({
-  label,
-  value,
-  color,
-  hint,
-  dashColor,
-  detail,
-}: {
-  label: string;
-  value: string;
-  color?: string;
-  hint?: string;
-  /** Draws the chart's dashed reference line as this stat's legend. */
-  dashColor?: string;
-  /** A second line under the value — the two ends of a change, say. */
-  detail?: string;
-}) {
-  return (
-    <div className="rounded-lg border border-gold-500/8 bg-vault-850 px-3 py-2" title={hint}>
-      <div className="flex items-center gap-1.5 text-[0.62rem] uppercase tracking-wide text-ink-600">
-        {dashColor && (
-          <span
-            className="h-0 w-3.5 shrink-0"
-            style={{ borderTop: `2px dashed ${dashColor}`, opacity: 0.7 }}
-          />
-        )}
-        {label}
-      </div>
-      <div
-        className="nums mt-0.5 text-base font-semibold"
-        style={{ color: color ?? "var(--color-ink-200)" }}
-      >
-        {value}
-      </div>
-      {detail && <div className="nums mt-0.5 text-[0.62rem] text-ink-600">{detail}</div>}
-    </div>
   );
 }
 
@@ -371,9 +393,7 @@ function BasisToggle({
         aria-pressed={on}
         title={BASIS_HINT[value]}
         className={`rounded-full px-2 py-0.5 transition-colors ${
-          on
-            ? "bg-vault-800 text-ink-200"
-            : "text-ink-600 hover:text-ink-400"
+          on ? "bg-vault-800 text-ink-200" : "text-ink-600 hover:text-ink-400"
         } focus-visible:outline-1 focus-visible:outline-gold-500`}
       >
         {BASIS_LABEL[value]}
