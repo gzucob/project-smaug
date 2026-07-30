@@ -184,3 +184,78 @@ async def test_quote_maps_transport_error_to_brapi_error() -> None:
         provider = YahooQuoteProvider("https://query1.finance.yahoo.com", http)
         with pytest.raises(BrapiTimeoutError):
             await provider.get("PETR4")
+
+
+def _meta_chart(first_trade: int) -> dict:
+    """A max-range body carrying only what the first-trade probe reads."""
+    result = [{"meta": {"firstTradeDate": first_trade}}]
+    return {"chart": {"result": result, "error": None}}
+
+
+async def test_year_prices_before_the_first_trade_is_named_not_yet_listed() -> None:
+    # #153: Yahoo answers 400 "Data doesn't exist for startDate…" for a window
+    # that precedes the instrument, which is indistinguishable from a transient
+    # outage by status alone. Its own meta.firstTradeDate settles it: CXSE3
+    # listed in 2021, so 2015 is a fact about the world, not a gap of ours.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("range") == "max":
+            return httpx.Response(200, json=_meta_chart(_ts(2021, 4, 30)))
+        return httpx.Response(400, json={"chart": {"result": None}})
+
+    async with _mock_client(handler) as http:
+        provider = YahooPriceHistory("https://query1.finance.yahoo.com", http)
+        prices = await provider.year_prices("CXSE3", 2015)
+
+    assert prices.null_reason is NullReason.NOT_YET_LISTED
+
+
+async def test_year_prices_after_the_first_trade_stays_a_transient_gap() -> None:
+    # The same 400 for a year the instrument *did* trade in is still worth
+    # chasing — it must not be excused as pre-listing.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("range") == "max":
+            return httpx.Response(200, json=_meta_chart(_ts(2021, 4, 30)))
+        return httpx.Response(400, json={"chart": {"result": None}})
+
+    async with _mock_client(handler) as http:
+        provider = YahooPriceHistory("https://query1.finance.yahoo.com", http)
+        prices = await provider.year_prices("CXSE3", 2023)
+
+    assert prices.null_reason is None
+
+
+async def test_first_trade_date_is_probed_once_per_symbol() -> None:
+    # One probe serves every empty year of a symbol: the answer cannot change
+    # within a run, and a ticker is asked for one year at a time.
+    probes = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal probes
+        if request.url.params.get("range") == "max":
+            probes += 1
+            return httpx.Response(200, json=_meta_chart(_ts(2021, 4, 30)))
+        return httpx.Response(400, json={"chart": {"result": None}})
+
+    async with _mock_client(handler) as http:
+        provider = YahooPriceHistory("https://query1.finance.yahoo.com", http)
+        for year in (2015, 2016, 2017):
+            assert (
+                await provider.year_prices("CXSE3", year)
+            ).null_reason is NullReason.NOT_YET_LISTED
+
+    assert probes == 1
+
+
+async def test_a_failed_first_trade_probe_leaves_a_bare_gap() -> None:
+    # The probe only refines a null that already exists, so its own failure must
+    # never turn into a claim — nor into a raise.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("range") == "max":
+            return httpx.Response(500, json={})
+        return httpx.Response(400, json={"chart": {"result": None}})
+
+    async with _mock_client(handler) as http:
+        provider = YahooPriceHistory("https://query1.finance.yahoo.com", http)
+        prices = await provider.year_prices("CXSE3", 2015)
+
+    assert prices.null_reason is None

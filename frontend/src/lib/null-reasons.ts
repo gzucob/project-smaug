@@ -49,6 +49,13 @@ const COPY: Record<NullReason, ReasonCopy> = {
     long: "Nenhuma fonte de preço reconheceu este símbolo — papel deslistado ou renomeado, sem equivalência cadastrada.",
     intentional: false,
   },
+  not_yet_listed: {
+    short: "ainda não listado",
+    long: "O papel não era negociado neste exercício — começou a ser depois. Não existe cotação a buscar, em fonte nenhuma.",
+    // A fact about the world, not a gap of ours: the only price cause that is
+    // deliberate. Colouring it as a warning would flag 94 cells nobody can fix.
+    intentional: true,
+  },
   missing_share_count: {
     short: "sem nº de ações",
     long: "Faltou a quantidade de ações em circulação (FRE) para este período.",

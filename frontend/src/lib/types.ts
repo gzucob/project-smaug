@@ -112,6 +112,7 @@ export type NullReason =
   | "source_account_absent"
   | "missing_price"
   | "price_symbol_not_found"
+  | "not_yet_listed"
   | "missing_share_count"
   | "missing_prior_period"
   | "zero_denominator"

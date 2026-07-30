@@ -159,6 +159,23 @@ async def test_history_stays_a_plain_gap_when_one_source_knew_the_symbol() -> No
     assert prices.null_reason is None
 
 
+async def test_history_reports_not_yet_listed_without_needing_agreement() -> None:
+    # #153: unlike the unknown symbol above, this is a claim about the instrument
+    # rather than about one source's coverage. One source proving the year
+    # precedes the first trade settles it — and we only reach here because no
+    # source had a price, so nobody is contradicting it.
+    chain = FallbackPriceHistory(
+        [
+            FakeHistory(YearPrices()),  # this source just had nothing
+            FakeHistory(YearPrices(null_reason=NullReason.NOT_YET_LISTED)),
+        ]
+    )
+
+    prices = await chain.year_prices("CXSE3", 2015)
+
+    assert prices.null_reason is NullReason.NOT_YET_LISTED
+
+
 async def test_history_needs_at_least_one_provider() -> None:
     with pytest.raises(ValueError, match="at least one provider"):
         FallbackPriceHistory([])
