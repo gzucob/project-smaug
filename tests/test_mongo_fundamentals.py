@@ -254,6 +254,52 @@ def test_standardize_leaves_capex_null_when_only_a_disposal_is_filed() -> None:
     assert f.capex is None
 
 
+def test_standardize_skips_a_dep_amort_needle_that_only_lives_in_a_bracket() -> None:
+    # #160: CXSE3 files "Outros ajustes (Depreciação/Tributos Retidos)" — an
+    # other-adjustments line whose bracket happens to name depreciation, mixed
+    # with withheld taxes and impossible to separate. Reading it as D&A published
+    # an EBITDA that was really EBIT plus a few million of miscellany.
+    by_module = {
+        "DRE": {
+            "accounts": [
+                _acc("3.01", "Receita de Venda de Bens e/ou Serviços", "1000"),
+                _acc("3.05", "Resultado Antes do Resultado Financeiro", "300"),
+            ]
+        },
+        "DFC": {
+            "accounts": [
+                _acc("6.01", "Caixa Líquido Atividades Operacionais", "500"),
+                _acc(
+                    "6.01.01.03", "Outros ajustes (Depreciação/Tributos Retidos)", "9"
+                ),
+            ]
+        },
+    }
+
+    f = standardize(by_module, Sector.INSURER, date(2021, 12, 31))
+
+    assert f.dep_amort is None  # the line is not D&A, it merely mentions it
+    assert f.ebitda is None  # so there is no add-back, and no EBITDA to publish
+    assert f.ebit == Decimal("300")  # EBIT is unaffected — it comes from the DRE
+
+
+def test_standardize_keeps_a_dep_amort_line_whose_bracket_is_only_a_note() -> None:
+    # The other side of the rule: stripping brackets must not cost a real line.
+    # A needle outside them is what the line *is*, whatever the bracket adds.
+    by_module = {
+        "DFC": {
+            "accounts": [
+                _acc("6.01", "Caixa Líquido Atividades Operacionais", "500"),
+                _acc("6.01.01.04", "Depreciação e amortização (nota 12)", "80"),
+            ]
+        }
+    }
+
+    f = standardize(by_module, Sector.COMMODITY, date(2021, 12, 31))
+
+    assert f.dep_amort == Decimal("80")
+
+
 def _legacy_bank_dre(bottom_line: str) -> dict[str, Any]:
     """The pre-2020 bank DRE, whose bottom line is 3.13 — and whose 3.11 is not.
 
