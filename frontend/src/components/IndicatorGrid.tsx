@@ -15,7 +15,15 @@ import { IndicatorDetail } from "@/components/IndicatorDetail";
 import type { IndicatorSeries } from "@/components/IndicatorDetail";
 import { LAST_12M_SHORT, signOf, toNum, yearOf } from "@/lib/format";
 import { indicatorDoc } from "@/lib/indicator-docs";
-import { INDICATOR_GROUPS, groupColor, specByKey, specsByGroup } from "@/lib/indicators";
+import {
+  BASIS_HINT,
+  BASIS_LABEL,
+  INDICATOR_GROUPS,
+  basisPair,
+  groupColor,
+  specByKey,
+  specsByGroup,
+} from "@/lib/indicators";
 import type { IndicatorSpec } from "@/lib/indicators";
 import { reasonCopy } from "@/lib/null-reasons";
 import type { Analysis, IndicatorKey, Indicators } from "@/lib/types";
@@ -108,6 +116,14 @@ function IndicatorCell({
   // answer is "we did not compute it" (#54).
   const reason = missing ? reasonCopy(indicators.null_reasons?.[spec.key]) : null;
 
+  // The consolidated slice (ADR 0026) shows up only when it would actually read
+  // differently. The test is the rendered text, not a tolerance: if both bases
+  // format to "24,2%", a second line states nothing and only costs height.
+  const pair = basisPair(spec.key);
+  const totalRaw = pair ? indicators[pair.total] : null;
+  const totalText = pair ? spec.format(totalRaw) : "";
+  const showTotal = pair !== undefined && toNum(totalRaw) !== null && totalText !== text;
+
   let valueColor = "var(--color-ink-50)";
   if (missing) valueColor = "var(--color-ink-600)";
   else if (spec.signed) {
@@ -149,6 +165,16 @@ function IndicatorCell({
           title={reason.long}
         >
           {reason.short}
+        </div>
+      )}
+
+      {showTotal && (
+        <div
+          className="mt-0.5 flex items-baseline gap-1 text-[0.6rem] text-ink-600"
+          title={BASIS_HINT.total}
+        >
+          {BASIS_LABEL.total}
+          <span className="nums text-ink-400">{totalText}</span>
         </div>
       )}
     </div>

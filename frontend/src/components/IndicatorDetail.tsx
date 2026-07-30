@@ -20,13 +20,17 @@ import type { ChartMode } from "@/components/IndicatorChart";
 import { DASH } from "@/lib/format";
 import type { IndicatorDoc, RelevanceNote } from "@/lib/indicator-docs";
 import {
+  BASIS_HINT,
+  BASIS_LABEL,
   INDICATOR_GROUPS,
   INDICATORS,
+  basisOf,
+  basisPair,
   formatKindOf,
   specsByGroup,
   valueFormatter,
 } from "@/lib/indicators";
-import type { IndicatorSpec } from "@/lib/indicators";
+import type { Basis, IndicatorSpec } from "@/lib/indicators";
 import { reasonCopy } from "@/lib/null-reasons";
 import { sectorMeta } from "@/lib/sectors";
 import type { IndicatorKey, NullReason } from "@/lib/types";
@@ -72,7 +76,10 @@ export function IndicatorDetail({
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
       // The picker has its own arrow behaviour; leave it alone while focused.
       if (document.activeElement instanceof HTMLSelectElement) return;
-      const at = INDICATORS.findIndex((s) => s.key === spec.key);
+      // A `_total` column is not in the grid's list; walk from its controllers'
+      // sibling so the arrows keep working while reading the consolidated basis.
+      const gridKey = basisPair(spec.key)?.controllers ?? spec.key;
+      const at = INDICATORS.findIndex((s) => s.key === gridKey);
       if (at < 0) return;
       const step = e.key === "ArrowRight" ? 1 : -1;
       const next = (at + step + INDICATORS.length) % INDICATORS.length;
@@ -122,6 +129,10 @@ export function IndicatorDetail({
 
   const plottable = series.values.filter((v) => v !== null).length;
   const reason = nullReason ? reasonCopy(nullReason) : null;
+  // Switching basis is switching indicator: `roe` and `roe_total` are separate
+  // columns with their own series and their own doc (ADR 0026), so the toggle
+  // reuses the same path the picker takes.
+  const pair = basisPair(spec.key);
 
   // The reference statistics describe the closed exercises only. The TTM window
   // overlaps the last one and is not a comparable period, so averaging it in
@@ -186,7 +197,10 @@ export function IndicatorDetail({
                 </h3>
                 <FiChevronDown className="text-ink-500" size={15} />
                 <select
-                  value={spec.key}
+                  // The picker lists grid indicators only, so while reading a
+                  // `_total` column it shows that column's controllers' sibling
+                  // — the basis toggle below is what states which slice it is.
+                  value={pair?.controllers ?? spec.key}
                   onChange={(e) => onSelectKey(e.target.value as IndicatorKey)}
                   aria-label="Trocar de indicador"
                   className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
@@ -205,6 +219,12 @@ export function IndicatorDetail({
               <p className="mt-0.5 text-xs" style={{ color: accent }}>
                 {spec.group}
               </p>
+              {pair && (
+                <BasisToggle
+                  basis={basisOf(spec.key)}
+                  onChange={(b) => onSelectKey(b === "total" ? pair.total : pair.controllers)}
+                />
+              )}
             </div>
           </div>
         </header>
@@ -358,6 +378,46 @@ function Stat({
       >
         {value}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Which statement slice the modal is reading (ADR 0026).
+ *
+ * Always visible for an indicator that has two, even when they happen to agree:
+ * the reader has to know a choice exists — "17,3%" and "17,7%" are both correct
+ * answers to different questions, and the platforms publish the second one.
+ */
+function BasisToggle({
+  basis,
+  onChange,
+}: {
+  basis: Basis;
+  onChange: (basis: Basis) => void;
+}) {
+  const item = (value: Basis) => {
+    const on = basis === value;
+    return (
+      <button
+        type="button"
+        onClick={() => onChange(value)}
+        aria-pressed={on}
+        title={BASIS_HINT[value]}
+        className={`rounded-full px-2 py-0.5 transition-colors ${
+          on
+            ? "bg-vault-800 text-ink-200"
+            : "text-ink-600 hover:text-ink-400"
+        } focus-visible:outline-1 focus-visible:outline-gold-500`}
+      >
+        {BASIS_LABEL[value]}
+      </button>
+    );
+  };
+  return (
+    <div className="mt-2 flex items-center gap-1 rounded-full border border-gold-500/8 p-0.5 text-[0.62rem]">
+      {item("controllers")}
+      {item("total")}
     </div>
   );
 }

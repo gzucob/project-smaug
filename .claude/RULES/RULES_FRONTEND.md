@@ -71,6 +71,13 @@ not in the fonts.
   base URL is `NEXT_PUBLIC_API_BASE` (default `http://localhost:8000`). Because
   fetching is server-side there is **no CORS surface** — do not add
   client-side calls to the API.
+- **A screen never shows a statement slice without naming it** (ADR 0026). A
+  bare indicator name is the controllers' slice; `roe_total` and friends are the
+  consolidated group. `lib/indicators.ts` owns the pairing (`basisPair`,
+  `BASIS_LABEL`) and the drill-down carries the toggle. The second basis is
+  surfaced in a cell **only when the two format differently** — comparing the
+  rendered text, not a tolerance, because a line that repeats "24,2%" costs
+  height and says nothing.
 - **A null is never explained by the front-end.** The API sends `null_reasons`
   (ADR 0008) naming why each indicator is null; render it through
   `lib/null-reasons.ts` and distinguish a deliberate n/d (`inapplicable_regime`,
