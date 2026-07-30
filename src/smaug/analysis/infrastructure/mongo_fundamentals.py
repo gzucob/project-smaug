@@ -80,12 +80,20 @@ _CLOSED_YEAR_MONTH = 12
 # those sit *above* the profit-sharing deduction, and BBAS3's parent 2024 reads
 # R$39.8 bn there against R$35.3 bn at the bottom line — the R$4.5 bn its employees
 # are paid.
+#
+# The last entry is the pre-2020 bank chart's bottom line (#155). It is last
+# because it is the least specific name of the set, and it must never outrank a
+# modern one; the banks that file it stopped doing so after 2019. Note that the
+# *code* moved too — the old chart's bottom line is 3.13, and its 3.11 is
+# "Reversão dos Juros sobre Capital Próprio", filed as zero — which is why the
+# bottom line is found by name here and never by code.
 _NET_INCOME_TOTAL_NAMES = (
     "lucro ou prejuizo liquido consolidado do periodo",
     "lucro/prejuizo consolidado do periodo",
     "lucro ou prejuizo liquido do periodo",
     "resultado liquido das operacoes continuadas",
     "lucro ou prejuizo das operacoes continuadas",
+    "lucro/prejuizo do periodo",
 )
 
 Accounts = Sequence[Mapping[str, Any]]
@@ -606,20 +614,39 @@ def _as_bank(
     )
 
 
+# Where the pre-2020 charts park the credit portfolio, newest first. Both are a
+# line *already* net of its provision ("Empréstimos a Clientes Líquidos de
+# Provisão"), so nothing is subtracted from them — and nothing may be: under
+# ``1.03`` the sibling ``Empréstimos a Instituições Financeiras Líquidos de
+# Provisão`` also carries the word, and subtracting it would take R$20 bn of
+# interbank lending off BBAS3's book (#155).
+_LEGACY_LOAN_BOOK_PARENTS = ("1.02.03", "1.03")
+
+
 def _loan_book(bpa: Accounts, scale: Decimal) -> Decimal | None:
     """The credit portfolio, net of the provision carried against it.
 
-    Both banks file the loan book under "Ativos Financeiros ao Custo Amortizado"
-    (1.02.04) with the balance-sheet provision as its sibling — but only BBDC4
-    fills that provision line in (BBAS3 files zero there, its portfolio already net).
-    Subtracting it where it is filed puts the two banks on one basis: what the bank
-    still expects to collect.
+    From 2020 both banks file the loan book under "Ativos Financeiros ao Custo
+    Amortizado" (1.02.04) with the balance-sheet provision as its sibling — but only
+    BBDC4 fills that provision line in (BBAS3 files zero there, its portfolio already
+    net). Subtracting it where it is filed puts the two banks on one basis: what the
+    bank still expects to collect.
+
+    Before that the same portfolio sat under a different parent and a different name
+    twice over (#155): ``1.02.03`` "Ativos Financeiros Avaliados ao Custo Amortizado"
+    in 2018–2019, and ``1.03`` "Empréstimos e Recebíveis" up to 2017. The needle for
+    both is "clientes", which is what separates the customer book from the interbank
+    lending filed beside it — the two banks word the rest of the line differently.
     """
     gross = _child_by_name(bpa, "1.02.04", "operacoes de credito")
-    if gross is None:
-        return None
-    provision = _child_by_name(bpa, "1.02.04", "provisao") or Decimal(0)
-    return _mul(gross + provision, scale)  # the provision is filed negative
+    if gross is not None:
+        provision = _child_by_name(bpa, "1.02.04", "provisao") or Decimal(0)
+        return _mul(gross + provision, scale)  # the provision is filed negative
+    for parent in _LEGACY_LOAN_BOOK_PARENTS:
+        net = _child_by_name(bpa, parent, "clientes")
+        if net is not None:
+            return _mul(net, scale)
+    return None
 
 
 def _as_insurer(
