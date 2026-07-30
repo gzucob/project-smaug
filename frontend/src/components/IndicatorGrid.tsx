@@ -13,7 +13,7 @@ import type { ReactNode } from "react";
 import { FiBarChart2, FiInfo } from "react-icons/fi";
 import { IndicatorDetail } from "@/components/IndicatorDetail";
 import type { IndicatorSeries } from "@/components/IndicatorDetail";
-import { LAST_12M_SHORT, signOf, toNum, yearOf } from "@/lib/format";
+import { LAST_12M_SHORT, toNum, yearOf } from "@/lib/format";
 import { indicatorDoc } from "@/lib/indicator-docs";
 import {
   BASIS_HINT,
@@ -154,12 +154,10 @@ function IndicatorCell({
   const totalText = pair ? spec.format(totalRaw) : "";
   const showTotal = pair !== undefined && toNum(totalRaw) !== null && totalText !== text;
 
-  let valueColor = "var(--color-ink-50)";
-  if (missing) valueColor = "var(--color-ink-600)";
-  else if (spec.signed) {
-    const s = signOf(raw);
-    valueColor = s === "up" ? "var(--color-up)" : s === "down" ? "var(--color-down)" : "var(--color-ink-200)";
-  }
+  // Neutral ink, always. The sign is already in the glyph; colouring it too made
+  // the growth cells read as alerts among thirty neutral ones — see the note in
+  // `lib/indicators.ts`.
+  const valueColor = missing ? "var(--color-ink-600)" : "var(--color-ink-50)";
 
   return (
     <div

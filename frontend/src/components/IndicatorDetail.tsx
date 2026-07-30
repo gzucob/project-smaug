@@ -113,16 +113,9 @@ export function IndicatorDetail({
   const current = series.values[series.values.length - 1] ?? null;
   const currentLabel = series.labels[series.labels.length - 1];
 
-  const heroColor =
-    current === null
-      ? "var(--color-ink-600)"
-      : spec.signed
-        ? current > 0
-          ? "var(--color-up)"
-          : current < 0
-            ? "var(--color-down)"
-            : "var(--color-ink-200)"
-        : "var(--color-ink-50)";
+  // The headline value is neutral like its cell: the chart below it is where
+  // direction is coloured, and colouring both said the same thing twice.
+  const heroColor = current === null ? "var(--color-ink-600)" : "var(--color-ink-50)";
 
   // The change against the closed exercise. In a cell this was a bare arrow with
   // nothing naming the other side; here both ends fit ("7,5% → 5,4%").

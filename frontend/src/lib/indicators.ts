@@ -1,8 +1,18 @@
 /**
  * Display metadata for each computed indicator: PT-BR label, group, and how to
- * format it. Growth indicators are sign-colored (up/down); the rest stay
- * neutral because coloring them "good/bad" without sector-aware thresholds
- * would mislead — the domain deliberately leaves that judgement out.
+ * format it.
+ *
+ * **Every cell takes the neutral ink.** Growth used to be sign-coloured, which
+ * read fine while the only signed cells on screen happened to be negative — the
+ * moment the compounded rates arrived (#144) the grid grew four bright blue
+ * values among thirty-odd cream ones, and they read as alerts rather than as
+ * numbers. The sign is already in the glyph (`signedPct` writes the `+`/`−`);
+ * colour on top of it was a second encoding of the same fact, competing with the
+ * group accent for attention.
+ *
+ * Colour still carries direction where there is movement to see: the marks in a
+ * chart, and the favourable/treacherous markers in the indicator docs. A grid
+ * cell is a value, not a movement.
  */
 import { money, multiple, pct, price, signedPct } from "@/lib/format";
 import type { Decimalish, IndicatorKey } from "@/lib/types";
@@ -22,7 +32,6 @@ export interface IndicatorSpec {
   hint: string;
   group: IndicatorGroup;
   format: (v: Decimalish) => string;
-  signed?: boolean; // color by sign of the value
 }
 
 /**
@@ -86,15 +95,15 @@ export const INDICATORS: IndicatorSpec[] = [
   { key: "eps", label: "LPA", hint: "Lucro por ação (lucro líquido / número de ações)", group: "Por ação", format: price },
   { key: "bvps", label: "VPA", hint: "Valor patrimonial por ação (patrimônio / número de ações)", group: "Por ação", format: price },
 
-  { key: "revenue_growth", label: "Cresc. receita", hint: "Variação da receita frente ao ano anterior", group: "Crescimento", format: signedPct, signed: true },
-  { key: "net_income_growth", label: "Cresc. lucro", hint: "Variação do lucro frente ao ano anterior", group: "Crescimento", format: signedPct, signed: true },
+  { key: "revenue_growth", label: "Cresc. receita", hint: "Variação da receita frente ao ano anterior", group: "Crescimento", format: signedPct },
+  { key: "net_income_growth", label: "Cresc. lucro", hint: "Variação do lucro frente ao ano anterior", group: "Crescimento", format: signedPct },
   // Compounded over a stated window (#144): the endpoints sit five closed
   // exercises apart. The window is in the label because "CAGR 5A" means
   // different spans at different reference platforms.
-  { key: "revenue_cagr_5y", label: "CAGR receita 5a", hint: "Crescimento anual composto da receita em 5 anos — extremos a 5 exercícios de distância", group: "Crescimento", format: signedPct, signed: true },
-  { key: "ebitda_cagr_5y", label: "CAGR EBITDA 5a", hint: "Crescimento anual composto do EBITDA em 5 anos", group: "Crescimento", format: signedPct, signed: true },
-  { key: "ebit_cagr_5y", label: "CAGR EBIT 5a", hint: "Crescimento anual composto do lucro operacional em 5 anos", group: "Crescimento", format: signedPct, signed: true },
-  { key: "net_income_cagr_5y", label: "CAGR lucro 5a", hint: "Crescimento anual composto do lucro líquido em 5 anos", group: "Crescimento", format: signedPct, signed: true },
+  { key: "revenue_cagr_5y", label: "CAGR receita 5a", hint: "Crescimento anual composto da receita em 5 anos — extremos a 5 exercícios de distância", group: "Crescimento", format: signedPct },
+  { key: "ebitda_cagr_5y", label: "CAGR EBITDA 5a", hint: "Crescimento anual composto do EBITDA em 5 anos", group: "Crescimento", format: signedPct },
+  { key: "ebit_cagr_5y", label: "CAGR EBIT 5a", hint: "Crescimento anual composto do lucro operacional em 5 anos", group: "Crescimento", format: signedPct },
+  { key: "net_income_cagr_5y", label: "CAGR lucro 5a", hint: "Crescimento anual composto do lucro líquido em 5 anos", group: "Crescimento", format: signedPct },
 
   { key: "net_debt", label: "Dívida líquida", hint: "Dívida total − caixa e aplicações", group: "Alavancagem & Liquidez", format: money },
   { key: "net_debt_to_ebitda", label: "Dív. líq./EBITDA", hint: "Anos de EBITDA para quitar a dívida líquida", group: "Alavancagem & Liquidez", format: multiple },
