@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal
 
 from smaug.analysis.domain.financials import AccountingRegime, StandardizedFinancials
-from smaug.analysis.domain.ttm import build_ttm
+from smaug.analysis.domain.ttm import _FLOW_FIELDS, build_ttm
 from smaug.portfolio.domain.sectors import Sector
 
 
@@ -168,22 +168,30 @@ def test_ttm_sums_the_insurer_dre_lines() -> None:
     assert ttm.claims_incurred == Decimal(-1600)  # negative as filed
 
 
-def test_ttm_carries_every_numeric_account_it_is_given() -> None:
+def test_ttm_carries_every_numeric_account_on_its_declared_basis() -> None:
     # The assembly names each account explicitly, which is how the bank lines went
-    # missing for a year (#140). Fill every numeric field and assert none is
-    # dropped, so a newly mapped account fails here instead of on a screen.
+    # missing for a year (#140). Fill every numeric field with the same value in
+    # all four quarters and read the basis off the result: a flow sums to 4×, a
+    # stock stays at the latest quarter's 1×. So this fails both ways a new
+    # account can go wrong — dropped entirely, or wired to the wrong basis, which
+    # is the worse one (a quarter published as if it were a year).
     numeric = [
         f.name for f in fields(StandardizedFinancials) if f.type == "Decimal | None"
     ]
     assert "loan_book" in numeric  # the annotation is read as text — fail loudly
-    filled = {name: Decimal(100) for name in numeric}
-    quarters = [replace(_q(e), **filled) for e in _ENDS]
+    quarters = [replace(_q(e), **dict.fromkeys(numeric, Decimal(100))) for e in _ENDS]
 
     ttm = build_ttm(quarters, None)
 
     assert ttm is not None
-    dropped = [name for name in numeric if getattr(ttm, name) is None]
-    assert dropped == []
+    for name in numeric:
+        if name == "ebitda":
+            expected = Decimal(800)  # recomposed from the summed EBIT + D&A
+        elif name in _FLOW_FIELDS:
+            expected = Decimal(400)  # flow: summed over the four quarters
+        else:
+            expected = Decimal(100)  # stock: the latest quarter, never summed
+        assert getattr(ttm, name) == expected, name
 
 
 def test_ttm_carries_the_null_cause_provenance() -> None:
