@@ -217,6 +217,43 @@ def test_standardize_bank_reads_its_own_chart_of_accounts() -> None:
     assert f.unmapped_fields == frozenset({"dep_amort", "ebitda"})
 
 
+def _investing(*lines: dict[str, Any]) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """A minimal filing carrying only an investing section, for the capex tests."""
+    return {
+        "DFC": {
+            "accounts": [
+                _acc("6.01", "Caixa Líquido Atividades Operacionais", "500"),
+                *lines,
+            ]
+        }
+    }
+
+
+def test_standardize_reads_a_capex_line_filed_as_zero_as_zero() -> None:
+    # #159: BBSE3 files "Aquisição de imobilizado" at 0 — it is a holding of
+    # insurers and owns almost no PP&E. Reading a published zero as an absent
+    # account took free cash flow to null for two years in which the answer is
+    # simply that it invested nothing.
+    by_module = _investing(_acc("6.02.09", "Aquisição de imobilizado", "0"))
+
+    f = standardize(by_module, Sector.INSURER, date(2021, 12, 31))
+
+    assert f.capex == Decimal("0")  # a filed zero is a value, not an absence
+    assert f.cfo == Decimal("500")
+
+
+def test_standardize_leaves_capex_null_when_only_a_disposal_is_filed() -> None:
+    # The other half of the same guard, and why it is `<= 0` rather than a bare
+    # label match: a filer publishing only "alienação de imobilizado" has not told
+    # us its acquisitions were zero, it has told us nothing about them. Answering
+    # 0 here would invent a fact and hand FCF a number it has not earned.
+    by_module = _investing(_acc("6.02.03", "Alienação de Imobilizado", "30"))
+
+    f = standardize(by_module, Sector.COMMODITY, date(2021, 12, 31))
+
+    assert f.capex is None
+
+
 def _legacy_bank_dre(bottom_line: str) -> dict[str, Any]:
     """The pre-2020 bank DRE, whose bottom line is 3.13 — and whose 3.11 is not.
 
