@@ -76,14 +76,14 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
             <ClassificationBadge classification={reference.classification} />
           </div>
         </div>
-        <div className="rise text-right" style={{ animationDelay: "120ms" }}>
+        <div className="rise text-right" style={{ animationDelay: "60ms" }}>
           <div className="text-xs uppercase tracking-wide text-ink-500">Preço atual</div>
           <div className="nums text-4xl font-semibold text-gold-molten">{price(headlinePrice)}</div>
         </div>
       </header>
 
       {/* ------------------------------------------------ scale figures --- */}
-      <div className="rise mb-12 flex flex-wrap gap-x-12 gap-y-4 border-t border-ink-900/80 pt-5" style={{ animationDelay: "200ms" }}>
+      <div className="rise mb-12 flex flex-wrap gap-x-12 gap-y-4 border-t border-ink-900/80 pt-5" style={{ animationDelay: "120ms" }}>
         {scaleFigures.map((f) => (
           <div key={f.label}>
             <div className="text-xs uppercase tracking-wide text-ink-500">{f.label}</div>
@@ -102,7 +102,7 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
             columns, leaving room for the per-cell chart/info affordances. */}
         <div className="flex flex-col gap-5">
           {ttm && (
-            <div className="rise" style={{ animationDelay: "160ms" }}>
+            <div className="rise" style={{ animationDelay: "180ms" }}>
               <ViewPanel analysis={ttm} history={history} ttm={ttm} primary />
             </div>
           )}

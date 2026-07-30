@@ -63,12 +63,12 @@ export function IndicatorDetail({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-vault-950/85 p-4 sm:p-8"
+      className="modal-backdrop fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-vault-950/85 p-4 sm:p-8"
       onClick={onClose}
       role="presentation"
     >
       <div
-        className="panel my-auto w-full max-w-3xl p-6 sm:p-7"
+        className="modal-panel panel my-auto w-full max-w-3xl p-6 sm:p-7"
         role="dialog"
         aria-modal="true"
         aria-label={spec.label}

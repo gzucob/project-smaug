@@ -94,10 +94,20 @@ not in the fonts.
 
 ## Motion
 
-Minimal. A subtle `.rise` entrance (staggered via inline `animationDelay`) is
-the only page-load motion. `globals.css` already disables animation under
-`prefers-reduced-motion` — keep new motion inside that guard. No decorative
-background animation.
+Minimal. A subtle `.rise` entrance (staggered via inline `animationDelay`, 260ms
+on the `--ease-out-strong` curve) is the only page-load motion; the indicator
+modal adds an entry-only fade + `scale(0.97)` settle. Curves and durations are
+**tokens** in the `@theme` block (`--ease-out-strong`, `--duration-*`) — never
+hand-type a `cubic-bezier` or a duration in a component, and keep every UI
+duration under 300ms.
+
+The `prefers-reduced-motion` guard in `globals.css` **drops movement, not all
+motion**: it removes translates, scales and the stagger, and deliberately keeps
+colour/opacity transitions, which aid comprehension rather than decorate. Keep
+new motion inside that guard. Gate hover *movement* behind
+`@media (hover: hover) and (pointer: fine)` (or Tailwind's `motion-safe:`) —
+touch fires a synthetic hover that then sticks. No decorative background
+animation.
 
 ## Dev workflow & quality gate
 

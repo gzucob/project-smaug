@@ -61,6 +61,15 @@
   --font-display: var(--font-newsreader), Georgia, serif;
   --font-body: var(--font-geist), system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* --- Motion ---------------------------------------------------------------
+     One canonical curve and one duration scale. The built-in CSS easings are
+     too weak to read as deliberate; every UI duration stays under the 300ms
+     budget. */
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --duration-hover: 200ms;
+  --duration-rise: 260ms;
+  --duration-modal: 220ms;
 }
 
 /* ---------------------------------------------------------------- base --- */
@@ -111,12 +120,16 @@ body {
 
 .panel-hover {
   transition:
-    transform 0.25s ease,
-    border-color 0.25s ease;
+    transform var(--duration-hover) var(--ease-out-strong),
+    border-color var(--duration-hover) var(--ease-out-strong);
 }
-.panel-hover:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in oklab, var(--color-gold-500) 28%, transparent);
+/* Touch fires a synthetic :hover on tap that then sticks — gate the hover
+   state behind a real pointer. */
+@media (hover: hover) and (pointer: fine) {
+  .panel-hover:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklab, var(--color-gold-500) 28%, transparent);
+  }
 }
 
 /* Thin divider. */
@@ -145,20 +158,78 @@ body {
   }
 }
 
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .rise {
   opacity: 0;
-  animation: rise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  animation: rise var(--duration-rise) var(--ease-out-strong) forwards;
+}
+
+/* -------------------------------------------------------------- modal --- */
+
+/* Entry transition for the indicator drill-down. Transitions plus
+   @starting-style rather than keyframes: a modal re-opened rapidly retargets
+   from its current state instead of restarting from zero. */
+.modal-backdrop {
+  opacity: 1;
+  transition: opacity var(--duration-modal) var(--ease-out-strong);
+}
+@starting-style {
+  .modal-backdrop {
+    opacity: 0;
+  }
+}
+
+.modal-panel {
+  opacity: 1;
+  transform: scale(1);
+  transition:
+    opacity var(--duration-modal) var(--ease-out-strong),
+    transform var(--duration-modal) var(--ease-out-strong);
+}
+@starting-style {
+  .modal-panel {
+    opacity: 0;
+    transform: scale(0.97);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation: none !important;
-    transition: none !important;
+  html {
+    scroll-behavior: auto;
   }
+
+  /* Keep colour and opacity feedback — it explains state and aids
+     comprehension. Drop only the movement: the entrance's translate and the
+     panel's hover lift. */
   .rise {
-    opacity: 1;
+    animation: fade-in var(--duration-rise) var(--ease-out-strong) forwards;
+    /* !important is required: the per-element stagger is an inline style, and
+       inline styles outrank a class selector. Under reduced motion everything
+       fades in at once instead of cascading. */
+    animation-delay: 0ms !important;
+  }
+
+  .panel-hover:hover {
+    transform: none;
+  }
+
+  /* Keep the modal's fade, drop its scale. */
+  .modal-panel {
+    transition: opacity var(--duration-modal) var(--ease-out-strong);
+    transform: none;
+  }
+  @starting-style {
+    .modal-panel {
+      transform: none;
+    }
   }
 }
 
