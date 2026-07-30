@@ -217,6 +217,110 @@ def test_standardize_bank_reads_its_own_chart_of_accounts() -> None:
     assert f.unmapped_fields == frozenset({"dep_amort", "ebitda"})
 
 
+def _legacy_bank_dre(bottom_line: str) -> dict[str, Any]:
+    """The pre-2020 bank DRE, whose bottom line is 3.13 — and whose 3.11 is not.
+
+    Every code and label here is the real one, from the two banks' 2015–2019 DFPs.
+    """
+    return {
+        "accounts": [
+            _acc("3.01", "Receitas da Intermediação Financeira", "400"),
+            _acc("3.02", "Despesas da Intermediação Financeira", "-260"),
+            _acc("3.02.05", "Provisão p/ Créditos de Liquidação Duvidosa", "-70"),
+            _acc("3.03", "Resultado Bruto Intermediação Financeira", "140"),
+            _acc("3.04.01", "Receitas de Prestação de Serviços", "45"),
+            _acc("3.04.02", "Despesas de Pessoal", "-30"),
+            _acc("3.04.03", "Outras Despesas Administrativas", "-20"),
+            _acc("3.05", "Resultado Operacional", "60"),
+            # The decoy: in this chart 3.11 is not the bottom line at all, and it
+            # is filed zero. Reading the result by code publishes a bank that
+            # earned nothing (#78, #155).
+            _acc("3.11", "Reversão dos Juros sobre Capital Próprio", "0"),
+            _acc("3.13", bottom_line, "90"),
+        ]
+    }
+
+
+def test_standardize_bank_reads_the_2018_chart_of_accounts() -> None:
+    # #155: up to 2019 the bank bottom line is 3.13 "Lucro/Prejuízo do Período",
+    # and in 2018–2019 the credit portfolio sits under 1.02.03 — one level off
+    # from the 1.02.04 the modern chart uses — under a name that already says it
+    # is net of its provision. Its sibling 1.02.03.02 is interbank lending, whose
+    # label carries the same "líquidos" wording: matching it would put R$105 bn of
+    # bank-to-bank credit into the customer book.
+    by_module = {
+        "BPA": {
+            "accounts": [
+                _acc("1", "Ativo Total", "5000"),
+                _acc("1.01", "Caixa e Equivalentes de Caixa", "300"),
+                _acc("1.02", "Ativos Financeiros", "4000"),
+                _acc(
+                    "1.02.03",
+                    "Ativos Financeiros Avaliados ao Custo Amortizado",
+                    "3000",
+                ),
+                _acc("1.02.03.01", "Títulos e valores mobiliários líquidos", "500"),
+                _acc(
+                    "1.02.03.02",
+                    "Empréstimos a Instituições financeiras líquidos",
+                    "700",
+                ),
+                _acc("1.02.03.04", "Empréstimos a clientes líquidos", "2000"),
+            ]
+        },
+        "BPP": {"accounts": [_acc("2.07", "Patrimônio Líquido Consolidado", "800")]},
+        "DRE": _legacy_bank_dre("Lucro/Prejuízo do Período"),
+    }
+
+    f = standardize(by_module, Sector.BANK, date(2018, 12, 31))
+
+    assert f.filed_regime is AccountingRegime.BANK
+    assert f.net_income == Decimal("90")  # 3.13, not the zero at 3.11
+    assert f.net_income_total == Decimal("90")
+    assert f.loan_book == Decimal("2000")  # already net; the interbank line is not it
+    # The rest of the bank set reads the same in this chart as in the modern one.
+    assert f.gross_profit == Decimal("140")
+    assert f.loan_loss_provision == Decimal("-70")
+    assert f.fee_income == Decimal("45")
+
+
+def test_standardize_bank_reads_the_2015_chart_of_accounts() -> None:
+    # #155, one generation further back: up to 2017 the portfolio sits under 1.03
+    # "Empréstimos e Recebíveis", and here the sibling trap is explicit — the
+    # interbank line is literally named "Líquidos de Provisão", so a search for a
+    # provision to subtract under this parent would take R$20 bn of interbank
+    # lending off the book. Nothing is subtracted: the line is already net.
+    by_module = {
+        "BPA": {
+            "accounts": [
+                _acc("1", "Ativo Total", "5000"),
+                _acc("1.01", "Caixa e Equivalentes de Caixa", "300"),
+                _acc("1.02", "Aplicações Financeiras", "1000"),
+                _acc("1.03", "Empréstimos e Recebíveis", "3000"),
+                _acc(
+                    "1.03.01",
+                    "Empréstimos a Instituições Financeiras Líquidos de Provisão",
+                    "700",
+                ),
+                _acc("1.03.02", "Aplicações em Operações Compromissadas", "300"),
+                _acc(
+                    "1.03.03",
+                    "Empréstimos a Clientes Líquidos de Provisão",
+                    "2000",
+                ),
+                _acc("1.03.04", "Depósitos Compulsórios em Bancos Centrais", "600"),
+            ]
+        },
+        "BPP": {"accounts": [_acc("2.07", "Patrimônio Líquido Consolidado", "800")]},
+        "DRE": _legacy_bank_dre("Lucro/Prejuízo do Período"),
+    }
+
+    f = standardize(by_module, Sector.BANK, date(2015, 12, 31))
+
+    assert f.net_income == Decimal("90")
+    assert f.loan_book == Decimal("2000")
+
+
 def test_standardize_insurer_reads_ebit_at_307_and_no_debt_line() -> None:
     # The two dead needles ADR 0005 warns about, both live in the real mirror:
     # 3.05 is EBIT for a corporate filer but "Outras Receitas e Despesas
