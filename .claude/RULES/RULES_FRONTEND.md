@@ -42,11 +42,29 @@ Restate this stack before proposing a new dependency or restructuring.
   hairline border, no heavy shadow or backdrop blur. `.panel-hover` adds only a
   small lift + border brighten.
 
+### Colour means direction; identity is a detail
+
+`--color-up` (blue) and `--color-down` (red) carry **direction** wherever it
+exists: every data mark in a chart, a delta, a signed value, and the
+favourable/treacherous markers in the indicator docs. Blue and red rather than
+green and red on purpose — protanopia and deuteranopia are a red/green
+confusion, so the usual financial palette is the one pair that fails them.
+
+Direction is coloured **only where the sign means something**. A growth of −2,3%
+is bad news; a P/L of 8,24× is neither good nor bad, and takes the neutral ink.
+`IndicatorSpec.signed` is what marks the difference.
+
 ### Gemstone-per-sector encoding
 
 Each of the five sectors owns one vivid hue (`--color-gem-azure` = bank,
 `-violet` = insurer, `-jade` = utility, `-gold` = commodity, `-coral` =
 industry), mapped in `src/lib/sectors.ts`.
+
+**Its territory is the details, not the data** (#145): the classification badge,
+the ticker card, a heading accent, the chart's average reference line. Charts
+used to take the sector hue, so an insurer's page was violet throughout — which
+answered a question nobody asks (the reader knows which company they opened)
+while the question the chart does raise, up or down, had no colour at all.
 
 - The gem **name** (Safira, Ametista, Esmeralda, Ouro, Rubi) is an **internal
   reference only** — it explains *why* a sector has its colour. **Never render
