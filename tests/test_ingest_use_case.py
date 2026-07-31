@@ -126,3 +126,38 @@ async def test_should_abort_run_when_cvm_zip_download_definitively_fails() -> No
     assert outcomes[-1].status is OutcomeStatus.ABORTED
     assert all(o.ticker == "PETR4" for o in outcomes)  # never reached VALE3
     assert repo.items == []
+
+
+class _RegistrantSource:
+    """A CVM-shaped source: every result names the registrant that filed it."""
+
+    async def fetch(self, ticker: str, module: str) -> list[RawFetchResult]:
+        return [
+            RawFetchResult(
+                module=module,
+                request={"cvm_code": "9512"},
+                http_status=200,
+                payload={},
+                cvm_code="9512",
+            )
+        ]
+
+
+async def test_the_registrant_travels_from_the_source_onto_what_is_stored() -> None:
+    # The whole read path keys on it (ADR 0030), so a source that names the filer
+    # and a store that drops it would leave the mirror unreadable by company.
+    repo = FakeRawIngestionRepository()
+    use_case = IngestPortfolioUseCase(
+        client=_RegistrantSource(),
+        repository=repo,
+        event_bus=EventBus(),
+        modules=["BPA"],
+        source="cvm",
+        sleep=no_sleep,
+    )
+
+    await use_case.execute(["PETR3"])
+
+    assert [i.cvm_code for i in repo.items] == ["9512"]
+    # The ticker still records which code the collection was requested under.
+    assert [i.ticker for i in repo.items] == ["PETR3"]

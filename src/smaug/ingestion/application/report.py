@@ -19,11 +19,18 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from smaug.ingestion.domain.repositories import RawIngestionRepository
+from smaug.portfolio.domain.company import RegistrantResolver
 from smaug.portfolio.domain.sectors import Sector, sector_of
 
 # Curated nine by default; the CLI injects a registry-backed resolver so the
 # report can describe an on-demand ticker too.
 SectorResolver = Callable[[str], Sector]
+
+
+def _no_registrant(_ticker: str) -> None:
+    """Default: no registrant named, so the mirror is read by ticker as before."""
+    return None
+
 
 # --- brapi sector-directed field expectations (plan §6.1) ------------------
 _NON_FINANCIAL_FIELDS: tuple[str, ...] = (
@@ -200,11 +207,15 @@ class CompletenessReportUseCase:
         *,
         source: str = "brapi",
         sector_resolver: SectorResolver = sector_of,
+        registrant_resolver: RegistrantResolver = _no_registrant,
     ) -> None:
         self._repository = repository
         self._modules = tuple(modules)
         self._profile = _profile_for(source)
         self._sector_resolver = sector_resolver
+        # A CVM mirror is stored per registrant (ADR 0030), so a ticker that is not
+        # the one its company was collected under only finds its modules by code.
+        self._registrant_resolver = registrant_resolver
 
     async def execute(self, tickers: Iterable[str]) -> CompletenessReport:
         reports: list[TickerReport] = []
@@ -216,12 +227,15 @@ class CompletenessReportUseCase:
 
     async def _report_ticker(self, ticker: str) -> TickerReport:
         sector = self._sector_resolver(ticker)
+        cvm_code = self._registrant_resolver(ticker)
         presences: list[ModulePresence] = []
         payloads: list[Mapping[str, Any]] = []
         timestamps: list[datetime] = []
 
         for module in self._modules:
-            snapshot = await self._repository.find_latest(ticker, module)
+            snapshot = await self._repository.find_latest(
+                ticker, module, cvm_code=cvm_code
+            )
             if snapshot is None:
                 presences.append(ModulePresence(module, False, None, 0, None))
                 continue

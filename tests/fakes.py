@@ -58,15 +58,37 @@ class FakeRawIngestionRepository:
         self.items.append(stored)
         return stored
 
-    async def find_latest(self, ticker: str, module: str) -> RawIngestion | None:
-        matches = [
-            item
-            for item in self.items
-            if item.ticker == ticker and item.module == module
-        ]
+    async def find_latest(
+        self, ticker: str, module: str, *, cvm_code: str | None = None
+    ) -> RawIngestion | None:
+        def keyed(item: RawIngestion) -> bool:
+            if cvm_code is not None:
+                return item.cvm_code == cvm_code
+            return item.ticker == ticker
+
+        matches = [item for item in self.items if keyed(item) and item.module == module]
         if not matches:
             return None
         return max(matches, key=lambda item: item.fetched_at)
+
+    async def unlinked_tickers(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                {
+                    item.ticker
+                    for item in self.items
+                    if item.source == "cvm" and item.cvm_code is None
+                }
+            )
+        )
+
+    async def link_registrant(self, ticker: str, cvm_code: str) -> int:
+        linked = 0
+        for index, item in enumerate(self.items):
+            if item.source == "cvm" and item.cvm_code is None and item.ticker == ticker:
+                self.items[index] = replace(item, cvm_code=cvm_code)
+                linked += 1
+        return linked
 
 
 class FakeDataSource:

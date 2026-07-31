@@ -36,6 +36,8 @@ from smaug.analysis.domain.capital import (
     restatement_factors,
 )
 from smaug.analysis.domain.financials import CapitalComposition, ShareCounts
+from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
+from smaug.portfolio.domain.company import RegistrantResolver
 from smaug.portfolio.domain.share_classes import shares_per_unit
 from smaug.shared.logging import get_logger
 
@@ -147,8 +149,14 @@ def _scaled(counts: ShareCounts, factor: Decimal) -> ShareCounts:
 class MongoSharesReader:
     """Serves the outstanding share counts per fiscal year from the raw mirror."""
 
-    def __init__(self, collection: RawCollection) -> None:
+    def __init__(
+        self,
+        collection: RawCollection,
+        *,
+        registrant_resolver: RegistrantResolver = no_registrant,
+    ) -> None:
         self._collection = collection
+        self._registrant = registrant_resolver
 
     async def outstanding(self, ticker: str, year: int) -> Decimal | None:
         filed = await self.counts(ticker, year)
@@ -232,7 +240,7 @@ class MongoSharesReader:
         copy in the append-only mirror can never win.
         """
         cursor = self._collection.find(
-            {"ticker": ticker, "source": "cvm", "module": CAPITAL_MODULE}
+            mirror_filter(ticker, self._registrant, module=CAPITAL_MODULE)
         ).sort("fetched_at", 1)
         by_year: dict[int, ShareCounts] = {}
         best: dict[int, tuple[int, str]] = {}
@@ -265,7 +273,7 @@ class MongoSharesReader:
         wants. ``version`` breaks a tie between two filings of the same period.
         """
         cursor = self._collection.find(
-            {"ticker": ticker, "source": "cvm", "module": TREASURY_MODULE}
+            mirror_filter(ticker, self._registrant, module=TREASURY_MODULE)
         ).sort("fetched_at", 1)
         by_year: dict[int, CapitalComposition] = {}
         best: dict[int, tuple[str, int]] = {}
@@ -306,7 +314,7 @@ class MongoSharesReader:
         detection depends on (LREN3's buyback would round to a false 19/20).
         """
         cursor = self._collection.find(
-            {"ticker": ticker, "source": "cvm", "module": TREASURY_MODULE}
+            mirror_filter(ticker, self._registrant, module=TREASURY_MODULE)
         ).sort("fetched_at", 1)
         best: dict[str, tuple[int, Decimal]] = {}  # reference_date -> (version, total)
         async for document in cursor:

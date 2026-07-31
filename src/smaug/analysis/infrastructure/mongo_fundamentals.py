@@ -33,6 +33,8 @@ from smaug.analysis.domain.financials import (
     StandardizedFinancials,
     expected_regime,
 )
+from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
+from smaug.portfolio.domain.company import RegistrantResolver
 from smaug.portfolio.domain.sectors import Sector, sector_of
 
 _STATEMENTS = ("BPA", "BPP", "DRE", "DFC", "DMPL")
@@ -761,12 +763,16 @@ class MongoFundamentalsReader:
         collection: RawCollection,
         *,
         sector_resolver: Callable[[str], Sector] = sector_of,
+        registrant_resolver: RegistrantResolver = no_registrant,
     ) -> None:
         self._collection = collection
         # The sector only seeds the ``expected_regime`` fallback (the filed regime,
         # read off the statement, decides applicability). Curated for the nine;
         # the CLI injects a registry-backed resolver for on-demand tickers.
         self._sector_resolver = sector_resolver
+        # Which registrant's filings to read (ADR 0030) — the same resolution, from
+        # the same registry, that the sector one uses.
+        self._registrant = registrant_resolver
 
     async def history(self, ticker: str) -> list[StandardizedFinancials]:
         """ITR quarterly periods (oldest→newest) — the raw material for the TTM."""
@@ -784,7 +790,7 @@ class MongoFundamentalsReader:
     async def _load(
         self, ticker: str
     ) -> list[tuple[str | None, StandardizedFinancials]]:
-        cursor = self._collection.find({"source": "cvm", "ticker": ticker})
+        cursor = self._collection.find(mirror_filter(ticker, self._registrant))
         docs: list[Mapping[str, Any]] = await cursor.to_list(None)
         sector = self._sector_resolver(ticker)
 

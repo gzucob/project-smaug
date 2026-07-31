@@ -9,10 +9,17 @@ demand instead of being hard-coded (``cvm_codes.py``).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 
 from smaug.portfolio.domain.share_classes import ShareClass
+
+# Ticker -> the registrant that files for it (``CD_CVM``), or ``None`` when the
+# ticker resolves nowhere. The mirror is keyed on the registrant (ADR 0030), so
+# every reader of it takes one of these — curated for the nine, registry-backed
+# for the rest, exactly like ``SectorResolver``.
+RegistrantResolver = Callable[[str], str | None]
 
 
 @dataclass(frozen=True)

@@ -206,6 +206,11 @@ class CvmDataSource:
     def _zip_name(self) -> str:
         return f"{self._prefix}_{self._year}.zip"
 
+    @property
+    def archive_name(self) -> str:
+        """The yearly archive this source reads — what a mirrored document names."""
+        return self._zip_name
+
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
         """Return every raw statement filed for ``ticker``/``module``.
 
@@ -245,6 +250,7 @@ class CvmDataSource:
                 },
                 http_status=200,
                 payload=self._to_payload(code, statement),
+                cvm_code=code,
             )
             for statement in statements
             if statement.module == wanted and statement.accounts

@@ -19,16 +19,64 @@ class BeanieRawIngestionRepository:
         await document.insert()
         return self._to_entity(document)
 
-    async def find_latest(self, ticker: str, module: str) -> RawIngestion | None:
+    async def find_latest(
+        self, ticker: str, module: str, *, cvm_code: str | None = None
+    ) -> RawIngestion | None:
+        """The newest snapshot for a module, keyed by registrant when one is given.
+
+        A ticker outside the company it was collected under finds nothing on the
+        ticker key (ADR 0030): the mirror stores ELET3/5/6 once, under the filer.
+        So a caller that can name the registrant passes it, and only a brapi
+        caller — which has none — falls back to the ticker.
+        """
+        key = (
+            RawIngestionDocument.cvm_code == cvm_code
+            if cvm_code is not None
+            else RawIngestionDocument.ticker == ticker
+        )
         document = (
-            await RawIngestionDocument.find(
-                RawIngestionDocument.ticker == ticker,
-                RawIngestionDocument.module == module,
-            )
+            await RawIngestionDocument.find(key, RawIngestionDocument.module == module)
             .sort("-fetched_at")
             .first_or_none()
         )
         return self._to_entity(document) if document is not None else None
+
+    async def unlinked_tickers(self) -> tuple[str, ...]:
+        """Tickers with CVM documents mirrored before the key moved (ADR 0030)."""
+        collection = RawIngestionDocument.get_pymongo_collection()
+        tickers = await collection.distinct("ticker", self._unlinked())
+        return tuple(sorted(str(ticker) for ticker in tickers))
+
+    async def link_registrant(self, ticker: str, cvm_code: str) -> int:
+        """Stamp the registrant on ``ticker``'s unlinked CVM documents.
+
+        Scoped to the documents that lack one, so a re-run is a no-op and a
+        document that already names a *different* filer is never overwritten —
+        this fills a gap, it does not restate a fact.
+        """
+        collection = RawIngestionDocument.get_pymongo_collection()
+        result = await collection.update_many(
+            {"ticker": ticker, **self._unlinked()}, {"$set": {"cvm_code": cvm_code}}
+        )
+        return int(result.modified_count)
+
+    async def registrants_of(self, file: str) -> set[str]:
+        """Which registrants a given yearly archive has already been mirrored for.
+
+        The archive's own name is the honest predicate: a company is done for
+        ``dfp_cia_aberta_2019.zip`` when a document says it was read from exactly
+        that file. Lets a whole-exchange run resume where it stopped instead of
+        appending a second copy of everything it already holds.
+        """
+        collection = RawIngestionDocument.get_pymongo_collection()
+        codes = await collection.distinct("cvm_code", {"request.file": file})
+        return {str(code) for code in codes if code is not None}
+
+    @staticmethod
+    def _unlinked() -> dict[str, object]:
+        # Documents written before the field existed have no key at all; ones
+        # written by a source that names no registrant have it explicitly null.
+        return {"source": "cvm", "cvm_code": None}
 
     @staticmethod
     def _to_document(ingestion: RawIngestion) -> RawIngestionDocument:
@@ -40,6 +88,7 @@ class BeanieRawIngestionRepository:
             request=dict(ingestion.request),
             http_status=ingestion.http_status,
             payload=dict(ingestion.payload),
+            cvm_code=ingestion.cvm_code,
         )
 
     @staticmethod
@@ -53,4 +102,5 @@ class BeanieRawIngestionRepository:
             request=document.request,
             http_status=document.http_status,
             payload=document.payload,
+            cvm_code=document.cvm_code,
         )

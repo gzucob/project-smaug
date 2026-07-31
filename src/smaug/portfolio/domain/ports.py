@@ -13,10 +13,11 @@ from collections.abc import Iterable
 from typing import Protocol
 
 from smaug.portfolio.domain.company import CompanyIdentity
+from smaug.portfolio.domain.universe import ListedCompany
 
 
 class CompanyRegistry(Protocol):
-    """Resolve a B3 ticker to its CVM registrant keys."""
+    """Resolve a B3 ticker to its CVM registrant keys, and list the universe."""
 
     async def resolve(self, ticker: str) -> CompanyIdentity | None:
         """Return the identity for ``ticker``, or ``None`` if it is not listed."""
@@ -24,4 +25,8 @@ class CompanyRegistry(Protocol):
 
     async def resolve_all(self, tickers: Iterable[str]) -> dict[str, CompanyIdentity]:
         """Resolve many tickers at once; unlisted ones are absent from the dict."""
+        ...
+
+    async def companies(self) -> tuple[ListedCompany, ...]:
+        """Every listed company, the unit a whole-exchange run iterates."""
         ...

@@ -163,6 +163,9 @@ async def test_fetch_returns_one_result_per_filed_quarter(tmp_path: Path) -> Non
     assert all(
         r.request["reference_date"] == r.payload["reference_date"] for r in results
     )
+    # Every filing names its filer, which is the key the mirror is read by
+    # (ADR 0030) — PETR3 must reach the same statements as PETR4.
+    assert {r.cvm_code for r in results} == {"9512"}
 
 
 def test_build_index_keeps_every_version_and_both_balance_types(

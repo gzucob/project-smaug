@@ -20,6 +20,10 @@ class RawFetchResult:
     request: Mapping[str, Any]
     http_status: int
     payload: Mapping[str, Any]
+    # The CVM registrant this filing belongs to (``CD_CVM``). A filing is the
+    # company's, not the ticker's — ELET3/5/6 are one filer — so it is the key the
+    # mirror is read by (ADR 0030). ``None`` for brapi, which knows only tickers.
+    cvm_code: str | None = None
 
 
 class RawDataSource(Protocol):

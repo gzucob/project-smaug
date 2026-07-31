@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from typing import Any, cast
@@ -44,6 +45,7 @@ from smaug.ingestion.application.ingest import (
     IngestPortfolioUseCase,
     OutcomeStatus,
 )
+from smaug.ingestion.application.relink import RelinkMirrorUseCase, RelinkReport
 from smaug.ingestion.application.report import (
     CompletenessReport,
     CompletenessReportUseCase,
@@ -71,6 +73,7 @@ from smaug.portfolio.domain.sectors import (
 )
 from smaug.portfolio.domain.share_classes import ShareClass, listed_classes
 from smaug.portfolio.domain.taxonomy import Classification, classify
+from smaug.portfolio.domain.universe import ListedCompany
 from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
@@ -83,6 +86,16 @@ app = typer.Typer(help="smaug — CVM/brapi ingestion and indicator analysis.")
 logger = get_logger("smaug.cli")
 
 _FAILED_STATUSES = frozenset({OutcomeStatus.ERROR, OutcomeStatus.ABORTED})
+
+
+@dataclass(frozen=True)
+class YearPass:
+    """What one archive year of a collection run produced."""
+
+    year: int
+    outcomes: list[FetchOutcome]
+    companies: int
+    already_mirrored: int
 
 
 def _guarded[T](coro: Coroutine[Any, Any, T]) -> T:
@@ -136,6 +149,26 @@ def _sector_resolver(
         if identity is None:
             raise UnknownTickerError(ticker)
         return sector_from_cvm(identity.cvm_sector)
+
+    return resolve
+
+
+def _registrant_resolver(
+    identities: dict[str, CompanyIdentity],
+) -> Callable[[str], str | None]:
+    """The registrant whose filings a ticker reads (``CD_CVM``, ADR 0030).
+
+    Curated for the nine, registry-resolved for the rest — the same two-step every
+    other resolver here takes, and for the same reason: the nine never trigger an
+    FCA download.
+    """
+
+    def resolve(ticker: str) -> str | None:
+        curated = TICKER_TO_CVM_CODE.get(ticker)
+        if curated is not None:
+            return curated
+        identity = identities.get(ticker)
+        return identity.cd_cvm if identity is not None else None
 
     return resolve
 
@@ -211,22 +244,77 @@ def ingest(
     ticker: list[str] | None = typer.Option(
         None, "--ticker", "-t", help="Ticker to collect (repeatable). Default: all."
     ),
+    all_listed: bool = typer.Option(
+        False, "--all", "-a", help="Every listed company, from the CVM FCA registry."
+    ),
     document: str | None = typer.Option(
         None, "--document", help="CVM document: ITR or DFP (overrides config)."
     ),
     year: int | None = typer.Option(
         None, "--year", help="CVM file year to mirror (overrides config)."
     ),
+    from_year: int | None = typer.Option(
+        None, "--from-year", help="First year of a range to sweep (with --to-year)."
+    ),
+    to_year: int | None = typer.Option(
+        None, "--to-year", help="Last year of a range to sweep (with --from-year)."
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Re-collect a company already mirrored from that year's archive.",
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Log every call instead of a per-year summary."
+    ),
 ) -> None:
-    """Collect the configured modules for the active source and store the mirror."""
-    tickers = tuple(ticker) if ticker else portfolio_tickers()
+    """Collect the configured modules for the active source and store the mirror.
+
+    Three scopes: the curated nine (default), an explicit ``--ticker`` list, or
+    ``--all`` — every company the CVM registry lists, which is what M2 means by
+    running at exchange scale. A run over 368 companies and eleven years is one
+    command, because each year's archive is read once and served to every company
+    in it (``--from-year``/``--to-year``).
+    """
+    if all_listed and ticker:
+        raise typer.BadParameter("--all and --ticker are mutually exclusive")
+    years = _years_to_sweep(year, from_year, to_year)
+    tickers = () if all_listed else (tuple(ticker) if ticker else portfolio_tickers())
     try:
         # _guarded turns an unknown ticker into a clean exit, like analyze (#13).
-        exit_code = _guarded(_run_ingest(tickers, document=document, year=year))
+        exit_code = _guarded(
+            _run_ingest(
+                tickers,
+                document=document,
+                years=years,
+                whole_exchange=all_listed,
+                force=force,
+                verbose=verbose,
+            )
+        )
     except NotImplementedError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
     raise typer.Exit(code=exit_code)
+
+
+def _years_to_sweep(
+    year: int | None, from_year: int | None, to_year: int | None
+) -> tuple[int | None, ...]:
+    """The years one run covers: a range, a single year, or the configured one.
+
+    ``(None,)`` means "whatever the config says" — the shape the single-year path
+    already had, kept so ``--year`` and no flag at all behave exactly as before.
+    """
+    if from_year is None and to_year is None:
+        return (year,)
+    if year is not None:
+        raise typer.BadParameter("--year cannot be combined with --from-year/--to-year")
+    if from_year is None or to_year is None:
+        raise typer.BadParameter("--from-year and --to-year go together")
+    if from_year > to_year:
+        raise typer.BadParameter("--from-year must not be after --to-year")
+    return tuple(range(from_year, to_year + 1))
 
 
 @app.command()
@@ -275,6 +363,7 @@ def _build_data_source(
         ticker_to_cnpj,
         year=cvm_year,
         cache_dir=settings.cvm_cache_dir,
+        ticker_to_code=ticker_to_code,
     )
     # ...and the statements ZIP has a composition of its own, which is the only
     # place treasury shares are filed. Also keyed by CNPJ, not by CD_CVM.
@@ -283,6 +372,7 @@ def _build_data_source(
         ticker_to_cnpj,
         year=cvm_year,
         cache_dir=settings.cvm_cache_dir,
+        ticker_to_code=ticker_to_code,
         document=cast(CvmDocument, doc),
     )
     return RoutedDataSource(
@@ -291,35 +381,128 @@ def _build_data_source(
 
 
 async def _run_ingest(
-    tickers: tuple[str, ...], *, document: str | None = None, year: int | None = None
+    tickers: tuple[str, ...],
+    *,
+    document: str | None = None,
+    years: tuple[int | None, ...] = (None,),
+    whole_exchange: bool = False,
+    force: bool = False,
+    verbose: bool = False,
 ) -> int:
     settings = get_settings()
     client = await init_database(settings)
+    repository = BeanieRawIngestionRepository()
+    passes: list[YearPass] = []
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
-            # For CVM, resolve the registrant keys up front: an unknown ticker is
-            # a user error rejected before any statement download (#60), not a
-            # 404-skip. brapi keys off the ticker directly, so it needs no map.
-            if settings.ingestion_source == "cvm":
-                code_map, cnpj_map = await _cvm_key_maps(settings, http, tickers)
-            else:
-                code_map, cnpj_map = {}, {}
-            use_case = IngestPortfolioUseCase(
-                client=_build_data_source(
-                    settings, http, code_map, cnpj_map, document=document, year=year
-                ),
-                repository=BeanieRawIngestionRepository(),
-                event_bus=EventBus(),
-                modules=settings.active_modules,
-                source=settings.ingestion_source,
-                delay_seconds=settings.request_delay_seconds,
-            )
-            outcomes = await use_case.execute(tickers)
+            companies = await _universe(settings, http) if whole_exchange else ()
+            for year in years:
+                passes.append(
+                    await _ingest_one_year(
+                        settings,
+                        http,
+                        repository,
+                        tickers,
+                        companies,
+                        document=document,
+                        year=year,
+                        whole_exchange=whole_exchange,
+                        force=force,
+                    )
+                )
     finally:
         await client.close()
 
-    print(_format_collection_log(outcomes))
+    outcomes = [outcome for pass_ in passes for outcome in pass_.outcomes]
+    print(_format_collection_log(outcomes) if verbose else format_batch_log(passes))
     return 1 if any(o.status in _FAILED_STATUSES for o in outcomes) else 0
+
+
+async def _universe(
+    settings: Settings, http: httpx.AsyncClient
+) -> tuple[ListedCompany, ...]:
+    """Every listed company — the iteration unit of a whole-exchange run (#109)."""
+    registry = CvmCompanyRegistry(
+        http, year=settings.cvm_year, cache_dir=settings.cvm_cache_dir
+    )
+    companies = await registry.companies()
+    logger.info("Universe: %d listed companies", len(companies))
+    return companies
+
+
+async def _ingest_one_year(
+    settings: Settings,
+    http: httpx.AsyncClient,
+    repository: BeanieRawIngestionRepository,
+    tickers: tuple[str, ...],
+    companies: tuple[ListedCompany, ...],
+    *,
+    document: str | None,
+    year: int | None,
+    whole_exchange: bool,
+    force: bool,
+) -> YearPass:
+    """Collect one CVM archive year (or the single configured pass).
+
+    The archive is downloaded and indexed once here and then serves every company
+    in it, which is why a year costs seconds of CPU rather than a request each.
+    """
+    # For CVM, resolve the registrant keys up front: an unknown ticker is
+    # a user error rejected before any statement download (#60), not a
+    # 404-skip. brapi keys off the ticker directly, so it needs no map.
+    if whole_exchange:
+        code_map = {c.ticker: c.cd_cvm for c in companies}
+        cnpj_map = {c.ticker: c.cnpj for c in companies}
+        wanted = tuple(c.ticker for c in companies)
+    elif settings.ingestion_source == "cvm":
+        code_map, cnpj_map = await _cvm_key_maps(settings, http, tickers)
+        wanted = tickers
+    else:
+        code_map, cnpj_map = {}, {}
+        wanted = tickers
+
+    source = _build_data_source(
+        settings, http, code_map, cnpj_map, document=document, year=year
+    )
+    skipped: tuple[str, ...] = ()
+    if whole_exchange and not force:
+        wanted, skipped = await _still_to_collect(repository, source, wanted, code_map)
+
+    use_case = IngestPortfolioUseCase(
+        client=source,
+        repository=repository,
+        event_bus=EventBus(),
+        modules=settings.active_modules,
+        source=settings.ingestion_source,
+        delay_seconds=settings.active_delay_seconds,
+    )
+    return YearPass(
+        year=year if year is not None else settings.cvm_year,
+        outcomes=await use_case.execute(wanted),
+        companies=len(wanted),
+        already_mirrored=len(skipped),
+    )
+
+
+async def _still_to_collect(
+    repository: BeanieRawIngestionRepository,
+    source: RawDataSource,
+    wanted: tuple[str, ...],
+    code_map: dict[str, str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Split the universe into what this archive still owes and what it already gave.
+
+    A whole-exchange run is long enough to be interrupted, and the mirror is
+    append-only: without this, resuming would file a second identical copy of
+    every company already collected. ``--force`` collects regardless, which is
+    what a re-run after an amended archive wants.
+    """
+    archive = source.archive_name if isinstance(source, RoutedDataSource) else None
+    if archive is None:  # brapi: no archive that can be finished with
+        return wanted, ()
+    done = await repository.registrants_of(archive)
+    todo = tuple(t for t in wanted if code_map.get(t) not in done)
+    return todo, tuple(t for t in wanted if t not in set(todo))
 
 
 async def _run_report(tickers: tuple[str, ...]) -> None:
@@ -327,14 +510,13 @@ async def _run_report(tickers: tuple[str, ...]) -> None:
     client = await init_database(settings)
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
-            resolver = _sector_resolver(
-                await _registry_identities(settings, http, tickers)
-            )
+            identities = await _registry_identities(settings, http, tickers)
         use_case = CompletenessReportUseCase(
             repository=BeanieRawIngestionRepository(),
             modules=settings.active_modules,
             source=settings.ingestion_source,
-            sector_resolver=resolver,
+            sector_resolver=_sector_resolver(identities),
+            registrant_resolver=_registrant_resolver(identities),
         )
         completeness = await use_case.execute(tickers)
     finally:
@@ -394,15 +576,18 @@ async def _run_analyze(tickers: tuple[str, ...]) -> int:
             # The reader keeps a five-value Sector (the internal regime hint); the
             # stored analysis carries the B3 Classification (ADR 0024). Both are
             # built from the same resolved identities.
+            registrant = _registrant_resolver(identities)
             use_case = AnalyzePortfolioUseCase(
                 reader=MongoFundamentalsReader(
                     mongo[settings.mongo_db]["raw_ingestions"],
                     sector_resolver=_sector_resolver(identities),
+                    registrant_resolver=registrant,
                 ),
                 price_provider=_build_price_provider(settings, http),
                 repository=SqlAlchemyAnalysisRepository(session_factory),
                 shares_reader=MongoSharesReader(
-                    mongo[settings.mongo_db]["raw_ingestions"]
+                    mongo[settings.mongo_db]["raw_ingestions"],
+                    registrant_resolver=registrant,
                 ),
                 classification_resolver=_classification_resolver(identities),
                 classes_resolver=_classes_resolver(identities),
@@ -445,9 +630,8 @@ async def _run_doctor(tickers: tuple[str, ...]) -> int:
     mongo = await init_database(settings)
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
-            resolver = _sector_resolver(
-                await _registry_identities(settings, http, tickers)
-            )
+            identities = await _registry_identities(settings, http, tickers)
+        resolver = _sector_resolver(identities)
         use_case = DoctorUseCase(
             SqlAlchemyAnalysisRepository(session_factory), sector_resolver=resolver
         )
@@ -457,7 +641,9 @@ async def _run_doctor(tickers: tuple[str, ...]) -> int:
         # from them are.
         drift = await AccountDriftUseCase(
             MongoFundamentalsReader(
-                mongo[settings.mongo_db]["raw_ingestions"], sector_resolver=resolver
+                mongo[settings.mongo_db]["raw_ingestions"],
+                sector_resolver=resolver,
+                registrant_resolver=_registrant_resolver(identities),
             )
         ).execute(tickers)
     finally:
@@ -467,6 +653,40 @@ async def _run_doctor(tickers: tuple[str, ...]) -> int:
     print(format_doctor(report))
     print(format_drift(drift))
     return 0
+
+
+@app.command()
+def relink() -> None:
+    """Name the registrant on CVM documents mirrored before the key moved (ADR 0030).
+
+    The readers filter the mirror by ``CD_CVM`` so a company's share classes read
+    one filing instead of a copy each. Documents collected before that carry only
+    the ticker they were requested under; this stamps the company onto them, which
+    is a relabelling — no download, no payload touched. Idempotent, and a
+    deliberate maintenance action like ``prune``.
+    """
+    exit_code = _guarded(_run_relink())
+    raise typer.Exit(code=exit_code)
+
+
+async def _run_relink() -> int:
+    settings = get_settings()
+    client = await init_database(settings)
+    repository = BeanieRawIngestionRepository()
+    try:
+        pending = await repository.unlinked_tickers()
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            identities = await _registry_identities(settings, http, pending)
+        report = await RelinkMirrorUseCase(
+            repository, registrant_resolver=_registrant_resolver(identities)
+        ).execute()
+    finally:
+        await client.close()
+
+    print(format_relink(report))
+    # An unresolved ticker is a gap, not a crash: its documents stay readable
+    # under the old key, and the non-zero exit says the mirror is not fully keyed.
+    return 1 if report.unresolved else 0
 
 
 @app.command()
@@ -497,6 +717,58 @@ async def _run_prune() -> int:
         f"kept {result.kept} latest-per-cell row(s)."
     )
     return 0
+
+
+def format_batch_log(passes: list[YearPass]) -> str:
+    """Per-year tally, with a line for every call that actually failed.
+
+    A whole-exchange run makes ~3,300 calls a year, so the per-call log stops
+    being a log and becomes a wall. What a summary must never do is hide a
+    failure behind a number: a skip is counted (a company that did not file that
+    year is the normal case), an error or an abort is named.
+    """
+    lines: list[str] = ["", "=== Collection log ==="]
+    for pass_ in passes:
+        counts: dict[OutcomeStatus, int] = {}
+        for outcome in pass_.outcomes:
+            counts[outcome.status] = counts.get(outcome.status, 0) + 1
+        tally = ", ".join(f"{s.value}={n}" for s, n in sorted(counts.items()))
+        resumed = (
+            f", {pass_.already_mirrored} already mirrored"
+            if pass_.already_mirrored
+            else ""
+        )
+        lines.append(
+            f"  {pass_.year}  {pass_.companies:>4} collected{resumed} "
+            f"| {tally or 'nothing collected'}"
+        )
+        for outcome in pass_.outcomes:
+            if outcome.status in _FAILED_STATUSES:
+                lines.append(
+                    f"    !! {outcome.ticker:<8} {outcome.module:<14} "
+                    f"{outcome.status.value:<8} {outcome.detail}"
+                )
+    calls = sum(len(p.outcomes) for p in passes)
+    failed = sum(1 for p in passes for o in p.outcomes if o.status in _FAILED_STATUSES)
+    lines.append(f"--- {len(passes)} year(s), {calls} calls, {failed} failed")
+    return "\n".join(lines)
+
+
+def format_relink(report: RelinkReport) -> str:
+    """Render what the relink stamped, and what it could not name."""
+    lines: list[str] = ["", "=== smaug relink — mirror keyed on the registrant ==="]
+    for ticker, count in sorted(report.linked.items()):
+        lines.append(f"  {ticker:<8} {count:>6} document(s)")
+    if not report.linked:
+        lines.append("  (every CVM document already names its registrant)")
+    lines.append(
+        f"--- {report.documents} document(s) linked "
+        f"across {len(report.linked)} ticker(s)"
+    )
+    if report.unresolved:
+        who = ", ".join(report.unresolved)
+        lines.append(f"    !! no registrant resolves: {who} — left on the ticker key")
+    return "\n".join(lines)
 
 
 def _format_collection_log(outcomes: list[FetchOutcome]) -> str:
