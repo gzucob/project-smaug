@@ -46,14 +46,14 @@ export default function HomePage() {
             <Link
               key={p.ticker}
               href={`/ticker/${p.ticker}`}
-              className="nums rounded-lg border border-gold-500/15 px-2.5 py-1 text-xs font-semibold tracking-wide text-ink-300 transition-colors hover:border-gold-400/50 hover:text-gold-300"
+              className="pressable nums rounded-lg border border-gold-500/15 px-2.5 py-1 text-xs font-semibold tracking-wide text-ink-300 hover:border-gold-400/50 hover:text-gold-300"
             >
               {p.ticker}
             </Link>
           ))}
           <Link
             href="/portfolio"
-            className="rounded-lg px-2.5 py-1 text-xs font-semibold text-gold-400 transition-colors hover:text-gold-300"
+            className="pressable rounded-lg px-2.5 py-1 text-xs font-semibold text-gold-400 hover:text-gold-300"
           >
             ver carteira →
           </Link>

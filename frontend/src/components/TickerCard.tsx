@@ -23,7 +23,7 @@ export function TickerCard({ ticker, sector, analysis }: { ticker: string; secto
   return (
     <Link
       href={`/ticker/${ticker}`}
-      className="panel panel-hover group relative flex flex-col gap-4 overflow-hidden p-5"
+      className="panel panel-hover pressable group relative flex flex-col gap-4 overflow-hidden p-5"
     >
       <span
         aria-hidden

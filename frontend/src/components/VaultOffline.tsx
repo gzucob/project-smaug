@@ -30,7 +30,7 @@ export function VaultOffline({
       {showBackHome && (
         <Link
           href="/"
-          className="rounded-xl border border-gold-500/30 px-5 py-2.5 text-sm font-semibold text-gold-300 transition-colors hover:bg-gold-500/10"
+          className="pressable rounded-xl border border-gold-500/30 px-5 py-2.5 text-sm font-semibold text-gold-300 hover:bg-gold-500/10"
         >
           Voltar ao início
         </Link>

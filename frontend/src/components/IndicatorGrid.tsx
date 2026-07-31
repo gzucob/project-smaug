@@ -226,7 +226,7 @@ function CellButton({
       type="button"
       aria-label={label}
       onClick={onClick}
-      className="rounded-md p-1 text-ink-600 transition-colors hover:bg-vault-800 hover:text-gold-300 focus-visible:outline-1 focus-visible:outline-gold-500"
+      className="pressable rounded-md p-1 text-ink-600 hover:bg-vault-800 hover:text-gold-300 focus-visible:outline-1 focus-visible:outline-gold-500"
     >
       {children}
     </button>

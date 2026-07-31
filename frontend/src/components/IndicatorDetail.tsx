@@ -156,7 +156,7 @@ export function IndicatorDetail({
           type="button"
           onClick={onClose}
           aria-label="Fechar"
-          className="absolute right-5 top-5 z-10 rounded-lg border border-gold-500/10 bg-vault-900 p-2 text-ink-500 transition-colors hover:border-gold-500/30 hover:text-ink-200 sm:right-6 sm:top-6"
+          className="pressable absolute right-5 top-5 z-10 rounded-lg border border-gold-500/10 bg-vault-900 p-2 text-ink-500 hover:border-gold-500/30 hover:text-ink-200 sm:right-6 sm:top-6"
         >
           <FiX size={16} />
         </button>
