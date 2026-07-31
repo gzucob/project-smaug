@@ -715,8 +715,12 @@ async def _run_doctor(
         await mongo.close()
         await engine.dispose()
 
-    print(format_doctor(report) if verbose else format_doctor_summary(report))
-    print(format_drift(drift))
+    if verbose:
+        print(format_doctor(report))
+        print(format_drift(drift))
+    else:
+        print(format_doctor_summary(report))
+        print(format_drift_summary(drift))
     return 0
 
 
@@ -1059,6 +1063,51 @@ def format_doctor_summary(report: DoctorReport) -> str:
         lines.append(f"    !! {unclassified} unclassified nulls across: {who}")
     else:
         lines.append("    every null carries a named cause.")
+    return "\n".join(lines)
+
+
+def format_drift_summary(report: DriftReport) -> str:
+    """Drift rolled up per account rather than per ticker.
+
+    One company's account drifting is a fact about that filer. The same account
+    drifting across two hundred of them is one bug in our mapping, and the
+    per-ticker listing — 630 lines over the exchange — is the shape that hides
+    exactly that. So the roll-up counts tickers per account, ordered by the side
+    that is missing: ``newer`` first, because a needle that has stopped working
+    on what we ingest today outranks one that never reached the old chart.
+    """
+    per_account: dict[str, dict[str, int]] = {}
+    for ticker_drift in report.tickers:
+        for drift in ticker_drift.accounts:
+            sides = per_account.setdefault(
+                drift.account, {"newer": 0, "older": 0, "mixed": 0}
+            )
+            sides[drift.missing_side] += 1
+
+    lines: list[str] = ["", "=== smaug doctor — chart-of-accounts drift ==="]
+    if not per_account:
+        lines.append("  (no account changed status across any ticker's closed years)")
+        return "\n".join(lines)
+
+    order = {"newer": 0, "mixed": 1, "older": 2}
+
+    def rank(item: tuple[str, dict[str, int]]) -> tuple[int, int, str]:
+        account, sides = item
+        worst = min(order[s] for s, n in sides.items() if n)
+        return worst, -sum(sides.values()), account
+
+    lines.append(f"  {'account':<24} {'tickers':>7}  newer  mixed  older")
+    for account, sides in sorted(per_account.items(), key=rank):
+        total = sum(sides.values())
+        lines.append(
+            f"  {account:<24} {total:>7}  {sides['newer']:>5}  "
+            f"{sides['mixed']:>5}  {sides['older']:>5}"
+        )
+    lines.append(
+        f"--- {report.drifting} account/ticker pairs changed status across "
+        f"{len(per_account)} account(s). An account missing from every year is "
+        "not drift and is not listed."
+    )
     return "\n".join(lines)
 
 

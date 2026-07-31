@@ -14,6 +14,7 @@ from smaug.analysis.application.doctor import (
     IndicatorCoverage,
     TickerCoverage,
 )
+from smaug.analysis.application.drift import AccountDrift, DriftReport, TickerDrift
 from smaug.analysis.domain.entities import VIEW_CLOSED_YEAR, TickerAnalysis
 from smaug.analysis.domain.indicators import Indicators, NullReason
 from smaug.entrypoints.cli import (
@@ -22,6 +23,7 @@ from smaug.entrypoints.cli import (
     format_analysis_run,
     format_doctor,
     format_doctor_summary,
+    format_drift_summary,
     format_report,
 )
 from smaug.ingestion.application.ingest import FetchOutcome, OutcomeStatus
@@ -209,3 +211,38 @@ def test_analysis_run_summary_names_a_failure_and_counts_the_rest() -> None:
     assert "skipped (nothing mirrored): BBBB3" in out
     assert "3 ticker(s), 1 view(s) stored" in out
     assert "analyzed=1" in out
+
+
+def _drift(ticker: str, account: str, read: tuple[int, ...], missing: tuple[int, ...]):
+    return TickerDrift(
+        ticker=ticker,
+        years=tuple(sorted(read + missing)),
+        accounts=(
+            AccountDrift(account=account, read=read, missing=missing, boundaries=1),
+        ),
+    )
+
+
+def test_drift_summary_rolls_up_per_account_with_the_urgent_side_first() -> None:
+    # One filer's account drifting is a fact about that filer; the same account
+    # drifting across many of them is one bug in our mapping.
+    report = DriftReport(
+        tickers=(
+            _drift("AAAA3", "capex", read=(2021, 2022), missing=(2019, 2020)),
+            _drift("BBBB3", "capex", read=(2021, 2022), missing=(2019, 2020)),
+            _drift("CCCC3", "ebitda", read=(2019, 2020), missing=(2021, 2022)),
+        )
+    )
+
+    out = format_drift_summary(report)
+
+    # ebitda stopped mapping in the filings we read today, so it outranks capex,
+    # which merely never reached the old chart.
+    assert out.index("ebitda") < out.index("capex")
+    assert "3 account/ticker pairs changed status across 2 account(s)" in out
+
+
+def test_drift_summary_says_so_when_nothing_drifted() -> None:
+    out = format_drift_summary(DriftReport(tickers=()))
+
+    assert "no account changed status" in out
