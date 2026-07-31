@@ -66,6 +66,10 @@ from smaug.ingestion.infrastructure.cvm_capital import (
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, CvmDocument
 from smaug.ingestion.infrastructure.repositories import BeanieRawIngestionRepository
 from smaug.ingestion.infrastructure.routed_source import RoutedDataSource
+from smaug.portfolio.application.refresh_taxonomy import (
+    RefreshTaxonomyUseCase,
+    TaxonomyDrift,
+)
 from smaug.portfolio.domain.company import CompanyIdentity
 from smaug.portfolio.domain.cvm_codes import TICKER_TO_CNPJ, TICKER_TO_CVM_CODE
 from smaug.portfolio.domain.listings import listed_since
@@ -76,8 +80,13 @@ from smaug.portfolio.domain.sectors import (
     sector_from_cvm,
 )
 from smaug.portfolio.domain.share_classes import ShareClass, listed_classes
-from smaug.portfolio.domain.taxonomy import Classification, classify
+from smaug.portfolio.domain.taxonomy import (
+    TAXONOMY_SNAPSHOT,
+    Classification,
+    classify,
+)
 from smaug.portfolio.domain.universe import ListedCompany
+from smaug.portfolio.infrastructure.b3_taxonomy import B3TaxonomySource
 from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
@@ -725,6 +734,44 @@ async def _run_doctor(
 
 
 @app.command()
+def taxonomy(
+    write: bool = typer.Option(
+        False, "--write", help="Rewrite the committed snapshot with what B3 says now."
+    ),
+) -> None:
+    """Report how the committed B3 taxonomy has drifted, or regenerate it (#112).
+
+    B3 republishes the *Classificação Setorial* weekly, so the snapshot is stale
+    by construction and the useful question is what moved. By default this only
+    reports, exiting non-zero when anything did; ``--write`` records it — a
+    deliberate act, because every stored analysis carries the classification it
+    was computed under.
+    """
+    exit_code = _guarded(_run_taxonomy(write=write))
+    raise typer.Exit(code=exit_code)
+
+
+async def _run_taxonomy(*, write: bool) -> int:
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        companies = await _universe(settings, http)
+        fetched = await B3TaxonomySource(http).fetch(companies)
+
+    use_case = RefreshTaxonomyUseCase(TAXONOMY_SNAPSHOT)
+    drift = use_case.drift(
+        fetched.classifications,
+        unclassified=fetched.unclassified,
+        unknown_labels=fetched.unknown_labels,
+    )
+    print(format_taxonomy_drift(drift, companies=len(companies)))
+    if write:
+        count = use_case.write(fetched.classifications)
+        print(f"\nWrote {count} ticker(s) to {TAXONOMY_SNAPSHOT.name}.")
+        return 0
+    return 1 if drift.moved else 0
+
+
+@app.command()
 def relink() -> None:
     """Name the registrant on CVM documents mirrored before the key moved (ADR 0030).
 
@@ -846,6 +893,50 @@ def format_batch_log(passes: list[YearPass]) -> str:
     calls = sum(len(p.outcomes) for p in passes)
     failed = sum(1 for p in passes for o in p.outcomes if o.status in _FAILED_STATUSES)
     lines.append(f"--- {len(passes)} year(s), {calls} calls, {failed} failed")
+    return "\n".join(lines)
+
+
+def format_taxonomy_drift(drift: TaxonomyDrift, *, companies: int) -> str:
+    """What moved in B3's classification since the snapshot was written.
+
+    A changed sector leads, because it is the only one of the three that
+    silently restates history: every stored analysis carries the classification
+    it was computed under, so a company moving sector makes the persisted rows
+    disagree with the snapshot until they are recomputed.
+    """
+    lines: list[str] = ["", "=== smaug taxonomy — B3 classification drift ==="]
+    for ticker, before, after in drift.changed:
+        lines.append(f"  ~~ {ticker:<8} {before.setor} → {after.setor}")
+        lines.append(f"     {before.subsetor} / {before.segmento}")
+        lines.append(f"     {after.subsetor} / {after.segmento}")
+    if drift.gained:
+        lines.append(
+            f"  ++ newly classified ({len(drift.gained)}): "
+            f"{', '.join(drift.gained[:15])}"
+            f"{' …' if len(drift.gained) > 15 else ''}"
+        )
+    if drift.lost:
+        lines.append(
+            f"  -- no longer classified ({len(drift.lost)}): "
+            f"{', '.join(drift.lost[:15])}"
+            f"{' …' if len(drift.lost) > 15 else ''}"
+        )
+    lines.append(
+        f"--- {companies} companies asked | {drift.unchanged} unchanged, "
+        f"{len(drift.gained)} gained, {len(drift.lost)} lost, "
+        f"{len(drift.changed)} changed"
+    )
+    if drift.unclassified:
+        lines.append(
+            f"    {len(drift.unclassified)} company(ies) B3 does not classify "
+            "(judicial recovery, liquidation) — they keep the CVM fallback"
+        )
+    if drift.unknown_labels:
+        lines.append("    !! labels no correction covers — verify before trusting:")
+        for label in drift.unknown_labels:
+            lines.append(f"       {label!r}")
+    elif not drift.moved:
+        lines.append("    the snapshot matches what B3 publishes today.")
     return "\n".join(lines)
 
 
