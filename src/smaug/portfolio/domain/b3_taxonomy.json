@@ -4,8 +4,8 @@
   "tickers": {
     "AALR3": [
       "Saúde",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos"
+      "Serv.Méd.Hospit.,Análises e Diagnósticos",
+      "Serv.Méd.Hospit.,Análises e Diagnósticos"
     ],
     "ABCB4": [
       "Financeiro",
@@ -20,7 +20,7 @@
     "AERI3": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Máquinas e Equipamentos Industriais"
+      "Máq. e Equip. Industriais"
     ],
     "AESO3": [
       "Utilidade Pública",
@@ -59,7 +59,7 @@
     ],
     "ALLD3": [
       "Consumo Cíclico",
-      "Comércio",
+      "Comércio Varejista",
       "Eletrodomésticos"
     ],
     "ALOS3": [
@@ -94,7 +94,7 @@
     ],
     "AMER3": [
       "Consumo Cíclico",
-      "Comércio",
+      "Comércio Varejista",
       "Produtos Diversos"
     ],
     "ANIM3": [
@@ -160,11 +160,11 @@
     "AZUL4": [
       "Bens Industriais",
       "Transporte",
-      "Transporte Aéreo"
+      "Linhas Aéreas de Passageiros"
     ],
     "AZZA3": [
       "Consumo Cíclico",
-      "Comércio",
+      "Comércio Varejista",
       "Tecidos, Vestuário e Calçados"
     ],
     "B3SA3": [
@@ -230,12 +230,12 @@
     "BDLL3": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Máquinas e Equipamentos Industriais"
+      "Máq. e Equip. Industriais"
     ],
     "BDLL4": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Máquinas e Equipamentos Industriais"
+      "Máq. e Equip. Industriais"
     ],
     "BEEF3": [
       "Consumo não Cíclico",
@@ -269,12 +269,12 @@
     ],
     "BHIA12": [
       "Consumo Cíclico",
-      "Comércio",
+      "Comércio Varejista",
       "Eletrodomésticos"
     ],
     "BHIA3": [
       "Consumo Cíclico",
-      "Comércio",
+      "Comércio Varejista",
       "Eletrodomésticos"
     ],
     "BIOM3": [
@@ -317,6 +317,11 @@
       "Intermediários Financeiros",
       "Bancos"
     ],
+    "BMKS3": [
+      "Consumo Cíclico",
+      "Viagens e Lazer",
+      "Bicicletas"
+    ],
     "BMOB3": [
       "Tecnologia da Informação",
       "Programas e Serviços",
@@ -329,12 +334,12 @@
     ],
     "BOBR3": [
       "Consumo não Cíclico",
-      "Produtos de Uso Pessoal e de Limpeza",
+      "Produtos de Cuidado Pessoal e de Limpeza",
       "Produtos de Limpeza"
     ],
     "BOBR4": [
       "Consumo não Cíclico",
-      "Produtos de Uso Pessoal e de Limpeza",
+      "Produtos de Cuidado Pessoal e de Limpeza",
       "Produtos de Limpeza"
     ],
     "BPAR3": [
@@ -469,7 +474,7 @@
     ],
     "CEAB3": [
       "Consumo Cíclico",
-      "Comércio",
+      "Comércio Varejista",
       "Tecidos, Vestuário e Calçados"
     ],
     "CEBR3": [
@@ -559,12 +564,12 @@
     ],
     "CGRA3": [
       "Consumo Cíclico",
-      "Comércio",
+      "Comércio Varejista",
       "Tecidos, Vestuário e Calçados"
     ],
     "CGRA4": [
       "Consumo Cíclico",
-      "Comércio",
+      "Comércio Varejista",
       "Tecidos, Vestuário e Calçados"
     ],
     "CLSC3": [
@@ -714,8 +719,8 @@
     ],
     "DASA3": [
       "Saúde",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos"
+      "Serv.Méd.Hospit.,Análises e Diagnósticos",
+      "Serv.Méd.Hospit.,Análises e Diagnósticos"
     ],
     "DESK3": [
       "Comunicações",
@@ -770,12 +775,12 @@
     "EALT3": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Máquinas e Equipamentos Industriais"
+      "Máq. e Equip. Industriais"
     ],
     "EALT4": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Máquinas e Equipamentos Industriais"
+      "Máq. e Equip. Industriais"
     ],
     "ECOR3": [
       "Bens Industriais",
@@ -869,8 +874,8 @@
     ],
     "ESPA3": [
       "Consumo não Cíclico",
-      "Produtos de Uso Pessoal e de Limpeza",
-      "Produtos de Uso Pessoal"
+      "Produtos de Cuidado Pessoal e de Limpeza",
+      "Produtos de Cuidado Pessoal"
     ],
     "ESTR4": [
       "Consumo Cíclico",
@@ -939,8 +944,8 @@
     ],
     "FLRY3": [
       "Saúde",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos"
+      "Serv.Méd.Hospit.,Análises e Diagnósticos",
+      "Serv.Méd.Hospit.,Análises e Diagnósticos"
     ],
     "FRAS3": [
       "Bens Industriais",
@@ -950,7 +955,7 @@
     "FRIO3": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Máquinas e Equipamentos Industriais"
+      "Máq. e Equip. Industriais"
     ],
     "GEPA3": [
       "Utilidade Pública",
@@ -1014,13 +1019,13 @@
     ],
     "GUAR3": [
       "Consumo Cíclico",
-      "Comércio",
+      "Comércio Varejista",
       "Tecidos, Vestuário e Calçados"
     ],
     "HAPV3": [
       "Saúde",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos"
+      "Serv.Méd.Hospit.,Análises e Diagnósticos",
+      "Serv.Méd.Hospit.,Análises e Diagnósticos"
     ],
     "HBOR3": [
       "Consumo Cíclico",
@@ -1105,7 +1110,7 @@
     "INEP3": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Máquinas e Equipamentos Industriais"
+      "Máq. e Equip. Industriais"
     ],
     "INNC3": [
       "Consumo Cíclico",
@@ -1167,6 +1172,11 @@
       "Alimentos Processados",
       "Açucar e Alcool"
     ],
+    "JBSS3": [
+      "Consumo não Cíclico",
+      "Alimentos Processados",
+      "Carnes e Derivados"
+    ],
     "JFEN3": [
       "Consumo Cíclico",
       "Construção Civil",
@@ -1195,12 +1205,12 @@
     "KEPL11": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Máquinas e Equipamentos Industriais"
+      "Máq. e Equip. Industriais"
     ],
     "KEPL3": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Máquinas e Equipamentos Industriais"
+      "Máq. e Equip. Industriais"
     ],
     "KLAS3": [
       "Consumo Cíclico",
@@ -1214,8 +1224,8 @@
     ],
     "KRSA3": [
       "Saúde",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos"
+      "Serv.Méd.Hospit.,Análises e Diagnósticos",
+      "Serv.Méd.Hospit.,Análises e Diagnósticos"
     ],
     "LAND3": [
       "Consumo não Cíclico",
@@ -1239,7 +1249,7 @@
     ],
     "LJQQ3": [
       "Consumo Cíclico",
-      "Comércio",
+      "Comércio Varejista",
       "Produtos Diversos"
     ],
     "LOGG3": [
@@ -1259,7 +1269,7 @@
     ],
     "LREN3": [
       "Consumo Cíclico",
-      "Comércio",
+      "Comércio Varejista",
       "Tecidos, Vestuário e Calçados"
     ],
     "LUPA3": [
@@ -1274,8 +1284,8 @@
     ],
     "MATD3": [
       "Saúde",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos"
+      "Serv.Méd.Hospit.,Análises e Diagnósticos",
+      "Serv.Méd.Hospit.,Análises e Diagnósticos"
     ],
     "MBLY12": [
       "Consumo Cíclico",
@@ -1319,7 +1329,7 @@
     ],
     "MGLU3": [
       "Consumo Cíclico",
-      "Comércio",
+      "Comércio Varejista",
       "Eletrodomésticos"
     ],
     "MILS3": [
@@ -1334,12 +1344,12 @@
     ],
     "MMAQ3": [
       "Bens Industriais",
-      "Comércio",
+      "Comércio Varejista",
       "Material de Transporte"
     ],
     "MMAQ4": [
       "Bens Industriais",
-      "Comércio",
+      "Comércio Varejista",
       "Material de Transporte"
     ],
     "MNDL3": [
@@ -1405,12 +1415,12 @@
     "MTSA3": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Máquinas e Equipamentos de Construção e Agrícolas"
+      "Máq. e Equip. Construção e Agrícolas"
     ],
     "MTSA4": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Máquinas e Equipamentos de Construção e Agrícolas"
+      "Máq. e Equip. Construção e Agrícolas"
     ],
     "MULT3": [
       "Financeiro",
@@ -1479,8 +1489,8 @@
     ],
     "ODPV3": [
       "Saúde",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos"
+      "Serv.Méd.Hospit.,Análises e Diagnósticos",
+      "Serv.Méd.Hospit.,Análises e Diagnósticos"
     ],
     "OFSA3": [
       "Saúde",
@@ -1499,8 +1509,8 @@
     ],
     "ONCO3": [
       "Saúde",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos"
+      "Serv.Méd.Hospit.,Análises e Diagnósticos",
+      "Serv.Méd.Hospit.,Análises e Diagnósticos"
     ],
     "OPCT3": [
       "Petróleo, Gás e Biocombustíveis",
@@ -1675,7 +1685,7 @@
     "PTCA3": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Máquinas e Equipamentos Industriais"
+      "Máq. e Equip. Industriais"
     ],
     "PTNT3": [
       "Consumo Cíclico",
@@ -1689,8 +1699,8 @@
     ],
     "QUAL3": [
       "Saúde",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos"
+      "Serv.Méd.Hospit.,Análises e Diagnósticos",
+      "Serv.Méd.Hospit.,Análises e Diagnósticos"
     ],
     "QUSW3": [
       "Tecnologia da Informação",
@@ -1749,8 +1759,8 @@
     ],
     "RDOR3": [
       "Saúde",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos",
-      "Serviços Médico-Hospitalares, Análises e Diagnósticos"
+      "Serv.Méd.Hospit.,Análises e Diagnósticos",
+      "Serv.Méd.Hospit.,Análises e Diagnósticos"
     ],
     "RECV3": [
       "Petróleo, Gás e Biocombustíveis",
@@ -1785,7 +1795,7 @@
     "ROMI3": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Máquinas e Equipamentos Industriais"
+      "Máq. e Equip. Industriais"
     ],
     "RPAD3": [
       "Financeiro",
@@ -1844,7 +1854,7 @@
     ],
     "SBFG3": [
       "Consumo Cíclico",
-      "Comércio",
+      "Comércio Varejista",
       "Produtos Diversos"
     ],
     "SBSP3": [
@@ -1875,12 +1885,12 @@
     "SHUL3": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Motores, Compressores e Outros"
+      "Motores , Compressores e Outros"
     ],
     "SHUL4": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Motores, Compressores e Outros"
+      "Motores , Compressores e Outros"
     ],
     "SIMH3": [
       "Financeiro",
@@ -2159,7 +2169,7 @@
     ],
     "VSTE3": [
       "Consumo Cíclico",
-      "Comércio",
+      "Comércio Varejista",
       "Tecidos, Vestuário e Calçados"
     ],
     "VTRU3": [
@@ -2180,7 +2190,7 @@
     "WEGE3": [
       "Bens Industriais",
       "Máquinas e Equipamentos",
-      "Motores, Compressores e Outros"
+      "Motores , Compressores e Outros"
     ],
     "WEST3": [
       "Consumo Cíclico",
@@ -2204,12 +2214,12 @@
     ],
     "WLMM3": [
       "Bens Industriais",
-      "Comércio",
+      "Comércio Varejista",
       "Material de Transporte"
     ],
     "WLMM4": [
       "Bens Industriais",
-      "Comércio",
+      "Comércio Varejista",
       "Material de Transporte"
     ],
     "YDUQ3": [

@@ -34,7 +34,9 @@ class TaxonomyDrift:
     changed: tuple[tuple[str, Classification, Classification], ...]
     unchanged: int
     unclassified: tuple[str, ...]  # companies B3 answered nothing for
-    unknown_labels: tuple[str, ...]  # a mangling no correction covers
+    unknown_labels: tuple[str, ...]  # a label outside B3's own vocabulary
+    from_sheet: int = 0  # tickers named by the spreadsheet
+    from_detail: int = 0  # tickers only the per-company fallback could reach
 
     @property
     def moved(self) -> bool:
@@ -95,6 +97,8 @@ class RefreshTaxonomyUseCase:
         *,
         unclassified: Iterable[str] = (),
         unknown_labels: Iterable[str] = (),
+        from_sheet: int = 0,
+        from_detail: int = 0,
     ) -> TaxonomyDrift:
         gained, _, changed, unchanged = compare(fetched)
         lost = tuple(
@@ -107,6 +111,8 @@ class RefreshTaxonomyUseCase:
             unchanged=unchanged,
             unclassified=tuple(unclassified),
             unknown_labels=tuple(unknown_labels),
+            from_sheet=from_sheet,
+            from_detail=from_detail,
         )
 
     def write(self, fetched: dict[str, Classification]) -> int:

@@ -755,13 +755,17 @@ async def _run_taxonomy(*, write: bool) -> int:
     settings = get_settings()
     async with httpx.AsyncClient(timeout=30.0) as http:
         companies = await _universe(settings, http)
-        fetched = await B3TaxonomySource(http).fetch(companies)
+        fetched = await B3TaxonomySource(http, cache_dir=settings.cvm_cache_dir).fetch(
+            companies
+        )
 
     use_case = RefreshTaxonomyUseCase(TAXONOMY_SNAPSHOT)
     drift = use_case.drift(
         fetched.classifications,
         unclassified=fetched.unclassified,
         unknown_labels=fetched.unknown_labels,
+        from_sheet=fetched.from_sheet,
+        from_detail=fetched.from_detail,
     )
     print(format_taxonomy_drift(drift, companies=len(companies)))
     if write:
@@ -906,7 +910,7 @@ def format_taxonomy_drift(drift: TaxonomyDrift, *, companies: int) -> str:
     """
     lines: list[str] = ["", "=== smaug taxonomy — B3 classification drift ==="]
     for ticker, before, after in drift.changed:
-        lines.append(f"  ~~ {ticker:<8} {before.setor} → {after.setor}")
+        lines.append(f"  ~~ {ticker:<8} {before.setor} -> {after.setor}")
         lines.append(f"     {before.subsetor} / {before.segmento}")
         lines.append(f"     {after.subsetor} / {after.segmento}")
     if drift.gained:
@@ -925,6 +929,11 @@ def format_taxonomy_drift(drift: TaxonomyDrift, *, companies: int) -> str:
         f"--- {companies} companies asked | {drift.unchanged} unchanged, "
         f"{len(drift.gained)} gained, {len(drift.lost)} lost, "
         f"{len(drift.changed)} changed"
+    )
+    lines.append(
+        f"    {drift.from_sheet} ticker(s) from B3's spreadsheet, "
+        f"{drift.from_detail} from the per-company fallback (renamed since our "
+        "FCA archive)"
     )
     if drift.unclassified:
         lines.append(
