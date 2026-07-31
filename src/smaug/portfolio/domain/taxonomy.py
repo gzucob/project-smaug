@@ -4,19 +4,32 @@ The B3 groups every listed company in a three-level economic taxonomy. That
 taxonomy is a **B3 artifact**, published by the exchange and refreshed weekly —
 it is *not* in CVM open data, whose registry carries only a single
 ``Setor_Atividade`` label (the FCA/cad, see ADR 0023). So the three levels come
-from a **committed snapshot** here (reference data, like ``cvm_codes.py``), and a
-ticker outside the snapshot degrades gracefully to the CVM single level
-(``subsetor``/``segmento`` unknown) — never an error, never a blank screen.
+from a **committed snapshot**, and a ticker outside it degrades gracefully to the
+CVM single level (``subsetor``/``segmento`` unknown) — never an error, never a
+blank screen.
 
-The snapshot is hand-verified against B3's *Classificação Setorial*. Keeping it
-current for the whole exchange (and regenerating it from B3's file) is a
-follow-up; today it covers the analysed set, and the CVM fallback covers the
-rest.
+The snapshot lives in ``b3_taxonomy.json`` beside this module and is
+**generated**, not written: ``smaug taxonomy --check`` reports how it has drifted
+from B3, ``--write`` regenerates it. It used to be a dict of fifteen entries
+typed in by hand, which was honest while fifteen tickers were analysed and
+became a fiction the moment the whole exchange was: 491 of 506 tickers were
+falling back to the CVM label, and that fallback answers with 56 cadastral
+activity strings ("Emp. Adm. Part. - Sem Setor Principal") where B3 has eleven
+economic sectors.
+
+The fallback stays for what B3 does not classify — companies in judicial
+recovery, liquidation or bankruptcy, which it drops from the taxonomy while CVM
+still registers them.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from functools import cache
+from pathlib import Path
+
+TAXONOMY_SNAPSHOT = Path(__file__).with_name("b3_taxonomy.json")
 
 
 @dataclass(frozen=True)
@@ -39,55 +52,29 @@ class Classification:
         return "b3" if self.subsetor is not None else "cvm"
 
 
-# Committed snapshot of B3's Classificação Setorial (setor, subsetor, segmento),
-# keyed by trading ticker. Covers the nine portfolio tickers plus the tickers
-# analysed on demand so far. Verified against B3's public tool.
-B3_TAXONOMY: dict[str, Classification] = {
-    "PETR4": Classification(
-        "Petróleo, Gás e Biocombustíveis",
-        "Petróleo, Gás e Biocombustíveis",
-        "Exploração, Refino e Distribuição",
-    ),
-    "VALE3": Classification("Materiais Básicos", "Mineração", "Minerais Metálicos"),
-    "SAPR11": Classification(
-        "Utilidade Pública", "Água e Saneamento", "Água e Saneamento"
-    ),
-    "TAEE11": Classification(
-        "Utilidade Pública", "Energia Elétrica", "Energia Elétrica"
-    ),
-    "WEGE3": Classification(
-        "Bens Industriais", "Máquinas e Equipamentos", "Motores, Compressores e Outros"
-    ),
-    "BBAS3": Classification("Financeiro", "Intermediários Financeiros", "Bancos"),
-    "BBDC4": Classification("Financeiro", "Intermediários Financeiros", "Bancos"),
-    "BBSE3": Classification("Financeiro", "Previdência e Seguros", "Seguradoras"),
-    "CXSE3": Classification("Financeiro", "Previdência e Seguros", "Seguradoras"),
-    "KLBN11": Classification(
-        "Materiais Básicos", "Madeira e Papel", "Papel e Celulose"
-    ),
-    # Sector representatives — one liquid name per B3 setor econômico not covered
-    # by the nine, ingested to broaden the fidelity comparison across sectors.
-    "ABEV3": Classification(
-        "Consumo não Cíclico", "Bebidas", "Cervejas e Refrigerantes"
-    ),
-    "LREN3": Classification(
-        "Consumo Cíclico", "Comércio", "Tecidos, Vestuário e Calçados"
-    ),
-    "HAPV3": Classification(
-        "Saúde",
-        "Serviços Médico-Hospitalares, Análises e Diagnósticos",
-        "Serviços Médico-Hospitalares, Análises e Diagnósticos",
-    ),
-    "TOTS3": Classification(
-        "Tecnologia da Informação", "Programas e Serviços", "Programas e Serviços"
-    ),
-    "VIVT3": Classification("Comunicações", "Telecomunicações", "Telecomunicações"),
-}
+@cache
+def _snapshot() -> dict[str, Classification]:
+    """The committed B3 snapshot, read once.
+
+    Cached because ``classify`` is called per ticker per exercise — 316k times
+    over a whole-exchange doctor run — and the file is small enough that reading
+    it once at first use beats any laziness scheme.
+    """
+    raw = json.loads(TAXONOMY_SNAPSHOT.read_text(encoding="utf-8"))
+    return {
+        ticker: Classification(levels[0], levels[1], levels[2])
+        for ticker, levels in raw["tickers"].items()
+    }
+
+
+def snapshot_tickers() -> frozenset[str]:
+    """Which tickers the committed snapshot covers."""
+    return frozenset(_snapshot())
 
 
 def b3_classification(ticker: str) -> Classification | None:
     """The full B3 three-level classification for ``ticker``, if in the snapshot."""
-    return B3_TAXONOMY.get(ticker.upper().strip())
+    return _snapshot().get(ticker.upper().strip())
 
 
 def classify(ticker: str, cvm_sector: str | None) -> Classification | None:
