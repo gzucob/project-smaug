@@ -15,6 +15,14 @@ def test_active_modules_follows_selected_source() -> None:
     assert Settings(ingestion_source="brapi").active_modules == DEFAULT_BRAPI_MODULES
 
 
+def test_only_the_source_that_makes_a_request_per_call_is_paced() -> None:
+    # CVM serves every call from one downloaded archive, so pacing them buys
+    # nothing and costs a whole-exchange run two hundred hours.
+    paced = Settings(ingestion_source="brapi", request_delay_seconds=2.0)
+    assert paced.active_delay_seconds == 2.0
+    assert Settings(ingestion_source="cvm").active_delay_seconds == 0.0
+
+
 async def test_build_data_source_selects_implementation_by_config() -> None:
     # The CVM key maps are resolved upstream (curated nine + FCA registry) and
     # passed in; brapi ignores them (it keys off the ticker directly).

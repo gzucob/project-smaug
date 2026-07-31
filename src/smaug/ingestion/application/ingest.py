@@ -142,6 +142,7 @@ class IngestPortfolioUseCase:
                 request=response.request,
                 http_status=response.http_status,
                 payload=response.payload,
+                cvm_code=response.cvm_code,
             )
             stored = await self._repository.add(ingestion)
             self._event_bus.publish(

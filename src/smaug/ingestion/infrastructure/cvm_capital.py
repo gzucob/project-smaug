@@ -76,11 +76,16 @@ class CvmCapitalSource:
         *,
         year: int,
         cache_dir: str,
+        ticker_to_code: Mapping[str, str] | None = None,
         base_url: str | None = None,
         sleep: Sleeper = asyncio.sleep,
     ) -> None:
         self._http = http_client
         self._ticker_to_cnpj = dict(ticker_to_cnpj)
+        # The FRE is keyed by CNPJ, but the mirror is read by ``CD_CVM`` (ADR 0030),
+        # and the two name the same registrant. The composition root resolves both,
+        # so the second map only travels here to be stamped onto what is stored.
+        self._ticker_to_code = dict(ticker_to_code or {})
         self._year = year
         self._cache_dir = Path(cache_dir)
         self._base_url = (base_url or CVM_FRE_BASE_URL).rstrip("/")
@@ -134,6 +139,7 @@ class CvmCapitalSource:
                 },
                 http_status=200,
                 payload=row,
+                cvm_code=self._ticker_to_code.get(ticker),
             )
             for row in rows
         ]
@@ -234,12 +240,14 @@ class CvmTreasurySource:
         *,
         year: int,
         cache_dir: str,
+        ticker_to_code: Mapping[str, str] | None = None,
         document: CvmDocument = "DFP",
         base_url: str | None = None,
         sleep: Sleeper = asyncio.sleep,
     ) -> None:
         self._http = http_client
         self._ticker_to_cnpj = dict(ticker_to_cnpj)
+        self._ticker_to_code = dict(ticker_to_code or {})
         self._year = year
         self._cache_dir = Path(cache_dir)
         self._document = document
@@ -283,6 +291,7 @@ class CvmTreasurySource:
                 },
                 http_status=200,
                 payload=row,
+                cvm_code=self._ticker_to_code.get(ticker),
             )
             for row in rows
         ]

@@ -25,3 +25,17 @@ class RoutedDataSource:
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
         source = self._routes.get(module.upper(), self._default)
         return await source.fetch(ticker, module)
+
+    @property
+    def archive_name(self) -> str | None:
+        """The statements archive this run reads — the batch's resume marker.
+
+        The statements file, not the FRE, because it is the one every module but
+        the share counts comes from: a company found in it has been collected for
+        this year. A run that wants the FRE re-read regardless uses ``--force``.
+
+        ``None`` when the routed default is not archive-backed (brapi), which is
+        the honest answer to "which file is this run finished with".
+        """
+        archive = getattr(self._default, "archive_name", None)
+        return archive if isinstance(archive, str) else None

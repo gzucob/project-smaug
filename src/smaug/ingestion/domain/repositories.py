@@ -19,6 +19,20 @@ class RawIngestionRepository(Protocol):
         """Persist a new snapshot (never overwrites) and return it with its id."""
         ...
 
-    async def find_latest(self, ticker: str, module: str) -> RawIngestion | None:
-        """Return the most recent snapshot for ``ticker``/``module``, if any."""
+    async def find_latest(
+        self, ticker: str, module: str, *, cvm_code: str | None = None
+    ) -> RawIngestion | None:
+        """The most recent snapshot for a module, by registrant when given."""
+        ...
+
+    async def unlinked_tickers(self) -> tuple[str, ...]:
+        """Tickers whose CVM documents do not yet name their registrant."""
+        ...
+
+    async def link_registrant(self, ticker: str, cvm_code: str) -> int:
+        """Stamp ``cvm_code`` on ``ticker``'s unlinked CVM documents; count them."""
+        ...
+
+    async def registrants_of(self, file: str) -> set[str]:
+        """Registrants already mirrored from the CVM archive named ``file``."""
         ...

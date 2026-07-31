@@ -21,6 +21,7 @@ def _fake_document(**overrides: object) -> SimpleNamespace:
         "request": {"url": "https://brapi.dev/api/quote/PETR4"},
         "http_status": 200,
         "payload": {"results": [{"symbol": "PETR4"}]},
+        "cvm_code": None,  # a brapi document names no registrant (ADR 0030)
     }
     base.update(overrides)
     return SimpleNamespace(**base)

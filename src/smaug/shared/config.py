@@ -97,6 +97,8 @@ class Settings(BaseSettings):
     )
 
     # ---- Collection ----
+    # Courtesy pacing between calls. It exists for brapi, which makes one HTTP
+    # request per ticker/module and rate-limits the free plan.
     request_delay_seconds: float = Field(default=2.0)
 
     @property
@@ -105,6 +107,19 @@ class Settings(BaseSettings):
         if self.ingestion_source == "cvm":
             return self.cvm_modules
         return self.brapi_modules
+
+    @property
+    def active_delay_seconds(self) -> float:
+        """Pacing between calls for the active source — zero for CVM.
+
+        A CVM run downloads the year's archive once and then serves every
+        ticker/module from an index in memory, so there is no request to pace:
+        pausing between them is waiting between pages of a book already open on
+        the desk. It is also the whole difference between a whole-exchange run
+        that takes twenty minutes and one that takes two hundred hours
+        (368 companies x 9 modules x 11 years x 2s).
+        """
+        return 0.0 if self.ingestion_source == "cvm" else self.request_delay_seconds
 
     def require_token(self) -> str:
         """Return the raw token, failing loudly if it is empty."""

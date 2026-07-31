@@ -341,3 +341,45 @@ async def test_two_classes_of_the_same_kind_yield_no_classes(tmp_path: Path) -> 
 
     assert identity is not None
     assert identity.share_classes == ()
+
+
+async def test_companies_group_trading_codes_and_drop_the_archives_non_tickers(
+    tmp_path: Path,
+) -> None:
+    # The real 2024 archive files 41 rows whose Codigo_Negociacao is not a ticker;
+    # resolving one at a time never met them, a whole-exchange run meets them all.
+    listed, junk = "40.000.000/0001-00", "41.000.000/0001-00"
+    _write_fca_zip(
+        tmp_path,
+        geral=[_cadastre_row(listed, "000444"), _cadastre_row(junk, "000555")],
+        securities=[
+            {
+                "CNPJ_Companhia": listed,
+                "Codigo_Negociacao": code,
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": kind,
+            }
+            for code, kind in (
+                ("IJKL4", "Ações Preferenciais"),
+                ("IJKL3", "Ações Ordinárias"),
+            )
+        ]
+        + [
+            {
+                "CNPJ_Companhia": junk,
+                "Codigo_Negociacao": "1545-8",
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": "Ações Ordinárias",
+            }
+        ],
+    )
+
+    companies = await _registry(tmp_path).companies()
+
+    assert len(companies) == 1
+    assert companies[0].cd_cvm == "444"
+    assert companies[0].ticker == "IJKL3"  # the ON names the company
+    assert companies[0].tickers == ("IJKL3", "IJKL4")
+    assert companies[0].cnpj == listed

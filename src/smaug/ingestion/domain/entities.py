@@ -25,3 +25,8 @@ class RawIngestion:
     http_status: int
     payload: Mapping[str, Any]
     id: str | None = None
+    # The registrant that filed it (ADR 0030). ``ticker`` records which code the
+    # collection was requested under and stays informational; this is what the
+    # readers key on, so a company's classes share one mirror instead of a copy
+    # each. ``None`` for brapi, whose world has no registrant.
+    cvm_code: str | None = None

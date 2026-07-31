@@ -38,6 +38,7 @@ import httpx
 from smaug.ingestion.infrastructure.download import Sleeper, download_zip
 from smaug.portfolio.domain.company import CompanyIdentity
 from smaug.portfolio.domain.share_classes import ShareClass, ShareKind
+from smaug.portfolio.domain.universe import ListedCompany, listed_companies
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -191,6 +192,16 @@ class CvmCompanyRegistry:
             if identity is not None:
                 resolved[ticker] = identity
         return resolved
+
+    async def companies(self) -> tuple[ListedCompany, ...]:
+        """Every listed company in the archive, grouped from its trading codes.
+
+        The index is keyed by ticker because that is what a caller resolves; a
+        batch wants the other direction, and the grouping is where the archive's
+        non-tickers are dropped (see ``universe``).
+        """
+        index = await self._ensure_loaded()
+        return listed_companies(index.values())
 
     async def _ensure_loaded(self) -> dict[str, CompanyIdentity]:
         cached = self._index
