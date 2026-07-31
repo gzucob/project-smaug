@@ -3,7 +3,10 @@
 from datetime import date
 from decimal import Decimal
 
-from smaug.analysis.application.analyze import AnalyzePortfolioUseCase
+from smaug.analysis.application.analyze import (
+    AnalysisStatus,
+    AnalyzePortfolioUseCase,
+)
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.financials import (
     MarketData,
@@ -156,7 +159,7 @@ async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
         FakeShares({2026: _counts(common=800, preferred=400)}),
     )
 
-    out = await use_case.execute(["PETR4"])
+    out = (await use_case.execute(["PETR4"])).analyses
 
     assert len(out) == 1
     saved = repo.saved[0]
@@ -320,7 +323,7 @@ async def test_analyze_produces_ttm_and_closed_year_views() -> None:
         ),
     )
 
-    out = await use_case.execute(["PETR4"])
+    out = (await use_case.execute(["PETR4"])).analyses
 
     # TTM + two closed years, TTM saved first.
     assert len(out) == 3
@@ -462,14 +465,14 @@ async def test_analyze_skips_when_fewer_than_four_quarters() -> None:
     use_case = AnalyzePortfolioUseCase(
         FakeReader({"PETR4": two}), FakePrice(), FakeRepo(), FakeShares()
     )
-    assert await use_case.execute(["PETR4"]) == []
+    assert (await use_case.execute(["PETR4"])).analyses == []
 
 
 async def test_analyze_skips_ticker_without_fundamentals() -> None:
     use_case = AnalyzePortfolioUseCase(
         FakeReader({}), FakePrice(), FakeRepo(), FakeShares()
     )
-    assert await use_case.execute(["PETR4"]) == []
+    assert (await use_case.execute(["PETR4"])).analyses == []
 
 
 async def test_analyze_divides_each_view_by_that_years_filed_shares() -> None:
@@ -502,7 +505,7 @@ async def test_analyze_divides_each_view_by_that_years_filed_shares() -> None:
         ),
     )
 
-    out = await use_case.execute(["PETR4"])
+    out = (await use_case.execute(["PETR4"])).analyses
     views = {(a.view, a.reference_date): a for a in out}
 
     ttm = views[("ttm_live", date(2026, 3, 31))]
@@ -586,7 +589,7 @@ async def test_analyze_degrades_when_price_unavailable() -> None:
         FakeShares(),
     )
 
-    out = await use_case.execute(["BBAS3"])
+    out = (await use_case.execute(["BBAS3"])).analyses
 
     assert len(out) == 1
     assert out[0].indicators.roe == Decimal("0.1")  # 800 / 8000, fundamentals survive
@@ -610,7 +613,7 @@ async def test_analyze_degrades_when_price_times_out() -> None:
         FakeShares(),
     )
 
-    out = await use_case.execute(["BBAS3"])
+    out = (await use_case.execute(["BBAS3"])).analyses
 
     assert len(out) == 1
     assert out[0].indicators.roe == Decimal("0.1")  # fundamentals survive
@@ -671,3 +674,65 @@ async def test_a_priced_ticker_with_a_vendor_gap_stays_a_transient_miss() -> Non
 
     closed = [a for a in repo.saved if a.reference_date == date(2015, 12, 31)]
     assert closed[0].indicators.null_reasons["pe"] is not NullReason.NOT_YET_LISTED
+
+
+class _ExplodingReader:
+    """A reader that fails for one ticker and answers normally for the rest."""
+
+    def __init__(self, working: dict[str, list[StandardizedFinancials]]) -> None:
+        self._working = working
+
+    async def history(self, ticker: str) -> list[StandardizedFinancials]:
+        if ticker == "BOOM3":
+            raise ValueError("malformed payload")
+        return self._working.get(ticker, [])
+
+    async def annuals(self, ticker: str) -> list[StandardizedFinancials]:
+        if ticker == "BOOM3":
+            raise ValueError("malformed payload")
+        return []
+
+    async def annual(self, ticker: str) -> StandardizedFinancials | None:
+        return None
+
+
+async def test_one_ticker_failing_does_not_end_the_run() -> None:
+    # At nine tickers a traceback was fine; at five hundred it throws away the
+    # ones that had nothing wrong with them, each a minute of price requests.
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        _ExplodingReader(
+            {
+                "PETR4": _quarters(
+                    Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(6000)
+                )
+            }
+        ),
+        FakePrice(MarketData(price=Decimal(10))),
+        repo,
+        FakeShares({2026: _counts(common=800, preferred=400)}),
+    )
+
+    run = await use_case.execute(["BOOM3", "PETR4"])
+
+    assert [(o.ticker, o.status) for o in run.outcomes] == [
+        ("BOOM3", AnalysisStatus.ERROR),
+        ("PETR4", AnalysisStatus.ANALYZED),
+    ]
+    assert "malformed payload" in run.failed[0].detail
+    assert [a.ticker for a in run.analyses] == ["PETR4"]  # the good one still landed
+
+
+async def test_a_ticker_with_nothing_mirrored_is_skipped_not_failed() -> None:
+    """No filings is a fact about the company, not a fault of the run."""
+    use_case = AnalyzePortfolioUseCase(
+        _ExplodingReader({}),
+        FakePrice(MarketData(price=Decimal(10))),
+        FakeRepo(),
+        FakeShares({}),
+    )
+
+    run = await use_case.execute(["NADA3"])
+
+    assert run.outcomes[0].status == AnalysisStatus.SKIPPED
+    assert run.failed == ()
