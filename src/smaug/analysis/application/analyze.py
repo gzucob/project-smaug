@@ -23,8 +23,10 @@ each class is summed at: the current quote, or that year's adjusted average.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from enum import StrEnum
 
 from smaug.analysis.domain.calculator import compute
 from smaug.analysis.domain.entities import (
@@ -54,6 +56,41 @@ from smaug.shared.logging import get_logger
 logger = get_logger(__name__)
 
 Clock = Callable[[], datetime]
+
+
+class AnalysisStatus(StrEnum):
+    """How one ticker fared in a run."""
+
+    ANALYZED = "analyzed"
+    SKIPPED = "skipped"  # nothing mirrored for it — not an error
+    ERROR = "error"
+
+
+@dataclass(frozen=True)
+class TickerOutcome:
+    """One ticker's result: its views, or why there are none."""
+
+    ticker: str
+    status: AnalysisStatus
+    analyses: tuple[TickerAnalysis, ...]
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class AnalysisRun:
+    """Everything one run produced, per ticker."""
+
+    outcomes: tuple[TickerOutcome, ...]
+
+    @property
+    def analyses(self) -> list[TickerAnalysis]:
+        """Every view computed, flattened — what the CLI renders."""
+        return [a for outcome in self.outcomes for a in outcome.analyses]
+
+    @property
+    def failed(self) -> tuple[TickerOutcome, ...]:
+        return tuple(o for o in self.outcomes if o.status is AnalysisStatus.ERROR)
+
 
 # How a ticker's B3 ``Classification`` is resolved for the stored analysis.
 # Defaults to the committed snapshot; the CLI passes a registry-backed resolver
@@ -149,11 +186,34 @@ class AnalyzePortfolioUseCase:
         self._classes_resolver = classes_resolver
         self._listed_since_resolver = listed_since_resolver
 
-    async def execute(self, tickers: Iterable[str]) -> list[TickerAnalysis]:
-        results: list[TickerAnalysis] = []
+    async def execute(self, tickers: Iterable[str]) -> AnalysisRun:
+        """Analyze each ticker, and never let one of them end the run.
+
+        Nine tickers could afford to fail loudly and together: whatever broke was
+        going to be looked at immediately anyway. Five hundred cannot — an
+        unmapped account or a malformed payload on the two-hundredth would throw
+        away the four hundred that had nothing wrong with them, and each is a
+        minute of price requests. So a ticker's failure is recorded and the run
+        continues, which is the shape the ingestion use case has always had.
+        """
+        outcomes: list[TickerOutcome] = []
         for ticker in tickers:
-            results.extend(await self._analyze_ticker(ticker))
-        return results
+            outcomes.append(await self._analyze_guarded(ticker))
+        return AnalysisRun(tuple(outcomes))
+
+    async def _analyze_guarded(self, ticker: str) -> TickerOutcome:
+        try:
+            analyses = await self._analyze_ticker(ticker)
+        except Exception as exc:  # noqa: BLE001 - one ticker must not end the run
+            logger.exception("Analysis failed for %s", ticker)
+            return TickerOutcome(
+                ticker, AnalysisStatus.ERROR, (), f"{type(exc).__name__}: {exc}"
+            )
+        if not analyses:
+            return TickerOutcome(
+                ticker, AnalysisStatus.SKIPPED, (), "no CVM fundamentals"
+            )
+        return TickerOutcome(ticker, AnalysisStatus.ANALYZED, tuple(analyses))
 
     async def _analyze_ticker(self, ticker: str) -> list[TickerAnalysis]:
         quarters = await self._reader.history(ticker)

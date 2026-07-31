@@ -17,7 +17,11 @@ from typing import Any, cast
 import httpx
 import typer
 
-from smaug.analysis.application.analyze import AnalyzePortfolioUseCase
+from smaug.analysis.application.analyze import (
+    AnalysisRun,
+    AnalysisStatus,
+    AnalyzePortfolioUseCase,
+)
 from smaug.analysis.application.doctor import (
     DoctorReport,
     DoctorUseCase,
@@ -530,10 +534,26 @@ def analyze(
     ticker: list[str] | None = typer.Option(
         None, "--ticker", "-t", help="Ticker to analyze (repeatable). Default: all."
     ),
+    all_listed: bool = typer.Option(
+        False, "--all", "-a", help="Every traded code the CVM registry lists."
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Print every indicator instead of a summary."
+    ),
 ) -> None:
-    """Compute the fundamental + market indicators and store them in Postgres."""
-    tickers = tuple(ticker) if ticker else portfolio_tickers()
-    exit_code = _guarded(_run_analyze(tickers))
+    """Compute the fundamental + market indicators and store them in Postgres.
+
+    ``--all`` analyses every traded code rather than every company: a company's
+    classes share one filing but not one price, so ELET3 and ELET6 are two
+    different answers to "what is this worth". It runs sequentially — measured at
+    about six seconds a code, with no sign of the price sources rate-limiting.
+    """
+    if all_listed and ticker:
+        raise typer.BadParameter("--all and --ticker are mutually exclusive")
+    tickers = () if all_listed else (tuple(ticker) if ticker else portfolio_tickers())
+    exit_code = _guarded(
+        _run_analyze(tickers, whole_exchange=all_listed, verbose=verbose)
+    )
     raise typer.Exit(code=exit_code)
 
 
@@ -565,14 +585,19 @@ def _build_price_provider(
     )
 
 
-async def _run_analyze(tickers: tuple[str, ...]) -> int:
+async def _run_analyze(
+    tickers: tuple[str, ...], *, whole_exchange: bool = False, verbose: bool = False
+) -> int:
     settings = get_settings()
     mongo = await init_database(settings)
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
-            identities = await _registry_identities(settings, http, tickers)
+            if whole_exchange:
+                tickers, identities = await _universe_tickers(settings, http)
+            else:
+                identities = await _registry_identities(settings, http, tickers)
             # The reader keeps a five-value Sector (the internal regime hint); the
             # stored analysis carries the B3 Classification (ADR 0024). Both are
             # built from the same resolved identities.
@@ -593,19 +618,45 @@ async def _run_analyze(tickers: tuple[str, ...]) -> int:
                 classes_resolver=_classes_resolver(identities),
                 listed_since_resolver=_listed_since_resolver(identities),
             )
-            analyses = await use_case.execute(tickers)
+            run = await use_case.execute(tickers)
     finally:
         await mongo.close()
         await engine.dispose()
 
-    print(format_analysis(analyses))
-    return 0
+    print(format_analysis(run.analyses) if verbose else format_analysis_run(run))
+    return 1 if run.failed else 0
+
+
+async def _universe_tickers(
+    settings: Settings, http: httpx.AsyncClient
+) -> tuple[tuple[str, ...], dict[str, CompanyIdentity]]:
+    """Every traded code, with the identity each resolver needs (#109).
+
+    The unit here is the **ticker**, not the company the mirror is keyed on: a
+    company's classes trade at different prices, so ELET3 and ELET6 have
+    different multiples over the one filing they share. Analysing only the
+    company's ON share would leave the other codes unanswerable — including to
+    someone typing one into the search box.
+    """
+    registry = CvmCompanyRegistry(
+        http, year=settings.cvm_year, cache_dir=settings.cvm_cache_dir
+    )
+    tickers = tuple(sorted(t for c in await registry.companies() for t in c.tickers))
+    identities = await registry.resolve_all(tickers)
+    logger.info("Universe: %d traded codes", len(tickers))
+    return tickers, identities
 
 
 @app.command()
 def doctor(
     ticker: list[str] | None = typer.Option(
         None, "--ticker", "-t", help="Ticker to inspect (repeatable). Default: all."
+    ),
+    all_listed: bool = typer.Option(
+        False, "--all", "-a", help="Every traded code the CVM registry lists."
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Print every null cell instead of a summary."
     ),
 ) -> None:
     """Coverage report over the persisted analysis — the M0 gate (read-only).
@@ -617,20 +668,34 @@ def doctor(
     Then a second section on a second axis: which mapped *accounts* changed
     status across a ticker's closed years (#156). Coverage alone cannot tell a
     stale needle from a line the filer never publishes; the transition can.
+
+    Over the whole exchange the per-cell listing is tens of thousands of lines,
+    so ``--all`` summarizes and ``--verbose`` restores the detail. What the
+    summary keeps is the part that needs acting on: every ticker carrying a null
+    nobody has named.
     """
-    tickers = tuple(ticker) if ticker else portfolio_tickers()
-    exit_code = _guarded(_run_doctor(tickers))
+    if all_listed and ticker:
+        raise typer.BadParameter("--all and --ticker are mutually exclusive")
+    tickers = () if all_listed else (tuple(ticker) if ticker else portfolio_tickers())
+    exit_code = _guarded(
+        _run_doctor(tickers, whole_exchange=all_listed, verbose=verbose)
+    )
     raise typer.Exit(code=exit_code)
 
 
-async def _run_doctor(tickers: tuple[str, ...]) -> int:
+async def _run_doctor(
+    tickers: tuple[str, ...], *, whole_exchange: bool = False, verbose: bool = False
+) -> int:
     settings = get_settings()
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
     mongo = await init_database(settings)
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
-            identities = await _registry_identities(settings, http, tickers)
+            if whole_exchange:
+                tickers, identities = await _universe_tickers(settings, http)
+            else:
+                identities = await _registry_identities(settings, http, tickers)
         resolver = _sector_resolver(identities)
         use_case = DoctorUseCase(
             SqlAlchemyAnalysisRepository(session_factory), sector_resolver=resolver
@@ -650,8 +715,12 @@ async def _run_doctor(tickers: tuple[str, ...]) -> int:
         await mongo.close()
         await engine.dispose()
 
-    print(format_doctor(report))
-    print(format_drift(drift))
+    if verbose:
+        print(format_doctor(report))
+        print(format_drift(drift))
+    else:
+        print(format_doctor_summary(report))
+        print(format_drift_summary(drift))
     return 0
 
 
@@ -717,6 +786,32 @@ async def _run_prune() -> int:
         f"kept {result.kept} latest-per-cell row(s)."
     )
     return 0
+
+
+def format_analysis_run(run: AnalysisRun) -> str:
+    """Per-ticker tally of a run, naming every ticker that failed.
+
+    Printing 29 indicators for each of 506 codes is 15,000 numbers nobody reads.
+    What the summary must still do is name a failure: a skip is a company with
+    nothing mirrored, an error is ours.
+    """
+    counts: dict[AnalysisStatus, int] = {}
+    for outcome in run.outcomes:
+        counts[outcome.status] = counts.get(outcome.status, 0) + 1
+    tally = ", ".join(f"{s.value}={n}" for s, n in sorted(counts.items()))
+
+    lines: list[str] = ["", "=== Analysis run ==="]
+    for outcome in run.outcomes:
+        if outcome.status is AnalysisStatus.ERROR:
+            lines.append(f"  !! {outcome.ticker:<8} {outcome.detail}")
+    skipped = [o.ticker for o in run.outcomes if o.status is AnalysisStatus.SKIPPED]
+    if skipped:
+        lines.append(f"  skipped (nothing mirrored): {', '.join(sorted(skipped))}")
+    views = sum(len(o.analyses) for o in run.outcomes)
+    lines.append(
+        f"--- {len(run.outcomes)} ticker(s), {views} view(s) stored | {tally or 'none'}"
+    )
+    return "\n".join(lines)
 
 
 def format_batch_log(passes: list[YearPass]) -> str:
@@ -913,6 +1008,106 @@ def format_doctor(report: DoctorReport) -> str:
     if unclassified:
         who = ", ".join(sorted(tickers_with_unclassified))
         lines.append(f"    !! {unclassified} unclassified nulls across: {who}")
+    return "\n".join(lines)
+
+
+def format_doctor_summary(report: DoctorReport) -> str:
+    """The coverage report as totals — the M0 gate at exchange scale.
+
+    Same numbers as the per-cell listing, minus the cells. The one thing it does
+    not compress is an **unclassified** null: a value we do not have and cannot
+    explain is the only finding here that asks for work, so every ticker holding
+    one is named. A named null is a fact about the world already, and a count of
+    it is enough.
+    """
+    named: dict[NullReason, int] = {}
+    values = unclassified = cells = exercises = 0
+    analyzed = 0
+    unnamed_tickers: set[str] = set()
+    empty: list[str] = []
+
+    for ticker_cov in report.tickers:
+        if not ticker_cov.exercises:
+            empty.append(ticker_cov.ticker)
+            continue
+        analyzed += 1
+        for exercise in ticker_cov.exercises:
+            exercises += 1
+            for cell in exercise.indicators:
+                cells += 1
+                if cell.has_value:
+                    values += 1
+                elif cell.reason is not None:
+                    named[cell.reason] = named.get(cell.reason, 0) + 1
+                else:
+                    unclassified += 1
+                    unnamed_tickers.add(ticker_cov.ticker)
+
+    share = (100 * values / cells) if cells else 0.0
+    lines: list[str] = [
+        "",
+        "=== smaug doctor — persisted analysis coverage ===",
+        f"  {analyzed} of {len(report.tickers)} ticker(s) analyzed, "
+        f"{exercises} exercises, {cells} cells",
+        f"  value={values} ({share:.1f}%) named={sum(named.values())} "
+        f"unclassified={unclassified}",
+    ]
+    for reason, count in sorted(named.items(), key=lambda kv: -kv[1]):
+        lines.append(f"    {reason.value:<26} {count:>7}")
+    if empty:
+        shown = ", ".join(sorted(empty)[:12])
+        more = f" (+{len(empty) - 12} more)" if len(empty) > 12 else ""
+        lines.append(f"  no persisted analysis: {shown}{more}")
+    if unclassified:
+        who = ", ".join(sorted(unnamed_tickers))
+        lines.append(f"    !! {unclassified} unclassified nulls across: {who}")
+    else:
+        lines.append("    every null carries a named cause.")
+    return "\n".join(lines)
+
+
+def format_drift_summary(report: DriftReport) -> str:
+    """Drift rolled up per account rather than per ticker.
+
+    One company's account drifting is a fact about that filer. The same account
+    drifting across two hundred of them is one bug in our mapping, and the
+    per-ticker listing — 630 lines over the exchange — is the shape that hides
+    exactly that. So the roll-up counts tickers per account, ordered by the side
+    that is missing: ``newer`` first, because a needle that has stopped working
+    on what we ingest today outranks one that never reached the old chart.
+    """
+    per_account: dict[str, dict[str, int]] = {}
+    for ticker_drift in report.tickers:
+        for drift in ticker_drift.accounts:
+            sides = per_account.setdefault(
+                drift.account, {"newer": 0, "older": 0, "mixed": 0}
+            )
+            sides[drift.missing_side] += 1
+
+    lines: list[str] = ["", "=== smaug doctor — chart-of-accounts drift ==="]
+    if not per_account:
+        lines.append("  (no account changed status across any ticker's closed years)")
+        return "\n".join(lines)
+
+    order = {"newer": 0, "mixed": 1, "older": 2}
+
+    def rank(item: tuple[str, dict[str, int]]) -> tuple[int, int, str]:
+        account, sides = item
+        worst = min(order[s] for s, n in sides.items() if n)
+        return worst, -sum(sides.values()), account
+
+    lines.append(f"  {'account':<24} {'tickers':>7}  newer  mixed  older")
+    for account, sides in sorted(per_account.items(), key=rank):
+        total = sum(sides.values())
+        lines.append(
+            f"  {account:<24} {total:>7}  {sides['newer']:>5}  "
+            f"{sides['mixed']:>5}  {sides['older']:>5}"
+        )
+    lines.append(
+        f"--- {report.drifting} account/ticker pairs changed status across "
+        f"{len(per_account)} account(s). An account missing from every year is "
+        "not drift and is not listed."
+    )
     return "\n".join(lines)
 
 
