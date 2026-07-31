@@ -30,6 +30,7 @@ import unicodedata
 import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 import httpx
@@ -65,6 +66,7 @@ class _Security:
     cnpj: str
     trading: bool
     version: int
+    listed_since: date | None = None
 
 
 @dataclass
@@ -239,6 +241,7 @@ class CvmCompanyRegistry:
                 denom=company.denom,
                 cvm_sector=company.cvm_sector,
                 situation=company.situation,
+                listed_since=security.listed_since,
                 share_classes=classes.get(security.cnpj, ()),
             )
         return index
@@ -290,7 +293,10 @@ class CvmCompanyRegistry:
                     continue
                 trading = not (row.get("Data_Fim_Negociacao") or "").strip()
                 candidate = _Security(
-                    cnpj=cnpj, trading=trading, version=_int(row.get("Versao"))
+                    cnpj=cnpj,
+                    trading=trading,
+                    version=_int(row.get("Versao")),
+                    listed_since=_iso_date(row.get("Data_Inicio_Listagem")),
                 )
                 current = securities.get(ticker)
                 if current is None or _prefer(candidate, current):
@@ -317,6 +323,15 @@ def _int(value: str | None) -> int:
         return int(value) if value else 0
     except ValueError:
         return 0
+
+
+def _iso_date(value: str | None) -> date | None:
+    """An FCA date column (``YYYY-MM-DD``), or ``None`` when blank or malformed."""
+    text = (value or "").strip()
+    try:
+        return date.fromisoformat(text) if text else None
+    except ValueError:
+        return None
 
 
 def _prefer(candidate: _Security, current: _Security) -> bool:

@@ -616,3 +616,58 @@ async def test_analyze_degrades_when_price_times_out() -> None:
     assert out[0].indicators.roe == Decimal("0.1")  # fundamentals survive
     assert out[0].indicators.pe is None  # timeout -> no market multiple
     assert out[0].price is None
+
+
+async def test_a_year_before_the_ticker_listed_is_named_not_yet_listed() -> None:
+    # #153: CXSE3 listed on 2021-04-29, so its 2020 row can have no price in any
+    # source. The evidence is the FCA's own Data_Inicio_Negociacao, never a price
+    # vendor's earliest datum — that is the vendor's coverage, and for a thinly
+    # traded class it lands years late (TAEE4 has traded since 2006-10-27 while
+    # Yahoo's series for it starts in 2017).
+    annual = StandardizedFinancials(
+        reference_date=date(2020, 12, 31),
+        sector=Sector.INSURER,
+        period_start=date(2020, 1, 1),
+        net_income=Decimal(600),
+        equity=Decimal(3600),
+    )
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"CXSE3": []}, annuals={"CXSE3": [annual]}),
+        FakePrice(year=YearPrices()),  # no source has a price
+        repo,
+        FakeShares({2020: _counts(common=800)}),
+        listed_since_resolver=lambda ticker: date(2021, 4, 29),
+    )
+
+    await use_case.execute(["CXSE3"])
+
+    closed = [a for a in repo.saved if a.reference_date == date(2020, 12, 31)]
+    assert closed, "the closed year should still be persisted"
+    assert closed[0].indicators.null_reasons["pe"] is NullReason.NOT_YET_LISTED
+
+
+async def test_a_priced_ticker_with_a_vendor_gap_stays_a_transient_miss() -> None:
+    # The failure the FCA date exists to prevent: an instrument that WAS trading
+    # in the year, whose price merely went missing, must keep the transient cause.
+    # Attributing "not yet listed" here would state a falsehood about the world.
+    annual = StandardizedFinancials(
+        reference_date=date(2015, 12, 31),
+        sector=Sector.UTILITY,
+        period_start=date(2015, 1, 1),
+        net_income=Decimal(600),
+        equity=Decimal(3600),
+    )
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"TAEE11": []}, annuals={"TAEE11": [annual]}),
+        FakePrice(year=YearPrices()),
+        repo,
+        FakeShares({2015: _counts(common=800)}),
+        listed_since_resolver=lambda ticker: date(2006, 10, 27),
+    )
+
+    await use_case.execute(["TAEE11"])
+
+    closed = [a for a in repo.saved if a.reference_date == date(2015, 12, 31)]
+    assert closed[0].indicators.null_reasons["pe"] is not NullReason.NOT_YET_LISTED

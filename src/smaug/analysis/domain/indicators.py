@@ -35,6 +35,13 @@ class NullReason(StrEnum):
       ``PRICE_SYMBOL_NOT_FOUND`` is its non-transient sibling — every price source
       rejected the symbol itself (a delisted/renamed ticker with no override), so
       the null is structural, not a passing outage (#64).
+      ``NOT_YET_LISTED`` is the third, at the other end of the timeline: the
+      period *precedes the instrument's first trade*, so no source will ever fill
+      it — CXSE3 listed in 2021 and the SAPR11 unit did not exist before 2017,
+      yet extending the history to 2015 (#63) produced rows for both (#153). It
+      is a fact about the world rather than a gap of ours, and it is the only
+      price cause that is *deliberate*: the others are worth chasing, this one
+      is not.
     * ``ZERO_DENOMINATOR`` — every input is present, but the ratio is undefined
       because its denominator is zero (a holding filing revenue = 0 nulls
       P/Receita and the margins; a year with ~zero earnings nulls P/E, payout).
@@ -58,6 +65,7 @@ class NullReason(StrEnum):
     SOURCE_ACCOUNT_ABSENT = "source_account_absent"
     MISSING_PRICE = "missing_price"
     PRICE_SYMBOL_NOT_FOUND = "price_symbol_not_found"
+    NOT_YET_LISTED = "not_yet_listed"
     MISSING_SHARE_COUNT = "missing_share_count"
     MISSING_PRIOR_PERIOD = "missing_prior_period"
     ZERO_DENOMINATOR = "zero_denominator"

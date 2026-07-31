@@ -142,7 +142,12 @@ class YahooPriceHistory:
 
         if response.status_code != httpx.codes.OK:
             # A transient/bad window: expected null, not a crash. No reason recorded,
-            # so the chain treats it as a gap this source could not fill.
+            # so the chain treats it as a gap this source could not fill. Whether the
+            # year *precedes the instrument* is not decidable here — Yahoo answers
+            # the same 400 either way, and its ``meta.firstTradeDate`` is the earliest
+            # date it holds data for, not the listing date (#153): TAEE4 has traded
+            # since 2006-10-27 and Yahoo's series starts in 2017. The use case makes
+            # that call from the FCA's own ``Data_Inicio_Negociacao``.
             logger.warning(
                 "Yahoo history %d for %s: HTTP %d; year multiples will be null",
                 year,

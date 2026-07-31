@@ -23,7 +23,7 @@ each class is summed at: the current quote, or that year's adjusted average.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from smaug.analysis.domain.calculator import compute
@@ -37,6 +37,7 @@ from smaug.analysis.domain.financials import (
     StandardizedFinancials,
     YearPrices,
 )
+from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.market_cap import capitalize
 from smaug.analysis.domain.ports import (
     AnalysisRepository,
@@ -63,6 +64,16 @@ ClassificationResolver = Callable[[str], Classification]
 # Defaults to the curated nine (``listed_classes``); the CLI passes a
 # registry-backed resolver so an on-demand ticker is capitalized too (#110).
 ClassesResolver = Callable[[str], tuple[ShareClass, ...]]
+
+# When a ticker was admitted to listing (``portfolio.domain.listings``). A closed
+# year that ends before it cannot have a price in any source, which is a fact
+# about the world rather than a gap of ours (#153). Defaults to "unknown", which
+# simply never makes the claim.
+ListedSinceResolver = Callable[[str], date | None]
+
+
+def _unknown_listed_since(ticker: str) -> date | None:
+    return None
 
 
 def _default_classification(ticker: str) -> Classification:
@@ -127,6 +138,7 @@ class AnalyzePortfolioUseCase:
         clock: Clock = _utc_now,
         classification_resolver: ClassificationResolver = _default_classification,
         classes_resolver: ClassesResolver = listed_classes,
+        listed_since_resolver: ListedSinceResolver = _unknown_listed_since,
     ) -> None:
         self._reader = reader
         self._price_provider = price_provider
@@ -135,6 +147,7 @@ class AnalyzePortfolioUseCase:
         self._clock = clock
         self._classification_resolver = classification_resolver
         self._classes_resolver = classes_resolver
+        self._listed_since_resolver = listed_since_resolver
 
     async def execute(self, tickers: Iterable[str]) -> list[TickerAnalysis]:
         results: list[TickerAnalysis] = []
@@ -264,6 +277,18 @@ class AnalyzePortfolioUseCase:
             cap_null_reason=cap_null_reason,
         )
 
+    def _not_yet_listed(self, ticker: str, year: int) -> bool:
+        """Whether ``year`` ends before ``ticker`` was listed.
+
+        Only ever consulted once the cap has already come out null, so the claim
+        needs *both* that no source had a price and that the registry puts the
+        listing later. The date alone would not be enough: it records admission as
+        the FCA now states it, and a filer that migrated segments can carry a date
+        later than its real debut.
+        """
+        listed_since = self._listed_since_resolver(ticker)
+        return listed_since is not None and listed_since.year > year
+
     async def _current_quote(self, ticker: str) -> MarketData:
         try:
             return await self._price_provider.get(ticker)
@@ -320,6 +345,12 @@ class AnalyzePortfolioUseCase:
             # generic MISSING_PRICE the cap reports, so the null is non-transient in
             # ``smaug doctor`` (#64).
             cap_null_reason = own.null_reason
+        if cap is None and self._not_yet_listed(ticker, year):
+            # Outranks both: the year ends before the instrument existed, so there
+            # was never a price to miss. Taken from the FCA, never from a price
+            # vendor — a vendor's earliest datum is its own coverage, and for an
+            # illiquid class it lands years late (#153).
+            cap_null_reason = NullReason.NOT_YET_LISTED
         market = MarketData(
             price=own.nominal_avg,
             market_cap=cap,
