@@ -75,6 +75,7 @@
   --duration-hover: 200ms;
   --duration-rise: 260ms;
   --duration-modal: 220ms;
+  --duration-press: 160ms;
 }
 
 /* ---------------------------------------------------------------- base --- */
@@ -137,6 +138,34 @@ body {
   }
 }
 
+/* Press feedback — "did my click register?", not decoration (#135). One utility
+   rather than the same three declarations in six components, following `.panel`.
+   Deliberately NOT gated behind `(hover: hover)` the way `.panel-hover` is:
+   `:active` on touch is a real press, and touch is where the answer matters most
+   — the indicator cells' affordances are 12px icons.
+
+   Colour properties ride along on purpose: the `transition` shorthand would
+   otherwise cancel a `transition-colors` utility on the same element, so this
+   utility replaces it rather than fighting it. */
+.pressable {
+  transition:
+    transform var(--duration-press) var(--ease-out-strong),
+    color var(--duration-hover) var(--ease-out-strong),
+    background-color var(--duration-hover) var(--ease-out-strong),
+    border-color var(--duration-hover) var(--ease-out-strong);
+}
+.pressable:active {
+  /* 0.95–0.98 is the usable band; below it the element reads as a toy. */
+  transform: scale(0.97);
+}
+/* A whole card is not a 12px icon: the same 0.97 reads as a lurch across a 300px
+   tile. It also replaces `.panel-hover`'s lift while held, and that is the point
+   — the card drops the 2px and shrinks slightly, which is what a press looks
+   like. On touch there is no lift to lose, since that one is pointer-gated. */
+.panel.pressable:active {
+  transform: scale(0.985);
+}
+
 /* Thin divider. */
 .hairline {
   height: 1px;
@@ -181,7 +210,9 @@ body {
 
 /* Entry transition for the indicator drill-down. Transitions plus
    @starting-style rather than keyframes: a modal re-opened rapidly retargets
-   from its current state instead of restarting from zero. */
+   from its current state instead of restarting from zero. Exit is still instant
+   — see #134, and the note there on why Headless UI's `transition` prop stalls
+   in this dialog. */
 .modal-backdrop {
   opacity: 1;
   transition: opacity var(--duration-modal) var(--ease-out-strong);
@@ -224,6 +255,21 @@ body {
 
   .panel-hover:hover {
     transform: none;
+  }
+
+  /* Press feedback survives, its movement does not: the reader still gets an
+     answer to "did that register?", as an opacity dip instead of a scale (#135).
+     Dropping it altogether would take the feedback with the motion. */
+  .pressable {
+    transition:
+      opacity var(--duration-press) var(--ease-out-strong),
+      color var(--duration-hover) var(--ease-out-strong),
+      background-color var(--duration-hover) var(--ease-out-strong),
+      border-color var(--duration-hover) var(--ease-out-strong);
+  }
+  .pressable:active {
+    transform: none;
+    opacity: 0.7;
   }
 
   /* Keep the modal's fade, drop its scale. */
