@@ -21,6 +21,7 @@ import httpx
 import pytest
 
 from smaug.analysis.infrastructure.b3_prices import (
+    B3BaseChanges,
     B3PriceProvider,
     B3QuoteProvider,
     CotahistArchive,
@@ -377,3 +378,273 @@ async def test_an_archive_without_a_text_member_fails_loudly(tmp_path: Path) -> 
     with pytest.raises(ValueError, match="no .TXT member"):
         async with http:
             await archive.year(2015)
+
+
+def _quote(
+    *,
+    session: str,
+    code: str,
+    cents: int,
+    distribution: str,
+    marker: str = "",
+) -> str:
+    """One COTAHIST quote record, built field by field.
+
+    Synthesised rather than carved out of the archive, and only for the rights
+    tests: what they isolate is a *sequence* of markers and distribution numbers
+    across sessions, which no handful of real lines shows in one place. Each case
+    names the real one it mirrors. ESPECI is ten wide — four for the class, four
+    for the "ex" marker, two for the governance segment.
+    """
+    especi = f"{'ON':<4}{marker:<4}{'':<2}"
+    price = f"{cents:013d}"
+    record = (
+        "01"
+        + session
+        + "02"
+        + f"{code:<12}"
+        + "010"
+        + f"{code[:4]:<12}"
+        + especi
+        + f"{'':<3}"
+        + f"{'R$':<4}"
+        + price * 5
+        + price * 2
+        + f"{1:05d}"
+        + f"{100:018d}"
+        + f"{cents:018d}"
+        + f"{0:013d}"
+        + "0"
+        + "99991231"
+        + f"{1:07d}"
+        + f"{0:013d}"
+        + f"{'BR' + code[:4] + 'ACNOR0':<12}"
+        + distribution
+    )
+    assert len(record) == 245, len(record)
+    return record
+
+
+def _rights_archive(cache_dir: Path, year: int, records: list[str]) -> None:
+    import io
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    buffer = io.BytesIO()
+    payload = "\r\n".join(records).encode("latin-1") + b"\r\n"
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(f"COTAHIST_A{year}.TXT", payload)
+    (cache_dir / f"COTAHIST_A{year}.ZIP").write_bytes(buffer.getvalue())
+
+
+async def test_a_rights_change_marked_as_a_bonus_is_a_base_change(
+    tmp_path: Path,
+) -> None:
+    """BBAS3's shape: the distribution number steps and the session trades ``EB``."""
+    _rights_archive(
+        tmp_path,
+        2024,
+        [
+            _quote(session="20240415", code="BBAS3", cents=5646, distribution="321"),
+            _quote(
+                session="20240416",
+                code="BBAS3",
+                cents=2791,
+                distribution="322",
+                marker="EB",
+            ),
+        ],
+    )
+    archive, http = _archive(tmp_path, today=date(2025, 1, 2))
+
+    async with http:
+        changes = await B3BaseChanges(archive).base_changes("BBAS3", (2024,))
+
+    assert [(c.session, round(c.ratio, 4)) for c in changes] == [
+        (date(2024, 4, 16), Decimal("2.0229"))
+    ]
+
+
+async def test_a_dividend_moves_the_rights_state_without_moving_the_base(
+    tmp_path: Path,
+) -> None:
+    # ``ED`` and ``EJ`` are cash leaving the company: the price drops and no share
+    # is created. 253 of them moved a price more than 15% over the archives, and
+    # every one would be a false action here.
+    _rights_archive(
+        tmp_path,
+        2024,
+        [
+            _quote(session="20240219", code="BBAS3", cents=2435, distribution="249"),
+            _quote(
+                session="20240220",
+                code="BBAS3",
+                cents=2397,
+                distribution="250",
+                marker="ED",
+            ),
+        ],
+    )
+    archive, http = _archive(tmp_path, today=date(2025, 1, 2))
+
+    async with http:
+        assert await B3BaseChanges(archive).base_changes("BBAS3", (2024,)) == ()
+
+
+async def test_a_sticky_marker_does_not_report_one_bonus_twice(
+    tmp_path: Path,
+) -> None:
+    """Itaúsa 2022: the bonus went ex on 11 November and the interest on the 21st.
+
+    The marker runs for about eight sessions, so the second date reads ``EJB``
+    and its ``B`` belongs to the first. Read on its own it is a second bonus,
+    and Itaúsa grows three actions it never took.
+    """
+    _rights_archive(
+        tmp_path,
+        2022,
+        [
+            _quote(session="20221110", code="ITSA4", cents=992, distribution="422"),
+            _quote(
+                session="20221111",
+                code="ITSA4",
+                cents=884,
+                distribution="423",
+                marker="EB",
+            ),
+            _quote(
+                session="20221121",
+                code="ITSA4",
+                cents=887,
+                distribution="424",
+                marker="EJB",
+            ),
+        ],
+    )
+    archive, http = _archive(tmp_path, today=date(2023, 1, 2))
+
+    async with http:
+        changes = await B3BaseChanges(archive).base_changes("ITSA4", (2022,))
+
+    assert [c.session for c in changes] == [date(2022, 11, 11)]
+
+
+async def test_a_base_change_on_a_year_s_first_session_is_seen_against_december(
+    tmp_path: Path,
+) -> None:
+    """SLCE3's bonus went ex on 3 January 2022, so the state it moved from is 2021's.
+
+    Reading 2022 alone the first session has nothing to differ from, and the
+    action is invisible — which is why the reader walks the years in order.
+    """
+    _rights_archive(
+        tmp_path,
+        2021,
+        [_quote(session="20211230", code="SLCE3", cents=4380, distribution="118")],
+    )
+    _rights_archive(
+        tmp_path,
+        2022,
+        [
+            _quote(
+                session="20220103",
+                code="SLCE3",
+                cents=4045,
+                distribution="119",
+                marker="EB",
+            )
+        ],
+    )
+    archive, http = _archive(tmp_path, today=date(2023, 1, 2))
+
+    async with http:
+        reader = B3BaseChanges(archive)
+        alone = await reader.base_changes("SLCE3", (2022,))
+        joined = await reader.base_changes("SLCE3", (2021, 2022))
+
+    assert alone == ()
+    assert [(c.session, round(c.ratio, 4)) for c in joined] == [
+        (date(2022, 1, 3), Decimal("1.0828"))
+    ]
+
+
+async def test_an_event_named_a_session_after_it_is_dated_is_still_dated(
+    tmp_path: Path,
+) -> None:
+    """Itaúsa's December 2025 bonus: the rights state steps under ``EX``.
+
+    ``EB`` only appears the next session, on the same distribution number — so a
+    reader looking at the opening session alone sees a marker it cannot classify
+    and drops a real action. VIVT3's 2025 split-and-grupamento has the same
+    shape.
+    """
+    _rights_archive(
+        tmp_path,
+        2025,
+        [
+            _quote(
+                session="20251218",
+                code="ITSA4",
+                cents=1160,
+                distribution="454",
+                marker="EDJ",
+            ),
+            _quote(
+                session="20251219",
+                code="ITSA4",
+                cents=1147,
+                distribution="455",
+                marker="EX",
+            ),
+            _quote(
+                session="20251222",
+                code="ITSA4",
+                cents=1146,
+                distribution="455",
+                marker="EB",
+            ),
+        ],
+    )
+    archive, http = _archive(tmp_path, today=date(2026, 1, 2))
+
+    async with http:
+        changes = await B3BaseChanges(archive).base_changes("ITSA4", (2025,))
+
+    # Dated by the session the state moved on, not by the one that named it.
+    assert [c.session for c in changes] == [date(2025, 12, 19)]
+
+
+async def test_a_bonus_following_a_bonus_is_a_second_action(tmp_path: Path) -> None:
+    """SLC Agrícola paid one in May 2023 and another in December, back to back.
+
+    Nothing moved the rights state in between, so the two are consecutive spans:
+    measuring the second against the first's markers rather than against the
+    session before it hides an action the market plainly repriced.
+    """
+    _rights_archive(
+        tmp_path,
+        2023,
+        [
+            _quote(session="20230508", code="SLCE3", cents=4400, distribution="120"),
+            _quote(
+                session="20230509",
+                code="SLCE3",
+                cents=4003,
+                distribution="121",
+                marker="EB",
+            ),
+            _quote(session="20231213", code="SLCE3", cents=4152, distribution="121"),
+            _quote(
+                session="20231214",
+                code="SLCE3",
+                cents=2000,
+                distribution="122",
+                marker="EB",
+            ),
+        ],
+    )
+    archive, http = _archive(tmp_path, today=date(2024, 1, 2))
+
+    async with http:
+        changes = await B3BaseChanges(archive).base_changes("SLCE3", (2023,))
+
+    assert [c.session for c in changes] == [date(2023, 5, 9), date(2023, 12, 14)]

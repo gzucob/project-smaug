@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import Protocol
 
-from smaug.analysis.domain.capital import RestatementStep
+from smaug.analysis.domain.capital import BaseChange, RestatementStep
 from smaug.analysis.domain.entities import PruneResult, TickerAnalysis
 from smaug.analysis.domain.financials import (
     MarketData,
@@ -128,6 +128,23 @@ class SharesReader(Protocol):
         a company's action falls mid-year and the sessions either side of it are
         quoted on different bases (ADR 0033). Empty when nothing ever moved.
         """
+        ...
+
+
+class BaseChangeReader(Protocol):
+    """Reads the sessions on which a code's share base moved.
+
+    A separate port from ``PriceProvider`` although one file answers both: this
+    is not a price, and the reader that needs it is the share side, which owns
+    the restatement chain. Wired only where the price source publishes an
+    unadjusted series — a vendor's back-adjusted one has already applied these
+    and dating them again would restate twice.
+    """
+
+    async def base_changes(
+        self, ticker: str, years: Sequence[int]
+    ) -> Sequence[BaseChange]:
+        """Every base change inside ``years``, oldest first."""
         ...
 
 

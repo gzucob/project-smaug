@@ -20,13 +20,18 @@ PostgreSQL, served by a read API. Both phases are already implemented (see
   (ADR 0027); the two must sit on the same base or every company that ever split
   is mispriced (BBAS3 by 2×), so under `PRICE_SOURCE=b3` the reader is wrapped in
   `RestatedPriceProvider`, which divides each **session** by the actions that
-  postdate it (ADR 0033). Those actions come from two complementary mirrors and
-  neither covers the other: CVM declares them with the counts on both sides but
-  stops after the 2023 FRE (`CAPITAL_EVENT`), while B3 has no counts and the ex
-  date (`CAPITAL_EVENT_B3`, ADR 0034) — so CVM supplies the ratios and B3 the
-  dates. `PRICE_SOURCE` still defaults to `vendors` (Yahoo primary, brapi
-  fallback — ADR 0013, superseded but still wired) until the remaining
-  coverage gaps close (#176). **Three price bases exist and must never be
+  postdate it (ADR 0033). **The ratio and the date come from different places.**
+  The ratio is always anchored on a filed share count: CVM declares it with the
+  counts on both sides (`CAPITAL_EVENT`) but stops after the 2023 FRE, and the
+  inference off two filed counts is the fallback. The date comes from B3 — the
+  event feed where it exists (`CAPITAL_EVENT_B3`, ADR 0034), and otherwise from
+  COTAHIST itself, which numbers each paper's rights state (`DISMES`) and marks
+  the ex session in `ESPECI` (ADR 0035). The tape is the complete one: over 60
+  companies it names all 47 actions B3's feed lists, plus 43 the feed omits.
+  `PRICE_SOURCE` still defaults to
+  `vendors` (Yahoo primary, brapi fallback — ADR 0013, superseded but still
+  wired) until the remaining coverage gaps close (#176). **Three price bases
+  exist and must never be
   mixed**: as traded · adjusted for splits/groupings/bonuses (what indicators
   use) · adjusted for dividends (total return only, ADR 0018).
 - The cap is derived, not fetched: it sums the company's listed share classes,

@@ -32,6 +32,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
 from smaug.analysis.domain.capital import (
+    BaseChange,
     CorporateAction,
     ExchangeAction,
     RestatementStep,
@@ -41,6 +42,7 @@ from smaug.analysis.domain.capital import (
     restatement_timeline,
 )
 from smaug.analysis.domain.financials import CapitalComposition, ShareCounts
+from smaug.analysis.domain.ports import BaseChangeReader
 from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
 from smaug.portfolio.domain.company import RegistrantResolver
 from smaug.portfolio.domain.share_classes import shares_per_unit
@@ -206,9 +208,14 @@ class MongoSharesReader:
         collection: RawCollection,
         *,
         registrant_resolver: RegistrantResolver = no_registrant,
+        base_changes: BaseChangeReader | None = None,
     ) -> None:
         self._collection = collection
         self._registrant = registrant_resolver
+        # Only wired where the price arrives as traded: it dates the chain off
+        # the very series that will be divided by it (ADR 0035). ``None`` leaves
+        # the timeline exactly as ADRs 0033/0034 built it.
+        self._base_changes = base_changes
 
     async def outstanding(self, ticker: str, year: int) -> Decimal | None:
         filed = await self.counts(ticker, year)
@@ -331,7 +338,23 @@ class MongoSharesReader:
         return restatement_timeline(
             *await self._restatement_inputs(ticker, by_year),
             exchange=await self._exchange_actions(ticker),
+            changes=await self._session_changes(ticker, by_year),
         )
+
+    async def _session_changes(
+        self, ticker: str, by_year: Mapping[int, ShareCounts]
+    ) -> tuple[BaseChange, ...]:
+        """The base changes B3's tape carries over the years the counts cover.
+
+        Bounded by the filed years and one beyond them, because an action is
+        reported by the *following* year's FRE: BBAS3's April 2024 split is first
+        counted by the 2023 form, so a chain that stopped at 2023 would never be
+        offered the session it happened on.
+        """
+        if self._base_changes is None or not by_year:
+            return ()
+        years = range(min(by_year), max(by_year) + 2)
+        return tuple(await self._base_changes.base_changes(ticker, tuple(years)))
 
     async def _factor(
         self, ticker: str, by_year: dict[int, ShareCounts], served: int
