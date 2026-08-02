@@ -12,6 +12,7 @@ from decimal import Decimal
 from typing import Protocol
 
 from smaug.analysis.domain.capital import BaseChange, RestatementStep
+from smaug.analysis.domain.dividends import CashEvent
 from smaug.analysis.domain.entities import PruneResult, TickerAnalysis
 from smaug.analysis.domain.financials import (
     MarketData,
@@ -145,6 +146,19 @@ class BaseChangeReader(Protocol):
         self, ticker: str, years: Sequence[int]
     ) -> Sequence[BaseChange]:
         """Every base change inside ``years``, oldest first."""
+        ...
+
+
+class CashEventReader(Protocol):
+    """Reads the cash payments a ticker's share class went ex.
+
+    Separate from the share side although both come from B3: a payment moves no
+    share count, so it never enters the restatement — it only fills the third
+    price basis (ADR 0039).
+    """
+
+    async def cash_events(self, ticker: str) -> Sequence[CashEvent]:
+        """Every payment, oldest first, dated by the first session without it."""
         ...
 
 

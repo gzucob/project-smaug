@@ -31,6 +31,7 @@ from smaug.analysis.application.drift import AccountDriftUseCase, DriftReport
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.ports import (
+    CashEventReader,
     PriceHistoryProvider,
     PriceProvider,
     SharesReader,
@@ -42,11 +43,15 @@ from smaug.analysis.infrastructure.b3_prices import (
 )
 from smaug.analysis.infrastructure.brapi_price import BrapiPriceProvider
 from smaug.analysis.infrastructure.composite_price import CompositePriceProvider
+from smaug.analysis.infrastructure.dividend_adjusted_price import (
+    DividendAdjustedPriceProvider,
+)
 from smaug.analysis.infrastructure.fallback_price import (
     FallbackPriceHistory,
     FallbackQuoteProvider,
 )
 from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
+from smaug.analysis.infrastructure.mongo_dividends import MongoCashEventReader
 from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsReader
 from smaug.analysis.infrastructure.restated_price import RestatedPriceProvider
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
@@ -69,6 +74,10 @@ from smaug.ingestion.domain.ports import RawDataSource
 from smaug.ingestion.infrastructure.b3_capital_events import (
     CAPITAL_EVENT_B3_MODULE,
     B3CapitalEventSource,
+)
+from smaug.ingestion.infrastructure.b3_cash_dividends import (
+    CASH_DIVIDEND_B3_MODULE,
+    B3CashDividendSource,
 )
 from smaug.ingestion.infrastructure.brapi_client import BrapiClient
 from smaug.ingestion.infrastructure.cvm_capital import (
@@ -422,12 +431,20 @@ def _build_data_source(
         ticker_to_code=ticker_to_code,
         base_url=settings.b3_listed_base_url,
     )
+    # ...and the cash it paid out, which no price file carries and which the
+    # third price basis is rebuilt from (ADR 0039).
+    cash_dividends = B3CashDividendSource(
+        http,
+        ticker_to_code=ticker_to_code,
+        base_url=settings.b3_listed_base_url,
+    )
     return RoutedDataSource(
         {
             CAPITAL_MODULE: capital,
             TREASURY_MODULE: treasury,
             CAPITAL_EVENT_MODULE: events,
             CAPITAL_EVENT_B3_MODULE: exchange_events,
+            CASH_DIVIDEND_B3_MODULE: cash_dividends,
         },
         default=statements,
     )
@@ -628,6 +645,7 @@ def _build_price_provider(
     settings: Settings,
     shares_reader: SharesReader,
     archive: CotahistArchive | None,
+    cash_events: CashEventReader,
     http: httpx.AsyncClient,
 ) -> PriceProvider:
     """Wire whichever price source ``PRICE_SOURCE`` selects.
@@ -643,7 +661,13 @@ def _build_price_provider(
     cell.
     """
     if archive is not None:
-        return RestatedPriceProvider(B3PriceProvider(archive), shares_reader)
+        # Dividends first, restatement outermost: the third basis is the second
+        # one with the cash put back, so both end up on the same share base
+        # (ADR 0039).
+        return RestatedPriceProvider(
+            DividendAdjustedPriceProvider(B3PriceProvider(archive), cash_events),
+            shares_reader,
+        )
     brapi = BrapiPriceProvider(
         settings.brapi_base_url, settings.brapi_token.get_secret_value(), http
     )
@@ -691,6 +715,10 @@ async def _run_analyze(
                 registrant_resolver=registrant,
                 base_changes=B3BaseChanges(archive) if archive else None,
             )
+            cash_events = MongoCashEventReader(
+                mongo[settings.mongo_db]["raw_ingestions"],
+                registrant_resolver=registrant,
+            )
             use_case = AnalyzePortfolioUseCase(
                 reader=MongoFundamentalsReader(
                     mongo[settings.mongo_db]["raw_ingestions"],
@@ -698,7 +726,7 @@ async def _run_analyze(
                     registrant_resolver=registrant,
                 ),
                 price_provider=_build_price_provider(
-                    settings, shares_reader, archive, http
+                    settings, shares_reader, archive, cash_events, http
                 ),
                 repository=SqlAlchemyAnalysisRepository(session_factory),
                 shares_reader=shares_reader,
