@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
-from smaug.analysis.domain.capital import factor_at
+from smaug.analysis.domain.capital import RestatementStep, factor_at
 from smaug.analysis.domain.financials import ShareCounts
 from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
 
@@ -406,6 +406,136 @@ async def test_the_restatement_is_published_dated_for_the_price_to_divide_by() -
     # Which is the yearly reading it refines: 2022 divides by 2, 2023 by nothing.
     assert factor_at(timeline, date(2022, 12, 31)) == Decimal(2)
     assert factor_at(timeline, date(2023, 6, 30)) == Decimal(1)
+
+
+def _b3_event(
+    ticker: str,
+    *,
+    kind: str,
+    factor: str,
+    approved: str,
+    last_prior: str,
+    isin: str = "BRBBASACNOR3",
+) -> dict[str, Any]:
+    """A ``GetListedSupplementCompany.stockDividends`` row, as B3 publishes it."""
+    return {
+        "ticker": ticker,
+        "source": "cvm",  # the run's source; the module says where the row is from
+        "module": "CAPITAL_EVENT_B3",
+        "fetched_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "payload": {
+            "event_type": kind,
+            "factor": factor,
+            "approval_date": approved,
+            "last_date_prior": last_prior,
+            "isin_code": isin,
+        },
+    }
+
+
+async def test_the_exchange_dates_the_step_the_filing_year_could_only_place() -> None:
+    # BBAS3: the FRE reports the doubled count in its 2023 filing and declares
+    # nothing, but the split traded on 2024-04-16 (ADR 0034).
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc("BBAS3", 2022, 2_865_417_020),
+                _doc("BBAS3", 2023, 5_730_834_040),
+                _b3_event(
+                    "BBAS3",
+                    kind="DESDOBRAMENTO",
+                    factor="100,00000000000",
+                    approved="02/02/2024",
+                    last_prior="15/04/2024",
+                ),
+            ]
+        )
+    )
+
+    timeline = await reader.restatement_timeline("BBAS3")
+
+    # A DESDOBRAMENTO's factor is the *percentage* of new shares: 100 is a 2:1
+    # split. And the new base starts the session after the last one on the old.
+    assert timeline == (RestatementStep(date(2024, 4, 16), Decimal(2)),)
+    assert factor_at(timeline, date(2023, 6, 30)) == 2
+
+
+async def test_a_grupamentos_factor_is_the_multiple_and_not_a_percentage() -> None:
+    # MGLU3's 1:10 grupamento files 0,10 — read as a percentage it would be a
+    # 1.001x event, and the 2024 price would come out ten times too low.
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc("MGLU3", 2023, 7_389_952_489),
+                _doc("MGLU3", 2024, 738_995_248),
+                _b3_event(
+                    "MGLU3",
+                    kind="GRUPAMENTO",
+                    factor="0,10000000000",
+                    approved="24/04/2024",
+                    last_prior="24/05/2024",
+                ),
+            ]
+        )
+    )
+
+    timeline = await reader.restatement_timeline("MGLU3")
+
+    assert timeline == (RestatementStep(date(2024, 5, 25), Decimal("0.1")),)
+
+
+async def test_one_event_listed_once_per_isin_is_still_one_event() -> None:
+    # B3 repeats a row for every asset code the company has had. Counted three
+    # times, BBAS3's 2:1 split would compound to 8x.
+    rows = [
+        _b3_event(
+            "BBAS3",
+            kind="DESDOBRAMENTO",
+            factor="100,00000000000",
+            approved="02/02/2024",
+            last_prior="15/04/2024",
+            isin=isin,
+        )
+        for isin in ("BRBBASACNOR3", "BRBBASA04OR8", "BRBBASA05OR5")
+    ]
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc("BBAS3", 2022, 2_865_417_020),
+                _doc("BBAS3", 2023, 5_730_834_040),
+                *rows,
+            ]
+        )
+    )
+
+    assert await reader.restatement_timeline("BBAS3") == (
+        RestatementStep(date(2024, 4, 16), Decimal(2)),
+    )
+
+
+async def test_a_spin_off_carries_a_factor_and_is_not_a_restatement() -> None:
+    # ``CIS RED CAP`` hands shareholders stock in a *different* company. Its
+    # factor of 100 would read as a 2:1 split of the one being restated.
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc("BBDC4", 2022, 1_000_000),
+                _doc("BBDC4", 2023, 2_000_000),
+                _b3_event(
+                    "BBDC4",
+                    kind="CIS RED CAP",
+                    factor="100,00000000000",
+                    approved="30/03/2023",
+                    last_prior="09/08/2023",
+                ),
+            ]
+        )
+    )
+
+    timeline = await reader.restatement_timeline("BBDC4")
+
+    # The step stands on the filing year, untouched by a row that is not one.
+    assert timeline == (RestatementStep(date(2023, 1, 1), Decimal(2)),)
 
 
 async def test_the_restatement_is_empty_without_any_capital_document() -> None:

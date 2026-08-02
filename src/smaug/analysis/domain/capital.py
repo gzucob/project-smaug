@@ -21,6 +21,7 @@ scale — which, at 1000x, would be a far larger error than the one it corrects.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -401,10 +402,112 @@ class RestatementStep:
     ratio: Decimal
 
 
+# How closely an exchange-published factor must match a step's ratio to be the
+# same event. Both sides are exact small rationals — a 10% bonus is 1.1 on either
+# — so the margin only absorbs the count-derived side's trailing digits.
+_EXCHANGE_MATCH_TOLERANCE = Decimal("1e-9")
+
+# How far an exchange action may sit from where the chain placed the step and
+# still be it. An undated step is parked on a filing year that can lag the event
+# by a full year (BBAS3's April-2024 split is reported by the 2023 FRE), and a
+# declared one carries an approval that precedes the ex date by weeks. Eighteen
+# months covers both; beyond it, a matching ratio is more likely a *different*
+# action of the same size — a company that pays a 10% bonus every year has one
+# every year.
+_EXCHANGE_MATCH_MONTHS = 18
+_EXCHANGE_MATCH_DAYS = _EXCHANGE_MATCH_MONTHS * 31
+
+
+@dataclass(frozen=True, slots=True)
+class ExchangeAction:
+    """One corporate action as **B3** publishes it: a factor and the day it bit.
+
+    No share counts, which is what separates it from a ``CorporateAction`` — it
+    cannot anchor itself on a filed count, so it never introduces a ratio of its
+    own. What it has and CVM does not is ``effective``: the first session quoted
+    on the new base, one day after the last session quoted on the old one
+    (B3's ``lastDatePrior``). CVM files the *approval*, which precedes the
+    market's repricing by weeks — BBAS3's 2024 split was approved on 2 February
+    and traded split from 16 April.
+    """
+
+    effective: date
+    approval_date: str  # ISO ``YYYY-MM-DD``; groups the legs of one composite
+    ratio: Decimal
+
+
+def _is_same_event(step: RestatementStep, action: ExchangeAction) -> bool:
+    """Whether an exchange action is the step the chain already found.
+
+    Matched on the **ratio**, never on the date: the ratio is the fact both
+    sources agree about, and the date is the thing being fixed.
+    """
+    return (
+        abs(action.ratio - step.ratio) <= abs(step.ratio) * _EXCHANGE_MATCH_TOLERANCE
+        and abs((action.effective - step.effective).days) <= _EXCHANGE_MATCH_DAYS
+    )
+
+
+def _redated(
+    timeline: Sequence[RestatementStep], exchange: Sequence[ExchangeAction]
+) -> list[RestatementStep]:
+    """``timeline`` with each step moved onto the exchange's date where one fits.
+
+    A date is taken only where the pairing is unambiguous **in both directions**:
+    one action for that step, and one step for that action. A company that pays a
+    10% bonus every year offers several candidates of the same size for any step
+    of 1.1, and an action falling between two filing years could belong to either
+    — in both cases choosing would be guessing at exactly the fact in question,
+    so the step keeps the date the counts gave it.
+    """
+    grouped = _grouped(exchange)
+    pairs = [
+        (index, action)
+        for index, step in enumerate(timeline)
+        for action in grouped
+        if _is_same_event(step, action)
+    ]
+    per_step = Counter(index for index, _action in pairs)
+    per_action = Counter(action for _index, action in pairs)
+    redated = list(timeline)
+    for index, action in pairs:
+        if per_step[index] == 1 and per_action[action] == 1:
+            redated[index] = RestatementStep(action.effective, timeline[index].ratio)
+    return redated
+
+
+def _grouped(exchange: Sequence[ExchangeAction]) -> list[ExchangeAction]:
+    """One action per approval date, its legs compounded.
+
+    B3 files a composite action as two rows sharing an approval date — VIVT3's
+    2025 action is a x80 split and a x0.025 grupamento, which is the x2 the market
+    saw and the x2 the counts moved by. Matched leg by leg it would be neither.
+    The group's date is its **latest** ``effective``: the legs of one action take
+    effect together, and a straggler date would cut the price series early.
+    """
+    by_approval: dict[str, list[ExchangeAction]] = {}
+    for action in exchange:
+        by_approval.setdefault(action.approval_date, []).append(action)
+    grouped: list[ExchangeAction] = []
+    for approval, legs in by_approval.items():
+        ratio = Decimal(1)
+        for leg in legs:
+            ratio *= leg.ratio
+        grouped.append(
+            ExchangeAction(
+                effective=max(leg.effective for leg in legs),
+                approval_date=approval,
+                ratio=ratio,
+            )
+        )
+    return grouped
+
+
 def restatement_timeline(
     issued_by_year: Mapping[int, Decimal],
     composition_units: Sequence[Decimal] = (),
     actions: Sequence[CorporateAction] = (),
+    exchange: Sequence[ExchangeAction] = (),
 ) -> tuple[RestatementStep, ...]:
     """The same restatement as ``restatement_factors``, resolved to dates.
 
@@ -414,11 +517,20 @@ def restatement_timeline(
     before restating them mixes the two (ADR 0033). This is what lets the price
     side split a year where the count side cannot.
 
-    A declared action dates itself. An inferred step has no date at all — only
-    the knowledge that the count had moved by the next filing — so it takes the
-    first day of the later filing year, which is exactly where the per-year
-    factor already put it. Inference therefore behaves as it always did, and only
-    a declared action buys the finer split.
+    Three sources of a date, in order of how well they know it:
+
+    * ``exchange`` — B3's own record, which carries the session the new base
+      started trading on. The best answer, and the only one for a step nothing
+      declared (ADR 0034).
+    * a **declared** action — CVM's approval date, weeks before the market
+      repriced.
+    * neither — the first day of the later filing year, which is exactly where
+      the per-year factor already put it. Inference therefore behaves as it
+      always did, and a date is only ever improved, never invented.
+
+    An exchange action never contributes a **ratio**: it has no share count to
+    anchor one on, and a factor applied where the counts saw nothing move is how
+    a single split becomes nine (#174). It moves a date the chain already has.
     """
     timeline: list[RestatementStep] = []
     for step in _filed_steps(issued_by_year, composition_units, actions):
@@ -435,7 +547,7 @@ def restatement_timeline(
             timeline.extend(dated)
         else:
             timeline.append(RestatementStep(date(step.year, 1, 1), step.ratio))
-    return tuple(sorted(timeline, key=lambda step: step.effective))
+    return tuple(sorted(_redated(timeline, exchange), key=lambda s: s.effective))
 
 
 def factor_at(timeline: Sequence[RestatementStep], session: date) -> Decimal:

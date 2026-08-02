@@ -26,12 +26,14 @@ Two readings of the same filing, for two different jobs:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
 from smaug.analysis.domain.capital import (
     CorporateAction,
+    ExchangeAction,
     RestatementStep,
     filed_scale,
     outstanding_counts,
@@ -49,6 +51,7 @@ logger = get_logger(__name__)
 CAPITAL_MODULE = "CAPITAL"
 TREASURY_MODULE = "CAPITAL_DFP"
 CAPITAL_EVENT_MODULE = "CAPITAL_EVENT"
+CAPITAL_EVENT_B3_MODULE = "CAPITAL_EVENT_B3"
 
 
 class RawCollection(Protocol):
@@ -75,6 +78,51 @@ def _positive(value: Any) -> Decimal | None:
     """
     count = _dec(value)
     return count if count is not None and count > 0 else None
+
+
+def _upper(value: Any) -> str:
+    return str(value).strip().upper() if value is not None else ""
+
+
+def _br_decimal(value: Any) -> Decimal | None:
+    """A number as B3 writes it: ``7.900,00000000000`` is seven thousand nine hundred.
+
+    The thousands separator is the period and the decimal is the comma.
+    """
+    if value is None:
+        return None
+    text = str(value).strip().replace(".", "").replace(",", ".")
+    if not text:
+        return None
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        return None
+
+
+def _br_date(value: Any) -> date | None:
+    """A date as B3 writes it: ``15/04/2024``."""
+    if not isinstance(value, str):
+        return None
+    parts = value.strip().split("/")
+    if len(parts) != 3:
+        return None
+    try:
+        return date(int(parts[2]), int(parts[1]), int(parts[0]))
+    except ValueError:
+        return None
+
+
+# What B3's ``factor`` means, which is not the same thing for all three actions.
+# A DESDOBRAMENTO or BONIFICACAO files the **percentage of new shares** — BBAS3's
+# 1:2 split is 100, SAPR4's 1:3 is 200, a 10% bonus is 10 — while a GRUPAMENTO
+# files the multiplier outright: HAPV3's 1:15 is 0.0667, MGLU3's 1:10 is 0.10.
+# Reading one as the other turns a 10% bonus into a tenfold one.
+_EXCHANGE_RATIO: dict[str, Callable[[Decimal], Decimal]] = {
+    "DESDOBRAMENTO": lambda factor: 1 + factor / 100,
+    "BONIFICACAO": lambda factor: 1 + factor / 100,
+    "GRUPAMENTO": lambda factor: factor,
+}
 
 
 def _sum(*counts: Decimal | None) -> Decimal | None:
@@ -215,6 +263,52 @@ class MongoSharesReader:
             )
         return _scaled(net, factor)
 
+    async def _exchange_actions(self, ticker: str) -> tuple[ExchangeAction, ...]:
+        """The corporate actions B3 publishes, deduplicated across ISINs.
+
+        B3 lists one row per event **per asset code**, so BBAS3's 2024 split
+        arrives three times — same date, same factor, three ISINs. They are one
+        event, and counting them three times would cube it.
+
+        Only the three actions that restate the whole share base are read.
+        ``CIS RED CAP`` (a spin-off) also carries a factor and is not one of
+        them: it hands shareholders stock in a *different* company, and the
+        share base it names is not the one being restated.
+        """
+        cursor = self._collection.find(
+            mirror_filter(
+                ticker,
+                self._registrant,
+                module=CAPITAL_EVENT_B3_MODULE,
+            )
+        ).sort("fetched_at", 1)
+        seen: dict[tuple[str, str, str], ExchangeAction] = {}
+        async for document in cursor:
+            payload = document.get("payload")
+            if not isinstance(payload, Mapping):
+                continue
+            kind = _upper(payload.get("event_type"))
+            factor = _br_decimal(payload.get("factor"))
+            approval = _br_date(payload.get("approval_date"))
+            last_prior = _br_date(payload.get("last_date_prior"))
+            if kind not in _EXCHANGE_RATIO or factor is None:
+                continue
+            if approval is None or last_prior is None:
+                continue
+            ratio = _EXCHANGE_RATIO[kind](factor)
+            if ratio <= 0:
+                continue
+            key = (approval.isoformat(), kind, str(factor))
+            seen[key] = ExchangeAction(
+                # ``lastDatePrior`` is the last session on the *old* base, so the
+                # new one starts the day after — and a step applies to everything
+                # quoted strictly before its ``effective``.
+                effective=last_prior + timedelta(days=1),
+                approval_date=approval.isoformat(),
+                ratio=ratio,
+            )
+        return tuple(seen.values())
+
     async def restatement_timeline(self, ticker: str) -> tuple[RestatementStep, ...]:
         """The dated share-base moves ``counts`` restates by — see the port.
 
@@ -228,6 +322,7 @@ class MongoSharesReader:
         by_year = await self._by_year(ticker)
         return restatement_timeline(
             *await self._restatement_inputs(ticker, by_year),
+            exchange=await self._exchange_actions(ticker),
         )
 
     async def _factor(
