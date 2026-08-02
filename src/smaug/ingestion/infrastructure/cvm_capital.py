@@ -52,6 +52,9 @@ CVM_FRE_BASE_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FRE/DADOS"
 # statements ZIP's own composition, which is what carries treasury shares.
 CAPITAL_MODULE = "CAPITAL"
 TREASURY_MODULE = "CAPITAL_DFP"
+# The FRE's *declared* corporate actions — split, grupamento, bonificação — with
+# the approval date and the share count on both sides of the event.
+CAPITAL_EVENT_MODULE = "CAPITAL_EVENT"
 
 # Of the three capital rows a company files (issued / subscribed / paid-in),
 # paid-in is the one that reflects shares actually in existence.
@@ -216,6 +219,181 @@ def _to_payload(row: Mapping[str, str]) -> dict[str, Any]:
         "common_shares": _int(row["Quantidade_Acoes_Ordinarias"]),
         "preferred_shares": _int(row["Quantidade_Acoes_Preferenciais"]),
         "total_shares": _int(row["Quantidade_Total_Acoes"]),
+    }
+
+
+class CvmCapitalEventSource:
+    """Fetch the corporate actions CVM **declares**, from the same yearly FRE ZIP.
+
+    ADR 0027 infers splits from the ratio between consecutive years' share counts,
+    on the stated premise that "the FRE never labels a split". It does. The
+    archive carries 43 members and this project opened one of them; another is
+    named after the event:
+
+        fre_cia_aberta_capital_social_desdobramento_{year}.csv
+
+    It files ``Tipo_Evento`` (Grupamento | Desdobramento | Bonificação), the
+    ``Data_Aprovacao``, and the total **before and after** the approval — which is
+    the ratio, stated rather than deduced. That distinction is not academic: a
+    count ratio also moves on issuances and cancellations, so inferring from it
+    conflated Ampla's 1:40,000 grupamento with the share issue that followed and
+    produced a factor (1/23,539) matching neither.
+
+    **Coverage stops after the 2023 FRE**, where CVM restructured the form and
+    dropped the member. The recent events (BBAS3's 2024 split, HAPV3's 2025
+    grupamento) come from B3 instead, and the two sources are complementary
+    rather than redundant: B3 lists one Bradesco bonus where this file lists its
+    10% bonus in 2012, 2013, 2014, 2015, 2016 and 2018.
+
+    A year whose archive has no such member yields ``BrapiNotFoundError`` per
+    ticker, like any other absent filing — the mirror records the absence rather
+    than inventing an empty event list.
+    """
+
+    def __init__(
+        self,
+        http_client: httpx.AsyncClient,
+        ticker_to_cnpj: Mapping[str, str],
+        *,
+        year: int,
+        cache_dir: str,
+        ticker_to_code: Mapping[str, str] | None = None,
+        base_url: str | None = None,
+        sleep: Sleeper = asyncio.sleep,
+    ) -> None:
+        self._http = http_client
+        self._ticker_to_cnpj = dict(ticker_to_cnpj)
+        self._ticker_to_code = dict(ticker_to_code or {})
+        self._year = year
+        self._cache_dir = Path(cache_dir)
+        self._base_url = (base_url or CVM_FRE_BASE_URL).rstrip("/")
+        self._sleep = sleep
+        self._index: dict[str, list[dict[str, Any]]] | None = None
+        self._lock = asyncio.Lock()
+
+    @property
+    def _zip_name(self) -> str:
+        return f"fre_cia_aberta_{self._year}.zip"
+
+    @property
+    def _member_name(self) -> str:
+        return f"fre_cia_aberta_capital_social_desdobramento_{self._year}.csv"
+
+    async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
+        """Every corporate action ``ticker``'s company declared in this FRE year.
+
+        The same event is restated in every later FRE, so the mirror will hold it
+        once per year it was filed in — kept, not deduplicated (ADR 0016). The
+        reader identifies an event by company + approval date + type.
+        """
+        index = await self._ensure_loaded()
+
+        cnpj = self._ticker_to_cnpj.get(ticker)
+        if cnpj is None:
+            raise BrapiNotFoundError(f"no CNPJ mapped for {ticker}")
+        rows = index.get(cnpj)
+        if not rows:
+            raise BrapiNotFoundError(
+                f"no CVM {self._year} FRE capital event for {ticker} ({cnpj})"
+            )
+
+        return [
+            RawFetchResult(
+                module=module,
+                request={
+                    "source": "cvm",
+                    "file": self._zip_name,
+                    "cnpj": cnpj,
+                    "statement": module,
+                    "reference_date": row["reference_date"],
+                    "version": row["version"],
+                    "event_id": row["event_id"],
+                    "approval_date": row["approval_date"],
+                },
+                http_status=200,
+                payload=row,
+                cvm_code=self._ticker_to_code.get(ticker),
+            )
+            for row in rows
+        ]
+
+    async def _ensure_loaded(self) -> dict[str, list[dict[str, Any]]]:
+        cached = self._index
+        if cached is not None:
+            return cached
+        async with self._lock:
+            cached = self._index
+            if cached is not None:
+                return cached
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+            raw = self._cache_dir / self._zip_name
+            if not raw.exists():
+                logger.info(
+                    "Downloading CVM FRE %s from %s", self._year, self._base_url
+                )
+                await download_zip(
+                    self._http,
+                    f"{self._base_url}/{self._zip_name}",
+                    raw,
+                    follow_redirects=True,
+                    sleep=self._sleep,
+                )
+            index = await asyncio.to_thread(self._build_index, raw)
+            self._index = index
+            logger.info(
+                "Loaded CVM FRE %s corporate actions: %d companies declared one",
+                self._year,
+                len(index),
+            )
+            return index
+
+    def _build_index(self, archive: Path) -> dict[str, list[dict[str, Any]]]:
+        index: dict[str, list[dict[str, Any]]] = {}
+        wanted = set(self._ticker_to_cnpj.values())
+        with zipfile.ZipFile(archive) as archive_file:
+            if self._member_name not in archive_file.namelist():
+                # CVM restructured the FRE for 2024 onward and the member is gone.
+                # Not an error: the year simply declares no events here.
+                logger.info(
+                    "CVM FRE %s has no %s; corporate actions for this year come "
+                    "from B3 instead",
+                    self._year,
+                    self._member_name,
+                )
+                return index
+            with archive_file.open(self._member_name) as member:
+                reader = csv.DictReader(
+                    io.TextIOWrapper(member, encoding=_ENCODING),
+                    delimiter=_DELIMITER,
+                )
+                for row in reader:
+                    cnpj = row["CNPJ_Companhia"]
+                    if cnpj in wanted:
+                        index.setdefault(cnpj, []).append(_to_event_payload(row))
+        return index
+
+
+def _to_event_payload(row: Mapping[str, str]) -> dict[str, Any]:
+    """Mirror one declared corporate action as filed — no ratio computed here.
+
+    The ratio is ``after / before``, and deriving it is the reader's job (ADR
+    0016): a row with a zero on either side is unusable for that division but is
+    still what the company filed, so it is stored rather than dropped.
+    """
+    return {
+        "cnpj": row["CNPJ_Companhia"],
+        "company_name": row["Nome_Companhia"],
+        "reference_date": row["Data_Referencia"],
+        "version": _int(row["Versao"]),
+        "event_id": row["ID_Capital_Social_Desdobramento"],
+        "approval_date": row["Data_Aprovacao"],
+        "event_type": row["Tipo_Evento"],
+        "common_before": _int(row["Quantidade_Acoes_Ordinarias_Antes_Aprovacao"]),
+        "preferred_before": _int(row["Quantidade_Acoes_Preferenciais_Antes_Aprovacao"]),
+        "total_before": _int(row["Quantidade_Total_Acoes_Antes_Aprovacao"]),
+        "common_after": _int(row["Quantidade_Acoes_Ordinarias_Depois_Aprovacao"]),
+        "preferred_after": _int(row["Quantidade_Acoes_Preferenciais_Depois_Aprovacao"]),
+        "total_after": _int(row["Quantidade_Total_Acoes_Depois_Aprovacao"]),
     }
 
 
