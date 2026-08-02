@@ -335,10 +335,7 @@ class MongoSharesReader:
         move happened on, which a yearly count series has no use for (ADR 0033).
         """
         by_year = await self._by_year(ticker)
-        return restatement_timeline(
-            *await self._restatement_inputs(ticker, by_year),
-            exchange=await self._exchange_actions(ticker),
-        )
+        return restatement_timeline(*await self._restatement_inputs(ticker, by_year))
 
     async def _session_changes(
         self, ticker: str, by_year: Mapping[int, ShareCounts]
@@ -368,19 +365,22 @@ class MongoSharesReader:
         list[Decimal],
         tuple[CorporateAction, ...],
         tuple[BaseChange, ...],
+        tuple[ExchangeAction, ...],
     ]:
         """The four readings the restatement takes, in the order both entries use.
 
-        The tape is among them because it now bears on the *ratio* and not only
-        on the date: a gap holding an action and an issuance together leaves the
-        counts dirty, and only a second witness can say an action was in there
-        (ADR 0037).
+        Both of B3's records are among them because they now bear on the *ratio*
+        and not only on the date: a gap holding an action and an issuance leaves
+        the counts dirty, and it takes a second witness to say an action was in
+        there — the feed where its factors reconcile with the move (ADR 0038),
+        the tape where they do not (ADR 0037).
         """
         return (
             {y: c.total for y, c in by_year.items() if c.total is not None},
             await self._composition_units_series(ticker, by_year),
             await self._declared_actions(ticker),
             await self._session_changes(ticker, by_year),
+            await self._exchange_actions(ticker),
         )
 
     async def _declared_actions(self, ticker: str) -> tuple[CorporateAction, ...]:

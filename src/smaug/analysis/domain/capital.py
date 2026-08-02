@@ -349,6 +349,7 @@ def _filed_steps(
     composition_units: Sequence[Decimal],
     actions: Sequence[CorporateAction],
     changes: Sequence[BaseChange] = (),
+    exchange: Sequence[ExchangeAction] = (),
 ) -> list[_FiledStep]:
     """Every share-base move between consecutive filed years, newest first."""
     steps: list[_FiledStep] = []
@@ -370,6 +371,8 @@ def _filed_steps(
         ratio = _clean_ratio(earlier, later)
         if ratio is None and later > earlier:
             ratio = _composition_split(composition_units, later)
+        if ratio is None:
+            ratio = _reconciled_ratio(earlier, later, previous_year, year, exchange)
         if ratio is None:
             ratio = _witnessed_ratio(earlier, later, previous_year, year, changes)
         if ratio is not None:
@@ -401,6 +404,68 @@ _PLAUSIBLE_RATIOS = _plausible_ratios()
 # little over half a percent of the base was issued alongside it.
 _WITNESS_BAND = Decimal("0.02")
 
+# How far the product of B3's declared factors may sit from the move the counts
+# made and still be that move. Same order as ``_WITNESS_BAND`` and for the same
+# reason: whatever else changed hands in the filing year rides along with it.
+_RECONCILE_BAND = Decimal("0.02")
+
+
+def _gap_window(previous_year: int, year: int) -> tuple[date, date]:
+    """When an action the gap's two filings disagree about can have taken effect.
+
+    It opens the year *after* the earlier filing, because an action inside that
+    year is already in that filing's own count — a window reaching back into it
+    offered LREN3's September 2015 split to a gap whose counts had absorbed it.
+    It closes the year after the later filing, because the FRE reports the
+    capital as it stands when the form is filed and can lag the event by a year
+    (ADR 0035).
+
+    Both ends matter, and the span is not always one year: RCSL3 files nothing
+    for 2023 or 2024, so its 2022->2025 gap runs four years and holds four base
+    changes. A window that saw only the last of them matched it to a move the
+    other three made.
+    """
+    return date(previous_year + 1, 1, 1), date(year + 1, 12, 31)
+
+
+def _reconciled_ratio(
+    earlier: Decimal,
+    later: Decimal,
+    previous_year: int,
+    year: int,
+    exchange: Sequence[ExchangeAction],
+) -> Decimal | None:
+    """B3's own factors for the gap, accepted because the counts confirm them.
+
+    ADR 0034 refuses an exchange factor as a *ratio*, and for a good reason: a
+    factor applied where the counts saw nothing move is how one split compounded
+    into nine (#174). That refusal is about evidence, not about the source — and
+    here the counts are the evidence. Where the product of every action B3 lists
+    inside the gap equals the move the counts actually made, the two independent
+    records are saying the same thing, and the objection is answered.
+
+    It is the strongest reading available, so it outranks the tape's (ADR 0037):
+    the factors are exact rather than rounded to a plausible fraction, and they
+    carry their own dates. It is also the only one that reads a gap holding
+    *several* actions — Sabesp's counts move x5.15652 across one filing, which is
+    a 2.96% bonus, a 0.16% bonus and a 1:5 split compounding to x5.15652.
+    """
+    if earlier <= 0 or later <= 0 or earlier == later:
+        return None
+    start, end = _gap_window(previous_year, year)
+    product = Decimal(1)
+    found = False
+    for action in exchange:
+        if start <= action.effective <= end and action.ratio > 0:
+            product *= action.ratio
+            found = True
+    if not found or product <= 0:
+        return None
+    filed = later / earlier
+    if abs(product - filed) / filed > _RECONCILE_BAND:
+        return None
+    return product
+
 
 def _witnessed_ratio(
     earlier: Decimal,
@@ -429,10 +494,8 @@ def _witnessed_ratio(
       direction. Alone it gives no ratio at all — only the market's reading of
       one, which is 10% out at its worst.
 
-    The window runs from the start of the earlier filing year to the end of the
-    year after the later one, because the FRE reports an action late. More than
-    one base change in it means the counts cannot say which is which, and the gap
-    keeps its factor of 1.
+    More than one base change in the window (``_gap_window``) means the counts
+    cannot say which is which, and the gap keeps its factor of 1.
     """
     if earlier <= 0 or later <= 0 or earlier == later:
         return None
@@ -444,7 +507,7 @@ def _witnessed_ratio(
         # against the vendor series sat here — CYRE3 went from 0.00% error to
         # 16.00% in all eleven years on a 19/16 that the counts never made.
         return None
-    window = (date(previous_year, 1, 1), date(year + 1, 12, 31))
+    window = _gap_window(previous_year, year)
     inside = [c for c in changes if window[0] <= c.session <= window[1]]
     if len(inside) != 1:
         return None
@@ -471,6 +534,7 @@ def restatement_factors(
     composition_units: Sequence[Decimal] = (),
     actions: Sequence[CorporateAction] = (),
     changes: Sequence[BaseChange] = (),
+    exchange: Sequence[ExchangeAction] = (),
 ) -> dict[int, Decimal]:
     """The factor that restates each year's counts onto the latest year's base.
 
@@ -502,7 +566,9 @@ def restatement_factors(
     """
     ratios = {
         step.year: step.ratio
-        for step in _filed_steps(issued_by_year, composition_units, actions, changes)
+        for step in _filed_steps(
+            issued_by_year, composition_units, actions, changes, exchange
+        )
     }
     factors: dict[int, Decimal] = {}
     running = Decimal(1)
@@ -747,7 +813,9 @@ def restatement_timeline(
     """
     timeline: list[RestatementStep] = []
     windows: list[tuple[date, date]] = []
-    for step in _filed_steps(issued_by_year, composition_units, actions, changes):
+    for step in _filed_steps(
+        issued_by_year, composition_units, actions, changes, exchange
+    ):
         dated = [
             RestatementStep(approved, ratio)
             for action in step.declared
