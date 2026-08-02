@@ -23,6 +23,14 @@ records, not the tens of millions the archive's size suggests — and they are
 kept encoded, one short string per code, so that a whole run holding a decade of
 years in memory carries megabytes rather than hundreds of them.
 
+**A price is not always quoted per share.** The layout's `FATCOT` says how many
+shares one quote covers — 1 for almost everything, but 1000 for a share still
+quoted by the lot (CEGR3 and NORD3 in 2015), and up to 1000000 for a code coming
+out of a restructuring (AZUL53 in 2026). It varies *within* a code's year, so it
+is divided out record by record. Reading it as 1 is not a rounding error: it is
+a price off by three orders of magnitude, and every multiple built on that price
+with it.
+
 **A code has no record on a day it did not trade.** An illiquid share is absent
 from the sessions nobody bought it in, and absent from a whole year it never
 traded — which is a fact about the market, not a gap in the source. This is what
@@ -67,6 +75,7 @@ _DATA = slice(2, 10)  # session date, YYYYMMDD
 _CODNEG = slice(12, 24)  # trading code, space-padded
 _TPMERC = slice(24, 27)  # market type: "010" is the spot market
 _PREULT = slice(108, 121)  # closing price, 11 integer + 2 decimal digits
+_FATCOT = slice(210, 217)  # shares per quote: "1" unitary, "1000" per lot of a thousand
 
 _QUOTE_RECORD = "01"
 _SPOT_MARKET = "010"
@@ -75,19 +84,22 @@ _SPOT_MARKET = "010"
 _PRICE_SCALE = Decimal(100)
 
 # The reduction's on-disk format. Bumped when the shape below changes, so a
-# stale cache is rebuilt rather than misread. v2 added the daily closes.
-_REDUCTION_VERSION = 2
+# stale cache is rebuilt rather than misread. v2 added the daily closes; v3
+# divides by the quote factor, which the centavo encoding could not represent.
+_REDUCTION_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
 class YearQuotes:
     """What one trading code did over one year, reduced to what is asked of it.
 
-    ``closes`` is the year's sessions encoded as ``"<day> <cents>"`` pairs, the
+    ``closes`` is the year's sessions encoded as ``"<day> <price>"`` pairs, the
     day counted from the 1st of January — a compact string rather than a parsed
     series because most codes are never asked for theirs, and a decade of years
     parsed up front would be tens of millions of objects held for the handful
-    that get read.
+    that get read. The price is written out rather than kept as an integer of
+    centavos because a lot-quoted code has a price finer than a centavo
+    (CEGR3 closed 2015 at R$0.09508 a share).
     """
 
     sessions: int
@@ -103,9 +115,9 @@ class YearQuotes:
         return tuple(
             SessionClose(
                 session=date.fromordinal(january + int(day)),
-                close=Decimal(cents) / _PRICE_SCALE,
+                close=Decimal(price),
             )
-            for day, cents in zip(fields[::2], fields[1::2], strict=False)
+            for day, price in zip(fields[::2], fields[1::2], strict=False)
         )
 
 
@@ -117,6 +129,20 @@ def _cents(raw: str) -> int | None:
         return None
 
 
+def _quote_factor(raw: str) -> int | None:
+    """How many shares one quote covers, or ``None`` when the field is unusable.
+
+    Never defaulted to 1: a record whose factor cannot be read is a record whose
+    price cannot be scaled, and dropping the session is honest where assuming
+    the common case would silently multiply it by a thousand.
+    """
+    try:
+        factor = int(raw)
+    except ValueError:
+        return None
+    return factor if factor > 0 else None
+
+
 def _session_date(raw: str) -> date | None:
     try:
         return date(int(raw[0:4]), int(raw[4:6]), int(raw[6:8]))
@@ -126,40 +152,45 @@ def _session_date(raw: str) -> date | None:
 
 @dataclass(slots=True)
 class _Accumulator:
-    """One code's running totals while the archive streams past. Mutable by design.
+    """One code's sessions while the archive streams past. Mutable by design.
 
-    Sessions are held as (ordinal, cents) integers rather than as dates and
-    decimals: the archive yields hundreds of thousands of them and only a few
-    hundred codes are ever asked for their series, so the objects are built at
-    the point of reading, not of streaming.
+    Sessions are held as (ordinal, cents, factor) integers rather than as dates
+    and decimals: the archive yields hundreds of thousands of them and only a
+    few hundred codes are ever asked for their series, so the decimals are built
+    once per code in ``freeze`` rather than once per line while streaming.
     """
 
-    total: int
-    last_ordinal: int
-    last_cents: int
     ordinals: list[int]
     cents: list[int]
+    factors: list[int]
 
-    def add(self, cents: int, ordinal: int) -> None:
-        self.total += cents
+    def add(self, cents: int, factor: int, ordinal: int) -> None:
         self.ordinals.append(ordinal)
         self.cents.append(cents)
-        if ordinal >= self.last_ordinal:
-            self.last_ordinal = ordinal
-            self.last_cents = cents
+        self.factors.append(factor)
 
     def freeze(self) -> YearQuotes:
-        last_session = date.fromordinal(self.last_ordinal)
+        """The year reduced, with its sessions put back in date order.
+
+        The archive is *usually* ordered by session and the 2025 file is not, so
+        the order is established here rather than inherited: ``closes`` promises
+        oldest first, and the last close has to be the year's last rather than
+        the file's last.
+        """
+        series = sorted(zip(self.ordinals, self.cents, self.factors, strict=True))
+        prices = [
+            Decimal(cents) / (_PRICE_SCALE * factor) for _, cents, factor in series
+        ]
+        last_session = date.fromordinal(series[-1][0])
         january = date(last_session.year, 1, 1).toordinal()
-        sessions = len(self.cents)
         return YearQuotes(
-            sessions=sessions,
-            average=Decimal(self.total) / _PRICE_SCALE / sessions,
+            sessions=len(prices),
+            average=sum(prices, Decimal(0)) / len(prices),
             last_session=last_session,
-            last_close=Decimal(self.last_cents) / _PRICE_SCALE,
+            last_close=prices[-1],
             closes=" ".join(
-                f"{ordinal - january} {cents}"
-                for ordinal, cents in zip(self.ordinals, self.cents, strict=True)
+                f"{ordinal - january} {price}"
+                for (ordinal, _, _), price in zip(series, prices, strict=True)
             ),
         )
 
@@ -181,18 +212,17 @@ def _reduce(archive_path: Path) -> dict[str, YearQuotes]:
                 if line[_TIPREG] != _QUOTE_RECORD or line[_TPMERC] != _SPOT_MARKET:
                     continue
                 cents = _cents(line[_PREULT])
+                factor = _quote_factor(line[_FATCOT])
                 session = _session_date(line[_DATA])
-                if cents is None or session is None:
+                if cents is None or factor is None or session is None:
                     continue
                 ordinal = session.toordinal()
                 code = line[_CODNEG].strip()
                 entry = totals.get(code)
                 if entry is None:
-                    totals[code] = _Accumulator(
-                        cents, ordinal, cents, [ordinal], [cents]
-                    )
+                    totals[code] = _Accumulator([ordinal], [cents], [factor])
                 else:
-                    entry.add(cents, ordinal)
+                    entry.add(cents, factor, ordinal)
     return {code: entry.freeze() for code, entry in totals.items()}
 
 
