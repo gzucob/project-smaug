@@ -100,6 +100,37 @@ def test_a_declared_bonus_series_compounds_year_after_year() -> None:
     assert Decimal("1.33") < factors[2016] < Decimal("1.34")
 
 
+def test_one_filing_step_can_hold_more_than_one_action() -> None:
+    # The FRE year lags what it reports. Bradesco's count moves x1.21 between its
+    # 2015 and 2016 filings, and the two 10% bonuses that make it up were
+    # approved in March 2016 and March 2017. Taking only the first reads 1.10
+    # where 1.21 happened, and the shortfall compounds down the whole series.
+    filed = {2015: Decimal(5_048_728_847), 2016: Decimal(6_108_961_905)}
+    declared = [
+        _action("Bonificação", 5_048_728_847, 5_553_601_732, "2016-03-10"),
+        _action("Bonificação", 5_553_601_732, 6_108_961_905, "2017-03-10"),
+    ]
+
+    factors = restatement_factors(filed, actions=declared)
+
+    # The two bonuses compound to the whole step, 1.21 — not the 1.10 the first
+    # of them accounts for. (Compared with a tolerance because a product of two
+    # divisions and one division differ in the last decimal place.)
+    assert abs(factors[2015] - Decimal("1.21")) < Decimal("1e-9")
+
+
+def test_the_chain_stops_at_the_next_filing_and_leaves_the_issuance_out() -> None:
+    # Ampla again: the chain ends at the grupamento's 98,062,897 while the next
+    # filing says 166,634,326. The shares in between were sold, not split, and
+    # restating them would rewrite a dilution as a corporate action.
+    filed = {2016: Decimal(3_922_515_918_446), 2017: Decimal(166_634_326)}
+    declared = [_action("Grupamento", 3_922_515_918_446, 98_062_897)]
+
+    factors = restatement_factors(filed, actions=declared)
+
+    assert abs(factors[2016] - Decimal(1) / Decimal(40000)) < Decimal("1e-11")
+
+
 def test_a_standstill_year_does_not_reapply_the_same_action() -> None:
     # EALT3 files 22.5 M unchanged from 2015 to 2023 and declares one x10 split.
     # Matching on the count alone re-applied it at every standstill year: nine

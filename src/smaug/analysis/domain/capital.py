@@ -213,9 +213,12 @@ class CorporateAction:
 
 
 def _declared_step(
-    actions: Sequence[CorporateAction], filed: Decimal, consumed: set[str]
+    actions: Sequence[CorporateAction],
+    earlier: Decimal,
+    later: Decimal,
+    consumed: set[str],
 ) -> Decimal | None:
-    """The compounded ratio of the actions that start from ``filed``.
+    """The compounded ratio of the declared actions between two filed counts.
 
     An action is matched to a share base by its own ``total_before``, not by its
     approval date. Dates cannot do this job: a split approved between a year-end
@@ -223,30 +226,28 @@ def _declared_step(
     so Ampla's December-2015 grupamento is absent from the 2015 *and* 2016 FREs.
     The count it started from is unambiguous where the date is not.
 
-    Chaining is confined to **one approval date**, which is what a composite
-    action is: VIVT3's x80 split and x0.025 grupamento were approved together and
-    compound to the x2 the market saw. Following the chain further would swallow
-    the next year's event into this year's step — Bradesco declares a bonus every
-    March, and each belongs to the step it was approved in, not to the first.
+    **The chain runs on until it reaches ``later``**, because one filing step can
+    hold more than one action. The FRE year lags what it reports: Bradesco's count
+    moves ×1.21 between its 2015 and 2016 filings, and the two 10% bonuses that
+    make it up were approved in March 2016 and March 2017. Stopping at the first
+    takes 1.10 where 1.21 happened, and the shortfall compounds down the series.
+    A composite action needs no special case under this rule — VIVT3's ×80 split
+    and ×0.025 grupamento simply chain to the ×2 the market saw.
+
+    It also stops when nothing further matches, which is what leaves an issuance
+    out: Ampla's chain ends at the grupamento's 98,062,897 while the next filing
+    says 166,634,326, and the shares in between were sold, not split.
+
+    Each approval is spent once, so a count returning to a level some action
+    started from cannot claim it a second time.
     """
-    matched = [
+    running = Decimal(1)
+    base = earlier
+    remaining = [
         action
         for action in actions
-        if action.ratio is not None
-        and action.approval_date not in consumed
-        and abs(action.total_before - filed) <= abs(filed) * _DECLARED_MATCH_TOLERANCE
+        if action.ratio is not None and action.approval_date not in consumed
     ]
-    if not matched:
-        return None
-
-    # Same-day legs of one composite action, followed from the base outward. The
-    # date is then spent: an action restates one share base, once, however many
-    # filings happen to report the count it started from.
-    approval = matched[0].approval_date
-    consumed.add(approval)
-    running = Decimal(1)
-    base = filed
-    remaining = [a for a in actions if a.approval_date == approval]
     while True:
         for action in remaining:
             ratio = action.ratio
@@ -257,10 +258,13 @@ def _declared_step(
             ):
                 running *= ratio
                 base = action.total_after
+                consumed.add(action.approval_date)
                 remaining.remove(action)
                 break
         else:
             return running if running != 1 else None
+        if abs(base - later) <= abs(later) * _DECLARED_MATCH_TOLERANCE:
+            return running
 
 
 def restatement_factors(
@@ -310,7 +314,7 @@ def restatement_factors(
         # standstill year. EALT3 files 22.5 M unchanged from 2015, and its single
         # x10 split compounded nine times into 2.25e16 shares before this guard.
         if earlier != later:
-            ratio = _declared_step(actions, earlier, consumed)
+            ratio = _declared_step(actions, earlier, later, consumed)
         if ratio is None:
             ratio = _clean_ratio(earlier, later)
             if ratio is None and later > earlier:
