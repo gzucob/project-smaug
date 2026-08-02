@@ -31,6 +31,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
 from smaug.analysis.domain.capital import (
+    CorporateAction,
     filed_scale,
     outstanding_counts,
     restatement_factors,
@@ -45,6 +46,7 @@ logger = get_logger(__name__)
 
 CAPITAL_MODULE = "CAPITAL"
 TREASURY_MODULE = "CAPITAL_DFP"
+CAPITAL_EVENT_MODULE = "CAPITAL_EVENT"
 
 
 class RawCollection(Protocol):
@@ -232,8 +234,49 @@ class MongoSharesReader:
         factors = restatement_factors(
             {y: c.total for y, c in by_year.items() if c.total is not None},
             await self._composition_units_series(ticker, by_year),
+            await self._declared_actions(ticker),
         )
         return factors.get(served, Decimal(1))
+
+    async def _declared_actions(self, ticker: str) -> tuple[CorporateAction, ...]:
+        """The corporate actions the company declared to CVM, deduplicated.
+
+        Every later FRE restates the whole history, so the mirror holds the same
+        event once per year it was filed in (ADR 0016). An event is identified by
+        its approval date and type; the highest ``version`` of it wins, the same
+        rule the capital rows use.
+        """
+        cursor = self._collection.find(
+            mirror_filter(ticker, self._registrant, module=CAPITAL_EVENT_MODULE)
+        ).sort("fetched_at", 1)
+        best: dict[tuple[str, str], tuple[int, CorporateAction]] = {}
+        async for document in cursor:
+            payload = document.get("payload")
+            if not isinstance(payload, Mapping):
+                continue
+            approval = payload.get("approval_date")
+            kind = payload.get("event_type")
+            before = _dec(payload.get("total_before"))
+            after = _dec(payload.get("total_after"))
+            if not isinstance(approval, str) or not isinstance(kind, str):
+                continue
+            if before is None or after is None:
+                continue
+            version = payload.get("version")
+            rank = version if isinstance(version, int) else 0
+            key = (approval, kind)
+            if key in best and rank < best[key][0]:
+                continue
+            best[key] = (
+                rank,
+                CorporateAction(
+                    approval_date=approval,
+                    kind=kind,
+                    total_before=before,
+                    total_after=after,
+                ),
+            )
+        return tuple(action for _rank, action in best.values())
 
     async def _composition(self, ticker: str, year: int) -> CapitalComposition | None:
         compositions = await self._compositions(ticker)
