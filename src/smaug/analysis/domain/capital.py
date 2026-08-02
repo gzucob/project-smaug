@@ -265,33 +265,68 @@ def _declared_step(
 
     Each approval is spent once, so a count returning to a level some action
     started from cannot claim it a second time.
+
+    **Either end of the move can be the anchor.** Read forwards the chain starts
+    at ``earlier``; where nothing starts there it is read backwards from
+    ``later``, which is a different question with the same answer — and the only
+    one TOTS3 answers. Its 3:1 split declares 192,637,727 -> 577,913,181 and no
+    FRE ever filed 192,637,727: the count moved again between the filing and the
+    split, so the ``before`` matches nothing while the ``after`` matches the next
+    filing exactly (#176).
     """
-    running = Decimal(1)
-    base = earlier
-    matched: list[CorporateAction] = []
     remaining = [
         action
         for action in actions
         if action.ratio is not None and action.approval_date not in consumed
     ]
+    matched = _chained(
+        remaining, start=earlier, target=later, backwards=False
+    ) or _chained(remaining, start=later, target=earlier, backwards=True)
+    if matched is None:
+        return None
+    consumed.update(action.approval_date for action in matched)
+    return matched
+
+
+def _chained(
+    actions: Sequence[CorporateAction],
+    *,
+    start: Decimal,
+    target: Decimal,
+    backwards: bool,
+) -> tuple[CorporateAction, ...] | None:
+    """The run of actions leading from ``start``, in approval order, or ``None``.
+
+    One direction of ``_declared_step``: read forwards, an action is matched on
+    the count it started from and hands on the one it ended at; read backwards
+    the two swap, so the chain is discovered newest-first and reversed at the
+    end. Both stop where nothing further matches and keep what they have, which
+    is what leaves an issuance riding alongside an action out of the ratio.
+    """
+    running = Decimal(1)
+    base = start
+    matched: list[CorporateAction] = []
+    remaining = list(actions)
     while True:
         for action in remaining:
             ratio = action.ratio
+            anchor = action.total_after if backwards else action.total_before
             if (
-                ratio is not None
-                and abs(action.total_before - base)
-                <= abs(base) * _DECLARED_MATCH_TOLERANCE
+                ratio is None
+                or abs(anchor - base) > abs(base) * _DECLARED_MATCH_TOLERANCE
             ):
-                running *= ratio
-                base = action.total_after
-                matched.append(action)
-                consumed.add(action.approval_date)
-                remaining.remove(action)
-                break
+                continue
+            running *= ratio
+            base = action.total_before if backwards else action.total_after
+            matched.append(action)
+            remaining.remove(action)
+            break
         else:
-            return tuple(matched) if running != 1 else None
-        if abs(base - later) <= abs(later) * _DECLARED_MATCH_TOLERANCE:
-            return tuple(matched)
+            if running == 1:
+                return None
+            return tuple(reversed(matched)) if backwards else tuple(matched)
+        if abs(base - target) <= abs(target) * _DECLARED_MATCH_TOLERANCE:
+            return tuple(reversed(matched)) if backwards else tuple(matched)
 
 
 @dataclass(frozen=True, slots=True)

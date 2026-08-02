@@ -177,3 +177,57 @@ def test_an_issuance_still_contributes_nothing() -> None:
     factors = restatement_factors(filed, actions=[])
 
     assert factors[2021] == 1
+
+
+def test_an_action_anchors_on_the_count_it_ended_at_when_its_start_was_unfiled() -> (
+    None
+):
+    """TOTS3. Its 3:1 split declares 192,637,727 -> 577,913,181 and no FRE filed
+    the first of those: 27 million shares were issued between the 2018 filing and
+    the split, so the ``before`` matches nothing while the ``after`` matches the
+    2019 filing to the share.
+
+    Read only forwards the action anchors on nothing and the chain falls through
+    to the inference, which is dirty for the same reason — leaving TOTS3 200% out
+    against the vendor series for 2015-2019 (#176).
+    """
+    filed = {2018: Decimal(165_637_727), 2019: Decimal(577_913_181)}
+    declared = [
+        _action("Desdobramento", 192_637_727, 577_913_181, "2020-04-27"),
+    ]
+
+    inferred = restatement_factors(filed)
+    factors = restatement_factors(filed, actions=declared)
+
+    # 577,913,181 / 165,637,727 is 3.489x, dirty enough that the inference
+    # declines it and leaves the years unrestated.
+    assert inferred[2018] == 1
+    assert factors[2018] == 3
+    assert factors[2019] == 1
+
+
+def test_the_forward_anchor_is_preferred_where_both_ends_could_match() -> None:
+    # Reading backwards is the fallback, not a second chance: an action that
+    # starts where the filing starts is the one that describes the move, and the
+    # count it ends at is not consulted.
+    filed = {2020: Decimal(100), 2021: Decimal(300)}
+    declared = [
+        _action("Desdobramento", 100, 300, "2021-03-01"),
+        _action("Bonificação", 150, 300, "2021-06-01"),
+    ]
+
+    factors = restatement_factors(filed, actions=declared)
+
+    assert factors[2020] == 3
+
+
+def test_an_action_ending_at_an_unfiled_count_is_still_ignored() -> None:
+    # Neither end matches, so it describes a different share base — the guard
+    # that keeps an unrelated declaration from rewriting a year it never touched
+    # has to survive the second anchor.
+    filed = {2020: Decimal(100), 2021: Decimal(200)}
+    declared = [_action("Desdobramento", 999_999, 1_999_998)]
+
+    factors = restatement_factors(filed, actions=declared)
+
+    assert factors[2020] == 2  # inferred, as before
