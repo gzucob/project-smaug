@@ -1,6 +1,6 @@
 # 0011 — Yahoo Finance sources the closed-year price history
 
-- **Status:** Superseded by [0013](0013-yahoo-primary-brapi-fallback.md) (itself supersedes [0007](0007-closed-year-price-coverage-is-plan-gated.md))
+- **Status:** Superseded by [0013](0013-yahoo-primary-brapi-fallback.md), then by [0032](0032-b3-publishes-the-price-series-itself.md) (itself supersedes [0007](0007-closed-year-price-coverage-is-plan-gated.md))
 - **Date:** 2026-07-10
 
 ## Context

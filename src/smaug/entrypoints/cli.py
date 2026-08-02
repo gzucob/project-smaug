@@ -30,7 +30,8 @@ from smaug.analysis.application.doctor import (
 from smaug.analysis.application.drift import AccountDriftUseCase, DriftReport
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.indicators import NullReason
-from smaug.analysis.domain.ports import PriceHistoryProvider
+from smaug.analysis.domain.ports import PriceHistoryProvider, PriceProvider
+from smaug.analysis.infrastructure.b3_prices import B3PriceProvider, CotahistArchive
 from smaug.analysis.infrastructure.brapi_price import BrapiPriceProvider
 from smaug.analysis.infrastructure.composite_price import CompositePriceProvider
 from smaug.analysis.infrastructure.fallback_price import (
@@ -566,15 +567,22 @@ def analyze(
     raise typer.Exit(code=exit_code)
 
 
-def _build_price_provider(
-    settings: Settings, http: httpx.AsyncClient
-) -> CompositePriceProvider:
-    """Wire the price sources: Yahoo primary, brapi fallback (ADR 0013).
+def _build_price_provider(settings: Settings, http: httpx.AsyncClient) -> PriceProvider:
+    """Wire whichever price source ``PRICE_SOURCE`` selects.
 
-    The live quote and the year history each try Yahoo first and fall back to
-    brapi. brapi's token is only used on the fallback path; the primary Yahoo
-    quote needs none.
+    ``b3`` reads the exchange's own published series and needs no chain: one file
+    answers both the live quote and the year history. ``vendors`` is the
+    Yahoo-primary/brapi-fallback arrangement it replaces (ADR 0013), kept
+    selectable only until the two have been diffed cell by cell.
     """
+    if settings.price_source == "b3":
+        return B3PriceProvider(
+            CotahistArchive(
+                http,
+                cache_dir=settings.b3_cache_dir,
+                base_url=settings.b3_series_base_url,
+            )
+        )
     brapi = BrapiPriceProvider(
         settings.brapi_base_url, settings.brapi_token.get_secret_value(), http
     )

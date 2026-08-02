@@ -39,7 +39,7 @@ from smaug.ingestion.infrastructure.cvm_source import (
     _DOCUMENT_PREFIX,
     CvmDocument,
 )
-from smaug.ingestion.infrastructure.download import Sleeper, download_zip
+from smaug.shared.download import Sleeper, download_zip
 from smaug.shared.errors import BrapiNotFoundError
 from smaug.shared.logging import get_logger
 

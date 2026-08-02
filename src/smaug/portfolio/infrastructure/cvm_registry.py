@@ -35,10 +35,10 @@ from pathlib import Path
 
 import httpx
 
-from smaug.ingestion.infrastructure.download import Sleeper, download_zip
 from smaug.portfolio.domain.company import CompanyIdentity
 from smaug.portfolio.domain.share_classes import ShareClass, ShareKind
 from smaug.portfolio.domain.universe import ListedCompany, listed_companies
+from smaug.shared.download import Sleeper, download_zip
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)

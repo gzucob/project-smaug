@@ -1,6 +1,6 @@
 # 0013 — Yahoo is the primary price source; brapi is the fallback
 
-- **Status:** Accepted (supersedes [0011](0011-yahoo-finance-for-closed-year-price-history.md))
+- **Status:** Superseded by [0032](0032-b3-publishes-the-price-series-itself.md) (supersedes [0011](0011-yahoo-finance-for-closed-year-price-history.md))
 - **Date:** 2026-07-10
 
 ## Context
