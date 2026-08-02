@@ -58,6 +58,10 @@ DEFAULT_CVM_MODULES: tuple[str, ...] = (
     # The FRE's declared corporate actions (split/grupamento/bonificação) with
     # their approval date — what ADR 0027 infers from count ratios instead.
     "CAPITAL_EVENT",
+    # The same events as **B3** publishes them: no share counts, but the last
+    # session quoted on the old base, which is where a price series is cut
+    # (ADR 0033). CVM's member stops after the 2023 FRE; B3 has what follows.
+    "CAPITAL_EVENT_B3",
 )
 
 
@@ -99,6 +103,11 @@ class Settings(BaseSettings):
     # (gitignored). The archives are large — about 520 MB for 2015-2026 — which
     # is why the reduction beside each one is what a second run reads.
     b3_cache_dir: str = Field(default=".cache/b3")
+    # The listed-companies proxy, which serves the corporate-action history
+    # (``GetListedSupplementCompany``). A different host from the quote series.
+    b3_listed_base_url: str = Field(
+        default="https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall"
+    )
 
     # ---- CVM ----
     cvm_modules: tuple[str, ...] = Field(default=DEFAULT_CVM_MODULES)

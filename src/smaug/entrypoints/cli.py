@@ -62,6 +62,10 @@ from smaug.ingestion.application.report import (
     TickerReport,
 )
 from smaug.ingestion.domain.ports import RawDataSource
+from smaug.ingestion.infrastructure.b3_capital_events import (
+    CAPITAL_EVENT_B3_MODULE,
+    B3CapitalEventSource,
+)
 from smaug.ingestion.infrastructure.brapi_client import BrapiClient
 from smaug.ingestion.infrastructure.cvm_capital import (
     CAPITAL_EVENT_MODULE,
@@ -406,11 +410,20 @@ def _build_data_source(
         cache_dir=settings.cvm_cache_dir,
         ticker_to_code=ticker_to_code,
     )
+    # ...and B3 declares the same events without the counts, but *with* the last
+    # session quoted on the old base — the two are complementary, and neither
+    # covers the other's years (ADR 0034).
+    exchange_events = B3CapitalEventSource(
+        http,
+        ticker_to_code=ticker_to_code,
+        base_url=settings.b3_listed_base_url,
+    )
     return RoutedDataSource(
         {
             CAPITAL_MODULE: capital,
             TREASURY_MODULE: treasury,
             CAPITAL_EVENT_MODULE: events,
+            CAPITAL_EVENT_B3_MODULE: exchange_events,
         },
         default=statements,
     )

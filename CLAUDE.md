@@ -20,12 +20,15 @@ PostgreSQL, served by a read API. Both phases are already implemented (see
   (ADR 0027); the two must sit on the same base or every company that ever split
   is mispriced (BBAS3 by 2×), so under `PRICE_SOURCE=b3` the reader is wrapped in
   `RestatedPriceProvider`, which divides each **session** by the actions that
-  postdate it (ADR 0033). `PRICE_SOURCE` still defaults to `vendors` (Yahoo
-  primary, brapi fallback — ADR 0013, superseded but still wired) while the
-  corporate-action coverage is completed: CVM stops declaring after the 2023 FRE,
-  and B3's own event feed is not ingested yet. **Three price bases exist and must
-  never be mixed**: as traded · adjusted for splits/groupings/bonuses (what
-  indicators use) · adjusted for dividends (total return only, ADR 0018).
+  postdate it (ADR 0033). Those actions come from two complementary mirrors and
+  neither covers the other: CVM declares them with the counts on both sides but
+  stops after the 2023 FRE (`CAPITAL_EVENT`), while B3 has no counts and the ex
+  date (`CAPITAL_EVENT_B3`, ADR 0034) — so CVM supplies the ratios and B3 the
+  dates. `PRICE_SOURCE` still defaults to `vendors` (Yahoo primary, brapi
+  fallback — ADR 0013, superseded but still wired) until the remaining
+  coverage gaps close (#176). **Three price bases exist and must never be
+  mixed**: as traded · adjusted for splits/groupings/bonuses (what indicators
+  use) · adjusted for dividends (total return only, ADR 0018).
 - The cap is derived, not fetched: it sums the company's listed share classes,
   each at its own price (`Σ class_price × class_shares`, ADR 0014), counting only
   the shares actually **outstanding** — issued less treasury (ADR 0017).
