@@ -609,13 +609,22 @@ class B3BaseChanges:
     declared action a session belongs to, not to state its size.
     """
 
-    def __init__(self, archive: CotahistArchive) -> None:
+    def __init__(
+        self, archive: CotahistArchive, today: Callable[[], date] = date.today
+    ) -> None:
         self._archive = archive
+        self._today = today
 
     async def base_changes(
         self, ticker: str, years: Sequence[int]
     ) -> tuple[BaseChange, ...]:
         """Every base change in ``years``, oldest first.
+
+        A year the exchange cannot have published yet is dropped rather than
+        asked for. The caller looks one year past the last filed one, because the
+        FRE reports an action late — and the last filed year is the running one
+        for a company that has already filed this year, which asks for an archive
+        that will not exist until January.
 
         The years are walked in order so a change on a year's first session is
         seen against December's state, which lives in the previous file. The
@@ -628,7 +637,8 @@ class B3BaseChanges:
         span = _Span()
         december: Decimal | None = None
         standing = ""  # the marker in force on the session last read
-        for year in sorted(set(years)):
+        published = self._today().year
+        for year in sorted({year for year in years if year <= published}):
             quotes = (await self._archive.year(year)).get(code)
             if quotes is None:
                 continue

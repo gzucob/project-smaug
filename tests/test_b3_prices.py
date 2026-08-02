@@ -648,3 +648,27 @@ async def test_a_bonus_following_a_bonus_is_a_second_action(tmp_path: Path) -> N
         changes = await B3BaseChanges(archive).base_changes("SLCE3", (2023,))
 
     assert [c.session for c in changes] == [date(2023, 5, 9), date(2023, 12, 14)]
+
+
+async def test_a_year_the_exchange_has_not_published_is_never_asked_for(
+    tmp_path: Path,
+) -> None:
+    """The caller looks one year past the last filed count, and that can be next year.
+
+    A company that has already filed this year makes the last filed year the
+    running one, so the span reaches into a year whose archive will not exist
+    until January. Asking for it is an HTTP 404 that propagates out of the share
+    reader and takes the *price* with it — 368 of 506 tickers lost their year
+    multiples to exactly this.
+    """
+    _write_archive(tmp_path, 2015)
+    transport = _CountingTransport(b"")  # any download would fail here
+    archive, http = _archive(tmp_path, today=date(2015, 6, 1), transport=transport)
+
+    async with http:
+        changes = await B3BaseChanges(
+            archive, today=lambda: date(2015, 6, 1)
+        ).base_changes("PETR4", (2015, 2016))
+
+    assert changes == ()
+    assert transport.requests == 0
