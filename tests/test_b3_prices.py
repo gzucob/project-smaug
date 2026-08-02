@@ -1,10 +1,12 @@
 """CotahistArchive and the B3 price providers: reduction, caching, freshness.
 
-The fixture is ten real records carved out of ``COTAHIST_A2015.ZIP`` — three
-PETR4 sessions, two VALE3, one TAEE11, plus the file's header and trailer, an
-option on PETR and a forward-market line. The last two are there because they
-are the trap: they carry the same ``TIPREG`` as a spot quote and only the market
-type tells them apart.
+The fixture is twelve real records carved out of ``COTAHIST_A2015.ZIP`` — three
+PETR4 sessions, two VALE3, one TAEE11, two CEGR3, plus the file's header and
+trailer, an option on PETR and a forward-market line. The last two are there
+because they are the trap: they carry the same ``TIPREG`` as a spot quote and
+only the market type tells them apart. CEGR3 is the other trap: it is quoted per
+lot of a thousand shares, so its record says 100.00 where the share is worth ten
+centavos.
 """
 
 from __future__ import annotations
@@ -43,19 +45,25 @@ class _CountingTransport(httpx.AsyncBaseTransport):
         return httpx.Response(200, content=self._bytes)
 
 
-def _archive_bytes() -> bytes:
+def _archive_bytes(*, out_of_order: bool = False) -> bytes:
     import io
 
+    payload = FIXTURE.read_bytes()
+    if out_of_order:
+        records = [record for record in payload.split(b"\r\n") if record]
+        payload = b"\r\n".join(reversed(records)) + b"\r\n"
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr("COTAHIST_A2015.TXT", FIXTURE.read_bytes())
+        archive.writestr("COTAHIST_A2015.TXT", payload)
     return buffer.getvalue()
 
 
-def _write_archive(cache_dir: Path, year: int = 2015) -> Path:
+def _write_archive(
+    cache_dir: Path, year: int = 2015, *, out_of_order: bool = False
+) -> Path:
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = cache_dir / f"COTAHIST_A{year}.ZIP"
-    path.write_bytes(_archive_bytes())
+    path.write_bytes(_archive_bytes(out_of_order=out_of_order))
     return path
 
 
@@ -84,7 +92,7 @@ async def test_only_spot_market_records_survive_the_reduction(tmp_path: Path) ->
     async with http:
         year = await archive.year(2015)
 
-    assert set(year) == {"PETR4", "VALE3", "TAEE11"}
+    assert set(year) == {"PETR4", "VALE3", "TAEE11", "CEGR3"}
     # PETRA1 is an option and ABCB4F a forward — both are TIPREG "01" like a
     # spot quote, and averaging them into the share's price is the whole reason
     # the market-type filter exists.
@@ -150,6 +158,77 @@ async def test_the_daily_closes_survive_the_reduction(tmp_path: Path) -> None:
         (date(2015, 1, 5), Decimal("8.61")),
         (date(2015, 1, 6), Decimal("8.33")),
     ]
+
+
+async def test_a_lot_quoted_price_is_divided_by_its_quote_factor(
+    tmp_path: Path,
+) -> None:
+    """CEGR3 was quoted per lot of a thousand shares, and the layout says so.
+
+    Its 2015 records read 100.00 and 95.08; the share was worth ten centavos and
+    nine and a half. Read at face value the price — and every multiple built on
+    it — is off by three orders of magnitude.
+
+    The record proves it against itself: the 29 May line moved 200,000 shares
+    for R$19,016, which is R$0.09508 each, and not the R$95.08 the price field
+    reads on its own.
+    """
+    _write_archive(tmp_path)
+    archive, http = _archive(tmp_path)
+
+    async with http:
+        year = await archive.year(2015)
+
+    cegr3 = year["CEGR3"]
+    assert cegr3.sessions == 2
+    assert cegr3.average == (Decimal("0.1") + Decimal("0.09508")) / 2
+    assert cegr3.last_close == Decimal("0.09508")
+
+
+async def test_the_lot_quoted_closes_survive_the_cached_reduction(
+    tmp_path: Path,
+) -> None:
+    # A price finer than a centavo is what the reduction's old integer encoding
+    # could not carry, so the round trip is the assertion, not the arithmetic.
+    transport = _CountingTransport(_archive_bytes())
+    archive, http = _archive(tmp_path, transport=transport)
+    async with http:
+        await archive.year(2015)
+
+    (tmp_path / "COTAHIST_A2015.ZIP").unlink()
+    reopened, http2 = _archive(tmp_path, transport=transport)
+    async with http2:
+        sessions = await B3PriceProvider(reopened).year_sessions("CEGR3", 2015)
+
+    assert [(s.session, s.close) for s in sessions] == [
+        (date(2015, 4, 14), Decimal("0.1")),
+        (date(2015, 5, 29), Decimal("0.09508")),
+    ]
+
+
+async def test_the_sessions_are_ordered_by_date_not_by_file_position(
+    tmp_path: Path,
+) -> None:
+    """The 2025 archive is not sorted by session; the 2024 one is.
+
+    So the order is the reduction's to establish: ``session_closes`` promises
+    oldest first, and the year's last close has to be its latest session rather
+    than whichever record the file happened to end on.
+    """
+    _write_archive(tmp_path, out_of_order=True)
+    archive, http = _archive(tmp_path)
+
+    async with http:
+        sessions = await B3PriceProvider(archive).year_sessions("PETR4", 2015)
+        year = await archive.year(2015)
+
+    assert [(s.session, s.close) for s in sessions] == [
+        (date(2015, 1, 2), Decimal("9.36")),
+        (date(2015, 1, 5), Decimal("8.61")),
+        (date(2015, 1, 6), Decimal("8.33")),
+    ]
+    assert year["PETR4"].last_session == date(2015, 1, 6)
+    assert year["PETR4"].last_close == Decimal("8.33")
 
 
 async def test_the_closes_come_back_off_the_cached_reduction(tmp_path: Path) -> None:
