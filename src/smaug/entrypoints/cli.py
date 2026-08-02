@@ -59,8 +59,10 @@ from smaug.ingestion.application.report import (
 from smaug.ingestion.domain.ports import RawDataSource
 from smaug.ingestion.infrastructure.brapi_client import BrapiClient
 from smaug.ingestion.infrastructure.cvm_capital import (
+    CAPITAL_EVENT_MODULE,
     CAPITAL_MODULE,
     TREASURY_MODULE,
+    CvmCapitalEventSource,
     CvmCapitalSource,
     CvmTreasurySource,
 )
@@ -389,8 +391,23 @@ def _build_data_source(
         ticker_to_code=ticker_to_code,
         document=cast(CvmDocument, doc),
     )
+    # The same FRE ZIP also declares the corporate actions outright, which the
+    # share counts alone can only be guessed at (ADR 0027 guesses, and conflates
+    # a split with the issuance that follows it).
+    events = CvmCapitalEventSource(
+        http,
+        ticker_to_cnpj,
+        year=cvm_year,
+        cache_dir=settings.cvm_cache_dir,
+        ticker_to_code=ticker_to_code,
+    )
     return RoutedDataSource(
-        {CAPITAL_MODULE: capital, TREASURY_MODULE: treasury}, default=statements
+        {
+            CAPITAL_MODULE: capital,
+            TREASURY_MODULE: treasury,
+            CAPITAL_EVENT_MODULE: events,
+        },
+        default=statements,
     )
 
 

@@ -22,6 +22,7 @@ scale — which, at 1000x, would be a far larger error than the one it corrects.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from decimal import ROUND_HALF_EVEN, Decimal
 
 from smaug.analysis.domain.financials import CapitalComposition, ShareCounts
@@ -179,11 +180,107 @@ def _composition_split(
     return matches[0] if len(matches) == 1 else None
 
 
+# How closely a declared event's "before" count must match a filed year's count
+# for the two to describe the same share base. They are the same quantity read
+# from two members of one archive, so the match is exact in practice; the margin
+# only absorbs a filer restating a rounded figure.
+_DECLARED_MATCH_TOLERANCE = Decimal("1e-9")
+
+
+@dataclass(frozen=True, slots=True)
+class CorporateAction:
+    """One split, grupamento or bonificação, as the company **declared** it.
+
+    CVM files these outright (``fre_..._capital_social_desdobramento``) with the
+    count on both sides of the approval, so the ratio is stated rather than
+    inferred from how the count moved between two filings. The difference is what
+    separates an action from everything else that happened in between: Ampla's
+    count fell 1/23,539 across two FREs, of which the grupamento was 1/40,000 and
+    the rest a share issue.
+    """
+
+    approval_date: str  # ISO ``YYYY-MM-DD``; sorts as filed
+    kind: str  # Grupamento | Desdobramento | Bonificação
+    total_before: Decimal
+    total_after: Decimal
+
+    @property
+    def ratio(self) -> Decimal | None:
+        """``after / before``, or ``None`` when either side was filed as zero."""
+        if self.total_before <= 0 or self.total_after <= 0:
+            return None
+        return self.total_after / self.total_before
+
+
+def _declared_step(
+    actions: Sequence[CorporateAction],
+    earlier: Decimal,
+    later: Decimal,
+    consumed: set[str],
+) -> Decimal | None:
+    """The compounded ratio of the declared actions between two filed counts.
+
+    An action is matched to a share base by its own ``total_before``, not by its
+    approval date. Dates cannot do this job: a split approved between a year-end
+    and the FRE's own approval lands in the following year's filing (ADR 0028),
+    so Ampla's December-2015 grupamento is absent from the 2015 *and* 2016 FREs.
+    The count it started from is unambiguous where the date is not.
+
+    **The chain runs on until it reaches ``later``**, because one filing step can
+    hold more than one action. The FRE year lags what it reports: Bradesco's count
+    moves ×1.21 between its 2015 and 2016 filings, and the two 10% bonuses that
+    make it up were approved in March 2016 and March 2017. Stopping at the first
+    takes 1.10 where 1.21 happened, and the shortfall compounds down the series.
+    A composite action needs no special case under this rule — VIVT3's ×80 split
+    and ×0.025 grupamento simply chain to the ×2 the market saw.
+
+    It also stops when nothing further matches, which is what leaves an issuance
+    out: Ampla's chain ends at the grupamento's 98,062,897 while the next filing
+    says 166,634,326, and the shares in between were sold, not split.
+
+    Each approval is spent once, so a count returning to a level some action
+    started from cannot claim it a second time.
+    """
+    running = Decimal(1)
+    base = earlier
+    remaining = [
+        action
+        for action in actions
+        if action.ratio is not None and action.approval_date not in consumed
+    ]
+    while True:
+        for action in remaining:
+            ratio = action.ratio
+            if (
+                ratio is not None
+                and abs(action.total_before - base)
+                <= abs(base) * _DECLARED_MATCH_TOLERANCE
+            ):
+                running *= ratio
+                base = action.total_after
+                consumed.add(action.approval_date)
+                remaining.remove(action)
+                break
+        else:
+            return running if running != 1 else None
+        if abs(base - later) <= abs(later) * _DECLARED_MATCH_TOLERANCE:
+            return running
+
+
 def restatement_factors(
     issued_by_year: Mapping[int, Decimal],
     composition_units: Sequence[Decimal] = (),
+    actions: Sequence[CorporateAction] = (),
 ) -> dict[int, Decimal]:
     """The factor that restates each year's counts onto the latest year's base.
+
+    ``actions`` are the corporate actions the company **declared** to CVM, and
+    they are consulted first: a declared ratio is a fact, while the ratio between
+    two filed counts is a guess that also moves on issuances and cancellations.
+    Where a year's count starts a declared action, that action's ratio is the
+    step; the inference below is the fallback for the years and companies CVM's
+    file does not reach (it stops after the 2023 FRE).
+
 
     The closed-year per-share history is split-adjusted (ADR 0027): a year that
     predates a split/bonus/grupamento has its counts multiplied forward so the
@@ -205,13 +302,23 @@ def restatement_factors(
     """
     factors: dict[int, Decimal] = {}
     running = Decimal(1)
+    consumed: set[str] = set()
     ordered = sorted(issued_by_year, reverse=True)
     for year, previous_year in zip(ordered, ordered[1:], strict=False):
         factors[year] = running
         earlier, later = issued_by_year[previous_year], issued_by_year[year]
-        ratio = _clean_ratio(earlier, later)
-        if ratio is None and later > earlier:
-            ratio = _composition_split(composition_units, later)
+        ratio = None
+        # A company that files the same count two years running had no action
+        # between them, whatever it once declared — and a declared event whose
+        # ``before`` still matches would otherwise be applied again at every
+        # standstill year. EALT3 files 22.5 M unchanged from 2015, and its single
+        # x10 split compounded nine times into 2.25e16 shares before this guard.
+        if earlier != later:
+            ratio = _declared_step(actions, earlier, later, consumed)
+        if ratio is None:
+            ratio = _clean_ratio(earlier, later)
+            if ratio is None and later > earlier:
+                ratio = _composition_split(composition_units, later)
         if ratio is not None:
             running *= ratio
     if ordered:
