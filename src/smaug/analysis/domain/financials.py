@@ -167,6 +167,21 @@ class CapitalComposition:
     treasury_total: Decimal | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class SessionClose:
+    """What one trading code closed at on one session, as traded.
+
+    The individual closes matter — and not only their yearly mean — because a
+    corporate action lands on a *day*: the sessions before it are quoted on the
+    old share base and the ones after it on the new, so restating the year's
+    average is not the same operation as restating each session and averaging
+    (ADR 0033). Built in bulk, hence ``slots``.
+    """
+
+    session: date
+    close: Decimal
+
+
 @dataclass(frozen=True)
 class YearPrices:
     """Average share price over one calendar year, both bases.

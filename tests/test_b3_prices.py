@@ -132,6 +132,55 @@ async def test_year_prices_carry_the_nominal_average_and_no_adjusted_one(
     assert prices.null_reason is None
 
 
+async def test_the_daily_closes_survive_the_reduction(tmp_path: Path) -> None:
+    """A year is kept as its sessions too, not only as their mean.
+
+    A corporate action falls on a day, so restating a year means restating the
+    closes either side of it separately (ADR 0033) — which a mean has already
+    thrown away.
+    """
+    _write_archive(tmp_path)
+    archive, http = _archive(tmp_path)
+
+    async with http:
+        sessions = await B3PriceProvider(archive).year_sessions("PETR4", 2015)
+
+    assert [(s.session, s.close) for s in sessions] == [
+        (date(2015, 1, 2), Decimal("9.36")),
+        (date(2015, 1, 5), Decimal("8.61")),
+        (date(2015, 1, 6), Decimal("8.33")),
+    ]
+
+
+async def test_the_closes_come_back_off_the_cached_reduction(tmp_path: Path) -> None:
+    # The reduction is what a second run reads; a series it did not persist is a
+    # series that exists only on the run that built it.
+    transport = _CountingTransport(_archive_bytes())
+    archive, http = _archive(tmp_path, transport=transport)
+    async with http:
+        await archive.year(2015)
+
+    (tmp_path / "COTAHIST_A2015.ZIP").unlink()
+    reopened, http2 = _archive(tmp_path, transport=transport)
+    async with http2:
+        sessions = await B3PriceProvider(reopened).year_sessions("VALE3", 2015)
+
+    assert [(s.session, s.close) for s in sessions] == [
+        (date(2015, 1, 2), Decimal("21.28")),
+        (date(2015, 1, 5), Decimal("20.96")),
+    ]
+
+
+async def test_a_code_with_no_session_that_year_has_no_series_either(
+    tmp_path: Path,
+) -> None:
+    _write_archive(tmp_path)
+    archive, http = _archive(tmp_path)
+
+    async with http:
+        assert await B3PriceProvider(archive).year_sessions("TAEE4", 2015) == ()
+
+
 async def test_a_code_with_no_session_that_year_is_a_plain_null(
     tmp_path: Path,
 ) -> None:

@@ -30,7 +30,11 @@ from smaug.analysis.application.doctor import (
 from smaug.analysis.application.drift import AccountDriftUseCase, DriftReport
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.indicators import NullReason
-from smaug.analysis.domain.ports import PriceHistoryProvider, PriceProvider
+from smaug.analysis.domain.ports import (
+    PriceHistoryProvider,
+    PriceProvider,
+    SharesReader,
+)
 from smaug.analysis.infrastructure.b3_prices import B3PriceProvider, CotahistArchive
 from smaug.analysis.infrastructure.brapi_price import BrapiPriceProvider
 from smaug.analysis.infrastructure.composite_price import CompositePriceProvider
@@ -40,6 +44,7 @@ from smaug.analysis.infrastructure.fallback_price import (
 )
 from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
 from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsReader
+from smaug.analysis.infrastructure.restated_price import RestatedPriceProvider
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
 from smaug.analysis.infrastructure.yahoo_price import (
     YahooPriceHistory,
@@ -584,21 +589,31 @@ def analyze(
     raise typer.Exit(code=exit_code)
 
 
-def _build_price_provider(settings: Settings, http: httpx.AsyncClient) -> PriceProvider:
+def _build_price_provider(
+    settings: Settings, http: httpx.AsyncClient, shares_reader: SharesReader
+) -> PriceProvider:
     """Wire whichever price source ``PRICE_SOURCE`` selects.
 
     ``b3`` reads the exchange's own published series and needs no chain: one file
-    answers both the live quote and the year history. ``vendors`` is the
-    Yahoo-primary/brapi-fallback arrangement it replaces (ADR 0013), kept
-    selectable only until the two have been diffed cell by cell.
+    answers both the live quote and the year history. It does need the share
+    history wrapped around it, because the exchange publishes what printed on the
+    tape and the counts it multiplies are restated onto today's base (ADR 0027) —
+    the two have to meet on one base or every company that ever split is
+    mispriced. ``vendors`` is the Yahoo-primary/brapi-fallback arrangement it
+    replaces (ADR 0013), and it arrives already adjusted, so wrapping it too would
+    adjust it twice. Kept selectable only until the two have been diffed cell by
+    cell.
     """
     if settings.price_source == "b3":
-        return B3PriceProvider(
-            CotahistArchive(
-                http,
-                cache_dir=settings.b3_cache_dir,
-                base_url=settings.b3_series_base_url,
-            )
+        return RestatedPriceProvider(
+            B3PriceProvider(
+                CotahistArchive(
+                    http,
+                    cache_dir=settings.b3_cache_dir,
+                    base_url=settings.b3_series_base_url,
+                )
+            ),
+            shares_reader,
         )
     brapi = BrapiPriceProvider(
         settings.brapi_base_url, settings.brapi_token.get_secret_value(), http
@@ -636,18 +651,22 @@ async def _run_analyze(
             # stored analysis carries the B3 Classification (ADR 0024). Both are
             # built from the same resolved identities.
             registrant = _registrant_resolver(identities)
+            # One reader, wired twice: the use case divides the per-share
+            # indicators by its restated counts, and the price provider divides
+            # the as-traded price by the very same restatement (ADR 0027).
+            shares_reader = MongoSharesReader(
+                mongo[settings.mongo_db]["raw_ingestions"],
+                registrant_resolver=registrant,
+            )
             use_case = AnalyzePortfolioUseCase(
                 reader=MongoFundamentalsReader(
                     mongo[settings.mongo_db]["raw_ingestions"],
                     sector_resolver=_sector_resolver(identities),
                     registrant_resolver=registrant,
                 ),
-                price_provider=_build_price_provider(settings, http),
+                price_provider=_build_price_provider(settings, http, shares_reader),
                 repository=SqlAlchemyAnalysisRepository(session_factory),
-                shares_reader=MongoSharesReader(
-                    mongo[settings.mongo_db]["raw_ingestions"],
-                    registrant_resolver=registrant,
-                ),
+                shares_reader=shares_reader,
                 classification_resolver=_classification_resolver(identities),
                 classes_resolver=_classes_resolver(identities),
                 listed_since_resolver=_listed_since_resolver(identities),

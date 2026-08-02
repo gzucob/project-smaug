@@ -23,9 +23,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from decimal import ROUND_HALF_EVEN, Decimal
 
-from smaug.analysis.domain.financials import CapitalComposition, ShareCounts
+from smaug.analysis.domain.financials import (
+    CapitalComposition,
+    SessionClose,
+    ShareCounts,
+)
 
 _UNITS = Decimal(1)
 _THOUSANDS = Decimal(1000)
@@ -211,14 +216,33 @@ class CorporateAction:
             return None
         return self.total_after / self.total_before
 
+    @property
+    def approved_on(self) -> date | None:
+        """``approval_date`` as a date, or ``None`` when it is not one.
+
+        The approval is the only date CVM files for the event. It precedes the
+        session the market actually reprices on — the ex date — by days, so a
+        price series split on it is right to the week rather than to the session
+        (ADR 0033). That is two orders of magnitude closer than splitting on the
+        filing year, which is what it replaces.
+        """
+        try:
+            return date.fromisoformat(self.approval_date)
+        except ValueError:
+            return None
+
 
 def _declared_step(
     actions: Sequence[CorporateAction],
     earlier: Decimal,
     later: Decimal,
     consumed: set[str],
-) -> Decimal | None:
-    """The compounded ratio of the declared actions between two filed counts.
+) -> tuple[CorporateAction, ...] | None:
+    """The declared actions that carry the share base from ``earlier`` to ``later``.
+
+    They are returned rather than only their compounded ratio, because each one
+    carries the date it was approved on and the price side adjusts session by
+    session (ADR 0033). ``None`` where the chain explains nothing.
 
     An action is matched to a share base by its own ``total_before``, not by its
     approval date. Dates cannot do this job: a split approved between a year-end
@@ -243,6 +267,7 @@ def _declared_step(
     """
     running = Decimal(1)
     base = earlier
+    matched: list[CorporateAction] = []
     remaining = [
         action
         for action in actions
@@ -258,13 +283,67 @@ def _declared_step(
             ):
                 running *= ratio
                 base = action.total_after
+                matched.append(action)
                 consumed.add(action.approval_date)
                 remaining.remove(action)
                 break
         else:
-            return running if running != 1 else None
+            return tuple(matched) if running != 1 else None
         if abs(base - later) <= abs(later) * _DECLARED_MATCH_TOLERANCE:
-            return running
+            return tuple(matched)
+
+
+@dataclass(frozen=True, slots=True)
+class _FiledStep:
+    """One move between two consecutive filed counts, and where its ratio came from.
+
+    ``year`` is the *later* of the two filing years, which is how the factors below
+    key it: the step is included in every year older than ``year`` and in none from
+    ``year`` on. ``declared`` is empty when the ratio was inferred from the counts
+    rather than read off a declaration — an inferred step has no date to its name.
+    """
+
+    year: int
+    ratio: Decimal
+    declared: tuple[CorporateAction, ...] = ()
+
+
+def _filed_steps(
+    issued_by_year: Mapping[int, Decimal],
+    composition_units: Sequence[Decimal],
+    actions: Sequence[CorporateAction],
+) -> list[_FiledStep]:
+    """Every share-base move between consecutive filed years, newest first."""
+    steps: list[_FiledStep] = []
+    consumed: set[str] = set()
+    ordered = sorted(issued_by_year, reverse=True)
+    for year, previous_year in zip(ordered, ordered[1:], strict=False):
+        earlier, later = issued_by_year[previous_year], issued_by_year[year]
+        declared: tuple[CorporateAction, ...] | None = None
+        # A company that files the same count two years running had no action
+        # between them, whatever it once declared — and a declared event whose
+        # ``before`` still matches would otherwise be applied again at every
+        # standstill year. EALT3 files 22.5 M unchanged from 2015, and its single
+        # x10 split compounded nine times into 2.25e16 shares before this guard.
+        if earlier != later:
+            declared = _declared_step(actions, earlier, later, consumed)
+        if declared:
+            steps.append(_FiledStep(year, _compounded(declared), declared))
+            continue
+        ratio = _clean_ratio(earlier, later)
+        if ratio is None and later > earlier:
+            ratio = _composition_split(composition_units, later)
+        if ratio is not None:
+            steps.append(_FiledStep(year, ratio))
+    return steps
+
+
+def _compounded(actions: Sequence[CorporateAction]) -> Decimal:
+    ratio = Decimal(1)
+    for action in actions:
+        if action.ratio is not None:
+            ratio *= action.ratio
+    return ratio
 
 
 def restatement_factors(
@@ -300,27 +379,91 @@ def restatement_factors(
     for such ratios, so a clean FRE ratio (BBAS3, LREN3's bonus, SANEPAR) and a
     share-*decreasing* one (a cancellation) behave exactly as before.
     """
+    ratios = {
+        step.year: step.ratio
+        for step in _filed_steps(issued_by_year, composition_units, actions)
+    }
     factors: dict[int, Decimal] = {}
     running = Decimal(1)
-    consumed: set[str] = set()
-    ordered = sorted(issued_by_year, reverse=True)
-    for year, previous_year in zip(ordered, ordered[1:], strict=False):
+    for year in sorted(issued_by_year, reverse=True):
         factors[year] = running
-        earlier, later = issued_by_year[previous_year], issued_by_year[year]
-        ratio = None
-        # A company that files the same count two years running had no action
-        # between them, whatever it once declared — and a declared event whose
-        # ``before`` still matches would otherwise be applied again at every
-        # standstill year. EALT3 files 22.5 M unchanged from 2015, and its single
-        # x10 split compounded nine times into 2.25e16 shares before this guard.
-        if earlier != later:
-            ratio = _declared_step(actions, earlier, later, consumed)
-        if ratio is None:
-            ratio = _clean_ratio(earlier, later)
-            if ratio is None and later > earlier:
-                ratio = _composition_split(composition_units, later)
-        if ratio is not None:
-            running *= ratio
-    if ordered:
-        factors[ordered[-1]] = running
+        # The step keyed on ``year`` is the one that moved the base *into* it, so
+        # it belongs to every older year and to none from here on.
+        running *= ratios.get(year, Decimal(1))
     return factors
+
+
+@dataclass(frozen=True, slots=True)
+class RestatementStep:
+    """One share-base move, dated: everything quoted before it is restated by it."""
+
+    effective: date
+    ratio: Decimal
+
+
+def restatement_timeline(
+    issued_by_year: Mapping[int, Decimal],
+    composition_units: Sequence[Decimal] = (),
+    actions: Sequence[CorporateAction] = (),
+) -> tuple[RestatementStep, ...]:
+    """The same restatement as ``restatement_factors``, resolved to dates.
+
+    The counts are a yearly series, so a yearly factor is all they can use. A
+    price is a *daily* one, and a corporate action lands on a day: the sessions
+    either side of it are quoted on different share bases, and averaging them
+    before restating them mixes the two (ADR 0033). This is what lets the price
+    side split a year where the count side cannot.
+
+    A declared action dates itself. An inferred step has no date at all — only
+    the knowledge that the count had moved by the next filing — so it takes the
+    first day of the later filing year, which is exactly where the per-year
+    factor already put it. Inference therefore behaves as it always did, and only
+    a declared action buys the finer split.
+    """
+    timeline: list[RestatementStep] = []
+    for step in _filed_steps(issued_by_year, composition_units, actions):
+        dated = [
+            RestatementStep(approved, ratio)
+            for action in step.declared
+            if (approved := action.approved_on) is not None
+            and (ratio := action.ratio) is not None
+        ]
+        # All or nothing per step: a half-dated chain would apply one action on
+        # its own date and its sibling on the year boundary, which is neither
+        # reading of the step and cannot compound back to its ratio.
+        if len(dated) == len(step.declared) and dated:
+            timeline.extend(dated)
+        else:
+            timeline.append(RestatementStep(date(step.year, 1, 1), step.ratio))
+    return tuple(sorted(timeline, key=lambda step: step.effective))
+
+
+def factor_at(timeline: Sequence[RestatementStep], session: date) -> Decimal:
+    """What a price quoted on ``session`` is divided by to reach today's base."""
+    factor = Decimal(1)
+    for step in timeline:
+        if step.effective > session:
+            factor *= step.ratio
+    return factor
+
+
+def average_factor(
+    timeline: Sequence[RestatementStep], sessions: Sequence[SessionClose]
+) -> Decimal:
+    """The single factor that restates a *year's average* price, session-weighted.
+
+    The year average is one number, so it takes one divisor — but the sessions it
+    averages do not all sit on the same base. This returns the divisor that yields
+    the mean of the restated closes, which is the quantity a vendor's back-adjusted
+    series publishes: ``Σp / Σ(p/g)``, so that ``avg / factor == mean(p/g)``.
+
+    ``1`` when there is nothing to weigh: a caller holding an average but no
+    sessions behind it has to fall back to the year-level factor itself.
+    """
+    traded = sum((s.close for s in sessions), Decimal(0))
+    restated = sum(
+        (s.close / factor_at(timeline, s.session) for s in sessions), Decimal(0)
+    )
+    if traded <= 0 or restated <= 0:
+        return Decimal(1)
+    return traded / restated

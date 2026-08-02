@@ -1,9 +1,10 @@
 """MongoSharesReader: per-year share counts from the CAPITAL raw mirror."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
+from smaug.analysis.domain.capital import factor_at
 from smaug.analysis.domain.financials import ShareCounts
 from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
 
@@ -381,7 +382,7 @@ async def test_a_pre_bonus_year_is_served_on_the_current_base() -> None:
     assert counts.common == Decimal(5_730_834_040)
 
 
-async def test_the_restatement_factor_is_published_for_the_price_to_divide_by() -> None:
+async def test_the_restatement_is_published_dated_for_the_price_to_divide_by() -> None:
     # The counts are multiplied by it; an as-traded price has to be divided by the
     # same number or the cap moves. B3 publishes the price as traded, so this is
     # what pairs the two (ADR 0032). BBAS3 2022 measured 2x against the adjusted
@@ -395,16 +396,24 @@ async def test_the_restatement_factor_is_published_for_the_price_to_divide_by() 
         )
     )
 
-    assert await reader.restatement_factor("BBAS3", 2022) == Decimal(2)
-    assert await reader.restatement_factor("BBAS3", 2023) == Decimal(1)
+    timeline = await reader.restatement_timeline("BBAS3")
+
+    assert [(step.effective, step.ratio) for step in timeline] == [
+        # Nothing dates an inferred move, so it takes the first day of the filing
+        # year that reported it — where the per-year factor already placed it.
+        (date(2023, 1, 1), Decimal(2))
+    ]
+    # Which is the yearly reading it refines: 2022 divides by 2, 2023 by nothing.
+    assert factor_at(timeline, date(2022, 12, 31)) == Decimal(2)
+    assert factor_at(timeline, date(2023, 6, 30)) == Decimal(1)
 
 
-async def test_the_restatement_factor_is_one_without_any_capital_document() -> None:
-    # No filing is not "no corporate action" — but a factor of 1 leaves the price
-    # exactly as the exchange published it, which is the honest default.
+async def test_the_restatement_is_empty_without_any_capital_document() -> None:
+    # No filing is not "no corporate action" — but an empty timeline leaves the
+    # price exactly as the exchange published it, which is the honest default.
     reader = MongoSharesReader(FakeCollection([]))
 
-    assert await reader.restatement_factor("PETR4", 2015) == Decimal(1)
+    assert await reader.restatement_timeline("PETR4") == ()
 
 
 async def test_the_current_year_is_its_own_base() -> None:
