@@ -5,9 +5,14 @@ because the filed counts also move on issuances and cancellations. Every fixture
 here is a real filing.
 """
 
+from datetime import date
 from decimal import Decimal
 
-from smaug.analysis.domain.capital import CorporateAction, restatement_factors
+from smaug.analysis.domain.capital import (
+    BaseChange,
+    CorporateAction,
+    restatement_factors,
+)
 
 
 def _action(kind: str, before: int, after: int, date: str = "2015-12-15"):
@@ -231,3 +236,87 @@ def test_an_action_ending_at_an_unfiled_count_is_still_ignored() -> None:
     factors = restatement_factors(filed, actions=declared)
 
     assert factors[2020] == 2  # inferred, as before
+
+
+def _change(day: str, ratio: str) -> BaseChange:
+    return BaseChange(session=date.fromisoformat(day), ratio=Decimal(ratio))
+
+
+def test_a_dirty_ratio_two_witnesses_agree_on_is_restated() -> None:
+    """Méliuz's 1:10 grupamento, with half a percent of the base issued alongside it.
+
+    The counts read 0.10051 where the event was 1/10, which the clean-ratio test
+    rejects by three orders of magnitude — and the price for every year before it
+    stayed ten times too small. B3's tape marks the base change on 2023-06-01 and
+    the market priced it at 0.0989, so both readings say the same thing.
+    """
+    filed = {2022: Decimal(865_180_443), 2023: Decimal(86_957_953)}
+    tape = [_change("2023-06-01", "0.0989")]
+
+    assert restatement_factors(filed)[2022] == 1  # nothing, before the witness
+    assert restatement_factors(filed, changes=tape)[2022] == Decimal("0.1")
+
+
+def test_a_move_too_small_to_tell_from_an_issuance_is_left_alone() -> None:
+    """A 4% bonus and a 4% follow-on are the same number.
+
+    The tape reads a size only to ±25%, so it cannot corroborate an action
+    smaller than its own error. Measured against the vendor series, every cell
+    this rule got wrong sat here: Cyrela went from an exact match to 16% out in
+    all eleven years, and Localiza from 0.4% to 3.5%.
+    """
+    filed = {2024: Decimal(1_000_000), 2025: Decimal(1_038_460)}
+    tape = [_change("2025-12-30", "1.0324")]
+
+    assert restatement_factors(filed, changes=tape)[2024] == 1
+
+
+def test_a_plausible_ratio_the_tape_did_not_see_is_left_alone() -> None:
+    # Measured over the exchange, 69 gaps sit near a plausible action ratio with
+    # no base change marked anywhere in them. They are issuances that happen to
+    # land near a fraction, and restating them would rewrite a dilution.
+    filed = {2022: Decimal(1_000_000), 2023: Decimal(2_010_000)}
+
+    assert restatement_factors(filed, changes=[])[2022] == 1
+
+
+def test_a_tape_event_of_another_size_does_not_confirm_the_ratio() -> None:
+    # The window is two years wide, so it catches actions belonging to other
+    # gaps. A 1:10 grupamento is not evidence for a 5% move.
+    filed = {2022: Decimal(1_000_000), 2023: Decimal(2_010_000)}
+    tape = [_change("2023-06-01", "0.0989")]
+
+    assert restatement_factors(filed, changes=tape)[2022] == 1
+
+
+def test_a_falling_count_is_not_explained_by_an_event_that_handed_shares_out() -> None:
+    # LREN3's 2021->2022 move is a buyback cancellation and the nearest thing on
+    # the tape is a bonus. Same magnitude, opposite direction, different event.
+    filed = {2021: Decimal(1_000_000), 2022: Decimal(505_100)}
+    tape = [_change("2022-04-05", "1.96")]
+
+    assert restatement_factors(filed, changes=tape)[2021] == 1
+
+
+def test_two_base_changes_in_one_gap_leave_it_unexplained() -> None:
+    """Recrusul's shape: the counts cannot say which of them they moved by.
+
+    A single filed ratio holding two actions and an issuance is not separable by
+    rounding, and picking one would be choosing the answer.
+    """
+    filed = {2022: Decimal(1_000_000), 2023: Decimal(505_100)}
+    tape = [_change("2023-03-01", "0.5"), _change("2023-09-01", "0.98")]
+
+    assert restatement_factors(filed, changes=tape)[2022] == 1
+
+
+def test_the_declared_ratio_still_outranks_the_witnessed_one() -> None:
+    # The tape is the last fallback, not a competitor: where CVM declares the
+    # move, its exact ratio is the answer and the market's reading is not.
+    filed = {2022: Decimal(1_000_000), 2023: Decimal(2_010_000)}
+    declared = [_action("Desdobramento", 1_000_000, 2_000_000, "2023-03-01")]
+    tape = [_change("2023-03-02", "2.05")]
+
+    factors = restatement_factors(filed, actions=declared, changes=tape)
+
+    assert factors[2022] == 2  # the declared 2x, not a witnessed 2.01

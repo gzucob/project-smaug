@@ -348,6 +348,7 @@ def _filed_steps(
     issued_by_year: Mapping[int, Decimal],
     composition_units: Sequence[Decimal],
     actions: Sequence[CorporateAction],
+    changes: Sequence[BaseChange] = (),
 ) -> list[_FiledStep]:
     """Every share-base move between consecutive filed years, newest first."""
     steps: list[_FiledStep] = []
@@ -369,9 +370,92 @@ def _filed_steps(
         ratio = _clean_ratio(earlier, later)
         if ratio is None and later > earlier:
             ratio = _composition_split(composition_units, later)
+        if ratio is None:
+            ratio = _witnessed_ratio(earlier, later, previous_year, year, changes)
         if ratio is not None:
             steps.append(_FiledStep(year, ratio))
     return steps
+
+
+# What a corporate action's ratio looks like: both sides small (a 2:1 split, a
+# 10% bonus is 11/10, a 1:15 grupamento), or one side a power of ten against a
+# small other (PDGR3's 1:100, BBAS3's 2003 1:1000). The grid is enumerated rather
+# than derived because density is the whole point — with denominators to 20 and a
+# 2% margin, *every* ratio is "clean": 0.10051 sits 0.01% from 20/199, which is
+# not an event any company declared.
+def _plausible_ratios() -> tuple[Decimal, ...]:
+    smalls = range(1, 26)
+    seen = {Decimal(p) / q for p in smalls for q in smalls}
+    for power in range(1, 5):
+        ten = Decimal(10) ** power
+        seen.update(ten / n for n in smalls)
+        seen.update(Decimal(n) / ten for n in smalls)
+    return tuple(sorted(ratio for ratio in seen if ratio != 1))
+
+
+_PLAUSIBLE_RATIOS = _plausible_ratios()
+
+# How far the filed ratio may sit from the action it is read as. The gap holds
+# the action *and* whatever else moved shares in the same filing year, so an
+# exact match is not on offer — CASH3's 1:10 grupamento reads 0.10051 because a
+# little over half a percent of the base was issued alongside it.
+_WITNESS_BAND = Decimal("0.02")
+
+
+def _witnessed_ratio(
+    earlier: Decimal,
+    later: Decimal,
+    previous_year: int,
+    year: int,
+    changes: Sequence[BaseChange],
+) -> Decimal | None:
+    """A ratio the counts leave dirty and B3's tape says happened anyway.
+
+    A filing gap that holds an action *and* an issuance reads as a dirty ratio,
+    and a dirty ratio is restated by nothing on purpose (ADR 0027) — that is what
+    keeps a dilution from being rewritten as a corporate action. The cost is that
+    a real action hidden behind an issuance is lost with it, and #176 only reached
+    the ones CVM declared.
+
+    Two independent witnesses are required, and neither is enough alone
+    (ADR 0037):
+
+    * the **counts**, whose ratio must sit within ``_WITNESS_BAND`` of a ratio an
+      action could plausibly have. Alone this fires on coincidence — measured
+      over the exchange, 69 gaps have a plausible ratio nearby and a tape event
+      of an entirely different size.
+    * the **tape**, which must mark exactly one base change inside the gap, of
+      that size (``_SESSION_MATCH_BAND``, as ADR 0035 already uses) and in that
+      direction. Alone it gives no ratio at all — only the market's reading of
+      one, which is 10% out at its worst.
+
+    The window runs from the start of the earlier filing year to the end of the
+    year after the later one, because the FRE reports an action late. More than
+    one base change in it means the counts cannot say which is which, and the gap
+    keeps its factor of 1.
+    """
+    if earlier <= 0 or later <= 0 or earlier == later:
+        return None
+    if 1 / _SESSION_MATCH_BAND < later / earlier < _SESSION_MATCH_BAND:
+        # Too small for either witness to tell from an issuance. The tape reads
+        # the size only to ±25% (ADR 0035), so it cannot corroborate an action
+        # smaller than its own error; and a 5% bonus is arithmetically the same
+        # move as a 5% follow-on. Measured: every cell this rule made *worse*
+        # against the vendor series sat here — CYRE3 went from 0.00% error to
+        # 16.00% in all eleven years on a 19/16 that the counts never made.
+        return None
+    window = (date(previous_year, 1, 1), date(year + 1, 12, 31))
+    inside = [c for c in changes if window[0] <= c.session <= window[1]]
+    if len(inside) != 1:
+        return None
+    filed = later / earlier
+    candidate = min(_PLAUSIBLE_RATIOS, key=lambda r: abs(r - filed))
+    if abs(candidate - filed) / filed > _WITNESS_BAND:
+        return None
+    observed = inside[0].ratio
+    if (observed > 1) != (candidate > 1) or not _is_same_size(candidate, observed):
+        return None
+    return candidate
 
 
 def _compounded(actions: Sequence[CorporateAction]) -> Decimal:
@@ -386,6 +470,7 @@ def restatement_factors(
     issued_by_year: Mapping[int, Decimal],
     composition_units: Sequence[Decimal] = (),
     actions: Sequence[CorporateAction] = (),
+    changes: Sequence[BaseChange] = (),
 ) -> dict[int, Decimal]:
     """The factor that restates each year's counts onto the latest year's base.
 
@@ -417,7 +502,7 @@ def restatement_factors(
     """
     ratios = {
         step.year: step.ratio
-        for step in _filed_steps(issued_by_year, composition_units, actions)
+        for step in _filed_steps(issued_by_year, composition_units, actions, changes)
     }
     factors: dict[int, Decimal] = {}
     running = Decimal(1)
@@ -629,8 +714,8 @@ def restatement_timeline(
     issued_by_year: Mapping[int, Decimal],
     composition_units: Sequence[Decimal] = (),
     actions: Sequence[CorporateAction] = (),
-    exchange: Sequence[ExchangeAction] = (),
     changes: Sequence[BaseChange] = (),
+    exchange: Sequence[ExchangeAction] = (),
 ) -> tuple[RestatementStep, ...]:
     """The same restatement as ``restatement_factors``, resolved to dates.
 
@@ -662,7 +747,7 @@ def restatement_timeline(
     """
     timeline: list[RestatementStep] = []
     windows: list[tuple[date, date]] = []
-    for step in _filed_steps(issued_by_year, composition_units, actions):
+    for step in _filed_steps(issued_by_year, composition_units, actions, changes):
         dated = [
             RestatementStep(approved, ratio)
             for action in step.declared
