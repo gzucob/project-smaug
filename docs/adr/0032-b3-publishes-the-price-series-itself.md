@@ -65,19 +65,26 @@ splits, groupings and bonuses but **not** for dividends.
 
 - The **as-traded** price is what B3 publishes and what we store unmodified: the
   mean of a closed year's daily closes, and the last close for the live quote.
-- The **corporate-action-adjusted** price is *derived* from it, using the factor
-  and date B3 publishes per event (`stockDividends`: `DESDOBRAMENTO`,
-  `GRUPAMENTO`, `BONIFICACAO`). It is not adjusted for dividends — that is a
-  third basis, and ADR 0018 already rules it out of valuation.
+- The **corporate-action-adjusted** price is *derived* from it, by dividing by the
+  very factor ADR 0027 multiplies that year's share counts by
+  (`restatement_factors`). It is not adjusted for dividends — that is a third
+  basis, and ADR 0018 already rules it out of valuation.
 - **Indicators are computed on the adjusted basis**, which is the one ADR 0027's
   restated share counts already sit on. Since `cap = price × shares` is invariant
   under a consistent restatement, no multiple changes value; what the basis
   decides is the per-share series and the price a screen shows.
 
-Deriving the factors from B3's event feed rather than from FRE count ratios also
-removes ADR 0027's stated blind spot: a composite action inside one filing year
-(VIVT3 2024: a 2:1 split plus a cancellation, combined ratio 1.9734) is invisible
-to a ratio test and explicit in an event list.
+**The factor is deliberately the counts' factor, not a better one.** B3 publishes
+a corporate-event feed (`stockDividends`: `DESDOBRAMENTO`, `GRUPAMENTO`,
+`BONIFICACAO`) which would in principle be more precise — event-level, dated, and
+able to see the composite action ADR 0027 admits it misses. Two things rule it
+out. It is **incomplete**: it lists one Bradesco bonus (2022) where the measured
+price ratio proves roughly one a year across the window, and one for Itaúsa. And
+even a complete feed would be the wrong input here — a price adjusted by a factor
+the count was *not* adjusted by breaks the invariance above, and a cap wrong by
+10% is worse than a per-share series uniformly one base behind. Improving the
+chain means moving both sides together, which is an evolution of ADR 0027 rather
+than a choice about the price source.
 
 The live quote becomes an **end-of-session close** rather than an intraday one.
 Deliberate: over a twelve-month accounting window the two agree at any precision
@@ -102,8 +109,13 @@ gate needs to mean anything.
 - **Two bases must be labelled wherever a price is shown.** Holding both and
   naming neither is how a reader ends up comparing R$45.49 with R$22.75.
 - **The dividend-adjusted column loses its source.** COTAHIST publishes no such
-  series; it is rebuilt from B3's cash-dividend history, which reaches back to
-  1995 and is a separate decision.
+  series; it is rebuilt from B3's cash-dividend history, which — unlike the stock
+  event feed — *is* complete (900 Bradesco rows back to 1995-12-28) and is a
+  separate decision.
+- **ADR 0027's blind spot is inherited, not fixed.** A composite action inside one
+  filing year (VIVT3 2024) stays invisible. It now misses identically on both
+  sides, which is what keeps the cap right regardless; the per-share series and
+  the displayed price for those years stay one base behind. Tracked as #122.
 - **A one-time 520 MB cache** and a first run that streams several GB of text;
   the per-year reduction keeps later runs cheap.
 - **We depend on a published file rather than an endpoint** for the price itself.
