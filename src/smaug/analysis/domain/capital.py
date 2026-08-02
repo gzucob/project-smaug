@@ -24,7 +24,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal
 
 from smaug.analysis.domain.financials import (
@@ -436,6 +436,38 @@ class ExchangeAction:
     ratio: Decimal
 
 
+@dataclass(frozen=True, slots=True)
+class BaseChange:
+    """A session on which the exchange's own tape says the share base moved.
+
+    Read off the price series itself: B3 numbers each paper's "estado de direito
+    vigente" and increments it on the first session quoted on the new base, so a
+    corporate action is dated by the very file the price is divided out of.
+
+    ``ratio`` is what the *market* did across that session, not what was
+    declared — the close before over the close after. It carries the day's own
+    move with it, so it identifies an action's size without ever stating it: the
+    ratio a step is restated by stays the one the counts anchored.
+    """
+
+    session: date
+    ratio: Decimal
+
+
+# How far an observed price ratio may sit from a declared one and still be the
+# same event. Measured over 107 pairs where both sources name the action: the
+# deviation is 1.5% at the median, 3.5% at the ninth decile and 10.3% at its
+# worst (GFSA3's 2025 grupamento, on a day the share moved 10% by itself). The
+# band is twice that worst case, and still an order of magnitude short of the
+# confusions it exists to reject — a 10% bonus against a 1:10 grupamento.
+_SESSION_MATCH_BAND = Decimal("1.25")
+
+# How long after its approval an action may still take effect. CVM files the
+# board's approval and the market reprices weeks later — BBAS3's 2 February 2024
+# split traded split on 16 April. Six months covers every pair measured.
+_APPROVAL_TO_EX_DAYS = 180
+
+
 def _is_same_event(step: RestatementStep, action: ExchangeAction) -> bool:
     """Whether an exchange action is the step the chain already found.
 
@@ -476,6 +508,61 @@ def _redated(
     return redated
 
 
+def _session_dated(
+    timeline: Sequence[RestatementStep],
+    windows: Sequence[tuple[date, date]],
+    changes: Sequence[BaseChange],
+) -> list[RestatementStep]:
+    """``timeline`` with each step moved onto the session its base actually moved.
+
+    Where ``_redated`` matches an exchange action on its *ratio* — both sides
+    state one exactly — this matches on **when and roughly how much**, because
+    the tape publishes the day and only the market's own reading of the size.
+
+    A candidate is taken when it falls inside the step's window, its observed
+    ratio is within ``_SESSION_MATCH_BAND`` of the declared one, and the pairing
+    is unambiguous in both directions. The window is what a step can honestly
+    claim to know: an approval is followed by its ex date within months, while an
+    inferred step knows only that the base had moved by the next filing — and the
+    FRE reports an action a year late, which is how BBAS3's April 2024 split came
+    to be parked on 2023-01-01.
+    """
+    pairs = [
+        (index, change)
+        for index, step in enumerate(timeline)
+        for change in changes
+        if windows[index][0] <= change.session <= windows[index][1]
+        and _is_same_size(step.ratio, change.ratio)
+    ]
+    per_step = Counter(index for index, _change in pairs)
+    per_change = Counter(change for _index, change in pairs)
+    dated = list(timeline)
+    for index, change in pairs:
+        if per_step[index] == 1 and per_change[change] == 1:
+            dated[index] = RestatementStep(change.session, timeline[index].ratio)
+    return dated
+
+
+def _is_same_size(declared: Decimal, observed: Decimal) -> bool:
+    """Whether a session's price ratio is the declared ratio plus a day's trading."""
+    if declared <= 0 or observed <= 0:
+        return False
+    return 1 / _SESSION_MATCH_BAND <= observed / declared <= _SESSION_MATCH_BAND
+
+
+def _window(step: RestatementStep, declared: bool) -> tuple[date, date]:
+    """The span in which a step's true effective session can lie.
+
+    A declared step is dated by its approval, and the market reprices after it,
+    never before. An inferred one is parked on the first day of the filing year
+    that *reported* the move, which the filing may report a year after it
+    happened — so the span runs to the end of the following year.
+    """
+    if declared:
+        return step.effective, step.effective + timedelta(days=_APPROVAL_TO_EX_DAYS)
+    return step.effective, date(step.effective.year + 1, 12, 31)
+
+
 def _grouped(exchange: Sequence[ExchangeAction]) -> list[ExchangeAction]:
     """One action per approval date, its legs compounded.
 
@@ -508,6 +595,7 @@ def restatement_timeline(
     composition_units: Sequence[Decimal] = (),
     actions: Sequence[CorporateAction] = (),
     exchange: Sequence[ExchangeAction] = (),
+    changes: Sequence[BaseChange] = (),
 ) -> tuple[RestatementStep, ...]:
     """The same restatement as ``restatement_factors``, resolved to dates.
 
@@ -517,22 +605,28 @@ def restatement_timeline(
     before restating them mixes the two (ADR 0033). This is what lets the price
     side split a year where the count side cannot.
 
-    Three sources of a date, in order of how well they know it:
+    Four sources of a date, in order of how well they know it:
 
-    * ``exchange`` — B3's own record, which carries the session the new base
-      started trading on. The best answer, and the only one for a step nothing
-      declared (ADR 0034).
+    * ``exchange`` — B3's published event feed, which states the session the new
+      base started trading on *and* an exact factor to match it on (ADR 0034).
+    * ``changes`` — the same session, read off the price series itself: B3
+      numbers each paper's rights state and increments it on the first session
+      quoted on the new base (ADR 0035). It knows the day exactly and the size
+      only as the market read it, so it is matched by window and magnitude —
+      which is why it comes second, not first. It is also the *complete* one:
+      the feed lists one Bradesco bonus where the tape carries eight.
     * a **declared** action — CVM's approval date, weeks before the market
       repriced.
-    * neither — the first day of the later filing year, which is exactly where
-      the per-year factor already put it. Inference therefore behaves as it
+    * none of them — the first day of the later filing year, which is exactly
+      where the per-year factor already put it. Inference therefore behaves as it
       always did, and a date is only ever improved, never invented.
 
-    An exchange action never contributes a **ratio**: it has no share count to
+    Neither exchange source contributes a **ratio**: neither has a share count to
     anchor one on, and a factor applied where the counts saw nothing move is how
-    a single split becomes nine (#174). It moves a date the chain already has.
+    a single split becomes nine (#174). They move a date the chain already has.
     """
     timeline: list[RestatementStep] = []
+    windows: list[tuple[date, date]] = []
     for step in _filed_steps(issued_by_year, composition_units, actions):
         dated = [
             RestatementStep(approved, ratio)
@@ -545,9 +639,28 @@ def restatement_timeline(
         # reading of the step and cannot compound back to its ratio.
         if len(dated) == len(step.declared) and dated:
             timeline.extend(dated)
+            windows.extend(_window(entry, declared=True) for entry in dated)
         else:
-            timeline.append(RestatementStep(date(step.year, 1, 1), step.ratio))
-    return tuple(sorted(_redated(timeline, exchange), key=lambda s: s.effective))
+            inferred = RestatementStep(date(step.year, 1, 1), step.ratio)
+            timeline.append(inferred)
+            windows.append(_window(inferred, declared=False))
+    redated = _redated(timeline, exchange)
+    # Only the steps the feed did not reach are offered to the tape. A step it
+    # already moved is left out of the matching entirely rather than merely
+    # ignored afterwards: it sits on the very session it would match, and would
+    # make that session look contested to the step that still needs it.
+    pending = [index for index, entry in enumerate(redated) if entry == timeline[index]]
+    for index, moved in zip(
+        pending,
+        _session_dated(
+            [redated[index] for index in pending],
+            [windows[index] for index in pending],
+            changes,
+        ),
+        strict=True,
+    ):
+        redated[index] = moved
+    return tuple(sorted(redated, key=lambda s: s.effective))
 
 
 def factor_at(timeline: Sequence[RestatementStep], session: date) -> Decimal:

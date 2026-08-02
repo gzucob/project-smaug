@@ -50,14 +50,15 @@ import asyncio
 import io
 import json
 import zipfile
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import httpx
 
+from smaug.analysis.domain.capital import BaseChange
 from smaug.analysis.domain.financials import MarketData, SessionClose, YearPrices
 from smaug.shared.download import Sleeper, download_zip
 from smaug.shared.logging import get_logger
@@ -76,6 +77,10 @@ _CODNEG = slice(12, 24)  # trading code, space-padded
 _TPMERC = slice(24, 27)  # market type: "010" is the spot market
 _PREULT = slice(108, 121)  # closing price, 11 integer + 2 decimal digits
 _FATCOT = slice(210, 217)  # shares per quote: "1" unitary, "1000" per lot of a thousand
+_DISMES = slice(242, 245)  # distribution number: the paper's current rights state
+# ESPECI is 10 wide (40-49); its first token is the class (ON/PN/UNT) and this is
+# the one that follows, which carries the "ex" markers.
+_MARKER = slice(43, 47)
 
 _QUOTE_RECORD = "01"
 _SPOT_MARKET = "010"
@@ -85,8 +90,34 @@ _PRICE_SCALE = Decimal(100)
 
 # The reduction's on-disk format. Bumped when the shape below changes, so a
 # stale cache is rebuilt rather than misread. v2 added the daily closes; v3
-# divides by the quote factor, which the centavo encoding could not represent.
-_REDUCTION_VERSION = 3
+# divides by the quote factor, which the centavo encoding could not represent;
+# v4 keeps the sessions where the paper's rights state changed.
+_REDUCTION_VERSION = 4
+
+# A marker with no class attached, used where the field is blank so that the
+# encoded triples stay whitespace-separated.
+_NO_MARKER = "-"
+
+# The letters that name an event handing the holder a different number of shares.
+_BASE_CHANGE_LETTERS = frozenset("BG")
+
+
+@dataclass(frozen=True, slots=True)
+class RightsState:
+    """One session and the rights state the paper carried into it.
+
+    ``distribution`` is COTAHIST's ``DISMES``, which the layout defines as the
+    paper's "número de seqüência correspondente ao estado de direito vigente" —
+    B3's own statement that this field, and not the price, is what says the
+    rights attached to the share changed. ``marker`` is the token ESPECI carries
+    beside the class on the sessions following that change (``EB``, ``EG``,
+    ``ED``…). B3 documents neither the marker's vocabulary nor its values, so it
+    is kept as filed and read in one place (``_is_base_change``).
+    """
+
+    session: date
+    distribution: str
+    marker: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +131,16 @@ class YearQuotes:
     that get read. The price is written out rather than kept as an integer of
     centavos because a lot-quoted code has a price finer than a centavo
     (CEGR3 closed 2015 at R$0.09508 a share).
+
+    ``rights`` is the year's *rights states*, encoded the same way as
+    ``"<day> <distribution> <marker>"`` triples: the first session of the year,
+    plus every session where either half of that pair changed. Holding the first
+    session too is what lets a reader join one year to the next — an action on
+    2 January (ITUB4 in 2026) shows up as a change only against December's
+    state, which lives in the previous year's file. The marker is kept on its own
+    changes, and not only on the distribution's, because it is *sticky*: it runs
+    for about eight sessions after the event, so knowing whether a given session
+    introduced it means knowing what stood immediately before.
     """
 
     sessions: int
@@ -107,6 +148,22 @@ class YearQuotes:
     last_session: date
     last_close: Decimal
     closes: str = ""
+    rights: str = ""
+
+    def rights_states(self) -> tuple[RightsState, ...]:
+        """The year's rights states, decoded — oldest first."""
+        january = date(self.last_session.year, 1, 1).toordinal()
+        fields = self.rights.split()
+        return tuple(
+            RightsState(
+                session=date.fromordinal(january + int(day)),
+                distribution=distribution,
+                marker="" if marker == _NO_MARKER else marker,
+            )
+            for day, distribution, marker in zip(
+                fields[::3], fields[1::3], fields[2::3], strict=False
+            )
+        )
 
     def session_closes(self) -> tuple[SessionClose, ...]:
         """The year's daily closes, decoded — as traded, oldest first."""
@@ -163,11 +220,17 @@ class _Accumulator:
     ordinals: list[int]
     cents: list[int]
     factors: list[int]
+    rights: list[str]
+    markers: list[str]
 
-    def add(self, cents: int, factor: int, ordinal: int) -> None:
+    def add(
+        self, cents: int, factor: int, ordinal: int, rights: str, marker: str
+    ) -> None:
         self.ordinals.append(ordinal)
         self.cents.append(cents)
         self.factors.append(factor)
+        self.rights.append(rights)
+        self.markers.append(marker)
 
     def freeze(self) -> YearQuotes:
         """The year reduced, with its sessions put back in date order.
@@ -177,12 +240,27 @@ class _Accumulator:
         oldest first, and the last close has to be the year's last rather than
         the file's last.
         """
-        series = sorted(zip(self.ordinals, self.cents, self.factors, strict=True))
+        series = sorted(
+            zip(
+                self.ordinals,
+                self.cents,
+                self.factors,
+                self.rights,
+                self.markers,
+                strict=True,
+            )
+        )
         prices = [
-            Decimal(cents) / (_PRICE_SCALE * factor) for _, cents, factor in series
+            Decimal(cents) / (_PRICE_SCALE * factor)
+            for _, cents, factor, _, _ in series
         ]
         last_session = date.fromordinal(series[-1][0])
         january = date(last_session.year, 1, 1).toordinal()
+        states = [
+            f"{ordinal - january} {rights} {marker or _NO_MARKER}"
+            for index, (ordinal, _, _, rights, marker) in enumerate(series)
+            if index == 0 or (rights, marker) != series[index - 1][3:5]
+        ]
         return YearQuotes(
             sessions=len(prices),
             average=sum(prices, Decimal(0)) / len(prices),
@@ -190,8 +268,9 @@ class _Accumulator:
             last_close=prices[-1],
             closes=" ".join(
                 f"{ordinal - january} {price}"
-                for (ordinal, _, _), price in zip(series, prices, strict=True)
+                for (ordinal, _, _, _, _), price in zip(series, prices, strict=True)
             ),
+            rights=" ".join(states),
         )
 
 
@@ -218,11 +297,15 @@ def _reduce(archive_path: Path) -> dict[str, YearQuotes]:
                     continue
                 ordinal = session.toordinal()
                 code = line[_CODNEG].strip()
+                rights = line[_DISMES].strip()
+                marker = line[_MARKER].strip()
                 entry = totals.get(code)
                 if entry is None:
-                    totals[code] = _Accumulator([ordinal], [cents], [factor])
+                    totals[code] = _Accumulator(
+                        [ordinal], [cents], [factor], [rights], [marker]
+                    )
                 else:
-                    entry.add(cents, factor, ordinal)
+                    entry.add(cents, factor, ordinal, rights, marker)
     return {code: entry.freeze() for code, entry in totals.items()}
 
 
@@ -238,6 +321,7 @@ def _dump(reduction: Mapping[str, YearQuotes], built_on: date) -> str:
                     quotes.last_session.isoformat(),
                     str(quotes.last_close),
                     quotes.closes,
+                    quotes.rights,
                 ]
                 for code, quotes in reduction.items()
             },
@@ -259,6 +343,7 @@ def _load(text: str) -> tuple[dict[str, YearQuotes], date] | None:
                 last_session=date.fromisoformat(row[2]),
                 last_close=Decimal(row[3]),
                 closes=row[4],
+                rights=row[5],
             )
             for code, row in payload["codes"].items()
         }
@@ -420,6 +505,158 @@ class B3QuoteProvider:
             )
             return MarketData()
         return MarketData(price=quotes.last_close)
+
+
+def _opened_base_change(before: frozenset[str], after: frozenset[str]) -> bool:
+    """Whether a rights state introduces an event that moved the share base.
+
+    ``B`` is bonificação and ``G`` grupamento, and B3's tape marks a
+    desdobramento as a bonificação too (BBAS3's 2024 split trades ``EB``). Both
+    hand the holder a different number of shares, which is exactly what a
+    restatement is. The markers combine, so the test is on the letters rather
+    than on a list: ``EDB`` is a dividend and a bonus on one session, ``EJB``
+    interest and a bonus.
+
+    **Against the span before it, never on its own**, because the marker is
+    sticky: it stays up for about eight sessions after the event. Itaúsa's 2022
+    bonus went ex on 11 November as ``EB`` and its interest on 21 November as
+    ``EJB`` — the ``B`` on the second date belongs to the first, and reading the
+    marker alone counts one bonus twice.
+
+    Everything else is deliberately out. ``ED`` and ``EJ`` are cash leaving the
+    company — the price drops and no share is created, which is the third basis
+    ADR 0018 keeps separate; 253 of them moved the price more than 15% and every
+    one would be a false action here. ``ES`` is a subscription, which issues
+    shares against new money: a dilution, not a restatement (ADR 0027). ``EX``
+    is left out too, at a known cost — VIVT3's 2025 split-and-grupamento carries
+    it — because 39 of its 40 occurrences are not composite actions at all, and
+    a candidate that is not an action can only steal a date. That case is what
+    B3's event feed still answers (ADR 0034).
+
+    B3 publishes no table for these values; the reading is measured, not cited,
+    which is why it lives behind one function with the evidence written down.
+    """
+    return bool(_BASE_CHANGE_LETTERS & set(after) - set(before))
+
+
+@dataclass(slots=True)
+class _Span:
+    """One distribution number's run of sessions, and everything its markers said.
+
+    A span, and not a session, because the marker and the rights state do not
+    always move together. Itaúsa's December 2025 bonus steps the distribution on
+    the 19th under ``EX`` and only says ``EB`` from the 22nd, still on the same
+    number — read session by session, the event names itself a day after it is
+    dated, and neither session on its own is a base change.
+
+    What it is measured against is the marker standing on the session **before**
+    it opened, not the whole span before it. A span can carry a bonus of its own
+    and still be followed by another: SLC Agrícola's May and December 2023
+    bonuses are consecutive spans, and comparing their unions hides the second.
+    """
+
+    distribution: str | None = None
+    letters: set[str] = field(default_factory=set)
+    previous: frozenset[str] = frozenset()
+    opened_on: date | None = None
+    before: Decimal | None = None
+    at_open: Decimal | None = None
+    reported: bool = True  # nothing precedes the first span, so it states nothing
+
+    def opened(
+        self,
+        state: RightsState,
+        *,
+        standing: str,
+        before: Decimal | None,
+        at_open: Decimal,
+    ) -> _Span:
+        return _Span(
+            distribution=state.distribution,
+            letters=set(state.marker),
+            previous=frozenset(standing),
+            opened_on=state.session,
+            before=before,
+            at_open=at_open,
+            reported=self.distribution is None,
+        )
+
+    def seen(self, marker: str) -> None:
+        self.letters |= set(marker)
+
+    def base_change(self) -> BaseChange | None:
+        """The change this span opened with, once its markers have named one."""
+        if self.reported or self.opened_on is None:
+            return None
+        if not _opened_base_change(self.previous, frozenset(self.letters)):
+            return None
+        self.reported = True
+        if self.before is None or self.before <= 0 or self.at_open is None:
+            return None
+        return BaseChange(self.opened_on, self.before / self.at_open)
+
+
+class B3BaseChanges:
+    """The sessions B3's own tape says a code's share base moved on.
+
+    The price series dates the corporate actions the counts can only place in a
+    year (ADR 0035): B3 numbers each paper's rights state and increments it on
+    the first session quoted on the new base, so the cut a restatement needs is
+    already inside the file the price is read from.
+
+    The ratio published alongside is the **market's** reading — the close before
+    over the close after — never a declared one. It exists to identify which
+    declared action a session belongs to, not to state its size.
+    """
+
+    def __init__(self, archive: CotahistArchive) -> None:
+        self._archive = archive
+
+    async def base_changes(
+        self, ticker: str, years: Sequence[int]
+    ) -> tuple[BaseChange, ...]:
+        """Every base change in ``years``, oldest first.
+
+        The years are walked in order so a change on a year's first session is
+        seen against December's state, which lives in the previous file. The
+        earliest year has no predecessor, so a code whose base moved on its very
+        first requested session is not dated — the file cannot tell that apart
+        from a code that simply started trading.
+        """
+        code = ticker.strip().upper()
+        changes: list[BaseChange] = []
+        span = _Span()
+        december: Decimal | None = None
+        standing = ""  # the marker in force on the session last read
+        for year in sorted(set(years)):
+            quotes = (await self._archive.year(year)).get(code)
+            if quotes is None:
+                continue
+            series = quotes.session_closes()
+            position = {close.session: index for index, close in enumerate(series)}
+            for state in quotes.rights_states():
+                at = position.get(state.session)
+                if at is None:
+                    continue
+                if state.distribution != span.distribution:
+                    # Measured across the cut, so the numerator is the session
+                    # immediately before it — not the previous *change*, which
+                    # can be a year away.
+                    before = series[at - 1].close if at > 0 else december
+                    span = span.opened(
+                        state,
+                        standing=standing,
+                        before=before,
+                        at_open=series[at].close,
+                    )
+                else:
+                    span.seen(state.marker)
+                standing = state.marker
+                change = span.base_change()
+                if change is not None:
+                    changes.append(change)
+            december = quotes.last_close
+        return tuple(changes)
 
 
 class B3PriceProvider:

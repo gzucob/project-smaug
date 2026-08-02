@@ -1,10 +1,11 @@
 """MongoSharesReader: per-year share counts from the CAPITAL raw mirror."""
 
+from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
-from smaug.analysis.domain.capital import RestatementStep, factor_at
+from smaug.analysis.domain.capital import BaseChange, RestatementStep, factor_at
 from smaug.analysis.domain.financials import ShareCounts
 from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
 
@@ -573,3 +574,45 @@ async def test_treasury_is_netted_before_the_restatement_factor() -> None:
 
     # (1,000,000 issued − 100,000 treasury) × 2 — never (1,000,000 × 2 − 100,000).
     assert await reader.outstanding("ACME3", 2022) == Decimal(1_800_000)
+
+
+class FakeBaseChanges:
+    """A ``BaseChangeReader`` that records the years it was asked for."""
+
+    def __init__(self, changes: list[BaseChange]) -> None:
+        self._changes = changes
+        self.asked: tuple[int, ...] = ()
+
+    async def base_changes(
+        self, ticker: str, years: Sequence[int]
+    ) -> Sequence[BaseChange]:
+        self.asked = tuple(years)
+        return self._changes
+
+
+async def test_the_tape_dates_the_move_the_filing_only_places_in_a_year() -> None:
+    # BBAS3's split traded on 16 April 2024; the 2023 FRE is what first counts it,
+    # so the chain parked it on 2023-01-01 and restated the wrong twelve months.
+    changes = FakeBaseChanges(
+        [BaseChange(session=date(2024, 4, 16), ratio=Decimal("2.0229"))]
+    )
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc("BBAS3", 2022, 2_865_417_020),
+                _doc("BBAS3", 2023, 5_730_834_040),
+            ]
+        ),
+        base_changes=changes,
+    )
+
+    timeline = await reader.restatement_timeline("BBAS3")
+
+    assert [(step.effective, step.ratio) for step in timeline] == [
+        (date(2024, 4, 16), Decimal(2))
+    ]
+    assert factor_at(timeline, date(2024, 4, 15)) == Decimal(2)
+    assert factor_at(timeline, date(2024, 4, 16)) == Decimal(1)
+    # One year past the last filed one, because the FRE reports an action late:
+    # a span stopping at 2023 would never be offered April 2024.
+    assert changes.asked == (2022, 2023, 2024)

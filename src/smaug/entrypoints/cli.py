@@ -35,7 +35,11 @@ from smaug.analysis.domain.ports import (
     PriceProvider,
     SharesReader,
 )
-from smaug.analysis.infrastructure.b3_prices import B3PriceProvider, CotahistArchive
+from smaug.analysis.infrastructure.b3_prices import (
+    B3BaseChanges,
+    B3PriceProvider,
+    CotahistArchive,
+)
 from smaug.analysis.infrastructure.brapi_price import BrapiPriceProvider
 from smaug.analysis.infrastructure.composite_price import CompositePriceProvider
 from smaug.analysis.infrastructure.fallback_price import (
@@ -602,8 +606,29 @@ def analyze(
     raise typer.Exit(code=exit_code)
 
 
+def _build_archive(
+    settings: Settings, http: httpx.AsyncClient
+) -> CotahistArchive | None:
+    """B3's quote series, or ``None`` when the vendors are serving the price.
+
+    One instance for the whole run: the share side reads the corporate-action
+    dates off it (ADR 0035) and the price side reads the closes, and they must
+    not each stream the same gigabytes.
+    """
+    if settings.price_source != "b3":
+        return None
+    return CotahistArchive(
+        http,
+        cache_dir=settings.b3_cache_dir,
+        base_url=settings.b3_series_base_url,
+    )
+
+
 def _build_price_provider(
-    settings: Settings, http: httpx.AsyncClient, shares_reader: SharesReader
+    settings: Settings,
+    shares_reader: SharesReader,
+    archive: CotahistArchive | None,
+    http: httpx.AsyncClient,
 ) -> PriceProvider:
     """Wire whichever price source ``PRICE_SOURCE`` selects.
 
@@ -617,17 +642,8 @@ def _build_price_provider(
     adjust it twice. Kept selectable only until the two have been diffed cell by
     cell.
     """
-    if settings.price_source == "b3":
-        return RestatedPriceProvider(
-            B3PriceProvider(
-                CotahistArchive(
-                    http,
-                    cache_dir=settings.b3_cache_dir,
-                    base_url=settings.b3_series_base_url,
-                )
-            ),
-            shares_reader,
-        )
+    if archive is not None:
+        return RestatedPriceProvider(B3PriceProvider(archive), shares_reader)
     brapi = BrapiPriceProvider(
         settings.brapi_base_url, settings.brapi_token.get_secret_value(), http
     )
@@ -666,10 +682,14 @@ async def _run_analyze(
             registrant = _registrant_resolver(identities)
             # One reader, wired twice: the use case divides the per-share
             # indicators by its restated counts, and the price provider divides
-            # the as-traded price by the very same restatement (ADR 0027).
+            # the as-traded price by the very same restatement (ADR 0027). The
+            # archive is built first because the reader dates that restatement
+            # off it, and the price provider then shares the same instance.
+            archive = _build_archive(settings, http)
             shares_reader = MongoSharesReader(
                 mongo[settings.mongo_db]["raw_ingestions"],
                 registrant_resolver=registrant,
+                base_changes=B3BaseChanges(archive) if archive else None,
             )
             use_case = AnalyzePortfolioUseCase(
                 reader=MongoFundamentalsReader(
@@ -677,7 +697,9 @@ async def _run_analyze(
                     sector_resolver=_sector_resolver(identities),
                     registrant_resolver=registrant,
                 ),
-                price_provider=_build_price_provider(settings, http, shares_reader),
+                price_provider=_build_price_provider(
+                    settings, shares_reader, archive, http
+                ),
                 repository=SqlAlchemyAnalysisRepository(session_factory),
                 shares_reader=shares_reader,
                 classification_resolver=_classification_resolver(identities),

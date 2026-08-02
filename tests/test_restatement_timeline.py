@@ -10,6 +10,7 @@ from datetime import date
 from decimal import Decimal
 
 from smaug.analysis.domain.capital import (
+    BaseChange,
     CorporateAction,
     ExchangeAction,
     RestatementStep,
@@ -250,3 +251,108 @@ def test_an_action_that_could_be_either_step_dates_neither() -> None:
         RestatementStep(date(2021, 1, 1), Decimal(2)),
         RestatementStep(date(2022, 1, 1), Decimal(2)),
     )
+
+
+def _change(day: str, ratio: str) -> BaseChange:
+    return BaseChange(session=date.fromisoformat(day), ratio=Decimal(ratio))
+
+
+def test_the_tape_dates_a_declared_action_the_feed_never_listed() -> None:
+    """Bradesco's 2019 bonus: CVM approved it in March, the market repriced in April.
+
+    B3's event feed lists one Bradesco bonus in its whole history (2022), so the
+    other eight kept their approval date and restated three weeks of April on the
+    wrong base. The price series carries every one of them.
+    """
+    filed = {2018: Decimal(6_000_000_000), 2019: Decimal(6_600_000_000)}
+    declared = [_action("Bonificação", 6_000_000_000, 6_600_000_000, "2019-03-12")]
+
+    timeline = restatement_timeline(
+        filed,
+        actions=declared,
+        changes=[_change("2019-04-01", "1.1905")],
+    )
+
+    assert timeline == (RestatementStep(date(2019, 4, 1), Decimal("1.1")),)
+    # The step keeps the ratio the counts anchored; the tape moved only the day.
+    assert factor_at(timeline, date(2019, 3, 31)) == Decimal("1.1")
+    assert factor_at(timeline, date(2019, 4, 1)) == 1
+
+
+def test_the_tape_dates_an_inferred_move_the_filing_reported_a_year_late() -> None:
+    """BBAS3's split traded on 16 April 2024 and the 2023 FRE is what reports it.
+
+    So the chain parks the step on 2023-01-01, leaving every 2023 session
+    unrestated and every 2024 one restated whole — the 100% error ADR 0033 could
+    not close without a date.
+    """
+    filed = {2022: Decimal(2_865_417_020), 2023: Decimal(5_730_834_040)}
+
+    timeline = restatement_timeline(filed, changes=[_change("2024-04-16", "2.0229")])
+
+    assert timeline == (RestatementStep(date(2024, 4, 16), Decimal(2)),)
+    assert factor_at(timeline, date(2024, 4, 15)) == 2
+    assert factor_at(timeline, date(2024, 4, 16)) == 1
+
+
+def test_a_session_whose_size_is_nothing_like_the_step_is_a_different_event() -> None:
+    """Magalu's 1:10 grupamento and its 5% bonus both sit in the same window.
+
+    The observed ratios are 0.1004 and 1.0459 against a step of 0.1: one is the
+    action, the other is not remotely it. Without that test the pair would look
+    ambiguous and the step would keep its filing-year date.
+    """
+    filed = {2023: Decimal(6_700_000_000), 2024: Decimal(670_000_000)}
+
+    timeline = restatement_timeline(
+        filed,
+        changes=[_change("2024-05-27", "0.1004"), _change("2025-12-30", "1.0459")],
+    )
+
+    assert timeline == (RestatementStep(date(2024, 5, 27), Decimal("0.1")),)
+
+
+def test_two_sessions_of_the_same_size_in_the_window_date_nothing() -> None:
+    # A company that pays the same bonus twice inside the window offers two
+    # equally good answers, and choosing would be guessing at the fact in
+    # question. The step keeps the date the counts gave it.
+    filed = {2023: Decimal(1_000_000), 2024: Decimal(1_100_000)}
+
+    timeline = restatement_timeline(
+        filed,
+        changes=[_change("2024-04-01", "1.10"), _change("2024-10-01", "1.11")],
+    )
+
+    assert timeline == (RestatementStep(date(2024, 1, 1), Decimal("1.1")),)
+
+
+def test_a_session_before_the_approval_is_not_the_action_it_approved() -> None:
+    # The market cannot reprice for an action the board has not approved yet, so
+    # a candidate earlier than the approval is a different event of similar size.
+    filed = {2018: Decimal(1_000_000), 2019: Decimal(1_100_000)}
+    declared = [_action("Bonificação", 1_000_000, 1_100_000, "2019-03-12")]
+
+    timeline = restatement_timeline(
+        filed, actions=declared, changes=[_change("2019-01-08", "1.1")]
+    )
+
+    assert timeline == (RestatementStep(date(2019, 3, 12), Decimal("1.1")),)
+
+
+def test_the_feed_keeps_the_step_it_already_dated() -> None:
+    """VIVT3's composite: the tape marks it ``EX`` and the reader skips it.
+
+    The feed still names it, so the step must come out on the feed's date — and
+    the tape's other candidates must not be able to pull it off that date.
+    """
+    filed = {2024: Decimal(1_613_273_311), 2025: Decimal(3_226_546_622)}
+    exchange = [
+        ExchangeAction(date(2025, 4, 15), "2025-03-13", Decimal(80)),
+        ExchangeAction(date(2025, 4, 15), "2025-03-13", Decimal("0.025")),
+    ]
+
+    timeline = restatement_timeline(
+        filed, exchange=exchange, changes=[_change("2025-09-01", "2.01")]
+    )
+
+    assert timeline == (RestatementStep(date(2025, 4, 15), Decimal(2)),)
