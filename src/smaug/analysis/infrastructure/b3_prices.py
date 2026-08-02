@@ -10,11 +10,18 @@ exchange itself rather than an undocumented vendor back-end.
 Two properties of the file drive the design here:
 
 **It is a reduction, not a document.** The 2025 archive is 748 MB of text and
-almost all of it is options. Everything the analysis wants from a year is, per
-trading code, the mean of the daily closes and the last one — so the file is
-streamed once and collapsed into ~26k entries, and that reduction is what gets
-cached. Keeping the parsed file in memory would be holding a library open to
-read one page of each book.
+almost all of it is options. What the analysis wants from a year is, per trading
+code, the mean of the daily closes, the last one, and the closes themselves — so
+the file is streamed once and collapsed onto the ~2.3k codes that trade on the
+spot market, and that reduction is what gets cached. Keeping the parsed file in
+memory would be holding a library open to read one page of each book.
+
+The daily closes survive the reduction because a corporate action lands on a
+*day*: restating a year's average is not the same operation as restating each
+session and averaging (ADR 0033). They cost little — a year is ~336k spot
+records, not the tens of millions the archive's size suggests — and they are
+kept encoded, one short string per code, so that a whole run holding a decade of
+years in memory carries megabytes rather than hundreds of them.
 
 **A code has no record on a day it did not trade.** An illiquid share is absent
 from the sessions nobody bought it in, and absent from a whole year it never
@@ -43,7 +50,7 @@ from pathlib import Path
 
 import httpx
 
-from smaug.analysis.domain.financials import MarketData, YearPrices
+from smaug.analysis.domain.financials import MarketData, SessionClose, YearPrices
 from smaug.shared.download import Sleeper, download_zip
 from smaug.shared.logging import get_logger
 
@@ -68,24 +75,45 @@ _SPOT_MARKET = "010"
 _PRICE_SCALE = Decimal(100)
 
 # The reduction's on-disk format. Bumped when the shape below changes, so a
-# stale cache is rebuilt rather than misread.
-_REDUCTION_VERSION = 1
+# stale cache is rebuilt rather than misread. v2 added the daily closes.
+_REDUCTION_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
 class YearQuotes:
-    """What one trading code did over one year, reduced to what is asked of it."""
+    """What one trading code did over one year, reduced to what is asked of it.
+
+    ``closes`` is the year's sessions encoded as ``"<day> <cents>"`` pairs, the
+    day counted from the 1st of January — a compact string rather than a parsed
+    series because most codes are never asked for theirs, and a decade of years
+    parsed up front would be tens of millions of objects held for the handful
+    that get read.
+    """
 
     sessions: int
     average: Decimal
     last_session: date
     last_close: Decimal
+    closes: str = ""
+
+    def session_closes(self) -> tuple[SessionClose, ...]:
+        """The year's daily closes, decoded — as traded, oldest first."""
+        january = date(self.last_session.year, 1, 1).toordinal()
+        fields = self.closes.split()
+        return tuple(
+            SessionClose(
+                session=date.fromordinal(january + int(day)),
+                close=Decimal(cents) / _PRICE_SCALE,
+            )
+            for day, cents in zip(fields[::2], fields[1::2], strict=False)
+        )
 
 
-def _decimal(raw: str) -> Decimal | None:
+def _cents(raw: str) -> int | None:
+    """The price field as its own integer of cents — the layout's implied scale."""
     try:
-        return Decimal(raw) / _PRICE_SCALE
-    except InvalidOperation:
+        return int(raw)
+    except ValueError:
         return None
 
 
@@ -98,26 +126,41 @@ def _session_date(raw: str) -> date | None:
 
 @dataclass(slots=True)
 class _Accumulator:
-    """One code's running totals while the archive streams past. Mutable by design."""
+    """One code's running totals while the archive streams past. Mutable by design.
 
-    total: Decimal
-    sessions: int
-    last_session: date
-    last_close: Decimal
+    Sessions are held as (ordinal, cents) integers rather than as dates and
+    decimals: the archive yields hundreds of thousands of them and only a few
+    hundred codes are ever asked for their series, so the objects are built at
+    the point of reading, not of streaming.
+    """
 
-    def add(self, close: Decimal, session: date) -> None:
-        self.total += close
-        self.sessions += 1
-        if session >= self.last_session:
-            self.last_session = session
-            self.last_close = close
+    total: int
+    last_ordinal: int
+    last_cents: int
+    ordinals: list[int]
+    cents: list[int]
+
+    def add(self, cents: int, ordinal: int) -> None:
+        self.total += cents
+        self.ordinals.append(ordinal)
+        self.cents.append(cents)
+        if ordinal >= self.last_ordinal:
+            self.last_ordinal = ordinal
+            self.last_cents = cents
 
     def freeze(self) -> YearQuotes:
+        last_session = date.fromordinal(self.last_ordinal)
+        january = date(last_session.year, 1, 1).toordinal()
+        sessions = len(self.cents)
         return YearQuotes(
-            sessions=self.sessions,
-            average=self.total / self.sessions,
-            last_session=self.last_session,
-            last_close=self.last_close,
+            sessions=sessions,
+            average=Decimal(self.total) / _PRICE_SCALE / sessions,
+            last_session=last_session,
+            last_close=Decimal(self.last_cents) / _PRICE_SCALE,
+            closes=" ".join(
+                f"{ordinal - january} {cents}"
+                for ordinal, cents in zip(self.ordinals, self.cents, strict=True)
+            ),
         )
 
 
@@ -137,16 +180,19 @@ def _reduce(archive_path: Path) -> dict[str, YearQuotes]:
             for line in stream:
                 if line[_TIPREG] != _QUOTE_RECORD or line[_TPMERC] != _SPOT_MARKET:
                     continue
-                close = _decimal(line[_PREULT])
+                cents = _cents(line[_PREULT])
                 session = _session_date(line[_DATA])
-                if close is None or session is None:
+                if cents is None or session is None:
                     continue
+                ordinal = session.toordinal()
                 code = line[_CODNEG].strip()
                 entry = totals.get(code)
                 if entry is None:
-                    totals[code] = _Accumulator(close, 1, session, close)
+                    totals[code] = _Accumulator(
+                        cents, ordinal, cents, [ordinal], [cents]
+                    )
                 else:
-                    entry.add(close, session)
+                    entry.add(cents, ordinal)
     return {code: entry.freeze() for code, entry in totals.items()}
 
 
@@ -161,6 +207,7 @@ def _dump(reduction: Mapping[str, YearQuotes], built_on: date) -> str:
                     str(quotes.average),
                     quotes.last_session.isoformat(),
                     str(quotes.last_close),
+                    quotes.closes,
                 ]
                 for code, quotes in reduction.items()
             },
@@ -181,6 +228,7 @@ def _load(text: str) -> tuple[dict[str, YearQuotes], date] | None:
                 average=Decimal(row[1]),
                 last_session=date.fromisoformat(row[2]),
                 last_close=Decimal(row[3]),
+                closes=row[4],
             )
             for code, row in payload["codes"].items()
         }
@@ -293,10 +341,21 @@ class B3PriceHistory:
             # Reported as a plain gap, not as a symbol the source rejected: B3
             # does not reject symbols, it simply has nothing where nothing traded.
             return YearPrices()
-        # ``adjusted_avg`` stays null until the corporate-event series lands: the
-        # published file carries the traded price and no dividend adjustment, and
-        # the valuation multiples divide by the traded price anyway (ADR 0018).
+        # ``adjusted_avg`` is the *dividend*-adjusted basis, which this file does
+        # not carry and the valuation multiples do not want (ADR 0018). The
+        # corporate-action basis is put on this average by ``RestatedPriceProvider``,
+        # which is the only thing that knows the company's share-base history.
         return YearPrices(nominal_avg=quotes.average)
+
+    async def year_sessions(self, ticker: str, year: int) -> tuple[SessionClose, ...]:
+        """Every close the code printed in ``year``, as traded.
+
+        Published alongside the average because the two answer different halves of
+        one question: the average is what an indicator divides by, the sessions are
+        what a corporate action has to be applied to first (ADR 0033).
+        """
+        quotes = (await self._archive.year(year)).get(ticker.strip().upper())
+        return () if quotes is None else quotes.session_closes()
 
 
 class B3QuoteProvider:
@@ -352,3 +411,6 @@ class B3PriceProvider:
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:
         return await self._history.year_prices(ticker, year)
+
+    async def year_sessions(self, ticker: str, year: int) -> tuple[SessionClose, ...]:
+        return await self._history.year_sessions(ticker, year)

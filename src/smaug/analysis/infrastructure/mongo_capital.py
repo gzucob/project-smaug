@@ -32,9 +32,11 @@ from typing import Any, Protocol
 
 from smaug.analysis.domain.capital import (
     CorporateAction,
+    RestatementStep,
     filed_scale,
     outstanding_counts,
     restatement_factors,
+    restatement_timeline,
 )
 from smaug.analysis.domain.financials import CapitalComposition, ShareCounts
 from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
@@ -213,30 +215,36 @@ class MongoSharesReader:
             )
         return _scaled(net, factor)
 
-    async def restatement_factor(self, ticker: str, year: int) -> Decimal:
-        """The factor ``counts`` restated ``year`` by — see the port's docstring.
+    async def restatement_timeline(self, ticker: str) -> tuple[RestatementStep, ...]:
+        """The dated share-base moves ``counts`` restates by — see the port.
 
-        Read by the price side, which must divide by exactly this number when its
-        source publishes the price **as traded** (B3's own series does; Yahoo's
-        did not). Same inputs and same chain as ``counts``, deliberately: a price
-        adjusted by a *better* factor than the count it multiplies would break the
-        very invariance that keeps the cap right.
+        Read by the price side, which must divide by exactly these when its source
+        publishes the price **as traded** (B3's own series does; Yahoo's did not).
+        Same inputs and same chain as ``counts``, deliberately: a price adjusted by
+        a *better* factor than the count it multiplies would break the very
+        invariance that keeps the cap right. What the price adds is the date each
+        move happened on, which a yearly count series has no use for (ADR 0033).
         """
         by_year = await self._by_year(ticker)
-        served = _served_year(by_year, ticker, year, "capital")
-        if served is None:
-            return Decimal(1)
-        return await self._factor(ticker, by_year, served)
+        return restatement_timeline(
+            *await self._restatement_inputs(ticker, by_year),
+        )
 
     async def _factor(
         self, ticker: str, by_year: dict[int, ShareCounts], served: int
     ) -> Decimal:
-        factors = restatement_factors(
+        factors = restatement_factors(*await self._restatement_inputs(ticker, by_year))
+        return factors.get(served, Decimal(1))
+
+    async def _restatement_inputs(
+        self, ticker: str, by_year: dict[int, ShareCounts]
+    ) -> tuple[dict[int, Decimal], list[Decimal], tuple[CorporateAction, ...]]:
+        """The three filings the restatement reads, in the order both entries take."""
+        return (
             {y: c.total for y, c in by_year.items() if c.total is not None},
             await self._composition_units_series(ticker, by_year),
             await self._declared_actions(ticker),
         )
-        return factors.get(served, Decimal(1))
 
     async def _declared_actions(self, ticker: str) -> tuple[CorporateAction, ...]:
         """The corporate actions the company declared to CVM, deduplicated.

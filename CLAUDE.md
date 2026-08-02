@@ -15,15 +15,17 @@ PostgreSQL, served by a read API. Both phases are already implemented (see
   (`smaug.analyze`); FastAPI (`smaug.entrypoints.api`) serves already-persisted
   results — it's a read API, not a write one.
 - Price source for Phase 2 — **migrating** to B3's own published series
-  (`COTAHIST_A{year}.ZIP`, free and unauthenticated, ADR 0032). The reader exists
-  and is tested; `PRICE_SOURCE` still defaults to `vendors` (Yahoo primary, brapi
-  fallback — ADR 0013, superseded but still wired) because B3 publishes the price
-  **as traded** while the share counts are restated onto the current base
-  (ADR 0027). The two must sit on the same base or every company that ever split
-  is mispriced (BBAS3 by 2×), so the default moves only once the
-  corporate-action factors land. **Three price bases exist and must never be
-  mixed**: as traded · adjusted for splits/groupings/bonuses (what indicators
-  use) · adjusted for dividends (total return only, ADR 0018).
+  (`COTAHIST_A{year}.ZIP`, free and unauthenticated, ADR 0032). B3 publishes the
+  price **as traded** while the share counts are restated onto the current base
+  (ADR 0027); the two must sit on the same base or every company that ever split
+  is mispriced (BBAS3 by 2×), so under `PRICE_SOURCE=b3` the reader is wrapped in
+  `RestatedPriceProvider`, which divides each **session** by the actions that
+  postdate it (ADR 0033). `PRICE_SOURCE` still defaults to `vendors` (Yahoo
+  primary, brapi fallback — ADR 0013, superseded but still wired) while the
+  corporate-action coverage is completed: CVM stops declaring after the 2023 FRE,
+  and B3's own event feed is not ingested yet. **Three price bases exist and must
+  never be mixed**: as traded · adjusted for splits/groupings/bonuses (what
+  indicators use) · adjusted for dividends (total return only, ADR 0018).
 - The cap is derived, not fetched: it sums the company's listed share classes,
   each at its own price (`Σ class_price × class_shares`, ADR 0014), counting only
   the shares actually **outstanding** — issued less treasury (ADR 0017).

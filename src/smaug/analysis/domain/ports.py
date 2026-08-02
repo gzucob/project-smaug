@@ -7,12 +7,15 @@ the composition root wires them.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
 from typing import Protocol
 
+from smaug.analysis.domain.capital import RestatementStep
 from smaug.analysis.domain.entities import PruneResult, TickerAnalysis
 from smaug.analysis.domain.financials import (
     MarketData,
+    SessionClose,
     ShareCounts,
     StandardizedFinancials,
     YearPrices,
@@ -45,6 +48,20 @@ class PriceProvider(Protocol):
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:
         """Average nominal and dividend-adjusted price over ``year``."""
+        ...
+
+
+class SessionPriceProvider(PriceProvider, Protocol):
+    """A ``PriceProvider`` that can also show the individual closes behind a year.
+
+    Only a source publishing the price **as traded** has to offer this: what it
+    is for is applying a corporate action to the sessions that preceded it and
+    not to the ones that followed (ADR 0033), and a pre-adjusted vendor series
+    has already had that done to it.
+    """
+
+    async def year_sessions(self, ticker: str, year: int) -> Sequence[SessionClose]:
+        """Every close the code printed in ``year``, as traded, oldest first."""
         ...
 
 
@@ -98,14 +115,18 @@ class SharesReader(Protocol):
         """
         ...
 
-    async def restatement_factor(self, ticker: str, year: int) -> Decimal:
-        """What ``year``'s counts were multiplied by to reach the current base.
+    async def restatement_timeline(self, ticker: str) -> Sequence[RestatementStep]:
+        """The dated share-base moves the counts above were restated by.
 
-        The counts above are already restated (ADR 0027); this publishes the
-        number they were restated *by*, because a price taken as traded has to be
-        divided by the same one. ``cap = price x shares`` is invariant only while
-        both sit on one base — pairing an as-traded price with a restated count
-        overstates BBAS3's pre-2024 cap by exactly 2x. ``1`` when nothing moved.
+        The counts are already restated (ADR 0027); this publishes what they were
+        restated *by*, because a price taken as traded has to be divided by the
+        same thing. ``cap = price x shares`` is invariant only while both sit on
+        one base — pairing an as-traded price with a restated count overstates
+        BBAS3's pre-2024 cap by exactly 2x.
+
+        Dated, and not one factor per year, because the price is a daily series:
+        a company's action falls mid-year and the sessions either side of it are
+        quoted on different bases (ADR 0033). Empty when nothing ever moved.
         """
         ...
 
