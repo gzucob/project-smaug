@@ -338,7 +338,6 @@ class MongoSharesReader:
         return restatement_timeline(
             *await self._restatement_inputs(ticker, by_year),
             exchange=await self._exchange_actions(ticker),
-            changes=await self._session_changes(ticker, by_year),
         )
 
     async def _session_changes(
@@ -364,12 +363,24 @@ class MongoSharesReader:
 
     async def _restatement_inputs(
         self, ticker: str, by_year: dict[int, ShareCounts]
-    ) -> tuple[dict[int, Decimal], list[Decimal], tuple[CorporateAction, ...]]:
-        """The three filings the restatement reads, in the order both entries take."""
+    ) -> tuple[
+        dict[int, Decimal],
+        list[Decimal],
+        tuple[CorporateAction, ...],
+        tuple[BaseChange, ...],
+    ]:
+        """The four readings the restatement takes, in the order both entries use.
+
+        The tape is among them because it now bears on the *ratio* and not only
+        on the date: a gap holding an action and an issuance together leaves the
+        counts dirty, and only a second witness can say an action was in there
+        (ADR 0037).
+        """
         return (
             {y: c.total for y, c in by_year.items() if c.total is not None},
             await self._composition_units_series(ticker, by_year),
             await self._declared_actions(ticker),
+            await self._session_changes(ticker, by_year),
         )
 
     async def _declared_actions(self, ticker: str) -> tuple[CorporateAction, ...]:
