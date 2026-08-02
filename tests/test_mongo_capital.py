@@ -381,6 +381,32 @@ async def test_a_pre_bonus_year_is_served_on_the_current_base() -> None:
     assert counts.common == Decimal(5_730_834_040)
 
 
+async def test_the_restatement_factor_is_published_for_the_price_to_divide_by() -> None:
+    # The counts are multiplied by it; an as-traded price has to be divided by the
+    # same number or the cap moves. B3 publishes the price as traded, so this is
+    # what pairs the two (ADR 0032). BBAS3 2022 measured 2x against the adjusted
+    # vendor series in all ten years.
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc("BBAS3", 2022, 2_865_417_020),
+                _doc("BBAS3", 2023, 5_730_834_040),
+            ]
+        )
+    )
+
+    assert await reader.restatement_factor("BBAS3", 2022) == Decimal(2)
+    assert await reader.restatement_factor("BBAS3", 2023) == Decimal(1)
+
+
+async def test_the_restatement_factor_is_one_without_any_capital_document() -> None:
+    # No filing is not "no corporate action" — but a factor of 1 leaves the price
+    # exactly as the exchange published it, which is the honest default.
+    reader = MongoSharesReader(FakeCollection([]))
+
+    assert await reader.restatement_factor("PETR4", 2015) == Decimal(1)
+
+
 async def test_the_current_year_is_its_own_base() -> None:
     reader = MongoSharesReader(
         FakeCollection(

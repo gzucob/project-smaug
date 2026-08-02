@@ -98,6 +98,17 @@ class SharesReader(Protocol):
         """
         ...
 
+    async def restatement_factor(self, ticker: str, year: int) -> Decimal:
+        """What ``year``'s counts were multiplied by to reach the current base.
+
+        The counts above are already restated (ADR 0027); this publishes the
+        number they were restated *by*, because a price taken as traded has to be
+        divided by the same one. ``cap = price x shares`` is invariant only while
+        both sit on one base — pairing an as-traded price with a restated count
+        overstates BBAS3's pre-2024 cap by exactly 2x. ``1`` when nothing moved.
+        """
+        ...
+
 
 class AnalysisRepository(Protocol):
     """Persists and reads back computed analyses."""
