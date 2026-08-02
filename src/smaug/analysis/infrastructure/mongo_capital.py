@@ -270,10 +270,18 @@ class MongoSharesReader:
         arrives three times — same date, same factor, three ISINs. They are one
         event, and counting them three times would cube it.
 
-        Only the three actions that restate the whole share base are read.
-        ``CIS RED CAP`` (a spin-off) also carries a factor and is not one of
-        them: it hands shareholders stock in a *different* company, and the
-        share base it names is not the one being restated.
+        Only the three actions that restate the whole share base are read. B3
+        files nine labels across the exchange, and the other six carry a factor
+        just like these do — measured over 907 rows for 217 companies:
+
+            BONIFICACAO 298 · GRUPAMENTO 263 · DESDOBRAMENTO 196   (restatements)
+            CIS RED CAP 97 · RESG TOTAL RV 31 · INCORPORACAO 13 ·
+            REST CAP ACOES 6 · CIS RED CAP QTD 2 · REST CAP C/ RED 1
+
+        A spin-off (``CIS RED CAP``) hands shareholders stock in a *different*
+        company; an ``INCORPORACAO`` merges one. Neither multiplies the base
+        being restated, so an unmapped label contributes nothing rather than
+        being guessed at.
         """
         cursor = self._collection.find(
             mirror_filter(
