@@ -51,7 +51,7 @@ from typing import Any, Literal
 import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
-from smaug.ingestion.infrastructure.download import Sleeper, download_zip
+from smaug.shared.download import Sleeper, download_zip
 from smaug.shared.errors import BrapiNotFoundError
 from smaug.shared.logging import get_logger
 

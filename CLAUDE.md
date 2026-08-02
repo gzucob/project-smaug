@@ -14,12 +14,19 @@ PostgreSQL, served by a read API. Both phases are already implemented (see
   (migrations in `alembic/versions/`). The calculation trigger is CLI
   (`smaug.analyze`); FastAPI (`smaug.entrypoints.api`) serves already-persisted
   results — it's a read API, not a write one.
-- Price source for Phase 2 (current quote + dividend-adjusted year history):
-  **Yahoo Finance is primary, brapi is the fallback** (ADR 0013). The cap is
-  derived, not fetched: the cap sums the company's listed share classes, each at
-  its own price (`Σ class_price × class_shares`, ADR 0014), counting only the shares
-  actually **outstanding** — issued less treasury (ADR 0017). brapi is also an alternative
-  ingestion source (`INGESTION_SOURCE=brapi`), limited on the free plan.
+- Price source for Phase 2 — **migrating** to B3's own published series
+  (`COTAHIST_A{year}.ZIP`, free and unauthenticated, ADR 0032). The reader exists
+  and is tested; `PRICE_SOURCE` still defaults to `vendors` (Yahoo primary, brapi
+  fallback — ADR 0013, superseded but still wired) because B3 publishes the price
+  **as traded** while the share counts are restated onto the current base
+  (ADR 0027). The two must sit on the same base or every company that ever split
+  is mispriced (BBAS3 by 2×), so the default moves only once the
+  corporate-action factors land. **Three price bases exist and must never be
+  mixed**: as traded · adjusted for splits/groupings/bonuses (what indicators
+  use) · adjusted for dividends (total return only, ADR 0018).
+- The cap is derived, not fetched: it sums the company's listed share classes,
+  each at its own price (`Σ class_price × class_shares`, ADR 0014), counting only
+  the shares actually **outstanding** — issued less treasury (ADR 0017).
 
 Always restate the stack before proposing architecture or dependencies.
 

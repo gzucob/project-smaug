@@ -16,6 +16,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # change — never a rewrite. brapi is kept for the day the paid plan is bought.
 IngestionSource = Literal["brapi", "cvm"]
 
+# Where market prices come from. Transitional: "b3" is wired and tested but not
+# yet the default — it serves the as-traded price, and the analysis needs the
+# corporate-action-adjusted one to match its restated share counts (ADR 0032).
+PriceSource = Literal["b3", "vendors"]
+
 # Default brapi modules to collect. Names are configurable via ``BRAPI_MODULES``
 # (comma-separated) so they can be corrected against the live docs without a
 # code change. "dividends" is a pseudo-module: the client requests it via the
@@ -75,6 +80,22 @@ class Settings(BaseSettings):
     # tickers (ADR 0007/0011), so the closed-year averages come from Yahoo's
     # public chart endpoint. No token; a browser-like User-Agent is set per call.
     yahoo_base_url: str = Field(default="https://query1.finance.yahoo.com")
+
+    # ---- B3 (the exchange's own published quote series) ----
+    # Which source prices the analysis. "b3" reads COTAHIST, the series B3
+    # publishes itself — but it publishes the price **as traded**, while the
+    # share counts are restated onto the current base (ADR 0027). Until the
+    # corporate-action factors land and put both on the same base, selecting it
+    # would overstate the cap of every company that ever split (BBAS3 by 2x), so
+    # the default stays on the vendor chain (ADR 0032).
+    price_source: PriceSource = Field(default="vendors")
+    b3_series_base_url: str = Field(
+        default="https://bvmf.bmfbovespa.com.br/InstDados/SerHist"
+    )
+    # Where the yearly COTAHIST archives and their reductions are cached
+    # (gitignored). The archives are large — about 520 MB for 2015-2026 — which
+    # is why the reduction beside each one is what a second run reads.
+    b3_cache_dir: str = Field(default=".cache/b3")
 
     # ---- CVM ----
     cvm_modules: tuple[str, ...] = Field(default=DEFAULT_CVM_MODULES)

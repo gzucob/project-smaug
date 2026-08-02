@@ -1,9 +1,16 @@
-"""Resilient ZIP download shared by the CVM sources (statements and FRE).
+"""Resilient ZIP download, shared by every source that reads a published archive.
 
 Each yearly archive is the step every ticker of a run shares, so a transient
 network failure here is the worst possible place to give up (#16): the
 download retries with backoff, writes atomically, and raises a typed error
-the ingestion use case treats as fatal-with-log instead of a traceback.
+the calling use case treats as fatal-with-log instead of a traceback.
+
+It lives in ``shared`` because three contexts read a yearly ZIP off a public
+server and none of them owns the plumbing: ``ingestion`` takes CVM's statements
+and FRE, ``portfolio`` takes the FCA registry, and ``analysis`` takes B3's
+COTAHIST price series. Importing it out of ``ingestion/infrastructure`` — which
+``portfolio`` did — reaches into another context's internals, which
+``RULES_LAYERS.md`` rules out.
 """
 
 from __future__ import annotations

@@ -99,9 +99,13 @@ uvicorn smaug.entrypoints.api:app --reload
   retornam `null` nos que não se aplicam (dívida líquida, EV/EBITDA, liquidez).
 - **Unidades**: os valores da CVM (em milhares) são escalados para reais antes
   de cruzar com o preço, para os múltiplos de mercado saírem corretos.
-- **Preço**: vem do brapi (`BRAPI_TOKEN`); no plano grátis só PETR4/VALE3
-  retornam cotação — as demais ficam com os múltiplos de mercado nulos, mas os
-  indicadores contábeis são calculados normalmente.
+- **Preço**: em migração para a série histórica que a **própria B3 publica**
+  (`COTAHIST_A{ano}.ZIP` — sem token, um arquivo por ano desde 1986, ADR 0032).
+  O leitor já existe (`PRICE_SOURCE=b3`), mas o padrão ainda é `vendors`: a B3
+  publica o preço **como negociado**, e os indicadores precisam do preço
+  **ajustado por desdobramento/grupamento/bonificação** para casar com a base
+  acionária restatada da ADR 0027. Um papel sem nenhum pregão no período fica com
+  os múltiplos de mercado nulos; os indicadores contábeis saem normalmente.
 - **Crescimento**: precisa de ≥2 anos no espelho; rode `CVM_YEAR=2023 uv run
   python -m smaug.entrypoints.cli ingest` (e 2022) para popular histórico.
 - Ainda **sem critérios de "tese azedando"** — isso fica para a fase de análise
