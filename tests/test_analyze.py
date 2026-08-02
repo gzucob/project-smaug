@@ -86,8 +86,13 @@ class FakePrice:
 class FakeShares:
     """CVM's filed capital composition, per fiscal year (ON/PN + the filer's total)."""
 
-    def __init__(self, by_year: dict[int, ShareCounts] | None = None) -> None:
+    def __init__(
+        self,
+        by_year: dict[int, ShareCounts] | None = None,
+        factors: dict[int, Decimal] | None = None,
+    ) -> None:
         self._by_year = by_year or {}
+        self._factors = factors or {}
 
     async def outstanding(self, ticker: str, year: int) -> Decimal | None:
         if is_unit(ticker):
@@ -97,6 +102,9 @@ class FakeShares:
 
     async def counts(self, ticker: str, year: int) -> ShareCounts | None:
         return self._by_year.get(year)
+
+    async def restatement_factor(self, ticker: str, year: int) -> Decimal:
+        return self._factors.get(year, Decimal(1))
 
 
 def _counts(*, common: int, preferred: int = 0) -> ShareCounts:

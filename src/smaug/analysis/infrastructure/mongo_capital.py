@@ -201,11 +201,7 @@ class MongoSharesReader:
                 year,
             )
             net = issued
-        factors = restatement_factors(
-            {y: c.total for y, c in by_year.items() if c.total is not None},
-            await self._composition_units_series(ticker, by_year),
-        )
-        factor = factors.get(served, Decimal(1))
+        factor = await self._factor(ticker, by_year, served)
         if factor != 1:
             logger.info(
                 "Restating %s %d share counts onto the current base (x%s, ADR 0027)",
@@ -214,6 +210,30 @@ class MongoSharesReader:
                 factor,
             )
         return _scaled(net, factor)
+
+    async def restatement_factor(self, ticker: str, year: int) -> Decimal:
+        """The factor ``counts`` restated ``year`` by — see the port's docstring.
+
+        Read by the price side, which must divide by exactly this number when its
+        source publishes the price **as traded** (B3's own series does; Yahoo's
+        did not). Same inputs and same chain as ``counts``, deliberately: a price
+        adjusted by a *better* factor than the count it multiplies would break the
+        very invariance that keeps the cap right.
+        """
+        by_year = await self._by_year(ticker)
+        served = _served_year(by_year, ticker, year, "capital")
+        if served is None:
+            return Decimal(1)
+        return await self._factor(ticker, by_year, served)
+
+    async def _factor(
+        self, ticker: str, by_year: dict[int, ShareCounts], served: int
+    ) -> Decimal:
+        factors = restatement_factors(
+            {y: c.total for y, c in by_year.items() if c.total is not None},
+            await self._composition_units_series(ticker, by_year),
+        )
+        return factors.get(served, Decimal(1))
 
     async def _composition(self, ticker: str, year: int) -> CapitalComposition | None:
         compositions = await self._compositions(ticker)
