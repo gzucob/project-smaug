@@ -8,7 +8,7 @@ dependencies and call the use cases (plan §3.1 / CLAUDE.md).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -71,6 +71,7 @@ from smaug.ingestion.application.report import (
     TickerReport,
 )
 from smaug.ingestion.domain.ports import RawDataSource
+from smaug.ingestion.domain.repositories import RawIngestionRepository
 from smaug.ingestion.infrastructure.b3_capital_events import (
     CAPITAL_EVENT_B3_MODULE,
     B3CapitalEventSource,
@@ -534,45 +535,79 @@ async def _ingest_one_year(
     source = _build_data_source(
         settings, http, code_map, cnpj_map, document=document, year=year
     )
-    skipped: tuple[str, ...] = ()
+    modules = settings.active_modules
+    plan = dict.fromkeys(wanted, modules)
     if whole_exchange and not force:
-        wanted, skipped = await _still_to_collect(repository, source, wanted, code_map)
+        plan = await _work_plan(repository, source, wanted, code_map, modules)
 
-    use_case = IngestPortfolioUseCase(
-        client=source,
-        repository=repository,
-        event_bus=EventBus(),
-        modules=settings.active_modules,
-        source=settings.ingestion_source,
-        delay_seconds=settings.active_delay_seconds,
-    )
+    outcomes: list[FetchOutcome] = []
+    for owed, tickers in _by_owed_modules(plan):
+        use_case = IngestPortfolioUseCase(
+            client=source,
+            repository=repository,
+            event_bus=EventBus(),
+            modules=owed,
+            source=settings.ingestion_source,
+            delay_seconds=settings.active_delay_seconds,
+        )
+        outcomes.extend(await use_case.execute(tickers))
+        if any(o.status is OutcomeStatus.ABORTED for o in outcomes):
+            # The use case stops the run on a fatal error; the next group would
+            # meet the same one (a dead ZIP is dead for every module).
+            break
     return YearPass(
         year=year if year is not None else settings.cvm_year,
-        outcomes=await use_case.execute(wanted),
-        companies=len(wanted),
-        already_mirrored=len(skipped),
+        outcomes=outcomes,
+        companies=len(plan),
+        already_mirrored=len(wanted) - len(plan),
     )
 
 
-async def _still_to_collect(
-    repository: BeanieRawIngestionRepository,
+async def _work_plan(
+    repository: RawIngestionRepository,
     source: RawDataSource,
     wanted: tuple[str, ...],
     code_map: dict[str, str],
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Split the universe into what this archive still owes and what it already gave.
+    modules: Sequence[str],
+) -> dict[str, tuple[str, ...]]:
+    """What each company is still owed, module by module — the resume guard.
 
     A whole-exchange run is long enough to be interrupted, and the mirror is
     append-only: without this, resuming would file a second identical copy of
-    every company already collected. ``--force`` collects regardless, which is
-    what a re-run after an amended archive wants.
+    every company already collected. The unit is the *call*, not the company
+    (#178): asking only "has this registrant been collected?" answered yes for a
+    module added to the config afterwards, which it had never been asked for, and
+    the run reported success having stored nothing. ``--force`` collects
+    regardless, which is what a re-run after an amended archive wants.
     """
-    archive = source.archive_name if isinstance(source, RoutedDataSource) else None
-    if archive is None:  # brapi: no archive that can be finished with
-        return wanted, ()
-    done = await repository.registrants_of(archive)
-    todo = tuple(t for t in wanted if code_map.get(t) not in done)
-    return todo, tuple(t for t in wanted if t not in set(todo))
+    if not isinstance(source, RoutedDataSource):  # brapi: no archive to finish
+        return {ticker: tuple(modules) for ticker in wanted}
+    done = {
+        module: await repository.mirrored_for(module, file=source.archive_for(module))
+        for module in modules
+    }
+    plan: dict[str, tuple[str, ...]] = {}
+    for ticker in wanted:
+        code = code_map.get(ticker)
+        owed = tuple(m for m in modules if code is None or code not in done[m])
+        if owed:
+            plan[ticker] = owed
+    return plan
+
+
+def _by_owed_modules(
+    plan: dict[str, tuple[str, ...]],
+) -> list[tuple[tuple[str, ...], tuple[str, ...]]]:
+    """Group the plan by the set of modules owed, so each set is one pass.
+
+    A resumed run splits in two: the companies never collected owe everything,
+    the ones already mirrored owe only the module that was added since. A fresh
+    sweep has a single group and behaves exactly as it did before.
+    """
+    groups: dict[tuple[str, ...], list[str]] = {}
+    for ticker, owed in plan.items():
+        groups.setdefault(owed, []).append(ticker)
+    return [(owed, tuple(tickers)) for owed, tickers in groups.items()]
 
 
 async def _run_report(tickers: tuple[str, ...]) -> None:

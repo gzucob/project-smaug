@@ -101,6 +101,11 @@ class CvmCapitalSource:
         return f"fre_cia_aberta_{self._year}.zip"
 
     @property
+    def archive_name(self) -> str:
+        """The yearly archive this source reads — what a mirrored document names."""
+        return self._zip_name
+
+    @property
     def _member_name(self) -> str:
         return f"fre_cia_aberta_capital_social_{self._year}.csv"
 
@@ -276,6 +281,11 @@ class CvmCapitalEventSource:
         return f"fre_cia_aberta_{self._year}.zip"
 
     @property
+    def archive_name(self) -> str:
+        """The yearly archive this source reads — what a mirrored document names."""
+        return self._zip_name
+
+    @property
     def _member_name(self) -> str:
         return f"fre_cia_aberta_capital_social_desdobramento_{self._year}.csv"
 
@@ -438,6 +448,11 @@ class CvmTreasurySource:
     @property
     def _zip_name(self) -> str:
         return f"{self._prefix}_{self._year}.zip"
+
+    @property
+    def archive_name(self) -> str:
+        """The yearly archive this source reads — what a mirrored document names."""
+        return self._zip_name
 
     @property
     def _member_name(self) -> str:
