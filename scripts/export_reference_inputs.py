@@ -17,9 +17,16 @@ nine miss). The representatives are resolved through the CVM FCA registry — th
 sector (the regime hint) and their share classes (for the cap) are not curated,
 exactly as the ``analyze`` CLI resolves them (ADR 0023/0025).
 
-Run against a live mirror (Mongo up, Yahoo reachable):
+Run against a live mirror (Mongo up; B3's archives are cached locally):
 
     uv run python scripts/export_reference_inputs.py
+
+**The committed fixture predates the price migration** (ADRs 0040/0041): its
+market block was exported from the vendor chain, against unrestated counts.
+Regenerating it now moves both — the price to B3's own series put on the share
+base of its year, and the counts to the restated ones the CLI serves — so a
+regeneration is a deliberate act to be revalidated against the platforms
+(#196), never a step taken in passing.
 """
 
 from __future__ import annotations
@@ -36,11 +43,18 @@ import httpx
 
 from smaug.analysis.domain.financials import StandardizedFinancials
 from smaug.analysis.domain.market_cap import capitalize
-from smaug.analysis.infrastructure.brapi_price import BrapiPriceProvider
-from smaug.analysis.infrastructure.fallback_price import FallbackPriceHistory
+from smaug.analysis.infrastructure.b3_prices import (
+    B3BaseChanges,
+    B3PriceProvider,
+    CotahistArchive,
+)
+from smaug.analysis.infrastructure.dividend_adjusted_price import (
+    DividendAdjustedPriceProvider,
+)
 from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
+from smaug.analysis.infrastructure.mongo_dividends import MongoCashEventReader
 from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsReader
-from smaug.analysis.infrastructure.yahoo_price import YahooPriceHistory
+from smaug.analysis.infrastructure.restated_price import RestatedPriceProvider
 from smaug.portfolio.domain.company import CompanyIdentity
 from smaug.portfolio.domain.sectors import (
     PORTFOLIO,
@@ -98,7 +112,6 @@ async def main() -> None:
     settings = get_settings()
     mongo = await init_database(settings)
     collection = mongo[settings.mongo_db]["raw_ingestions"]
-    shares = MongoSharesReader(collection)
     export: dict[str, Any] = {}
 
     async with httpx.AsyncClient(timeout=30.0) as http:
@@ -109,15 +122,17 @@ async def main() -> None:
         sector_of = _sector_resolver(identities)
         classes_of = _classes_resolver(identities)
         reader = MongoFundamentalsReader(collection, sector_resolver=sector_of)
-        history = FallbackPriceHistory(
-            [
-                YahooPriceHistory(settings.yahoo_base_url, http),
-                BrapiPriceProvider(
-                    settings.brapi_base_url,
-                    settings.brapi_token.get_secret_value(),
-                    http,
-                ),
-            ]
+        # The same chain the CLI composes, for the same reason: the price is
+        # divided by exactly the moves the counts are multiplied by (ADR 0033).
+        archive = CotahistArchive(
+            http, cache_dir=settings.b3_cache_dir, base_url=settings.b3_series_base_url
+        )
+        shares = MongoSharesReader(collection, base_changes=B3BaseChanges(archive))
+        history = RestatedPriceProvider(
+            DividendAdjustedPriceProvider(
+                B3PriceProvider(archive), MongoCashEventReader(collection)
+            ),
+            shares,
         )
         tickers = (*portfolio_tickers(), *REPRESENTATIVES)
         for ticker in tickers:
