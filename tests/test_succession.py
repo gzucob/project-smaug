@@ -33,6 +33,7 @@ from smaug.analysis.infrastructure.succession import (
     CodeSuccession,
     SuccessionPriceProvider,
 )
+from smaug.portfolio.domain.securities import confirms_name, name_key
 from smaug.portfolio.infrastructure.cvm_securities import CvmSecurityHistory
 
 TODAY = date(2026, 6, 1)
@@ -66,6 +67,7 @@ def _sessions(start: date, prices: Sequence[str]) -> list[tuple[date, Decimal]]:
 def _quotes(
     sessions: Sequence[tuple[date, Decimal]],
     rights: Sequence[tuple[date, str, str]] = (),
+    name: str = "",
 ) -> YearQuotes:
     january = date(sessions[0][0].year, 1, 1).toordinal()
     closes = " ".join(
@@ -83,6 +85,7 @@ def _quotes(
         last_close=prices[-1],
         closes=closes,
         rights=encoded,
+        name=name,
     )
 
 
@@ -392,17 +395,34 @@ async def test_an_action_filed_under_the_earlier_code_is_still_dated() -> None:
 # --- the codes a registrant has filed ---------------------------------------
 
 
-def _fca_archive(path: Path, year: int, rows: Sequence[Sequence[str]]) -> None:
+def _csv(header: Sequence[str], rows: Sequence[Sequence[str]]) -> bytes:
     buffer = io.StringIO()
     writer = csv.writer(buffer, delimiter=";", lineterminator="\n")
-    writer.writerow(
-        ["CNPJ_Companhia", "Codigo_Negociacao", "Valor_Mobiliario", "Versao"]
-    )
+    writer.writerow(header)
     writer.writerows(rows)
+    return buffer.getvalue().encode("latin-1")
+
+
+def _fca_archive(
+    path: Path,
+    year: int,
+    rows: Sequence[Sequence[str]],
+    general: Sequence[Sequence[str]] = (),
+) -> None:
     with zipfile.ZipFile(path / f"fca_cia_aberta_{year}.zip", "w") as archive:
         archive.writestr(
             f"fca_cia_aberta_valor_mobiliario_{year}.csv",
-            buffer.getvalue().encode("latin-1"),
+            _csv(
+                ["CNPJ_Companhia", "Codigo_Negociacao", "Valor_Mobiliario", "Versao"],
+                rows,
+            ),
+        )
+        archive.writestr(
+            f"fca_cia_aberta_geral_{year}.csv",
+            _csv(
+                ["CNPJ_Companhia", "Nome_Empresarial", "Versao"],
+                [[*row, "1"] for row in general],
+            ),
         )
 
 
@@ -441,6 +461,35 @@ async def test_the_codes_of_one_class_are_gathered_across_fca_years(
     assert siblings("ARZZ11") == ()
     # A registrant with one code has nothing to join.
     assert siblings("ALSO3") == ()
+
+
+async def test_the_names_a_registrant_filed_come_from_every_year(
+    tmp_path: Path,
+) -> None:
+    # The code column starts in 2018, but the names go back to 2010 — and it is
+    # the early years that carry the old name (#198).
+    _fca_archive(
+        tmp_path,
+        2015,
+        [],
+        general=[["16.590.234/0001-76", "AREZZO INDÚSTRIA E COMÉRCIO S.A."]],
+    )
+    _fca_archive(
+        tmp_path,
+        2019,
+        [["16.590.234/0001-76", "AZZA3", "Ações Ordinárias", "1"]],
+        general=[["16.590.234/0001-76", "AZZAS 2154 S.A."]],
+    )
+
+    async with httpx.AsyncClient() as http:
+        history = CvmSecurityHistory(
+            http, through=2019, since=2015, cache_dir=str(tmp_path)
+        )
+        names = await history.names()
+
+    assert confirms_name(names("AZZA3"), "AREZZO CO")
+    assert confirms_name(names("AZZA3"), "AZZAS 2154")
+    assert not confirms_name(names("AZZA3"), "BROOKFIELD")
 
 
 # --- the seam as the only witness to an action's date (#197, ADR 0043) -------
@@ -539,3 +588,90 @@ async def test_the_price_joins_a_seam_the_restatement_has_dated() -> None:
 
 async def _timeline(*steps: tuple[date, Decimal]) -> tuple[RestatementStep, ...]:
     return tuple(RestatementStep(effective=day, ratio=ratio) for day, ratio in steps)
+
+
+# --- the code the cadastre cannot name (#198, ADR 0044) ---------------------
+
+
+def test_a_filed_name_confirms_what_b3_printed() -> None:
+    filed = frozenset({name_key("TRACTEBEL ENERGIA SA"), name_key("ENGIE BRASIL S.A.")})
+
+    assert confirms_name(filed, "TRACTEBEL")
+    assert confirms_name(filed, "ENGIE")
+    # Celpa was never called Brookfield, however adjacent the two tapes are.
+    assert not confirms_name(filed, "BROOKFIELD")
+
+
+def _retired_archive(name: str = "TRACTEBEL") -> _FakeArchive:
+    """A code stops on one session and another starts on the very next."""
+    return _FakeArchive(
+        {
+            2015: {
+                "TBLE3": _quotes(_sessions(date(2015, 1, 2), ["30", "31"]), name=name),
+                "MRKT3": _quotes(
+                    _sessions(date(2015, 1, 2), ["9", "9"]), name="MARKET"
+                ),
+            },
+            2016: {
+                "TBLE3": _quotes(
+                    _sessions(date(2016, 7, 19), ["40", "41.39"]), name=name
+                ),
+                "EGIE3": _quotes(
+                    _sessions(date(2016, 7, 21), ["41.65", "42"]), name="ENGIE BRASIL"
+                ),
+                "MRKT3": _quotes(
+                    _sessions(date(2016, 7, 19), ["9", "9", "9", "9"]), name="MARKET"
+                ),
+            },
+        }
+    )
+
+
+def _tape_succession(archive: _FakeArchive, names: frozenset[str]) -> CodeSuccession:
+    return CodeSuccession(
+        archive,  # type: ignore[arg-type]
+        siblings=lambda ticker: (),  # the cadastre names nothing: this is #198
+        names=lambda ticker: names if ticker == "EGIE3" else frozenset(),
+        listed_since=lambda ticker: date(1998, 1, 1),
+        today=lambda: date(2016, 12, 31),
+    )
+
+
+async def test_the_tape_names_a_code_the_cadastre_never_did() -> None:
+    filed = frozenset({name_key("TRACTEBEL ENERGIA SA")})
+    succession = _tape_succession(_retired_archive(), filed)
+
+    assert await succession.candidates("EGIE3", 2015) == ("TBLE3", "EGIE3")
+
+
+async def test_the_tape_alone_is_not_enough_to_name_it() -> None:
+    # Same adjacency, same price — but this registrant never filed that name.
+    succession = _tape_succession(
+        _retired_archive(), frozenset({name_key("ENGIE BRASIL S.A.")})
+    )
+
+    assert await succession.candidates("EGIE3", 2015) == ("EGIE3",)
+
+
+async def test_a_price_that_does_not_carry_over_names_nothing() -> None:
+    archive = _retired_archive()
+    # The retiring code closes an eighth of where the new one opens.
+    archive._years[2016]["TBLE3"] = _quotes(  # type: ignore[index]
+        _sessions(date(2016, 7, 19), ["40", "5"]), name="TRACTEBEL"
+    )
+    succession = _tape_succession(archive, frozenset({name_key("TRACTEBEL ENERGIA")}))
+
+    assert await succession.candidates("EGIE3", 2015) == ("EGIE3",)
+
+
+async def test_two_codes_retiring_the_same_day_are_told_apart() -> None:
+    # Melhoramentos' MSPA3 printed its last session on the one before EGIE3
+    # opened, alongside Tractebel's — so uniqueness cannot be asked of the
+    # proposals, only of what survives both witnesses.
+    archive = _retired_archive()
+    archive._years[2016]["MSPA3"] = _quotes(  # type: ignore[index]
+        _sessions(date(2016, 7, 19), ["1.9", "2"]), name="MELHOR SP"
+    )
+    succession = _tape_succession(archive, frozenset({name_key("TRACTEBEL ENERGIA")}))
+
+    assert await succession.candidates("EGIE3", 2015) == ("TBLE3", "EGIE3")

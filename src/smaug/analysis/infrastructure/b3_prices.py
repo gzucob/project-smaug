@@ -75,6 +75,7 @@ B3_SERIES_BASE_URL = "https://bvmf.bmfbovespa.com.br/InstDados/SerHist"
 _TIPREG = slice(0, 2)  # record type: "01" is a quote line
 _DATA = slice(2, 10)  # session date, YYYYMMDD
 _CODNEG = slice(12, 24)  # trading code, space-padded
+_NOMRES = slice(27, 39)  # B3's own abbreviation of the issuer, 12 wide
 _TPMERC = slice(24, 27)  # market type: "010" is the spot market
 _PREULT = slice(108, 121)  # closing price, 11 integer + 2 decimal digits
 _FATCOT = slice(210, 217)  # shares per quote: "1" unitary, "1000" per lot of a thousand
@@ -98,8 +99,10 @@ _PRICE_SCALE = Decimal(100)
 # The reduction's on-disk format. Bumped when the shape below changes, so a
 # stale cache is rebuilt rather than misread. v2 added the daily closes; v3
 # divides by the quote factor, which the centavo encoding could not represent;
-# v4 keeps the sessions where the paper's rights state changed.
-_REDUCTION_VERSION = 4
+# v4 keeps the sessions where the paper's rights state changed; v5 keeps the
+# issuer name B3 prints beside the code, which is what confirms a retired
+# code against the names its registrant filed (#198).
+_REDUCTION_VERSION = 5
 
 # A marker with no class attached, used where the field is blank so that the
 # encoded triples stay whitespace-separated.
@@ -156,6 +159,7 @@ class YearQuotes:
     last_close: Decimal
     closes: str = ""
     rights: str = ""
+    name: str = ""
 
     def rights_states(self) -> tuple[RightsState, ...]:
         """The year's rights states, decoded — oldest first."""
@@ -245,6 +249,7 @@ class _Accumulator:
     factors: list[int]
     rights: list[str]
     markers: list[str]
+    name: str = ""
 
     def add(
         self, cents: int, factor: int, ordinal: int, rights: str, marker: str
@@ -294,6 +299,7 @@ class _Accumulator:
                 for (ordinal, _, _, _, _), price in zip(series, prices, strict=True)
             ),
             rights=" ".join(states),
+            name=self.name,
         )
 
 
@@ -325,7 +331,12 @@ def _reduce(archive_path: Path) -> dict[str, YearQuotes]:
                 entry = totals.get(code)
                 if entry is None:
                     totals[code] = _Accumulator(
-                        [ordinal], [cents], [factor], [rights], [marker]
+                        [ordinal],
+                        [cents],
+                        [factor],
+                        [rights],
+                        [marker],
+                        line[_NOMRES].strip(),
                     )
                 else:
                     entry.add(cents, factor, ordinal, rights, marker)
@@ -345,6 +356,7 @@ def _dump(reduction: Mapping[str, YearQuotes], built_on: date) -> str:
                     str(quotes.last_close),
                     quotes.closes,
                     quotes.rights,
+                    quotes.name,
                 ]
                 for code, quotes in reduction.items()
             },
@@ -367,6 +379,7 @@ def _load(text: str) -> tuple[dict[str, YearQuotes], date] | None:
                 last_close=Decimal(row[3]),
                 closes=row[4],
                 rights=row[5],
+                name=row[6],
             )
             for code, row in payload["codes"].items()
         }

@@ -1,10 +1,16 @@
-"""Every trading code a registrant has filed for a share class, across FCA years.
+"""Who a security is, gathered across every year of the FCA.
 
-``CvmCompanyRegistry`` reads one year of the FCA and answers "what is this ticker
-today". This reads the same securities member across every year that carries the
-column and answers the other question: "what else has this share class been
-called". One pass per year, one small ZIP per year (~400 KB), cached beside the
-registry's own.
+``CvmCompanyRegistry`` reads one year and answers "what is this ticker today".
+This reads every year and answers the two questions that need a history: what
+else this share class has been **coded**, and what its registrant has been
+**called**. One pass per year, one small ZIP per year (~400 KB), cached beside
+the registry's own.
+
+The two answers come from different halves of the archive, and deliberately from
+different year ranges. The trading code exists only from 2018
+(``FIRST_YEAR_WITH_TRADING_CODES``); the names go back to 2010, and it is the
+early years that carry weight — the FCA is a snapshot as of each filing, so a
+company that renamed is named by the years *before* it did, and nowhere else.
 
 The join is the registrant's ``CNPJ`` plus the code's class digit — never the
 company name, and never the code's root. A rename usually changes the name too
@@ -21,13 +27,16 @@ import io
 import unicodedata
 import zipfile
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 
 from smaug.portfolio.domain.securities import (
-    FIRST_YEAR_WITH_TRADING_CODES,
+    FIRST_FCA_YEAR,
+    RegistrantNamesResolver,
     SiblingCodesResolver,
+    name_key,
     share_class_suffix,
 )
 from smaug.portfolio.infrastructure.cvm_registry import CVM_FCA_BASE_URL
@@ -50,7 +59,7 @@ class CvmSecurityHistory:
         *,
         through: int,
         cache_dir: str,
-        since: int = FIRST_YEAR_WITH_TRADING_CODES,
+        since: int = FIRST_FCA_YEAR,
         base_url: str | None = None,
         sleep: Sleeper = asyncio.sleep,
     ) -> None:
@@ -59,7 +68,7 @@ class CvmSecurityHistory:
         self._cache_dir = Path(cache_dir)
         self._base_url = (base_url or CVM_FCA_BASE_URL).rstrip("/")
         self._sleep = sleep
-        self._index: dict[str, tuple[str, ...]] | None = None
+        self._index: _Index | None = None
         self._lock = asyncio.Lock()
 
     async def resolver(self) -> SiblingCodesResolver:
@@ -67,11 +76,27 @@ class CvmSecurityHistory:
         index = await self._ensure_loaded()
 
         def siblings(ticker: str) -> tuple[str, ...]:
-            return index.get(ticker.strip().upper(), ())
+            return index.siblings.get(ticker.strip().upper(), ())
 
         return siblings
 
-    async def _ensure_loaded(self) -> dict[str, tuple[str, ...]]:
+    async def names(self) -> RegistrantNamesResolver:
+        """Every name a code's registrant has filed, folded for comparison.
+
+        The FCA is a snapshot as of each year's own filing, so a company that
+        renamed is only ever named by the *earlier* years — which is exactly what
+        makes this useful: it is the record of what a registrant used to be
+        called, and the tape is the record of what traded under that name (#198).
+        """
+        index = await self._ensure_loaded()
+
+        def names_of(ticker: str) -> frozenset[str]:
+            cnpj = index.registrant.get(ticker.strip().upper())
+            return index.names.get(cnpj, frozenset()) if cnpj else frozenset()
+
+        return names_of
+
+    async def _ensure_loaded(self) -> _Index:
         cached = self._index
         if cached is not None:
             return cached
@@ -105,45 +130,82 @@ class CvmSecurityHistory:
             index = await asyncio.to_thread(_build_index, archives)
             self._index = index
             logger.info(
-                "Loaded CVM FCA %d-%d: %d codes share a class with another",
+                "Loaded CVM FCA %d-%d: %d codes share a class with another, "
+                "%d registrants named",
                 self._years.start,
                 self._years.stop - 1,
-                len(index),
+                len(index.siblings),
+                len(index.names),
             )
             return index
 
 
-def _build_index(archives: Sequence[tuple[int, Path]]) -> dict[str, tuple[str, ...]]:
+@dataclass(frozen=True, slots=True)
+class _Index:
+    """What one pass over the archive yields, keyed for the two questions asked."""
+
+    siblings: dict[str, tuple[str, ...]]
+    registrant: dict[str, str]  # code -> CNPJ
+    names: dict[str, frozenset[str]]  # CNPJ -> every name it has filed
+
+
+def _build_index(archives: Sequence[tuple[int, Path]]) -> _Index:
     """Group every filed equity code by (registrant, class), then invert."""
     grouped: dict[tuple[str, str], set[str]] = {}
+    registrant: dict[str, str] = {}
+    names: dict[str, set[str]] = {}
     for year, path in archives:
         for cnpj, code in _codes(year, path):
             suffix = share_class_suffix(code)
             if suffix is None:
                 continue
             grouped.setdefault((cnpj, suffix), set()).add(code)
-    index: dict[str, tuple[str, ...]] = {}
+            registrant.setdefault(code, cnpj)
+        for cnpj, name in _names(year, path):
+            key = name_key(name)
+            if key:
+                names.setdefault(cnpj, set()).add(key)
+    siblings: dict[str, tuple[str, ...]] = {}
     for codes in grouped.values():
         if len(codes) < 2:
             continue
         for code in codes:
-            index[code] = tuple(sorted(codes - {code}))
-    return index
+            siblings[code] = tuple(sorted(codes - {code}))
+    return _Index(
+        siblings=siblings,
+        registrant=registrant,
+        names={cnpj: frozenset(filed) for cnpj, filed in names.items()},
+    )
+
+
+def _names(year: int, path: Path) -> list[tuple[str, str]]:
+    """``(CNPJ, Nome_Empresarial)`` from the year's general cadastre."""
+    return [
+        (cnpj, name)
+        for row in _member(year, path, "geral")
+        if (cnpj := (row.get("CNPJ_Companhia") or "").strip())
+        and (name := (row.get("Nome_Empresarial") or "").strip())
+    ]
+
+
+def _member(year: int, path: Path, member: str) -> list[dict[str, str]]:
+    """One CSV of the year's FCA archive, or nothing when it cannot be read."""
+    name = f"fca_cia_aberta_{member}_{year}.csv"
+    try:
+        with zipfile.ZipFile(path) as archive:
+            if name not in archive.namelist():
+                return []
+            raw = archive.read(name).decode(_ENCODING)
+    except (OSError, zipfile.BadZipFile):
+        logger.warning("CVM FCA %d is unreadable; its %s is skipped", year, member)
+        return []
+    return list(csv.DictReader(io.StringIO(raw), delimiter=_DELIMITER))
 
 
 def _codes(year: int, path: Path) -> list[tuple[str, str]]:
     """``(CNPJ, code)`` for every equity security the year's FCA names."""
-    member = f"fca_cia_aberta_valor_mobiliario_{year}.csv"
-    try:
-        with zipfile.ZipFile(path) as archive:
-            if member not in archive.namelist():
-                return []
-            raw = archive.read(member).decode(_ENCODING)
-    except (OSError, zipfile.BadZipFile):
-        logger.warning("CVM FCA %d is unreadable; its codes are skipped", year)
-        return []
     rows: list[tuple[str, str]] = []
-    for row in csv.DictReader(io.StringIO(raw), delimiter=_DELIMITER):
+    for row in _member(year, path, "valor_mobiliario"):
         code = (row.get("Codigo_Negociacao") or "").strip().upper()
         cnpj = (row.get("CNPJ_Companhia") or "").strip()
         # Only shares: a debenture or a BDR line carries a code too, and a unit

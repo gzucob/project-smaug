@@ -39,8 +39,11 @@ PostgreSQL, served by a read API. Both phases are already implemented (see
   what keeps a merger's extinguished side (ALLL3, BRML3, LAME4) out of the
   survivor's series — **or where the restatement has dated the action that seam
   carries** (ADR 0043: B3 restarts a renamed code's rights state, so the seam is
-  the only witness to an action executed on it). A year the named codes cannot
-  cover is a null with a cause, never a partial average.
+  the only witness to an action executed on it). A code retired before the FCA
+  began naming codes (2018) is recovered from the tape instead — one code stops,
+  the next starts at the same price — and confirmed against the names CVM filed
+  from 2010 on (ADR 0044); neither witness is trusted alone. A year the named
+  codes cannot cover is a null with a cause, never a partial average.
   **Three price bases
   exist and must never be
   mixed**: as traded · adjusted for splits/groupings/bonuses (what indicators

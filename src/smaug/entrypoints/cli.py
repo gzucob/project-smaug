@@ -96,7 +96,10 @@ from smaug.portfolio.domain.sectors import (
     portfolio_tickers,
     sector_from_cvm,
 )
-from smaug.portfolio.domain.securities import SiblingCodesResolver
+from smaug.portfolio.domain.securities import (
+    RegistrantNamesResolver,
+    SiblingCodesResolver,
+)
 from smaug.portfolio.domain.share_classes import ShareClass, listed_classes
 from smaug.portfolio.domain.taxonomy import (
     TAXONOMY_SNAPSHOT,
@@ -639,14 +642,15 @@ def analyze(
     raise typer.Exit(code=exit_code)
 
 
-async def _siblings_resolver(
+async def _security_resolvers(
     settings: Settings, http: httpx.AsyncClient
-) -> SiblingCodesResolver:
-    """The other codes each share class has been filed under (#193).
+) -> tuple[SiblingCodesResolver, RegistrantNamesResolver]:
+    """What the cadastre knows about a security's identity, in two answers.
 
-    Read across every FCA year that carries the trading code, which is 2018 on —
-    a rename older than that column is not in the archive at all, and the price
-    side reports the years it cannot name rather than serving part of them.
+    The codes each share class has been filed under (#193), read across every FCA
+    year that carries the trading code — which is 2018 on. And every name each
+    registrant has filed, which is what confirms a code retired before that
+    column existed, against the name B3 printed beside it (#198).
     """
     history = CvmSecurityHistory(
         http,
@@ -656,7 +660,7 @@ async def _siblings_resolver(
         through=max(settings.cvm_year, date.today().year),
         cache_dir=settings.cvm_cache_dir,
     )
-    return await history.resolver()
+    return await history.resolver(), await history.names()
 
 
 def _build_archive(settings: Settings, http: httpx.AsyncClient) -> CotahistArchive:
@@ -740,9 +744,11 @@ async def _run_analyze(
             # that must not disagree about it: the price averages the joined
             # sessions and the base-change reader dates the actions filed under
             # the codes those sessions came from (ADR 0042).
+            siblings, names = await _security_resolvers(settings, http)
             succession = CodeSuccession(
                 archive,
-                siblings=await _siblings_resolver(settings, http),
+                siblings=siblings,
+                names=names,
                 listed_since=_listed_since_resolver(identities),
             )
             shares_reader = MongoSharesReader(
