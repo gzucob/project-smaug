@@ -11,6 +11,7 @@ from decimal import Decimal
 from smaug.analysis.domain.capital import (
     BaseChange,
     CorporateAction,
+    ExchangeAction,
     restatement_factors,
 )
 
@@ -320,3 +321,74 @@ def test_the_declared_ratio_still_outranks_the_witnessed_one() -> None:
     factors = restatement_factors(filed, actions=declared, changes=tape)
 
     assert factors[2022] == 2  # the declared 2x, not a witnessed 2.01
+
+
+def _exchange(day: str, ratio: str, approved: str = "2026-01-01") -> ExchangeAction:
+    return ExchangeAction(
+        effective=date.fromisoformat(day),
+        approval_date=approved,
+        ratio=Decimal(ratio),
+    )
+
+
+def test_the_feed_explains_a_gap_holding_several_actions_when_the_counts_agree() -> (
+    None
+):
+    """Sabesp: a 2.96% bonus, a 0.16% bonus and a 1:5 split between two filings.
+
+    No single ratio explains x5.15652 and no rounding reaches it, but the three
+    factors B3 publishes compound to exactly that — which is the counts and the
+    exchange, two records that cannot see each other, stating the same move.
+    """
+    filed = {2024: Decimal(683_509_869), 2025: Decimal(3_524_534_028)}
+    exchange = [
+        _exchange("2025-12-24", "1.0296469750"),
+        _exchange("2026-03-20", "1.001609803220"),
+        _exchange("2026-04-29", "5"),
+    ]
+
+    assert restatement_factors(filed)[2024] == 1  # nothing, before the feed
+    applied = restatement_factors(filed, exchange=exchange)[2024]
+    # The counts moved 3,524,534,028 / 683,509,869 = 5.15652, and the factor is
+    # the exchange's exact product rather than that quotient.
+    assert abs(applied - Decimal("5.15652")) < Decimal("0.0001")
+
+
+def test_the_feed_is_ignored_where_the_counts_do_not_confirm_it() -> None:
+    # The refusal ADR 0034 wrote down: a factor applied where the counts saw
+    # nothing of the sort is how one split compounded into nine. Oi's counts move
+    # x5 across a filing that also holds a 1:10 grupamento — a debt conversion
+    # rode along, and no product of factors is that move.
+    filed = {2023: Decimal(66_030_374), 2024: Decimal(330_121_738)}
+    exchange = [_exchange("2024-06-15", "0.1")]
+
+    assert restatement_factors(filed, exchange=exchange)[2023] == 1
+
+
+def test_an_action_the_earlier_count_already_reflects_is_not_counted_twice() -> None:
+    """LREN3's September 2015 split is inside the 2015 filing already.
+
+    A window reaching back into the earlier filing year offers it to the
+    2015->2016 gap, whose counts moved 1.111 — nothing like x5.
+    """
+    filed = {2015: Decimal(640_041_325), 2016: Decimal(711_145_682)}
+    exchange = [_exchange("2015-09-24", "5")]
+
+    assert restatement_factors(filed, exchange=exchange)[2015] == 1
+
+
+def test_a_gap_spanning_several_filings_sees_every_action_inside_it() -> None:
+    """Recrusul files nothing for 2023 or 2024, so one gap runs four years.
+
+    Four base changes fall inside it, and a window that saw only the last would
+    match that one to the move the other three made. Ambiguity is the honest
+    answer here, not a factor.
+    """
+    filed = {2022: Decimal(37_911_977), 2025: Decimal(110_250_240)}
+    tape = [
+        _change("2023-07-10", "0.5219"),
+        _change("2024-05-31", "0.2621"),
+        _change("2026-03-03", "3.6429"),
+    ]
+
+    assert restatement_factors(filed, changes=tape)[2022] == 1
