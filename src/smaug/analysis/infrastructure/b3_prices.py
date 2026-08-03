@@ -60,6 +60,7 @@ import httpx
 
 from smaug.analysis.domain.capital import BaseChange
 from smaug.analysis.domain.financials import MarketData, SessionClose, YearPrices
+from smaug.analysis.domain.succession import crosses
 from smaug.shared.download import Sleeper, download_zip
 from smaug.shared.logging import get_logger
 
@@ -676,6 +677,7 @@ class B3BaseChanges:
         span = _Span()
         december: Decimal | None = None
         standing = ""  # the marker in force on the session last read
+        reading = ""  # the code whose tape the last session was read from
         published = self._today().year
         for year in sorted({year for year in years if year <= published}):
             for tape in tapes:
@@ -683,6 +685,11 @@ class B3BaseChanges:
                 if quotes is None:
                     continue
                 series = quotes.session_closes()
+                if reading not in ("", tape) and december is not None:
+                    seam = _seam(december, series[0])
+                    if seam is not None:
+                        changes.append(seam)
+                reading = tape
                 position = {close.session: index for index, close in enumerate(series)}
                 for state in quotes.rights_states():
                     at = position.get(state.session)
@@ -707,6 +714,25 @@ class B3BaseChanges:
                         changes.append(change)
                 december = quotes.last_close
         return tuple(changes)
+
+
+def _seam(before: Decimal, opening: SessionClose) -> BaseChange | None:
+    """The base change a change of trading code is the only witness to.
+
+    B3 restarts a new code's rights state from scratch — ``VSTE3``'s first
+    session carries a clean ``ESPECI`` and a ``DISMES`` of 100 — so an action
+    executed on the day a company renames its code leaves no mark on the tape
+    that ADR 0035 reads. The **seam itself** is the mark: the last close under
+    the old code against the first under the new one, which is the same
+    measurement every other base change here publishes.
+
+    Only where the price did not carry over. A rename on its own moves no share,
+    and offering a ratio of ~1 as a candidate would let it be paired with a real
+    action of a different date.
+    """
+    if crosses(before, opening.close) or before <= 0 or opening.close <= 0:
+        return None
+    return BaseChange(session=opening.session, ratio=before / opening.close, seam=True)
 
 
 class B3PriceProvider:

@@ -16,14 +16,21 @@ needs and caches it per ticker.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import date
 from decimal import Decimal
 
+from smaug.analysis.domain.capital import RestatementStep
 from smaug.analysis.domain.financials import MarketData, SessionClose, YearPrices
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.ports import SessionPriceProvider
-from smaug.analysis.domain.succession import CodeWindow, chain, structural_gap
+from smaug.analysis.domain.succession import (
+    CodeWindow,
+    Explains,
+    candidates_of,
+    joined,
+    structural_gap,
+)
 from smaug.analysis.infrastructure.b3_prices import CotahistArchive
 from smaug.portfolio.domain.securities import SiblingCodesResolver, no_siblings
 from smaug.shared.logging import get_logger
@@ -31,6 +38,12 @@ from smaug.shared.logging import get_logger
 logger = get_logger(__name__)
 
 ListedSinceResolver = Callable[[str], date | None]
+
+# The dated share-base moves of one ticker (``SharesReader.restatement_timeline``),
+# taken as a callable so the price side can read it without depending on the whole
+# share port — and so the composition root can build it after the tape reader that
+# feeds it.
+TimelineReader = Callable[[str], Awaitable[Sequence[RestatementStep]]]
 
 # How many years before the earliest one asked about the chain is resolved over.
 # It exists so that "this code's series begins inside the year" is a claim the
@@ -60,22 +73,37 @@ class CodeSuccession:
         self._chains: dict[str, tuple[int, tuple[CodeWindow, ...]]] = {}
         self._calendars: dict[int, tuple[date, ...]] = {}
 
-    async def codes(self, ticker: str, since: int) -> tuple[str, ...]:
-        """Every code answering for ``ticker`` from ``since`` on, oldest first."""
+    async def candidates(self, ticker: str, since: int) -> tuple[str, ...]:
+        """Every code that could answer for ``ticker``, oldest first.
+
+        What the **tape** reader walks, and deliberately wider than what the
+        price averages: a seam the price refuses to cross is still the session an
+        action took effect on, and reading it is how that action gets dated at
+        all (ADR 0043).
+        """
         return tuple(window.code for window in await self._chain(ticker, since))
 
-    async def sessions(self, ticker: str, year: int) -> tuple[SessionClose, ...]:
-        """``year``'s closes across the chain, as traded, oldest first."""
+    async def chain(
+        self, ticker: str, since: int, *, explains: Explains
+    ) -> tuple[CodeWindow, ...]:
+        """The candidates whose seams the price crosses or the restatement explains."""
+        return joined(await self._chain(ticker, since), explains=explains)
+
+    async def sessions(
+        self, codes: Sequence[CodeWindow], year: int
+    ) -> tuple[SessionClose, ...]:
+        """``year``'s closes across ``codes``, as traded, oldest first."""
         merged: list[SessionClose] = []
-        for window in await self._chain(ticker, year):
+        for window in codes:
             quotes = (await self._archive.year(year)).get(window.code)
             if quotes is not None:
                 merged.extend(quotes.session_closes())
         return tuple(sorted(merged, key=lambda close: close.session))
 
-    async def unpriceable(self, ticker: str, year: int) -> bool:
-        """Whether ``year`` precedes everything the chain can name (see the domain)."""
-        resolved = await self._chain(ticker, year)
+    async def unpriceable(
+        self, ticker: str, year: int, resolved: Sequence[CodeWindow]
+    ) -> bool:
+        """Whether ``year`` precedes everything ``resolved`` names (see the domain)."""
         calendar = await self._calendar(year)
         start = resolved[0].first_session if resolved else None
         return structural_gap(
@@ -83,12 +111,12 @@ class CodeSuccession:
             chain_start=start,
             listed_since=self._listed_since(ticker),
             year_opened_on=calendar[0] if calendar else None,
-            coverage=await self._coverage(ticker, year, start, calendar),
+            coverage=await self._coverage(resolved, year, start, calendar),
         )
 
     async def _coverage(
         self,
-        ticker: str,
+        resolved: Sequence[CodeWindow],
         year: int,
         start: date | None,
         calendar: tuple[date, ...],
@@ -106,7 +134,7 @@ class CodeSuccession:
         if remaining <= 0:
             return None
         printed = sum(
-            1 for close in await self.sessions(ticker, year) if close.session >= start
+            1 for close in await self.sessions(resolved, year) if close.session >= start
         )
         return Decimal(printed) / Decimal(remaining)
 
@@ -125,17 +153,17 @@ class CodeSuccession:
         if served is None:
             resolved: tuple[CodeWindow, ...] = ()
         else:
-            candidates = [
+            siblings = [
                 window
                 for sibling in self._siblings(code)
                 if (window := await self._window(sibling, opened)) is not None
             ]
-            resolved = chain(
-                served, candidates, listed_since=self._listed_since(ticker)
+            resolved = candidates_of(
+                served, siblings, listed_since=self._listed_since(ticker)
             )
             if len(resolved) > 1:
                 logger.info(
-                    "%s is priced from %s since %d (#193)",
+                    "%s has traded as %s since %d (#193)",
                     code,
                     " -> ".join(window.code for window in resolved),
                     since,
@@ -194,35 +222,78 @@ class SuccessionPriceProvider:
     both see the joined series (a session recovered from an older code still has
     to be put on today's share base, ADR 0027).
 
+    It is here, and not in ``CodeSuccession``, that a seam is finally accepted or
+    refused: the answer depends on the restatement timeline, which is read from
+    the share side, and the share side reads the tape across the *candidates*.
+    Keeping the two apart is what keeps that from being a circle — the tape needs
+    the wider chain, the average needs the narrower one.
+
     A ticker whose chain is only itself — every code but twenty-odd of them — is
     delegated untouched, so the overwhelming case is byte-for-byte what it was.
     """
 
-    def __init__(self, inner: SessionPriceProvider, succession: CodeSuccession) -> None:
+    def __init__(
+        self,
+        inner: SessionPriceProvider,
+        succession: CodeSuccession,
+        *,
+        timeline: TimelineReader | None = None,
+    ) -> None:
         self._inner = inner
         self._succession = succession
+        self._timeline = timeline
+        self._steps: dict[str, Sequence[RestatementStep]] = {}
 
     async def get(self, ticker: str) -> MarketData:
         # The live quote is today's code by definition; nothing to join.
         return await self._inner.get(ticker)
 
     async def year_sessions(self, ticker: str, year: int) -> tuple[SessionClose, ...]:
-        if len(await self._succession.codes(ticker, year)) < 2:
+        resolved = await self._chain(ticker, year)
+        if len(resolved) < 2:
             return tuple(await self._inner.year_sessions(ticker, year))
-        return await self._succession.sessions(ticker, year)
+        return await self._succession.sessions(resolved, year)
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:
-        if await self._succession.unpriceable(ticker, year):
+        resolved = await self._chain(ticker, year)
+        if await self._succession.unpriceable(ticker, year, resolved):
             logger.warning(
                 "%s traded %d under a code we cannot name; its price is null (#193)",
                 ticker,
                 year,
             )
             return YearPrices(null_reason=NullReason.PRICE_SYMBOL_NOT_FOUND)
-        if len(await self._succession.codes(ticker, year)) < 2:
+        if len(resolved) < 2:
             return await self._inner.year_prices(ticker, year)
-        sessions = await self._succession.sessions(ticker, year)
+        sessions = await self._succession.sessions(resolved, year)
         if not sessions:
             return await self._inner.year_prices(ticker, year)
         total = sum((close.close for close in sessions), Decimal(0))
         return YearPrices(nominal_avg=total / Decimal(len(sessions)))
+
+    async def _chain(self, ticker: str, year: int) -> tuple[CodeWindow, ...]:
+        steps = await self._restatement(ticker)
+
+        def explains(predecessor: CodeWindow, successor: CodeWindow) -> bool:
+            """Whether a dated share-base move sits on this seam.
+
+            Dated *on* it, not merely near it: the seam is one session, and the
+            restatement chain only ever puts a step there by having matched its
+            size to the seam's own (``_session_dated``). A step somewhere else in
+            the gap is a different event and would leave this one unrestated.
+            """
+            return any(
+                predecessor.last_session < step.effective <= successor.first_session
+                for step in steps
+            )
+
+        return await self._succession.chain(ticker, year, explains=explains)
+
+    async def _restatement(self, ticker: str) -> Sequence[RestatementStep]:
+        if self._timeline is None:
+            return ()
+        cached = self._steps.get(ticker)
+        if cached is None:
+            cached = await self._timeline(ticker)
+            self._steps[ticker] = cached
+        return cached

@@ -37,8 +37,10 @@ PostgreSQL, served by a read API. Both phases are already implemented (see
   (ADR 0042): the FCA names the codes one registrant filed for a share class, and
   two of them join only where the price crosses the seam between them — which is
   what keeps a merger's extinguished side (ALLL3, BRML3, LAME4) out of the
-  survivor's series. A year the named codes cannot cover is a null with a cause,
-  never a partial average.
+  survivor's series — **or where the restatement has dated the action that seam
+  carries** (ADR 0043: B3 restarts a renamed code's rights state, so the seam is
+  the only witness to an action executed on it). A year the named codes cannot
+  cover is a null with a cause, never a partial average.
   **Three price bases
   exist and must never be
   mixed**: as traded · adjusted for splits/groupings/bonuses (what indicators

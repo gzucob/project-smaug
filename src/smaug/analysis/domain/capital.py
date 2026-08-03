@@ -353,6 +353,7 @@ def _filed_steps(
 ) -> list[_FiledStep]:
     """Every share-base move between consecutive filed years, newest first."""
     steps: list[_FiledStep] = []
+    stranded: list[tuple[int, CorporateAction]] = []
     consumed: set[str] = set()
     ordered = sorted(issued_by_year, reverse=True)
     for year, previous_year in zip(ordered, ordered[1:], strict=False):
@@ -377,7 +378,94 @@ def _filed_steps(
             ratio = _witnessed_ratio(earlier, later, previous_year, year, changes)
         if ratio is not None:
             steps.append(_FiledStep(year, ratio))
+            continue
+        witnessed = _declared_and_witnessed(
+            actions, previous_year, year, consumed, changes
+        )
+        if witnessed is not None:
+            stranded.append((year, witnessed))
+    for year, action in stranded:
+        ratio = action.ratio
+        # Never a second time. The FRE reports late, so an event can move the
+        # counts in one filing year while its approval and its session fall in a
+        # neighbouring gap's window — and the two windows overlap by a year by
+        # construction (``_gap_window``). A step of that size already standing is
+        # this same event, seen from the side the counts could anchor.
+        if ratio is None or any(_is_same_ratio(step.ratio, ratio) for step in steps):
+            continue
+        steps.append(_FiledStep(year, ratio, (action,)))
     return steps
+
+
+def _is_same_ratio(standing: Decimal, declared: Decimal) -> bool:
+    """Whether a step already carries a declared action's move.
+
+    Loose enough to see through the issuance riding alongside a count-derived
+    ratio (``_WITNESS_BAND``, as the counts' own witness uses), which is what
+    makes Alpargatas' 1.2500000016 and its declared 1.25 one event rather than
+    two.
+    """
+    if standing <= 0 or declared <= 0:
+        return False
+    return abs(standing - declared) / declared <= _WITNESS_BAND
+
+
+def _declared_and_witnessed(
+    actions: Sequence[CorporateAction],
+    previous_year: int,
+    year: int,
+    consumed: set[str],
+    changes: Sequence[BaseChange],
+) -> CorporateAction | None:
+    """A declaration the counts strand, kept because the tape saw it happen.
+
+    Last resort, for a gap every rule above left unexplained. The anchor
+    ``_declared_step`` relies on — the action's own ``total_before`` or
+    ``total_after`` matching a filing — is missing whenever shares were **issued
+    on both sides of the action**, and the declaration is then stranded: Veste
+    files 68.9 M shares for 2021 and 113.4 M for 2022, while its 8:1 grupamento
+    declares 848.6 M -> 106.1 M. Neither end matches anything, so the filed move
+    reads as a dirty x1.6475 and the ratio CVM stated outright is dropped with it.
+
+    Two witnesses, as everywhere else here (ADR 0037), and for a sharper reason
+    than usual: an approval date alone would re-apply an action the counts
+    *already* carried in some other gap — the FRE reports late, so an event moves
+    the counts in one filing year and is approved in another's window. Measured
+    over the exchange, dating on the approval alone moved 60 of 368 registrants,
+    duplicating Alpargatas' 1.25 and Bradesco's 1.1 on top of themselves.
+
+    So the tape has to have seen it: exactly one base change inside the gap, of
+    that size (``_SESSION_MATCH_BAND``), and exactly one declaration matching it.
+    What is then used is the **declared** ratio — 1/8, not the 0.1338 the market
+    printed — because the tape reads a size only to ±25% (ADR 0035). The
+    residual, here a x13.2 issuance, keeps its factor of 1 like any other.
+
+    The witness is a **seam** and only a seam. Every other base change the tape
+    publishes is already reachable through the counts — that is what
+    ``_witnessed_ratio`` above does, anchored on them — so leaning on one here
+    re-applies what the counts already carried: allowing any base change moved 37
+    of 368 registrants, and put Bradesco's 1.1 on top of Bradesco's 1.1. A seam
+    is the session a security changed trading code, which the counts cannot see
+    at all.
+    """
+    window = _gap_window(previous_year, year)
+    inside = [c for c in changes if c.seam and window[0] <= c.session <= window[1]]
+    if len(inside) != 1:
+        return None
+    observed = inside[0].ratio
+    matched = [
+        action
+        for action in actions
+        if (ratio := action.ratio) is not None
+        and action.approval_date not in consumed
+        and (approved := action.approved_on) is not None
+        and window[0] <= approved <= window[1]
+        and _is_same_size(ratio, observed)
+    ]
+    if len(matched) != 1:
+        return None
+    consumed.add(matched[0].approval_date)
+    return matched[0]
 
 
 # What a corporate action's ratio looks like: both sides small (a 2:1 split, a
@@ -634,10 +722,18 @@ class BaseChange:
     declared — the close before over the close after. It carries the day's own
     move with it, so it identifies an action's size without ever stating it: the
     ratio a step is restated by stays the one the counts anchored.
+
+    ``seam`` marks the one kind the tape does not mark itself: the session a
+    security changed trading code, where B3 restarts the rights state from
+    scratch and an action executed that day leaves no ``ESPECI`` behind (ADR
+    0043). It is kept apart because it is the only witness a stranded
+    declaration may lean on — every other base change is already reachable
+    through the counts, and leaning on those double-counts what they carry.
     """
 
     session: date
     ratio: Decimal
+    seam: bool = False
 
 
 # How far an observed price ratio may sit from a declared one and still be the
