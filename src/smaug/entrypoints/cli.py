@@ -48,6 +48,10 @@ from smaug.analysis.infrastructure.mongo_dividends import MongoCashEventReader
 from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsReader
 from smaug.analysis.infrastructure.restated_price import RestatedPriceProvider
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
+from smaug.analysis.infrastructure.succession import (
+    CodeSuccession,
+    SuccessionPriceProvider,
+)
 from smaug.ingestion.application.ingest import (
     FetchOutcome,
     IngestPortfolioUseCase,
@@ -92,6 +96,7 @@ from smaug.portfolio.domain.sectors import (
     portfolio_tickers,
     sector_from_cvm,
 )
+from smaug.portfolio.domain.securities import SiblingCodesResolver
 from smaug.portfolio.domain.share_classes import ShareClass, listed_classes
 from smaug.portfolio.domain.taxonomy import (
     TAXONOMY_SNAPSHOT,
@@ -101,6 +106,7 @@ from smaug.portfolio.domain.taxonomy import (
 from smaug.portfolio.domain.universe import ListedCompany
 from smaug.portfolio.infrastructure.b3_taxonomy import B3TaxonomySource
 from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
+from smaug.portfolio.infrastructure.cvm_securities import CvmSecurityHistory
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
 from smaug.shared.errors import UnknownTickerError
@@ -633,6 +639,26 @@ def analyze(
     raise typer.Exit(code=exit_code)
 
 
+async def _siblings_resolver(
+    settings: Settings, http: httpx.AsyncClient
+) -> SiblingCodesResolver:
+    """The other codes each share class has been filed under (#193).
+
+    Read across every FCA year that carries the trading code, which is 2018 on —
+    a rename older than that column is not in the archive at all, and the price
+    side reports the years it cannot name rather than serving part of them.
+    """
+    history = CvmSecurityHistory(
+        http,
+        # Through today rather than the mirrored year: a code renamed this year
+        # is named by no earlier archive, and the running year's file is skipped
+        # if CVM has not published it yet.
+        through=max(settings.cvm_year, date.today().year),
+        cache_dir=settings.cvm_cache_dir,
+    )
+    return await history.resolver()
+
+
 def _build_archive(settings: Settings, http: httpx.AsyncClient) -> CotahistArchive:
     """B3's quote series — the only thing that prices the analysis (ADR 0041).
 
@@ -651,12 +677,18 @@ def _build_price_provider(
     shares_reader: SharesReader,
     archive: CotahistArchive,
     cash_events: CashEventReader,
+    succession: CodeSuccession,
 ) -> PriceProvider:
     """Wire the exchange's series into the two bases derived from it.
 
     One file answers both the live quote and the year history, so there is no
     chain here and no fallback: a company B3 does not list reads as a missing
     price rather than as somebody else's number on another basis (ADR 0041).
+
+    The succession is innermost because it decides *which sessions exist* (ADR
+    0042): a security that changed trading code has its earlier years filed under
+    the earlier code, and both bases above have to be derived from the joined
+    series rather than from the tail of it.
 
     The share history wraps it because the exchange publishes what printed on the
     tape while the counts it multiplies are restated onto today's base (ADR 0027)
@@ -666,7 +698,10 @@ def _build_price_provider(
     (ADR 0039).
     """
     return RestatedPriceProvider(
-        DividendAdjustedPriceProvider(B3PriceProvider(archive), cash_events),
+        DividendAdjustedPriceProvider(
+            SuccessionPriceProvider(B3PriceProvider(archive), succession),
+            cash_events,
+        ),
         shares_reader,
     )
 
@@ -694,10 +729,19 @@ async def _run_analyze(
             # archive is built first because the reader dates that restatement
             # off it, and the price provider then shares the same instance.
             archive = _build_archive(settings, http)
+            # One chain of trading codes per security, shared by the two readers
+            # that must not disagree about it: the price averages the joined
+            # sessions and the base-change reader dates the actions filed under
+            # the codes those sessions came from (ADR 0042).
+            succession = CodeSuccession(
+                archive,
+                siblings=await _siblings_resolver(settings, http),
+                listed_since=_listed_since_resolver(identities),
+            )
             shares_reader = MongoSharesReader(
                 mongo[settings.mongo_db]["raw_ingestions"],
                 registrant_resolver=registrant,
-                base_changes=B3BaseChanges(archive),
+                base_changes=B3BaseChanges(archive, codes=succession.codes),
             )
             cash_events = MongoCashEventReader(
                 mongo[settings.mongo_db]["raw_ingestions"],
@@ -710,7 +754,7 @@ async def _run_analyze(
                     registrant_resolver=registrant,
                 ),
                 price_provider=_build_price_provider(
-                    shares_reader, archive, cash_events
+                    shares_reader, archive, cash_events, succession
                 ),
                 repository=SqlAlchemyAnalysisRepository(session_factory),
                 shares_reader=shares_reader,
