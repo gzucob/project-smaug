@@ -688,7 +688,10 @@ def _build_price_provider(
     The succession is innermost because it decides *which sessions exist* (ADR
     0042): a security that changed trading code has its earlier years filed under
     the earlier code, and both bases above have to be derived from the joined
-    series rather than from the tail of it.
+    series rather than from the tail of it. It reads the share history too, and
+    for a different question than the restatement outside it: whether a seam the
+    price does not carry across is a share-base move already dated, and so one
+    the sessions before it are restated by (ADR 0043).
 
     The share history wraps it because the exchange publishes what printed on the
     tape while the counts it multiplies are restated onto today's base (ADR 0027)
@@ -699,7 +702,11 @@ def _build_price_provider(
     """
     return RestatedPriceProvider(
         DividendAdjustedPriceProvider(
-            SuccessionPriceProvider(B3PriceProvider(archive), succession),
+            SuccessionPriceProvider(
+                B3PriceProvider(archive),
+                succession,
+                timeline=shares_reader.restatement_timeline,
+            ),
             cash_events,
         ),
         shares_reader,
@@ -741,7 +748,10 @@ async def _run_analyze(
             shares_reader = MongoSharesReader(
                 mongo[settings.mongo_db]["raw_ingestions"],
                 registrant_resolver=registrant,
-                base_changes=B3BaseChanges(archive, codes=succession.codes),
+                # The *candidates*, not the joined chain: a seam the price will
+                # refuse is still the session an action took effect on, and this
+                # is the reader that dates it (ADR 0043).
+                base_changes=B3BaseChanges(archive, codes=succession.candidates),
             )
             cash_events = MongoCashEventReader(
                 mongo[settings.mongo_db]["raw_ingestions"],

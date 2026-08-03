@@ -19,8 +19,15 @@ from pathlib import Path
 
 import httpx
 
+from smaug.analysis.domain.capital import RestatementStep
 from smaug.analysis.domain.indicators import NullReason
-from smaug.analysis.domain.succession import CodeWindow, chain, joins, structural_gap
+from smaug.analysis.domain.succession import (
+    CodeWindow,
+    chain,
+    joined,
+    joins,
+    structural_gap,
+)
 from smaug.analysis.infrastructure.b3_prices import B3BaseChanges, YearQuotes
 from smaug.analysis.infrastructure.succession import (
     CodeSuccession,
@@ -254,6 +261,10 @@ def _renamed_archive() -> _FakeArchive:
     )
 
 
+def _nothing_explains(predecessor: CodeWindow, successor: CodeWindow) -> bool:
+    return False
+
+
 def _succession(archive: _FakeArchive) -> CodeSuccession:
     return CodeSuccession(
         archive,  # type: ignore[arg-type]  # a reduced archive is all it reads
@@ -266,8 +277,9 @@ def _succession(archive: _FakeArchive) -> CodeSuccession:
 async def test_the_year_of_the_rename_is_read_under_both_codes() -> None:
     succession = _succession(_renamed_archive())
 
-    assert await succession.codes("AZZA3", 2023) == ("ARZZ3", "AZZA3")
-    sessions = await succession.sessions("AZZA3", 2024)
+    assert await succession.candidates("AZZA3", 2023) == ("ARZZ3", "AZZA3")
+    resolved = await succession.chain("AZZA3", 2023, explains=_nothing_explains)
+    sessions = await succession.sessions(resolved, 2024)
 
     assert [close.session.day for close in sessions] == [30, 31, 1, 2]
     assert sessions[0].close == Decimal("48")
@@ -368,7 +380,7 @@ async def test_an_action_filed_under_the_earlier_code_is_still_dated() -> None:
     joined = await B3BaseChanges(
         archive,  # type: ignore[arg-type]
         lambda: TODAY,
-        codes=succession.codes,
+        codes=succession.candidates,
     ).base_changes("AZZA3", [2023, 2024])
 
     assert blind == ()
@@ -429,3 +441,101 @@ async def test_the_codes_of_one_class_are_gathered_across_fca_years(
     assert siblings("ARZZ11") == ()
     # A registrant with one code has nothing to join.
     assert siblings("ALSO3") == ()
+
+
+# --- the seam as the only witness to an action's date (#197, ADR 0043) -------
+
+
+def _grupamento_archive() -> _FakeArchive:
+    """Le Lis Blanc's shape: LLIS3 to 2023-02-08, VSTE3 from the 9th, x7.47 apart."""
+    return _FakeArchive(
+        {
+            2022: {"LLIS3": _quotes(_sessions(date(2022, 12, 28), ["2.05", "2.09"]))},
+            2023: {
+                "LLIS3": _quotes(_sessions(date(2023, 2, 7), ["1.85", "1.73"])),
+                "VSTE3": _quotes(_sessions(date(2023, 2, 9), ["12.93", "13.06"])),
+                # The year's calendar comes from the code that traded most, and
+                # the debut test needs one: VSTE3 printing every session left in
+                # the year is what tells a rename from an illiquid share.
+                "MRKT3": _quotes(_sessions(date(2023, 2, 7), ["9", "9", "9", "9"])),
+            },
+            2024: {"VSTE3": _quotes(_sessions(date(2024, 1, 2), ["20", "19"]))},
+        }
+    )
+
+
+def _veste(archive: _FakeArchive) -> CodeSuccession:
+    return CodeSuccession(
+        archive,  # type: ignore[arg-type]
+        siblings=lambda ticker: ("LLIS3",) if ticker == "VSTE3" else (),
+        listed_since=lambda ticker: date(2008, 4, 28),
+        today=lambda: date(2024, 6, 1),
+    )
+
+
+async def test_a_seam_the_price_does_not_cross_is_offered_as_a_date() -> None:
+    archive = _grupamento_archive()
+    changes = await B3BaseChanges(
+        archive,  # type: ignore[arg-type]
+        lambda: date(2024, 6, 1),
+        codes=_veste(archive).candidates,
+    ).base_changes("VSTE3", [2022, 2023, 2024])
+
+    # B3's tape marks nothing here — the successor opens with a clean ESPECI and
+    # a DISMES restarted at 100 — so the seam itself is the only witness.
+    assert [(c.session, c.ratio) for c in changes] == [
+        (date(2023, 2, 9), Decimal("1.73") / Decimal("12.93"))
+    ]
+
+
+async def test_a_seam_the_price_crosses_offers_nothing() -> None:
+    archive = _renamed_archive()
+    changes = await B3BaseChanges(
+        archive,  # type: ignore[arg-type]
+        lambda: TODAY,
+        codes=_succession(archive).candidates,
+    ).base_changes("AZZA3", [2023, 2024, 2025])
+
+    # A rename on its own moves no share, and a candidate ratio of ~1 could only
+    # be paired with some other action of a different date.
+    assert changes == ()
+
+
+def test_an_explained_seam_joins_and_an_unexplained_one_does_not() -> None:
+    old = _window("LLIS3", date(2015, 1, 2), date(2023, 2, 8), last_close="1.73")
+    new = _window("VSTE3", date(2023, 2, 9), date(2026, 5, 29), first_close="12.93")
+
+    assert joined([old, new]) == (new,)
+    assert joined([old, new], explains=lambda _p, _s: True) == (old, new)
+
+
+async def test_the_price_joins_a_seam_the_restatement_has_dated() -> None:
+    archive = _grupamento_archive()
+    succession = _veste(archive)
+    inner = _StaticPrices(archive)
+
+    blind = SuccessionPriceProvider(inner, succession)  # type: ignore[arg-type]
+    dated = SuccessionPriceProvider(
+        inner,  # type: ignore[arg-type]
+        succession,
+        timeline=lambda ticker: _timeline(
+            (date(2023, 2, 9), Decimal(106_073_983) / Decimal(848_591_865))
+        ),
+    )
+
+    # Unexplained, the year is half a share base and is published as neither.
+    assert (await blind.year_prices("VSTE3", 2023)).null_reason is (
+        NullReason.PRICE_SYMBOL_NOT_FOUND
+    )
+    # Dated, the four sessions of 2023 are one series again — the two under LLIS3
+    # are restated by the outer decorator, which is what the step is for.
+    joined_year = await dated.year_prices("VSTE3", 2023)
+    assert joined_year.null_reason is None
+    assert (
+        joined_year.nominal_avg
+        == (Decimal("1.85") + Decimal("1.73") + Decimal("12.93") + Decimal("13.06")) / 4
+    )
+
+
+async def _timeline(*steps: tuple[date, Decimal]) -> tuple[RestatementStep, ...]:
+    return tuple(RestatementStep(effective=day, ratio=ratio) for day, ratio in steps)

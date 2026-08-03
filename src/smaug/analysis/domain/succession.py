@@ -19,17 +19,22 @@ be joined —
     security from the day the combination closed.
   * ``LLIS3`` → ``VSTE3`` (×7.474): a grupamento executed with the rename. B3's
     tape says nothing about it — the successor's first session carries a clean
-    ``ESPECI`` and a ``DISMES`` restarted at 100 — so nothing downstream would
-    restate the older sessions and the joined year would average two share bases.
+    ``ESPECI`` and a ``DISMES`` restarted at 100 — so on its own nothing
+    downstream would restate the older sessions and the joined year would average
+    two share bases.
 
-Both are refused here, and the year they would have completed is reported as a
-structural null instead. Refusing costs one cell and keeps every published number
-on one base; joining them silently would cost the base itself.
+The first is refused outright: no ratio restates a share exchange, because the
+holder's claim itself was swapped. The second is refused only while it is
+unexplained — the seam is offered to the restatement chain as the date of an
+action, and where the chain takes it (the ratio being CVM's own declaration,
+ADR 0043) the older sessions are restated like any others and the join is
+arithmetic. A seam nothing explains still stops the chain, and the year it would
+have completed is reported as a structural null instead.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -64,52 +69,109 @@ class CodeWindow:
     last_close: Decimal
 
 
+def crosses(before: Decimal, after: Decimal) -> bool:
+    """Whether a price carries over between two consecutive sessions unchanged.
+
+    The one place the seam band is applied, because two readers ask the same
+    question of it: the chain, deciding whether to join, and the tape reader,
+    deciding whether the seam is a session worth offering the restatement as a
+    date it has for nothing else.
+    """
+    if before <= 0 or after <= 0:
+        return False
+    return _SEAM_FLOOR <= after / before <= _SEAM_CEILING
+
+
+def adjacent(predecessor: CodeWindow, successor: CodeWindow) -> bool:
+    """Whether ``predecessor`` stops where ``successor`` starts."""
+    return predecessor.last_session < successor.first_session
+
+
 def joins(predecessor: CodeWindow, successor: CodeWindow) -> bool:
     """Whether ``predecessor``'s series can be read as ``successor``'s earlier self."""
-    if predecessor.last_session >= successor.first_session:
-        return False  # concurrent codes are two listings, not one succession
-    if predecessor.last_close <= 0:
-        return False
-    ratio = successor.first_close / predecessor.last_close
-    return _SEAM_FLOOR <= ratio <= _SEAM_CEILING
+    return adjacent(predecessor, successor) and crosses(
+        predecessor.last_close, successor.first_close
+    )
 
 
-def chain(
+Explains = Callable[[CodeWindow, CodeWindow], bool]
+
+
+def _explains_nothing(predecessor: CodeWindow, successor: CodeWindow) -> bool:
+    return False
+
+
+def candidates_of(
     served: CodeWindow,
-    candidates: Sequence[CodeWindow],
+    siblings: Sequence[CodeWindow],
     *,
     listed_since: date | None,
 ) -> tuple[CodeWindow, ...]:
-    """``served`` preceded by every code it continues, oldest first.
+    """Every code that could be ``served``'s earlier self, oldest first.
 
-    Walks backwards one seam at a time from the code that trades today, taking
-    the candidate that stops closest to the head of the chain and stopping at the
-    first seam the price does not cross. Stopping — rather than skipping to the
-    next candidate — is deliberate: a chain with a hole in it is not a series,
-    and the hole is what the caller reports.
+    Adjacency and the listing floor only — the two conditions that are facts
+    about the cadastre and the calendar. Whether the *price* carries across each
+    seam is a separate question, asked by ``chain`` below, because the tape
+    reader needs to walk even the seams the price side will refuse: a seam is the
+    only witness to the date of an action nothing else dates (ADR 0043).
 
     ``listed_since`` is the FCA's ``Data_Inicio_Listagem`` for the security, a
     floor and not a birth certificate (``portfolio.domain.listings``). A
     candidate that stops before it belonged to whatever the security was before
-    it existed — ALL's ``ALLL3`` for Rumo — and never joins.
+    it existed — ALL's ``ALLL3`` for Rumo — and is never one of these.
     """
     remaining = [
         candidate
-        for candidate in candidates
+        for candidate in siblings
         if candidate.code != served.code
         and (listed_since is None or candidate.last_session >= listed_since)
     ]
     resolved = [served]
     while True:
         head = resolved[0]
-        earlier = [c for c in remaining if c.last_session < head.first_session]
+        earlier = [c for c in remaining if adjacent(c, head)]
         if not earlier:
             return tuple(resolved)
         previous = max(earlier, key=lambda c: c.last_session)
-        if not joins(previous, head):
-            return tuple(resolved)
         remaining.remove(previous)
         resolved.insert(0, previous)
+
+
+def joined(
+    candidates: Sequence[CodeWindow], *, explains: Explains = _explains_nothing
+) -> tuple[CodeWindow, ...]:
+    """The candidates that read as one series, oldest first.
+
+    Walks backwards one seam at a time from the code that trades today and stops
+    at the first seam that is neither crossed by the price nor explained by the
+    restatement. Stopping — rather than skipping to the next candidate — is
+    deliberate: a chain with a hole in it is not a series, and the hole is what
+    the caller reports.
+
+    ``explains`` answers whether the share base moved on that seam and the move
+    is already dated, in which case the older sessions are restated onto today's
+    base like any others and joining them is arithmetic rather than a guess
+    (ADR 0043). It is what recovers Le Lis Blanc: its 8:1 grupamento took effect
+    on the very session ``VSTE3`` replaced ``LLIS3``.
+    """
+    for index in range(len(candidates) - 1, 0, -1):
+        predecessor, successor = candidates[index - 1], candidates[index]
+        if not joins(predecessor, successor) and not explains(predecessor, successor):
+            return tuple(candidates[index:])
+    return tuple(candidates)
+
+
+def chain(
+    served: CodeWindow,
+    siblings: Sequence[CodeWindow],
+    *,
+    listed_since: date | None,
+    explains: Explains = _explains_nothing,
+) -> tuple[CodeWindow, ...]:
+    """``served`` preceded by every code it continues, oldest first."""
+    return joined(
+        candidates_of(served, siblings, listed_since=listed_since), explains=explains
+    )
 
 
 def structural_gap(

@@ -392,3 +392,76 @@ def test_a_gap_spanning_several_filings_sees_every_action_inside_it() -> None:
     ]
 
     assert restatement_factors(filed, changes=tape)[2022] == 1
+
+
+def test_a_declaration_stranded_between_two_issuances_still_counts() -> None:
+    # Veste (ex-Le Lis Blanc). Its 8:1 grupamento declares 848,591,865 ->
+    # 106,073,983, and neither end matches a filing: shares were issued on both
+    # sides of it, so the FRE files 68.9 M for 2021 and 113.4 M for 2022. The
+    # filed move is a dirty x1.6475 that no rule explains, and the ratio CVM
+    # states outright used to be dropped with it (#197).
+    filed = {2021: Decimal(68_850_829), 2022: Decimal(113_426_924)}
+    declared = [_action("Grupamento", 848_591_865, 106_073_983, "2022-12-14")]
+    # The session VSTE3 replaced LLIS3: the only witness, because B3's tape marks
+    # nothing on a code change and the counts never carried the move.
+    seam = [BaseChange(date(2023, 2, 9), Decimal("1.73") / Decimal("12.93"), seam=True)]
+
+    inferred = restatement_factors(filed)
+    factors = restatement_factors(filed, actions=declared, changes=seam)
+
+    assert inferred[2021] == 1  # a dirty ratio restates nothing, by design
+    assert factors[2021] == Decimal(106_073_983) / Decimal(848_591_865)
+    assert factors[2022] == 1
+
+
+def test_a_stranded_declaration_needs_the_seam_to_speak() -> None:
+    # The same declaration with no seam under it stays dropped: an approval date
+    # alone re-applies actions the counts already carried (measured: 60 of 368
+    # registrants moved, Alpargatas' 1.25 landing on top of itself).
+    filed = {2021: Decimal(68_850_829), 2022: Decimal(113_426_924)}
+    declared = [_action("Grupamento", 848_591_865, 106_073_983, "2022-12-14")]
+    marked = [BaseChange(date(2023, 2, 9), Decimal("1.73") / Decimal("12.93"))]
+
+    assert restatement_factors(filed, actions=declared)[2021] == 1
+    # Nor on an ordinary base change: that one the counts can already anchor.
+    assert restatement_factors(filed, actions=declared, changes=marked)[2021] == 1
+
+
+def test_a_stranded_declaration_the_counts_already_carried_is_not_applied_twice() -> (
+    None
+):
+    # Alpargatas: the counts move x1.2500000016 in one filing gap while the
+    # declaration of the same 1.25 sits in the neighbouring gap's window — the
+    # two windows overlap by a year by construction.
+    filed = {
+        2018: Decimal(100_000_000),
+        2019: Decimal(125_000_016),
+        2020: Decimal(125_000_016),
+    }
+    declared = [_action("Bonificação", 100_000_000, 125_000_000, "2019-03-21")]
+    seam = [BaseChange(date(2020, 3, 21), Decimal("1") / Decimal("1.25"), seam=True)]
+
+    factors = restatement_factors(filed, actions=declared, changes=seam)
+
+    assert factors[2019] == 1  # the standstill year, not a second bonus
+    assert abs(factors[2018] - Decimal("1.25")) < Decimal("0.001")
+
+
+def test_a_declaration_outside_the_gap_is_left_where_it_belongs() -> None:
+    # The window is what places a stranded declaration, so it is the one thing
+    # that has to be strict.
+    filed = {2021: Decimal(68_850_829), 2022: Decimal(113_426_924)}
+    declared = [_action("Grupamento", 848_591_865, 106_073_983, "2024-06-01")]
+    seam = [BaseChange(date(2023, 2, 9), Decimal("1.73") / Decimal("12.93"), seam=True)]
+
+    assert restatement_factors(filed, actions=declared, changes=seam)[2021] == 1
+
+
+def test_a_stranded_declaration_never_outranks_a_rule_that_answered() -> None:
+    # A clean filed move is explained already; a declaration inside the same
+    # window does not get to compound on top of it.
+    filed = {2021: Decimal(50_000_000), 2022: Decimal(100_000_000)}
+    declared = [_action("Grupamento", 848_591_865, 106_073_983, "2022-12-14")]
+    seam = [BaseChange(date(2023, 2, 9), Decimal("1.73") / Decimal("12.93"), seam=True)]
+
+    assert restatement_factors(filed, actions=declared, changes=seam)[2021] == 2
