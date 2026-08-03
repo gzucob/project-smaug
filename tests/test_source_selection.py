@@ -2,7 +2,8 @@
 
 import httpx
 
-from smaug.entrypoints.cli import _build_data_source
+from smaug.analysis.infrastructure.b3_prices import CotahistArchive
+from smaug.entrypoints.cli import _build_archive, _build_data_source
 from smaug.ingestion.infrastructure.brapi_client import BrapiClient
 from smaug.ingestion.infrastructure.cvm_capital import CvmCapitalSource
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource
@@ -39,3 +40,12 @@ async def test_build_data_source_selects_implementation_by_config() -> None:
     assert isinstance(cvm._default, CvmDataSource)
     assert isinstance(cvm._routes["CAPITAL"], CvmCapitalSource)
     assert isinstance(brapi, BrapiClient)
+
+
+async def test_the_exchange_prices_the_analysis_by_default() -> None:
+    # ADR 0040. The vendor chain answers only when it is asked for by name, and
+    # it is never a fallback: a company B3 does not list reads as a missing
+    # price rather than silently from a source on another basis.
+    async with httpx.AsyncClient() as http:
+        assert isinstance(_build_archive(Settings(), http), CotahistArchive)
+        assert _build_archive(Settings(price_source="vendors"), http) is None
