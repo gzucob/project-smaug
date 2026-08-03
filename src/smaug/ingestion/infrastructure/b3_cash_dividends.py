@@ -26,14 +26,22 @@ fields make that worth insisting on:
   computed and already free of that scale. It is null on a handful of rows whose
   ``valueCash`` is ``0,0000000001`` — a nominal payment that rounds to nothing.
 
-**The two endpoints do not always agree on the name.** The dividend table is
-keyed on a ``tradingName`` of its own, and for some companies no other B3 system
-publishes it: the supplement, ``GetInitialCompanies`` and the company page all
-call Ambev ``AMBEV S/A``, and the dividend endpoint answers only to ``AMBEV`` —
-``AMBEV S/A`` and even ``AMBEV S`` return zero rows. The mismatch is not
-guessed at here. Shortening a name until one answers would attach Bradesco's
-history to Bradesco Financiamentos, and a wrong dividend series is worse than
-none; such a company is mirrored as having no payout and the gap is #190.
+**The two endpoints spell the corporate form differently.** Every other B3
+system writes it with a slash — the supplement, ``GetInitialCompanies``,
+``GetDetail`` and COTAHIST's own short name all call Ambev ``AMBEV S/A`` — and
+the dividend table writes it with dots, ``AMBEV S.A.``. The match is exact but
+for dots, so ``AMBEV SA`` answers and ``AMBEV S/A`` returns nothing at all.
+Measured over 371 companies: 50 return nothing on the supplement's name, and
+six of those are this and no other cause (Ambev, Klabin, Cury, Light, IMC,
+Ourofino). The rest have simply never paid.
+
+The retry is a **respelling, not a search**. Truncating a name until something
+answers looks like it works and does not: ``KLABIN`` answers with 18 rows from
+1996-2001 and ``KLABIN S.A.`` with 219, because the short name is a different,
+dead registrant. The response carries no company identity to catch that with —
+its fields are share class, date, value and reference price — so a wrong name
+returns a perfectly valid history of somebody else. Only the two spellings of
+one name are tried, and nothing else (#190).
 """
 
 from __future__ import annotations
@@ -99,6 +107,14 @@ class B3CashDividendSource:
         if not trading_name:
             raise BrapiNotFoundError(f"B3 gives no trading name for {ticker} ({root})")
         rows = await self._dividends(trading_name)
+        respelled = trading_name.replace("/", ".")
+        if not rows and respelled != trading_name:
+            logger.info(
+                "B3 gave no payout for %r; the dividend table spells it %r",
+                trading_name,
+                respelled,
+            )
+            rows = await self._dividends(respelled)
         if not rows:
             # A company that has never paid is the normal case for a recent
             # listing, and it is an absence the mirror records rather than an

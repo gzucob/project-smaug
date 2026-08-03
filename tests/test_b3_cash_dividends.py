@@ -142,3 +142,46 @@ async def test_a_company_that_has_never_paid_is_an_absence_not_an_empty_list() -
     async with httpx.AsyncClient(transport=_Empty()) as http:
         with pytest.raises(BrapiNotFoundError):
             await B3CashDividendSource(http).fetch("RDNI3", CASH_DIVIDEND_B3_MODULE)
+
+
+async def test_the_corporate_form_is_respelled_with_dots_and_retried() -> None:
+    """B3 writes the same company two ways and the dividend table wants the dots.
+
+    The supplement, ``GetInitialCompanies``, ``GetDetail`` and COTAHIST's short
+    name all say ``AMBEV S/A``; the dividend table says ``AMBEV S.A.`` and
+    returns nothing at all for the slash. It ignores a trailing dot, so swapping
+    the slash for one is enough. Six companies of 371 are this, Ambev and
+    Klabin among them.
+
+    It is a respelling and not a search: ``KLABIN`` alone answers with 18 rows
+    of a dead registrant where ``KLABIN S.A.`` answers with 219, and nothing in
+    the response would tell the two apart.
+    """
+
+    class _Dotted(_Transport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            params = _decoded(url)
+            self.asked.append(params)
+            if "GetListedSupplementCompany" in url:
+                return httpx.Response(200, json={"tradingName": "AMBEV S/A   "})
+            if params["tradingName"] != "AMBEV S.A":
+                return httpx.Response(
+                    200,
+                    json={"page": {"pageNumber": 1, "totalPages": 0}, "results": []},
+                )
+            return httpx.Response(
+                200, json={"page": {"pageNumber": 1, "totalPages": 1}, "results": ROWS}
+            )
+
+    transport = _Dotted()
+    async with httpx.AsyncClient(transport=transport) as http:
+        results = await B3CashDividendSource(http).fetch(
+            "ABEV3", CASH_DIVIDEND_B3_MODULE
+        )
+
+    assert len(results) == 2
+    assert [call.get("tradingName") for call in transport.asked[1:]] == [
+        "AMBEV S/A",
+        "AMBEV S.A",
+    ]
