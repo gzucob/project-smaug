@@ -33,6 +33,6 @@ class RawIngestionRepository(Protocol):
         """Stamp ``cvm_code`` on ``ticker``'s unlinked CVM documents; count them."""
         ...
 
-    async def registrants_of(self, file: str) -> set[str]:
-        """Registrants already mirrored from the CVM archive named ``file``."""
+    async def mirrored_for(self, module: str, *, file: str | None = None) -> set[str]:
+        """Registrants the mirror already holds ``module`` for, scoped to ``file``."""
         ...

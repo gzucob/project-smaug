@@ -26,16 +26,15 @@ class RoutedDataSource:
         source = self._routes.get(module.upper(), self._default)
         return await source.fetch(ticker, module)
 
-    @property
-    def archive_name(self) -> str | None:
-        """The statements archive this run reads — the batch's resume marker.
+    def archive_for(self, module: str) -> str | None:
+        """The archive whichever source answers ``module`` reads — its resume marker.
 
-        The statements file, not the FRE, because it is the one every module but
-        the share counts comes from: a company found in it has been collected for
-        this year. A run that wants the FRE re-read regardless uses ``--force``.
-
-        ``None`` when the routed default is not archive-backed (brapi), which is
-        the honest answer to "which file is this run finished with".
+        Each module names its own file, not the statements' one for all of them:
+        the share counts come from the FRE and the exchange's modules from no
+        archive at all. ``None`` says "this module has no file to be finished
+        with", which is the honest answer for B3's endpoints — they return the
+        whole history in one call, so presence alone is what marks them done.
         """
-        archive = getattr(self._default, "archive_name", None)
+        source = self._routes.get(module.upper(), self._default)
+        archive = getattr(source, "archive_name", None)
         return archive if isinstance(archive, str) else None

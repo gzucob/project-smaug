@@ -60,16 +60,24 @@ class BeanieRawIngestionRepository:
         )
         return int(result.modified_count)
 
-    async def registrants_of(self, file: str) -> set[str]:
-        """Which registrants a given yearly archive has already been mirrored for.
+    async def mirrored_for(self, module: str, *, file: str | None = None) -> set[str]:
+        """Which registrants this module has already been mirrored for.
 
-        The archive's own name is the honest predicate: a company is done for
-        ``dfp_cia_aberta_2019.zip`` when a document says it was read from exactly
-        that file. Lets a whole-exchange run resume where it stopped instead of
+        The module is half of the predicate and the archive is the other half: a
+        company is done for ``CAPITAL`` in ``fre_cia_aberta_2019.zip`` when a
+        document says that module was read from exactly that file. Asking by
+        registrant alone answered for a module nobody had ever collected (#178).
+
+        ``file`` is ``None`` for a module that comes from no archive — B3 returns
+        the whole history in one call, so holding the module at all is what marks
+        it done. Lets a whole-exchange run resume where it stopped instead of
         appending a second copy of everything it already holds.
         """
         collection = RawIngestionDocument.get_pymongo_collection()
-        codes = await collection.distinct("cvm_code", {"request.file": file})
+        query: dict[str, object] = {"module": module}
+        if file is not None:
+            query["request.file"] = file
+        codes = await collection.distinct("cvm_code", query)
         return {str(code) for code in codes if code is not None}
 
     @staticmethod
