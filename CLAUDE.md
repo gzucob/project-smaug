@@ -14,7 +14,7 @@ PostgreSQL, served by a read API. Both phases are already implemented (see
   (migrations in `alembic/versions/`). The calculation trigger is CLI
   (`smaug.analyze`); FastAPI (`smaug.entrypoints.api`) serves already-persisted
   results — it's a read API, not a write one.
-- Price source for Phase 2 — **migrating** to B3's own published series
+- Price source for Phase 2 — B3's own published series
   (`COTAHIST_A{year}.ZIP`, free and unauthenticated, ADR 0032). B3 publishes the
   price **as traded** while the share counts are restated onto the current base
   (ADR 0027); the two must sit on the same base or every company that ever split
@@ -28,9 +28,13 @@ PostgreSQL, served by a read API. Both phases are already implemented (see
   COTAHIST itself, which numbers each paper's rights state (`DISMES`) and marks
   the ex session in `ESPECI` (ADR 0035). The tape is the complete one: over 60
   companies it names all 47 actions B3's feed lists, plus 43 the feed omits.
-  `PRICE_SOURCE` still defaults to
-  `vendors` (Yahoo primary, brapi fallback — ADR 0013, superseded but still
-  wired) until the remaining coverage gaps close (#176). **Three price bases
+  `PRICE_SOURCE` **defaults to `b3`** (ADR 0040); `vendors` (Yahoo primary,
+  brapi fallback — ADR 0013) stays selectable only until that chain is removed
+  (#67). The exchange arrives on the year's own base on both sides, where the
+  vendor mixes them — it back-adjusts the price onto today's base while the
+  count stays as filed. It costs the history of a **renamed** ticker: B3 files
+  each year under the code that traded then, so AZZA3 has no 2015 (#193).
+  **Three price bases
   exist and must never be
   mixed**: as traded · adjusted for splits/groupings/bonuses (what indicators
   use) · adjusted for dividends (total return only, ADR 0018).

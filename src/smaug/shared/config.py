@@ -93,13 +93,14 @@ class Settings(BaseSettings):
     yahoo_base_url: str = Field(default="https://query1.finance.yahoo.com")
 
     # ---- B3 (the exchange's own published quote series) ----
-    # Which source prices the analysis. "b3" reads COTAHIST, the series B3
-    # publishes itself — but it publishes the price **as traded**, while the
-    # share counts are restated onto the current base (ADR 0027). Until the
-    # corporate-action factors land and put both on the same base, selecting it
-    # would overstate the cap of every company that ever split (BBAS3 by 2x), so
-    # the default stays on the vendor chain (ADR 0032).
-    price_source: PriceSource = Field(default="vendors")
+    # Which source prices the analysis. The default is "b3": COTAHIST, the series
+    # the exchange publishes itself (ADR 0032). It publishes the price **as
+    # traded**, so the restatement that puts it on the same base as the share
+    # counts (ADR 0027) had to land first — it did, session by session and from
+    # the exchange's own dates (ADRs 0033–0038), and the dividend basis with it
+    # (ADR 0039). "vendors" is the Yahoo/brapi chain it replaces, kept selectable
+    # only until that chain is removed (ADR 0040).
+    price_source: PriceSource = Field(default="b3")
     b3_series_base_url: str = Field(
         default="https://bvmf.bmfbovespa.com.br/InstDados/SerHist"
     )
