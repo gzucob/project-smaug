@@ -18,7 +18,7 @@ from smaug.analysis.domain.financials import (
 from smaug.analysis.domain.indicators import NullReason
 from smaug.portfolio.domain.sectors import Sector
 from smaug.portfolio.domain.share_classes import is_unit
-from smaug.shared.errors import BrapiForbiddenError, BrapiTimeoutError
+from smaug.shared.errors import SourceForbiddenError, SourceTimeoutError
 
 # Four consecutive quarter-ends: the TTM window Jul/2025–Mar/2026.
 _QUARTER_ENDS = (
@@ -395,8 +395,8 @@ async def test_a_closed_years_multiples_divide_by_what_the_shares_traded_at() ->
 
 
 async def test_analyze_prices_closed_year_without_the_live_quote() -> None:
-    # brapi (the live quote) is down, but Yahoo has the year's price and CVM has
-    # the filed share count — the closed-year multiples must still compute, while
+    # The live quote is missing, but the year's price is there and CVM has the
+    # filed share count — the closed-year multiples must still compute, while
     # the live TTM view degrades independently (ADR 0012 / #66).
     quarters = _quarters(
         Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(6000)
@@ -412,7 +412,7 @@ async def test_analyze_prices_closed_year_without_the_live_quote() -> None:
     use_case = AnalyzePortfolioUseCase(
         FakeReader({"PETR4": quarters}, annuals={"PETR4": [annual_2024]}),
         FakePrice(
-            get_error=BrapiTimeoutError("quote down"),
+            get_error=SourceTimeoutError("quote down"),
             year=YearPrices(nominal_avg=Decimal(8), adjusted_avg=Decimal(6)),
         ),
         repo,
@@ -423,7 +423,7 @@ async def test_analyze_prices_closed_year_without_the_live_quote() -> None:
     views = {(a.view, a.reference_date): a for a in repo.saved}
 
     y2024 = views[("closed_year", date(2024, 12, 31))]
-    assert y2024.price == Decimal(8)  # Yahoo nominal average, no brapi quote
+    assert y2024.price == Decimal(8)  # the year's nominal average, no live quote
     assert y2024.indicators.pe == Decimal(16)  # cap 8 × 1200 = 9600 / 600
     assert y2024.indicators.pb == Decimal(9600) / Decimal(3600)
 
@@ -434,10 +434,10 @@ async def test_analyze_prices_closed_year_without_the_live_quote() -> None:
 
 
 async def test_delisted_closed_year_names_the_price_null_non_transient() -> None:
-    # No price source knows the symbol (delisted/renamed, #64): the history chain
-    # returns a PRICE_SYMBOL_NOT_FOUND null, and the closed-year cap-multiples must
-    # carry that structural cause rather than a transient MISSING_PRICE — so
-    # smaug doctor tells a delisting apart from a passing Yahoo gap.
+    # The series does not carry the symbol at all (delisted, or renamed — #193):
+    # the provider returns a PRICE_SYMBOL_NOT_FOUND null, and the closed-year
+    # cap-multiples must carry that structural cause rather than a transient
+    # MISSING_PRICE — so smaug doctor tells a delisting apart from a passing gap.
     quarters = _quarters(
         Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(6000)
     )
@@ -523,11 +523,11 @@ async def test_analyze_divides_each_view_by_that_years_filed_shares() -> None:
 
 
 async def test_analyze_refuses_the_quotes_own_cap_and_share_count() -> None:
-    # brapi's quote carries a company-wide market cap and a share count derived
-    # from it, so for a multi-class ticker the identity cap ≡ price × shares does
-    # not hold: PETR4 landed +6.7% off the filed count. With no CVM filing there
-    # is no honest count, so both the cap and the per-share indicators go null
-    # with a named cause rather than take the vendor's biased pair (#39).
+    # A quote that carries its own company-wide market cap and a share count
+    # derived from it breaks the identity cap ≡ price × shares for a multi-class
+    # ticker: PETR4 landed +6.7% off the filed count. With no CVM filing there is
+    # no honest count, so both the cap and the per-share indicators go null with a
+    # named cause rather than take that biased pair (#39).
     repo = FakeRepo()
     use_case = AnalyzePortfolioUseCase(
         FakeReader(
@@ -550,7 +550,7 @@ async def test_analyze_refuses_the_quotes_own_cap_and_share_count() -> None:
 
     ind = repo.saved[0].indicators
     assert ind.eps is None
-    assert ind.pe is None  # brapi's 12000 is not borrowed
+    assert ind.pe is None  # the quote's own 12000 is not borrowed
     assert ind.null_reasons["eps"] is NullReason.MISSING_SHARE_COUNT
     assert ind.null_reasons["pe"] is NullReason.MISSING_SHARE_COUNT
 
@@ -566,7 +566,7 @@ async def test_analyze_keeps_per_share_indicators_when_price_is_missing() -> Non
                 )
             }
         ),
-        FakePrice(error=BrapiForbiddenError("403")),
+        FakePrice(error=SourceForbiddenError("403")),
         repo,
         FakeShares({2026: _counts(common=400)}),  # BBAS3 lists ON only
     )
@@ -589,7 +589,7 @@ async def test_analyze_degrades_when_price_unavailable() -> None:
                 )
             }
         ),
-        FakePrice(error=BrapiForbiddenError("403")),
+        FakePrice(error=SourceForbiddenError("403")),
         FakeRepo(),
         FakeShares(),
     )
@@ -603,7 +603,7 @@ async def test_analyze_degrades_when_price_unavailable() -> None:
 
 
 async def test_analyze_degrades_when_price_times_out() -> None:
-    # A transport timeout is a BrapiError, so it degrades like a plan-gate 403:
+    # A transport timeout is a SourceError, so it degrades like a plan-gate 403:
     # market multiples go null, accounting indicators survive.
     use_case = AnalyzePortfolioUseCase(
         FakeReader(
@@ -613,7 +613,7 @@ async def test_analyze_degrades_when_price_times_out() -> None:
                 )
             }
         ),
-        FakePrice(error=BrapiTimeoutError("read timed out")),
+        FakePrice(error=SourceTimeoutError("read timed out")),
         FakeRepo(),
         FakeShares(),
     )
@@ -627,11 +627,11 @@ async def test_analyze_degrades_when_price_times_out() -> None:
 
 
 async def test_a_year_before_the_ticker_listed_is_named_not_yet_listed() -> None:
-    # #153: CXSE3 listed on 2021-04-29, so its 2020 row can have no price in any
-    # source. The evidence is the FCA's own Data_Inicio_Negociacao, never a price
-    # vendor's earliest datum — that is the vendor's coverage, and for a thinly
-    # traded class it lands years late (TAEE4 has traded since 2006-10-27 while
-    # Yahoo's series for it starts in 2017).
+    # #153: CXSE3 listed on 2021-04-29, so its 2020 row can have no price at all.
+    # The evidence is the FCA's own Data_Inicio_Negociacao, never the earliest
+    # datum in a price series — that answers "when did this code first trade",
+    # which is a different question: TAEE4 has been listed since 2006 and B3's own
+    # file shows it did not trade a single session in 2015.
     annual = StandardizedFinancials(
         reference_date=date(2020, 12, 31),
         sector=Sector.INSURER,

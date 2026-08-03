@@ -50,7 +50,7 @@ from smaug.analysis.domain.ports import (
 from smaug.analysis.domain.ttm import build_ttm
 from smaug.portfolio.domain.share_classes import ShareClass, listed_classes
 from smaug.portfolio.domain.taxonomy import Classification, classify
-from smaug.shared.errors import BrapiError, UnknownTickerError
+from smaug.shared.errors import SourceError, UnknownTickerError
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -352,7 +352,7 @@ class AnalyzePortfolioUseCase:
     async def _current_quote(self, ticker: str) -> MarketData:
         try:
             return await self._price_provider.get(ticker)
-        except BrapiError as exc:
+        except SourceError as exc:
             logger.warning(
                 "No price for %s (%s); market multiples will be null", ticker, exc
             )
@@ -361,7 +361,7 @@ class AnalyzePortfolioUseCase:
     async def _year_prices(self, symbol: str, year: int) -> YearPrices:
         try:
             return await self._price_provider.year_prices(symbol, year)
-        except BrapiError as exc:
+        except SourceError as exc:
             logger.warning(
                 "No %d prices for %s (%s); year multiples will be null",
                 year,
@@ -382,8 +382,9 @@ class AnalyzePortfolioUseCase:
         a valuation multiple asks what the market paid for the company *that year*,
         and nobody bought PETR4 in 2022 at the R$13.15 the adjusted series now shows
         (ADR 0018). A closed-year row is therefore reproducible from the database and
-        independent of the current quote: the year's prices come from Yahoo (ADR
-        0011) and the counts from CVM's filed capital for that year (ADR 0004). A
+        independent of the current quote: the year's prices come from the exchange's
+        own series (ADR 0041) and the counts from CVM's filed capital for that year
+        (ADR 0004). A
         missing class price or class count degrades the cap to null; the per-share
         indicators (which need only the total) are unaffected. Returns the market
         inputs plus the year's adjusted average, kept as the total-return reference.

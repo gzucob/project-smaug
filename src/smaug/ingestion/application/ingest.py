@@ -1,7 +1,7 @@
 """Ingestion use case: fetch -> save -> publish, one call at a time.
 
 Orchestration only. It owns no HTTP and no Mongo details — it talks to the
-brapi client and to the repository *interface*, and publishes a domain event
+source and to the repository *interface*, and publishes a domain event
 on the shared bus. Resilience follows plan §5.1: 401 stops the run, plan/rate
 limits stop the run, 404 (unknown) and 403 (plan-restricted) skip the call, and
 any single failure never takes the other tickers down with it. A definitive CVM
@@ -22,12 +22,12 @@ from smaug.ingestion.domain.events import RawIngestionStored
 from smaug.ingestion.domain.ports import RawDataSource
 from smaug.ingestion.domain.repositories import RawIngestionRepository
 from smaug.shared.errors import (
-    BrapiAuthError,
-    BrapiError,
-    BrapiForbiddenError,
-    BrapiNotFoundError,
-    BrapiRateLimitError,
     CvmDownloadError,
+    SourceAuthError,
+    SourceError,
+    SourceForbiddenError,
+    SourceNotFoundError,
+    SourceRateLimitError,
 )
 from smaug.shared.events import EventBus
 from smaug.shared.logging import get_logger
@@ -72,7 +72,7 @@ class IngestPortfolioUseCase:
         event_bus: EventBus,
         modules: Sequence[str],
         *,
-        source: str = "brapi",
+        source: str = "cvm",
         delay_seconds: float = 2.0,
         clock: Clock = _utc_now,
         sleep: Sleeper = asyncio.sleep,
@@ -101,7 +101,7 @@ class IngestPortfolioUseCase:
         for module in self._modules:
             try:
                 outcome = await self._fetch_and_store(ticker, module)
-            except (BrapiAuthError, BrapiRateLimitError, CvmDownloadError) as exc:
+            except (SourceAuthError, SourceRateLimitError, CvmDownloadError) as exc:
                 # Fatal for the whole run: no point hammering the rest. The CVM
                 # ZIP is shared by every ticker of the year, so its definitive
                 # download failure dooms all remaining calls identically.
@@ -109,15 +109,15 @@ class IngestPortfolioUseCase:
                     FetchOutcome(ticker, module, OutcomeStatus.ABORTED, None, str(exc))
                 )
                 return True
-            except (BrapiNotFoundError, BrapiForbiddenError) as exc:
+            except (SourceNotFoundError, SourceForbiddenError) as exc:
                 # Skip just this call; keep collecting the others.
                 # 404 = ticker/module unknown; 403 = ticker needs a higher plan.
-                code = 403 if isinstance(exc, BrapiForbiddenError) else 404
+                code = 403 if isinstance(exc, SourceForbiddenError) else 404
                 logger.info("Skipping %s/%s: %s", ticker, module, exc)
                 outcomes.append(
                     FetchOutcome(ticker, module, OutcomeStatus.SKIPPED, code, str(exc))
                 )
-            except BrapiError as exc:
+            except SourceError as exc:
                 # Unexpected, but isolated: record and move on.
                 logger.warning("Error on %s/%s: %s", ticker, module, exc)
                 outcomes.append(

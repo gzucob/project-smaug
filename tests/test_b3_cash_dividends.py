@@ -17,7 +17,7 @@ from smaug.ingestion.infrastructure.b3_cash_dividends import (
     CASH_DIVIDEND_B3_MODULE,
     B3CashDividendSource,
 )
-from smaug.shared.errors import BrapiNotFoundError
+from smaug.shared.errors import SourceNotFoundError
 
 SUPPLEMENT = {"tradingName": "BRADESCO", "codeCVM": "906"}
 ROWS = [
@@ -140,7 +140,7 @@ async def test_a_company_that_has_never_paid_is_an_absence_not_an_empty_list() -
             )
 
     async with httpx.AsyncClient(transport=_Empty()) as http:
-        with pytest.raises(BrapiNotFoundError):
+        with pytest.raises(SourceNotFoundError):
             await B3CashDividendSource(http).fetch("RDNI3", CASH_DIVIDEND_B3_MODULE)
 
 

@@ -15,7 +15,7 @@ from smaug.ingestion.infrastructure.b3_capital_events import (
     CAPITAL_EVENT_B3_MODULE,
     B3CapitalEventSource,
 )
-from smaug.shared.errors import BrapiNotFoundError
+from smaug.shared.errors import SourceNotFoundError
 
 BBAS_ROWS = [
     {
@@ -134,7 +134,7 @@ async def test_a_company_with_no_corporate_action_is_an_absence_not_a_blank() ->
     source, http, _ = _source({"codeCVM": "1023", "stockDividends": []})
 
     async with http:
-        with pytest.raises(BrapiNotFoundError):
+        with pytest.raises(SourceNotFoundError):
             await source.fetch("BBAS3", CAPITAL_EVENT_B3_MODULE)
 
 
@@ -142,7 +142,7 @@ async def test_an_empty_body_is_how_b3_says_it_lists_no_such_company() -> None:
     source, http, _ = _source(None)
 
     async with http:
-        with pytest.raises(BrapiNotFoundError):
+        with pytest.raises(SourceNotFoundError):
             await source.fetch("BBAS3", CAPITAL_EVENT_B3_MODULE)
 
 

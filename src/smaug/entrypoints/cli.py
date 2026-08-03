@@ -1,6 +1,6 @@
 """CLI entrypoints — the composition root for Phase 1.
 
-Wires config -> Mongo -> brapi client -> repository -> use cases, and renders
+Wires config -> Mongo -> source readers -> repository -> use cases, and renders
 results to stdout. No business logic lives here: the commands only assemble
 dependencies and call the use cases (plan §3.1 / CLAUDE.md).
 """
@@ -32,7 +32,6 @@ from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.ports import (
     CashEventReader,
-    PriceHistoryProvider,
     PriceProvider,
     SharesReader,
 )
@@ -41,24 +40,14 @@ from smaug.analysis.infrastructure.b3_prices import (
     B3PriceProvider,
     CotahistArchive,
 )
-from smaug.analysis.infrastructure.brapi_price import BrapiPriceProvider
-from smaug.analysis.infrastructure.composite_price import CompositePriceProvider
 from smaug.analysis.infrastructure.dividend_adjusted_price import (
     DividendAdjustedPriceProvider,
-)
-from smaug.analysis.infrastructure.fallback_price import (
-    FallbackPriceHistory,
-    FallbackQuoteProvider,
 )
 from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
 from smaug.analysis.infrastructure.mongo_dividends import MongoCashEventReader
 from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsReader
 from smaug.analysis.infrastructure.restated_price import RestatedPriceProvider
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
-from smaug.analysis.infrastructure.yahoo_price import (
-    YahooPriceHistory,
-    YahooQuoteProvider,
-)
 from smaug.ingestion.application.ingest import (
     FetchOutcome,
     IngestPortfolioUseCase,
@@ -70,7 +59,6 @@ from smaug.ingestion.application.report import (
     CompletenessReportUseCase,
     TickerReport,
 )
-from smaug.ingestion.domain.ports import RawDataSource
 from smaug.ingestion.domain.repositories import RawIngestionRepository
 from smaug.ingestion.infrastructure.b3_capital_events import (
     CAPITAL_EVENT_B3_MODULE,
@@ -80,7 +68,6 @@ from smaug.ingestion.infrastructure.b3_cash_dividends import (
     CASH_DIVIDEND_B3_MODULE,
     B3CashDividendSource,
 )
-from smaug.ingestion.infrastructure.brapi_client import BrapiClient
 from smaug.ingestion.infrastructure.cvm_capital import (
     CAPITAL_EVENT_MODULE,
     CAPITAL_MODULE,
@@ -121,7 +108,7 @@ from smaug.shared.events import EventBus
 from smaug.shared.logging import get_logger
 from smaug.shared.sql_db import create_engine, create_session_factory
 
-app = typer.Typer(help="smaug — CVM/brapi ingestion and indicator analysis.")
+app = typer.Typer(help="smaug — CVM/B3 ingestion and indicator analysis.")
 logger = get_logger("smaug.cli")
 
 _FAILED_STATUSES = frozenset({OutcomeStatus.ERROR, OutcomeStatus.ABORTED})
@@ -142,7 +129,7 @@ def _guarded[T](coro: Coroutine[Any, Any, T]) -> T:
 
     Keeps the raw ``KeyError`` from ``sector_of`` off the terminal — the CLI
     reports a typo (or a not-yet-added ticker) as one line, like the ingestion
-    side maps brapi HTTP errors to typed ones.
+    side maps a source's HTTP errors to typed ones.
     """
     try:
         return asyncio.run(coro)
@@ -375,16 +362,13 @@ def _build_data_source(
     *,
     document: str | None = None,
     year: int | None = None,
-) -> RawDataSource:
-    """Pick the active raw source from config — the brapi/CVM swap seam.
+) -> RoutedDataSource:
+    """Build the raw source: CVM's archives, with B3's endpoints routed per module.
 
-    Both implement ``RawDataSource``, so the use case never knows which one it
-    got. The token is only required (and only exists) for brapi. ``document``/
-    ``year`` override the config for one run (e.g. to pull several CVM files).
-    The CVM key maps are resolved upstream (curated nine + FCA registry).
+    ``document``/``year`` override the config for one run (e.g. to pull several
+    CVM files). The CVM key maps are resolved upstream (curated nine + FCA
+    registry).
     """
-    if settings.ingestion_source == "brapi":
-        return BrapiClient(settings.brapi_base_url, settings.require_token(), http)
     doc = (document or settings.cvm_document).upper()
     if doc not in ("ITR", "DFP"):
         raise typer.BadParameter("--document must be ITR or DFP")
@@ -518,24 +502,20 @@ async def _ingest_one_year(
     The archive is downloaded and indexed once here and then serves every company
     in it, which is why a year costs seconds of CPU rather than a request each.
     """
-    # For CVM, resolve the registrant keys up front: an unknown ticker is
-    # a user error rejected before any statement download (#60), not a
-    # 404-skip. brapi keys off the ticker directly, so it needs no map.
+    # Resolve the registrant keys up front: an unknown ticker is a user error
+    # rejected before any statement download (#60), not a 404-skip.
     if whole_exchange:
         code_map = {c.ticker: c.cd_cvm for c in companies}
         cnpj_map = {c.ticker: c.cnpj for c in companies}
         wanted = tuple(c.ticker for c in companies)
-    elif settings.ingestion_source == "cvm":
-        code_map, cnpj_map = await _cvm_key_maps(settings, http, tickers)
-        wanted = tickers
     else:
-        code_map, cnpj_map = {}, {}
+        code_map, cnpj_map = await _cvm_key_maps(settings, http, tickers)
         wanted = tickers
 
     source = _build_data_source(
         settings, http, code_map, cnpj_map, document=document, year=year
     )
-    modules = settings.active_modules
+    modules = settings.cvm_modules
     plan = dict.fromkeys(wanted, modules)
     if whole_exchange and not force:
         plan = await _work_plan(repository, source, wanted, code_map, modules)
@@ -547,8 +527,6 @@ async def _ingest_one_year(
             repository=repository,
             event_bus=EventBus(),
             modules=owed,
-            source=settings.ingestion_source,
-            delay_seconds=settings.active_delay_seconds,
         )
         outcomes.extend(await use_case.execute(tickers))
         if any(o.status is OutcomeStatus.ABORTED for o in outcomes):
@@ -565,7 +543,7 @@ async def _ingest_one_year(
 
 async def _work_plan(
     repository: RawIngestionRepository,
-    source: RawDataSource,
+    source: RoutedDataSource,
     wanted: tuple[str, ...],
     code_map: dict[str, str],
     modules: Sequence[str],
@@ -580,8 +558,6 @@ async def _work_plan(
     the run reported success having stored nothing. ``--force`` collects
     regardless, which is what a re-run after an amended archive wants.
     """
-    if not isinstance(source, RoutedDataSource):  # brapi: no archive to finish
-        return {ticker: tuple(modules) for ticker in wanted}
     done = {
         module: await repository.mirrored_for(module, file=source.archive_for(module))
         for module in modules
@@ -618,8 +594,7 @@ async def _run_report(tickers: tuple[str, ...]) -> None:
             identities = await _registry_identities(settings, http, tickers)
         use_case = CompletenessReportUseCase(
             repository=BeanieRawIngestionRepository(),
-            modules=settings.active_modules,
-            source=settings.ingestion_source,
+            modules=settings.cvm_modules,
             sector_resolver=_sector_resolver(identities),
             registrant_resolver=_registrant_resolver(identities),
         )
@@ -658,17 +633,13 @@ def analyze(
     raise typer.Exit(code=exit_code)
 
 
-def _build_archive(
-    settings: Settings, http: httpx.AsyncClient
-) -> CotahistArchive | None:
-    """B3's quote series, or ``None`` when the vendors are serving the price.
+def _build_archive(settings: Settings, http: httpx.AsyncClient) -> CotahistArchive:
+    """B3's quote series — the only thing that prices the analysis (ADR 0041).
 
     One instance for the whole run: the share side reads the corporate-action
     dates off it (ADR 0035) and the price side reads the closes, and they must
     not each stream the same gigabytes.
     """
-    if settings.price_source != "b3":
-        return None
     return CotahistArchive(
         http,
         cache_dir=settings.b3_cache_dir,
@@ -677,48 +648,26 @@ def _build_archive(
 
 
 def _build_price_provider(
-    settings: Settings,
     shares_reader: SharesReader,
-    archive: CotahistArchive | None,
+    archive: CotahistArchive,
     cash_events: CashEventReader,
-    http: httpx.AsyncClient,
 ) -> PriceProvider:
-    """Wire whichever price source ``PRICE_SOURCE`` selects.
+    """Wire the exchange's series into the two bases derived from it.
 
-    ``b3`` reads the exchange's own published series and needs no chain: one file
-    answers both the live quote and the year history. It does need the share
-    history wrapped around it, because the exchange publishes what printed on the
-    tape and the counts it multiplies are restated onto today's base (ADR 0027) —
-    the two have to meet on one base or every company that ever split is
-    mispriced. ``vendors`` is the Yahoo-primary/brapi-fallback arrangement it
-    replaces (ADR 0013), and it arrives already adjusted, so wrapping it too would
-    adjust it twice. Kept selectable only until the two have been diffed cell by
-    cell.
+    One file answers both the live quote and the year history, so there is no
+    chain here and no fallback: a company B3 does not list reads as a missing
+    price rather than as somebody else's number on another basis (ADR 0041).
+
+    The share history wraps it because the exchange publishes what printed on the
+    tape while the counts it multiplies are restated onto today's base (ADR 0027)
+    — the two have to meet on one base or every company that ever split is
+    mispriced. Dividends first, restatement outermost: the third basis is the
+    second one with the cash put back, so both end up on the same share base
+    (ADR 0039).
     """
-    if archive is not None:
-        # Dividends first, restatement outermost: the third basis is the second
-        # one with the cash put back, so both end up on the same share base
-        # (ADR 0039).
-        return RestatedPriceProvider(
-            DividendAdjustedPriceProvider(B3PriceProvider(archive), cash_events),
-            shares_reader,
-        )
-    brapi = BrapiPriceProvider(
-        settings.brapi_base_url, settings.brapi_token.get_secret_value(), http
-    )
-    # History chain (ADR 0013 / #67): Yahoo first, brapi next. A contracted source
-    # (EODHD/Twelve Data) drops in as a third link here once its key is configured —
-    # the chain takes any number of providers, so no other code changes.
-    history: list[PriceHistoryProvider] = [
-        YahooPriceHistory(settings.yahoo_base_url, http),
-        brapi,
-    ]
-    return CompositePriceProvider(
-        quote=FallbackQuoteProvider(
-            primary=YahooQuoteProvider(settings.yahoo_base_url, http),
-            fallback=brapi,
-        ),
-        history=FallbackPriceHistory(history),
+    return RestatedPriceProvider(
+        DividendAdjustedPriceProvider(B3PriceProvider(archive), cash_events),
+        shares_reader,
     )
 
 
@@ -748,7 +697,7 @@ async def _run_analyze(
             shares_reader = MongoSharesReader(
                 mongo[settings.mongo_db]["raw_ingestions"],
                 registrant_resolver=registrant,
-                base_changes=B3BaseChanges(archive) if archive else None,
+                base_changes=B3BaseChanges(archive),
             )
             cash_events = MongoCashEventReader(
                 mongo[settings.mongo_db]["raw_ingestions"],
@@ -761,7 +710,7 @@ async def _run_analyze(
                     registrant_resolver=registrant,
                 ),
                 price_provider=_build_price_provider(
-                    settings, shares_reader, archive, cash_events, http
+                    shares_reader, archive, cash_events
                 ),
                 repository=SqlAlchemyAnalysisRepository(session_factory),
                 shares_reader=shares_reader,

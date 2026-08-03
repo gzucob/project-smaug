@@ -1,40 +1,18 @@
 """Application settings, loaded from environment / ``.env``.
 
-Single source of truth for secrets and knobs. The brapi token lives only
-here (via env), never hardcoded — the repo is public.
+Single source of truth for knobs. Every source is public and unauthenticated —
+CVM's archives and B3's own files and endpoints — so there is no secret here to
+keep out of a public repo (ADR 0041).
 """
 
 from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# The active raw data source. Only one is active per run (``INGESTION_SOURCE``),
-# but both implement the same ``RawDataSource`` port, so switching is a config
-# change — never a rewrite. brapi is kept for the day the paid plan is bought.
-IngestionSource = Literal["brapi", "cvm"]
-
-# Where market prices come from. Transitional: "b3" is wired and tested but not
-# yet the default — it serves the as-traded price, and the analysis needs the
-# corporate-action-adjusted one to match its restated share counts (ADR 0032).
-PriceSource = Literal["b3", "vendors"]
-
-# Default brapi modules to collect. Names are configurable via ``BRAPI_MODULES``
-# (comma-separated) so they can be corrected against the live docs without a
-# code change. "dividends" is a pseudo-module: the client requests it via the
-# ``dividends=true`` flag instead of the ``modules=`` param.
-DEFAULT_BRAPI_MODULES: tuple[str, ...] = (
-    "balanceSheetHistoryQuarterly",
-    "incomeStatementHistoryQuarterly",
-    "cashflowHistoryQuarterly",
-    "defaultKeyStatistics",
-    "financialData",
-    "dividends",
-)
-
-# Default CVM "modules" — the regulated statement types, not brapi module names.
+# The CVM "modules" — the regulated statement types.
 # BPA/BPP = balance sheet (assets / liabilities+equity), DRE = income,
 # DFC = cash flow, DMPL = changes in equity, DVA = value added, DRA = comprehensive
 # income. The last three are mirrored but not yet read by an indicator: the mirror
@@ -78,29 +56,13 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ---- Active source ----
-    ingestion_source: IngestionSource = Field(default="cvm")
-
-    # ---- brapi ----
-    brapi_token: SecretStr = Field(default=SecretStr(""))
-    brapi_base_url: str = Field(default="https://brapi.dev/api")
-    brapi_modules: tuple[str, ...] = Field(default=DEFAULT_BRAPI_MODULES)
-
-    # ---- Yahoo Finance (closed-year price history) ----
-    # brapi's free plan withholds multi-year daily history for all but its demo
-    # tickers (ADR 0007/0011), so the closed-year averages come from Yahoo's
-    # public chart endpoint. No token; a browser-like User-Agent is set per call.
-    yahoo_base_url: str = Field(default="https://query1.finance.yahoo.com")
-
     # ---- B3 (the exchange's own published quote series) ----
-    # Which source prices the analysis. The default is "b3": COTAHIST, the series
-    # the exchange publishes itself (ADR 0032). It publishes the price **as
-    # traded**, so the restatement that puts it on the same base as the share
-    # counts (ADR 0027) had to land first — it did, session by session and from
-    # the exchange's own dates (ADRs 0033–0038), and the dividend basis with it
-    # (ADR 0039). "vendors" is the Yahoo/brapi chain it replaces, kept selectable
-    # only until that chain is removed (ADR 0040).
-    price_source: PriceSource = Field(default="b3")
+    # COTAHIST prices the analysis, and nothing else does: the series the
+    # exchange publishes itself (ADR 0032), put on the same base as the share
+    # counts session by session (ADRs 0027/0033) and carrying the dividend basis
+    # rebuilt from B3's payouts (ADR 0039). The vendor chain that preceded it is
+    # gone (ADR 0041) — an absent price now reads as missing, loudly, instead of
+    # being answered by a second source on another basis.
     b3_series_base_url: str = Field(
         default="https://bvmf.bmfbovespa.com.br/InstDados/SerHist"
     )
@@ -133,38 +95,6 @@ class Settings(BaseSettings):
     postgres_uri: str = Field(
         default="postgresql+asyncpg://smaug:smaug@localhost:5432/smaug"
     )
-
-    # ---- Collection ----
-    # Courtesy pacing between calls. It exists for brapi, which makes one HTTP
-    # request per ticker/module and rate-limits the free plan.
-    request_delay_seconds: float = Field(default=2.0)
-
-    @property
-    def active_modules(self) -> tuple[str, ...]:
-        """Modules for the currently selected source (brapi vs CVM names)."""
-        if self.ingestion_source == "cvm":
-            return self.cvm_modules
-        return self.brapi_modules
-
-    @property
-    def active_delay_seconds(self) -> float:
-        """Pacing between calls for the active source — zero for CVM.
-
-        A CVM run downloads the year's archive once and then serves every
-        ticker/module from an index in memory, so there is no request to pace:
-        pausing between them is waiting between pages of a book already open on
-        the desk. It is also the whole difference between a whole-exchange run
-        that takes twenty minutes and one that takes two hundred hours
-        (368 companies x 9 modules x 11 years x 2s).
-        """
-        return 0.0 if self.ingestion_source == "cvm" else self.request_delay_seconds
-
-    def require_token(self) -> str:
-        """Return the raw token, failing loudly if it is empty."""
-        token = self.brapi_token.get_secret_value()
-        if not token:
-            raise ValueError("BRAPI_TOKEN is empty. Set it in .env before collecting.")
-        return token
 
 
 def get_settings() -> Settings:

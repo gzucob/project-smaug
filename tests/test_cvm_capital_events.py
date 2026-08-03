@@ -18,7 +18,7 @@ from smaug.ingestion.infrastructure.cvm_capital import (
     CAPITAL_EVENT_MODULE,
     CvmCapitalEventSource,
 )
-from smaug.shared.errors import BrapiNotFoundError
+from smaug.shared.errors import SourceNotFoundError
 
 _AMPLA = "33.050.071/0001-58"
 _VALE = "33.592.510/0001-54"
@@ -151,7 +151,7 @@ async def test_the_approval_date_identifies_one_event_within_a_filing(
 async def test_a_company_that_declared_no_action_is_not_found(tmp_path: Path) -> None:
     _write_zip(tmp_path / "fre_cia_aberta_2017.zip", [_row(_AMPLA)])
 
-    with pytest.raises(BrapiNotFoundError, match="capital event"):
+    with pytest.raises(SourceNotFoundError, match="capital event"):
         await _source(tmp_path).fetch("VALE3", CAPITAL_EVENT_MODULE)
 
 
@@ -166,7 +166,7 @@ async def test_a_year_whose_archive_dropped_the_member_finds_nothing(
         member="fre_cia_aberta_capital_social_2025.csv",
     )
 
-    with pytest.raises(BrapiNotFoundError, match="capital event"):
+    with pytest.raises(SourceNotFoundError, match="capital event"):
         await _source(tmp_path, year=2025).fetch("CBEE3", CAPITAL_EVENT_MODULE)
 
 

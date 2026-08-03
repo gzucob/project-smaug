@@ -240,9 +240,10 @@ class MongoSharesReader:
 
         The counts served for a year that predates a split/bonus/grupamento are
         multiplied onto the **current** share base (ADR 0027): the per-share series
-        stays continuous, and the count pairs with the price source — Yahoo
-        back-adjusts every close for splits, so an as-filed pre-bonus count against
-        an adjusted price undercounted BBAS3's pre-2023 caps by exactly the bonus.
+        stays continuous, and the count pairs with the price it multiplies — the
+        exchange's as-traded close is divided by exactly the same moves (ADR 0033),
+        and a mismatch is worth the whole action: an as-filed pre-bonus count
+        against an adjusted price undercounted BBAS3's pre-2023 caps by the bonus.
         The as-filed reading stays derivable: the mirror keeps every filing, and the
         factor is recomputed from it on every read, never stored.
         """
@@ -327,8 +328,8 @@ class MongoSharesReader:
     async def restatement_timeline(self, ticker: str) -> tuple[RestatementStep, ...]:
         """The dated share-base moves ``counts`` restates by — see the port.
 
-        Read by the price side, which must divide by exactly these when its source
-        publishes the price **as traded** (B3's own series does; Yahoo's did not).
+        Read by the price side, which must divide by exactly these because the
+        source publishes the price **as traded** (ADR 0032).
         Same inputs and same chain as ``counts``, deliberately: a price adjusted by
         a *better* factor than the count it multiplies would break the very
         invariance that keeps the cap right. What the price adds is the date each

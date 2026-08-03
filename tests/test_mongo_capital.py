@@ -366,8 +366,9 @@ async def test_outstanding_is_none_without_any_capital_document() -> None:
 
 async def test_a_pre_bonus_year_is_served_on_the_current_base() -> None:
     # BBAS3's 2023 2:1 bonus (ADR 0027): the 2022 closed year serves 5.73 bn,
-    # not the 2.87 bn filed — Yahoo back-adjusts the 2022 closes for the bonus,
-    # and the count has to sit on the same base as the price it multiplies.
+    # not the 2.87 bn filed — the price side divides the 2022 closes by the same
+    # bonus (ADR 0033), and the count has to sit on the base of the price it
+    # multiplies.
     reader = MongoSharesReader(
         FakeCollection(
             [

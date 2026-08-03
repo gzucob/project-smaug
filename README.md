@@ -1,7 +1,7 @@
 # project-smaug
 
 Ferramenta pessoal de análise da carteira de ações. **Fase 1: ingestão fiel e
-auditável** dos dados fundamentais (CVM/brapi), persistidos em MongoDB como um
+auditável** dos dados fundamentais (CVM/B3), persistidos em MongoDB como um
 espelho cru — sem cálculo, sem interpretação. **Fase 2: análise** — indicadores
 fundamentalistas e de mercado derivados do espelho, persistidos em PostgreSQL e
 servidos por uma API de leitura. Ambas já estão implementadas — veja
@@ -36,7 +36,7 @@ follow-ups viraram issues. O histórico segue no git.
 
 ```bash
 uv sync                 # dependências + venv (baixa o Python 3.13)
-cp .env.example .env    # preencha o BRAPI_TOKEN (só necessário se INGESTION_SOURCE=brapi)
+cp .env.example .env    # nada a preencher: nenhuma fonte pede credencial
 docker compose up -d    # sobe Mongo (Fase 1) + Postgres (Fase 2)
 ```
 
@@ -56,27 +56,25 @@ uv run python -m smaug.entrypoints.cli report
 
 A coleta é **append-only e re-executável com segurança**: cada chamada grava um
 novo documento em `raw_ingestions` (`ticker + module + fetched_at`), preservando
-o histórico de revisões. O token vai só no `.env`; nunca é persistido nem
-aparece no relatório. Falha em um ticker/módulo não derruba os demais (401 e
-limite de plano param a coleta; 404 pula a chamada).
+o histórico de revisões. Falha em um ticker/módulo não derruba os demais (um
+erro fatal para a fonte para a coleta; 404 pula a chamada).
 
-### Fonte de dados (`INGESTION_SOURCE`)
+### Fontes de dados
 
-A ingestão tem **duas fontes alternáveis por config**, ambas plugadas na mesma
-porta `RawDataSource` — trocar é mudar uma linha no `.env`, sem reescrever código:
+Duas, ambas públicas e sem autenticação (ADR 0041):
 
-- `INGESTION_SOURCE=cvm` (**padrão**) — dados abertos da CVM. Baixa o ZIP anual
-  do ITR (`CVM_YEAR`, default 2024), parseia com a `pycvm` e espelha os
-  statements crus (`BPA`/`BPP`/`DRE`/`DFC`). Cobre a carteira inteira, inclusive
-  bancos e seguradoras (no formato regulado deles). Não requer token. O mapa
+- **CVM** — dados abertos. Baixa o ZIP anual (`CVM_YEAR`, default 2024) e
+  espelha os statements crus (`BPA`/`BPP`/`DRE`/`DFC`/…), mais as contagens de
+  ações do FRE. Um arquivo é lido uma vez e serve a bolsa inteira. O mapa
   ticker → código CVM vive em `portfolio/domain/cvm_codes.py`.
-- `INGESTION_SOURCE=brapi` — API da brapi. No plano gratuito só PETR4/VALE3
-  retornam (as demais dão 403 e são puladas). Requer `BRAPI_TOKEN`.
+- **B3** — os eventos societários e os dividendos que a bolsa publica
+  (`CAPITAL_EVENT_B3`, `CASH_DIVIDEND_B3`), e a série de cotações
+  (`COTAHIST_A{ano}.ZIP`), que é a única fonte de preço da Fase 2.
 
 ## Uso (Fase 2 — indicadores)
 
 A Fase 2 calcula os indicadores (contábeis + de mercado) a partir do espelho
-CVM e da cotação do brapi, persiste no PostgreSQL e serve por FastAPI.
+CVM e da série de cotações da B3, persiste no PostgreSQL e serve por FastAPI.
 
 ```bash
 # 1. Sobe Mongo + Postgres:
@@ -99,13 +97,14 @@ uvicorn smaug.entrypoints.api:app --reload
   retornam `null` nos que não se aplicam (dívida líquida, EV/EBITDA, liquidez).
 - **Unidades**: os valores da CVM (em milhares) são escalados para reais antes
   de cruzar com o preço, para os múltiplos de mercado saírem corretos.
-- **Preço**: em migração para a série histórica que a **própria B3 publica**
-  (`COTAHIST_A{ano}.ZIP` — sem token, um arquivo por ano desde 1986, ADR 0032).
-  O leitor já existe (`PRICE_SOURCE=b3`), mas o padrão ainda é `vendors`: a B3
-  publica o preço **como negociado**, e os indicadores precisam do preço
-  **ajustado por desdobramento/grupamento/bonificação** para casar com a base
-  acionária restatada da ADR 0027. Um papel sem nenhum pregão no período fica com
-  os múltiplos de mercado nulos; os indicadores contábeis saem normalmente.
+- **Preço**: a série histórica que a **própria B3 publica**
+  (`COTAHIST_A{ano}.ZIP` — sem token, um arquivo por ano desde 1986, ADR 0032),
+  e nada mais (ADR 0041). A B3 publica o preço **como negociado**, então ele é
+  dividido pelos eventos societários posteriores a cada pregão para casar com a
+  base acionária restatada da ADR 0027 (ADR 0033), e os dividendos entram de
+  volta numa terceira base (ADR 0039). Um papel sem nenhum pregão no período
+  fica com os múltiplos de mercado nulos, com a causa nomeada; os indicadores
+  contábeis saem normalmente.
 - **Crescimento**: precisa de ≥2 anos no espelho; rode `CVM_YEAR=2023 uv run
   python -m smaug.entrypoints.cli ingest` (e 2022) para popular histórico.
 - Ainda **sem critérios de "tese azedando"** — isso fica para a fase de análise
@@ -115,7 +114,7 @@ uvicorn smaug.entrypoints.api:app --reload
 
 ```
 src/smaug/
-├── ingestion/     # fontes (brapi | CVM) + persistência do espelho cru (Mongo)
+├── ingestion/     # leitores CVM/B3 + persistência do espelho cru (Mongo)
 ├── analysis/      # cálculo de indicadores + persistência derivada (Postgres)
 ├── portfolio/     # mapas de referência: ticker -> setor, ticker -> código CVM
 ├── shared/        # config, conexões Mongo/Postgres, EventBus
@@ -124,11 +123,11 @@ src/smaug/
 
 ## Status
 
-✅ **Fase 1** — duas fontes alternáveis por config (CVM e brapi) sob a mesma
-porta, persistência do espelho cru (append-only), EventBus, CLI de coleta e
-relatório de completude. A CVM coleta as 9 ações de fato, sem custo nem token.
+✅ **Fase 1** — leitura da CVM e da B3 sob a mesma porta `RawDataSource`,
+persistência do espelho cru (append-only), EventBus, CLI de coleta e relatório
+de completude. Roda sobre a bolsa inteira, sem custo e sem credencial.
 
 ✅ **Fase 2 implementada** — cálculo de indicadores fundamentalistas (contábeis
-+ de mercado) a partir do espelho CVM + cotação brapi, persistidos em PostgreSQL
++ de mercado) a partir do espelho CVM + série de cotações da B3, em PostgreSQL
 (SQLAlchemy/Alembic) e servidos por FastAPI (`GET /analysis`). Cálculo próprio,
 tipado e ciente de setor. Falta a fase de análise qualitativa por IA (critérios).

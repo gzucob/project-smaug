@@ -40,7 +40,7 @@ from smaug.ingestion.infrastructure.cvm_source import (
     CvmDocument,
 )
 from smaug.shared.download import Sleeper, download_zip
-from smaug.shared.errors import BrapiNotFoundError
+from smaug.shared.errors import SourceNotFoundError
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -123,10 +123,10 @@ class CvmCapitalSource:
 
         cnpj = self._ticker_to_cnpj.get(ticker)
         if cnpj is None:
-            raise BrapiNotFoundError(f"no CNPJ mapped for {ticker}")
+            raise SourceNotFoundError(f"no CNPJ mapped for {ticker}")
         rows = index.get(cnpj)
         if not rows:
-            raise BrapiNotFoundError(
+            raise SourceNotFoundError(
                 f"no CVM {self._year} FRE capital for {ticker} ({cnpj})"
             )
 
@@ -250,7 +250,7 @@ class CvmCapitalEventSource:
     rather than redundant: B3 lists one Bradesco bonus where this file lists its
     10% bonus in 2012, 2013, 2014, 2015, 2016 and 2018.
 
-    A year whose archive has no such member yields ``BrapiNotFoundError`` per
+    A year whose archive has no such member yields ``SourceNotFoundError`` per
     ticker, like any other absent filing — the mirror records the absence rather
     than inventing an empty event list.
     """
@@ -300,10 +300,10 @@ class CvmCapitalEventSource:
 
         cnpj = self._ticker_to_cnpj.get(ticker)
         if cnpj is None:
-            raise BrapiNotFoundError(f"no CNPJ mapped for {ticker}")
+            raise SourceNotFoundError(f"no CNPJ mapped for {ticker}")
         rows = index.get(cnpj)
         if not rows:
-            raise BrapiNotFoundError(
+            raise SourceNotFoundError(
                 f"no CVM {self._year} FRE capital event for {ticker} ({cnpj})"
             )
 
@@ -464,10 +464,10 @@ class CvmTreasurySource:
 
         cnpj = self._ticker_to_cnpj.get(ticker)
         if cnpj is None:
-            raise BrapiNotFoundError(f"no CNPJ mapped for {ticker}")
+            raise SourceNotFoundError(f"no CNPJ mapped for {ticker}")
         rows = index.get(cnpj)
         if not rows:
-            raise BrapiNotFoundError(
+            raise SourceNotFoundError(
                 f"no CVM {self._year} {self._document} capital for {ticker} ({cnpj})"
             )
 

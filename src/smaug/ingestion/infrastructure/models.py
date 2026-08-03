@@ -1,13 +1,13 @@
 """Beanie document model for the ``raw_ingestions`` collection (plan §4.1).
 
-Append-only mirror: one document per brapi module call. The compound index
+Append-only mirror: one document per module call. The compound index
 (ticker, module, fetched_at desc) makes "latest snapshot" lookups cheap for
 the completeness report.
 
 A CVM document also carries the registrant that filed it, indexed the same way:
 that is the key its readers use (ADR 0030), because a filing belongs to a company
-and not to one of the codes it trades under. The field is nullable — a brapi
-document has no registrant to name.
+and not to one of the codes it trades under. The field is nullable — a
+document from a source that names no filer has no registrant to record.
 """
 
 from __future__ import annotations

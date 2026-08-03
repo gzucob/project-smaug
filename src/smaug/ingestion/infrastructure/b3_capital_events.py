@@ -36,7 +36,7 @@ from typing import Any
 import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
-from smaug.shared.errors import BrapiNotFoundError
+from smaug.shared.errors import SourceNotFoundError
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -82,13 +82,13 @@ class B3CapitalEventSource:
         root = ticker[:_ROOT_LENGTH]
         body = await self._supplement(root)
         if body is None:
-            raise BrapiNotFoundError(f"B3 lists no company for {ticker} ({root})")
+            raise SourceNotFoundError(f"B3 lists no company for {ticker} ({root})")
         rows = body.get("stockDividends")
         if not isinstance(rows, list) or not rows:
             # A company with no corporate action in its history is the normal
             # case, and it is an absence the mirror records rather than an empty
             # list it invents.
-            raise BrapiNotFoundError(f"B3 lists no corporate action for {ticker}")
+            raise SourceNotFoundError(f"B3 lists no corporate action for {ticker}")
 
         code = self._code_of(body, ticker)
         return [

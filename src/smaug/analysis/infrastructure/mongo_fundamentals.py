@@ -486,8 +486,8 @@ def _scale(by_module: Mapping[str, Any], module: str) -> Decimal:
     """CVM figures are reported in ``currency_size`` units (usually thousands).
 
     Scaling to absolute reais here is what keeps the market multiples honest —
-    brapi's market cap is in reais, so mixing the two unscaled inflates P/E,
-    P/B and EV/EBITDA by ~1000x.
+    a quote is in reais, so mixing the two unscaled inflates P/E, P/B and
+    EV/EBITDA by ~1000x.
     """
     payload = by_module.get(module)
     if isinstance(payload, Mapping):

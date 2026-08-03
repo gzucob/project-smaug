@@ -4,10 +4,10 @@ from smaug.ingestion.application.ingest import IngestPortfolioUseCase, OutcomeSt
 from smaug.ingestion.domain.events import RawIngestionStored
 from smaug.ingestion.domain.ports import RawFetchResult
 from smaug.shared.errors import (
-    BrapiAuthError,
-    BrapiForbiddenError,
-    BrapiNotFoundError,
     CvmDownloadError,
+    SourceAuthError,
+    SourceForbiddenError,
+    SourceNotFoundError,
 )
 from smaug.shared.events import EventBus
 from tests.fakes import FakeDataSource, FakeRawIngestionRepository, no_sleep
@@ -68,7 +68,7 @@ async def test_should_store_and_publish_for_each_module() -> None:
 
 
 async def test_should_skip_module_on_404_and_keep_going() -> None:
-    source = FakeDataSource(errors={("PETR4", "m1"): BrapiNotFoundError("nope")})
+    source = FakeDataSource(errors={("PETR4", "m1"): SourceNotFoundError("nope")})
     repo = FakeRawIngestionRepository()
 
     use_case = IngestPortfolioUseCase(
@@ -82,7 +82,7 @@ async def test_should_skip_module_on_404_and_keep_going() -> None:
 
 
 async def test_should_skip_module_on_403_plan_restriction_and_keep_going() -> None:
-    source = FakeDataSource(errors={("BBAS3", "m1"): BrapiForbiddenError("plan")})
+    source = FakeDataSource(errors={("BBAS3", "m1"): SourceForbiddenError("plan")})
     repo = FakeRawIngestionRepository()
 
     use_case = IngestPortfolioUseCase(
@@ -97,7 +97,7 @@ async def test_should_skip_module_on_403_plan_restriction_and_keep_going() -> No
 
 
 async def test_should_abort_run_on_auth_error_before_next_ticker() -> None:
-    source = FakeDataSource(errors={("PETR4", "m1"): BrapiAuthError("bad token")})
+    source = FakeDataSource(errors={("PETR4", "m1"): SourceAuthError("bad token")})
     repo = FakeRawIngestionRepository()
 
     use_case = IngestPortfolioUseCase(

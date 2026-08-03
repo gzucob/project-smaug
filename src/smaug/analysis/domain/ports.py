@@ -1,8 +1,8 @@
 """Domain ports for the analysis context.
 
-The use case depends only on these interfaces, so it never imports Mongo,
-brapi or SQLAlchemy directly. Infrastructure supplies the implementations and
-the composition root wires them.
+The use case depends only on these interfaces, so it never imports Mongo, httpx
+or SQLAlchemy directly. Infrastructure supplies the implementations and the
+composition root wires them.
 """
 
 from __future__ import annotations
@@ -39,10 +39,10 @@ class FundamentalsReader(Protocol):
 class PriceProvider(Protocol):
     """Provides market data (current quote + per-year history) for a ticker.
 
-    The two methods now come from different sources (ADR 0011): the live quote
-    from brapi, the closed-year history from Yahoo. The use case still depends
-    on this single port; ``CompositePriceProvider`` routes each call to the
-    source that serves it.
+    Both methods are answered by one source — B3's own series, which carries the
+    last close and every closed year in the same file (ADR 0041). The port stays
+    split from the two below because the *concerns* are distinct, not because
+    two vendors used to serve them.
     """
 
     async def get(self, ticker: str) -> MarketData: ...
@@ -57,8 +57,8 @@ class SessionPriceProvider(PriceProvider, Protocol):
 
     Only a source publishing the price **as traded** has to offer this: what it
     is for is applying a corporate action to the sessions that preceded it and
-    not to the ones that followed (ADR 0033), and a pre-adjusted vendor series
-    has already had that done to it.
+    not to the ones that followed (ADR 0033). A series that arrived pre-adjusted
+    could not offer it — the adjustment had already been folded in upstream.
     """
 
     async def year_sessions(self, ticker: str, year: int) -> Sequence[SessionClose]:
@@ -69,9 +69,8 @@ class SessionPriceProvider(PriceProvider, Protocol):
 class CurrentQuoteProvider(Protocol):
     """Provides a ticker's current market data (the live quote side).
 
-    Split from ``PriceProvider`` so the live quote can be sourced and chained
-    independently of the year history (ADR 0013): Yahoo is the primary quote,
-    brapi the fallback. Only the price is read: an implementation's own market cap
+    Split from ``PriceProvider`` so the live quote can be sourced independently
+    of the year history. Only the price is read: an implementation's own market cap
     is company-wide, and the use case builds the cap itself by summing each listed
     share class at its own quote (ADR 0014). It is called once per class, so the
     ``ticker`` here is a share class symbol (``PETR3``), not only a portfolio one.
@@ -83,11 +82,10 @@ class CurrentQuoteProvider(Protocol):
 class PriceHistoryProvider(Protocol):
     """Provides a ticker's daily price averaged over a closed fiscal year.
 
-    Split out from ``PriceProvider`` because the closed-year basis is sourced
-    independently of the live quote (ADR 0011): brapi's free plan withholds
-    multi-year daily history for all but its demo tickers, so the year averages
-    come from Yahoo Finance. Requesting the year by exact window (not a fixed
-    range) means extending coverage to more years never hits a range ceiling.
+    Split out from ``PriceProvider`` because the closed-year basis is a different
+    question from the live quote: it is an average over a window, and it is the
+    one the historical view reads. Requesting the year by exact window (not a
+    fixed range) means extending coverage to more years never hits a ceiling.
     """
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:

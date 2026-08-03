@@ -1,1 +1,1 @@
-"""Camada de infraestrutura da ingestão (brapi client, Beanie, repositórios)."""
+"""Camada de infraestrutura da ingestão (leitores CVM/B3, Beanie, repositórios)."""
