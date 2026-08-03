@@ -14,7 +14,7 @@ from smaug.ingestion.infrastructure.cvm_source import (
 )
 from smaug.portfolio.domain.cvm_codes import TICKER_TO_CVM_CODE
 from smaug.portfolio.domain.sectors import portfolio_tickers
-from smaug.shared.errors import BrapiNotFoundError, CvmDownloadError
+from smaug.shared.errors import CvmDownloadError, SourceNotFoundError
 from tests.fakes import no_sleep
 
 _HEADER = (
@@ -142,7 +142,7 @@ async def test_fetch_skips_unmapped_ticker_without_touching_network(
             http, {"BBAS3": "1023"}, year=2024, cache_dir=str(tmp_path)
         )
         source._index = {}  # pretend the file is already loaded (empty)
-        with pytest.raises(BrapiNotFoundError):
+        with pytest.raises(SourceNotFoundError):
             await source.fetch("PETR4", "BPA")  # PETR4 not in the injected map
 
 

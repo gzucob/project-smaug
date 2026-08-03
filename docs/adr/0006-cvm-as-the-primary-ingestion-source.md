@@ -1,6 +1,6 @@
 # 0006 — CVM is the primary ingestion source; brapi stays as a swappable alternative
 
-- **Status:** Accepted
+- **Status:** Superseded by [0041](0041-the-vendor-chain-is-removed.md)
 - **Date:** 2026-07-06
 - **Provenance:** recorded retroactively on 2026-07-10 from `docs/PLANO_FASE1.md`
   §0 (deleted; recoverable in git history). See `.claude/RULES/RULES_DOCS.md`.

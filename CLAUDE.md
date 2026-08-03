@@ -1,7 +1,7 @@
 # project-smaug
 
 Personal stock portfolio analysis tool. Phase 1: faithful ingestion of
-fundamental data (brapi/CVM) into MongoDB (raw mirror, no calculation). Phase 2:
+fundamental data (CVM/B3) into MongoDB (raw mirror, no calculation). Phase 2:
 analysis — fundamental + market indicators derived and persisted in
 PostgreSQL, served by a read API. Both phases are already implemented (see
 `src/smaug/analysis/` and the PR history).
@@ -18,7 +18,7 @@ PostgreSQL, served by a read API. Both phases are already implemented (see
   (`COTAHIST_A{year}.ZIP`, free and unauthenticated, ADR 0032). B3 publishes the
   price **as traded** while the share counts are restated onto the current base
   (ADR 0027); the two must sit on the same base or every company that ever split
-  is mispriced (BBAS3 by 2×), so under `PRICE_SOURCE=b3` the reader is wrapped in
+  is mispriced (BBAS3 by 2×), so the reader is wrapped in
   `RestatedPriceProvider`, which divides each **session** by the actions that
   postdate it (ADR 0033). **The ratio and the date come from different places.**
   The ratio is always anchored on a filed share count: CVM declares it with the
@@ -28,12 +28,13 @@ PostgreSQL, served by a read API. Both phases are already implemented (see
   COTAHIST itself, which numbers each paper's rights state (`DISMES`) and marks
   the ex session in `ESPECI` (ADR 0035). The tape is the complete one: over 60
   companies it names all 47 actions B3's feed lists, plus 43 the feed omits.
-  `PRICE_SOURCE` **defaults to `b3`** (ADR 0040); `vendors` (Yahoo primary,
-  brapi fallback — ADR 0013) stays selectable only until that chain is removed
-  (#67). The exchange arrives on the year's own base on both sides, where the
-  vendor mixes them — it back-adjusts the price onto today's base while the
-  count stays as filed. It costs the history of a **renamed** ticker: B3 files
-  each year under the code that traded then, so AZZA3 has no 2015 (#193).
+  **B3 is the only price source and CVM the only filing source** — the vendor
+  chain (Yahoo/brapi) was deleted in ADR 0041, along with the last credential:
+  every source is public and unauthenticated. There is no fallback, by design:
+  an absent price reads as a null with a named cause instead of as somebody
+  else's number on another basis. It costs the history of a **renamed** ticker:
+  B3 files each year under the code that traded then, so AZZA3 has no 2015
+  (#193).
   **Three price bases
   exist and must never be
   mixed**: as traded · adjusted for splits/groupings/bonuses (what indicators
@@ -80,7 +81,9 @@ Details in `.claude/RULES/RULES_LAYERS.md`.
 
 ## What NOT to Do
 - Don't push directly to `main` — always branch + PR + squash.
-- Don't commit secrets — the brapi token only lives in `.env` (gitignored). The repo is public.
+- Don't add a credentialed source. Every source today is public and
+  unauthenticated (ADR 0041), so nothing in `.env` is a secret — keep it that
+  way; the repo is public.
 - Don't write business logic in entrypoints (CLI/API) — they call use cases.
 - Don't put calculation/indicator logic in the `ingestion` context — that's
   `analysis`'s job (ingestion stays a raw mirror, with no interpretation).

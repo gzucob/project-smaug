@@ -68,7 +68,7 @@ def test_the_filter_names_the_registrant_when_one_resolves() -> None:
 
 
 def test_the_filter_falls_back_to_the_ticker_when_none_does() -> None:
-    """A brapi document has no registrant, and neither had a CVM one before #109."""
+    """A CVM document filed before #109 named no registrant."""
     assert mirror_filter("PETR4", no_registrant) == {
         "source": "cvm",
         "ticker": "PETR4",

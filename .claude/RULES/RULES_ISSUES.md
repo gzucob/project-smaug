@@ -12,7 +12,7 @@ incomplete.
 ### Namespaces
 | Namespace | Area |
 |---|---|
-| `ING` | Ingestion — brapi client, collection, mirror persistence |
+| `ING` | Ingestion — CVM/B3 readers, collection, mirror persistence |
 | `ANL` | Analysis — indicator calculation, PostgreSQL persistence, read API |
 | `WEB` | Front-end — the Next.js app under `frontend/` (UI, charts, formatting) |
 | `PORT` | Portfolio — ticker → sector map |

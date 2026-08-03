@@ -1,1 +1,1 @@
-"""Contexto de ingestão: busca na brapi + persistência do espelho cru."""
+"""Contexto de ingestão: leitura da CVM e da B3 + persistência do espelho cru."""

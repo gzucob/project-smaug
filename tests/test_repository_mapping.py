@@ -15,13 +15,13 @@ def _fake_document(**overrides: object) -> SimpleNamespace:
     base: dict[str, object] = {
         "id": "abc123",
         "ticker": "PETR4",
-        "source": "brapi",
+        "source": "cvm",
         "module": "financialData",
         "fetched_at": datetime(2026, 7, 2, tzinfo=UTC),
-        "request": {"url": "https://brapi.dev/api/quote/PETR4"},
+        "request": {"file": "dfp_cia_aberta_2024.zip", "statement": "DRE"},
         "http_status": 200,
         "payload": {"results": [{"symbol": "PETR4"}]},
-        "cvm_code": None,  # a brapi document names no registrant (ADR 0030)
+        "cvm_code": None,  # a document filed before the key moved (ADR 0030)
     }
     base.update(overrides)
     return SimpleNamespace(**base)

@@ -1,6 +1,6 @@
 """CVM raw data source — parses dados.cvm.gov.br into the ``RawDataSource`` port.
 
-Unlike brapi (one HTTP call per ticker/module), CVM ships one yearly ZIP with
+CVM ships one yearly ZIP with
 *every* company. So this source downloads that ZIP once, caches it, reads the
 statement CSVs it contains, and serves each ticker/statement from the in-memory
 index.
@@ -52,7 +52,7 @@ import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
 from smaug.shared.download import Sleeper, download_zip
-from smaug.shared.errors import BrapiNotFoundError
+from smaug.shared.errors import SourceNotFoundError
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -226,10 +226,10 @@ class CvmDataSource:
 
         code = self._ticker_to_code.get(ticker)
         if code is None:
-            raise BrapiNotFoundError(f"no CVM code mapped for {ticker}")
+            raise SourceNotFoundError(f"no CVM code mapped for {ticker}")
         statements = index.get(code)
         if not statements:
-            raise BrapiNotFoundError(
+            raise SourceNotFoundError(
                 f"no CVM {self._year} filing for {ticker} ({code})"
             )
 
@@ -256,7 +256,7 @@ class CvmDataSource:
             if statement.module == wanted and statement.accounts
         ]
         if not results:
-            raise BrapiNotFoundError(f"no {module} for {ticker} ({code})")
+            raise SourceNotFoundError(f"no {module} for {ticker} ({code})")
         return results
 
     async def _ensure_loaded(self) -> dict[str, list[_Statement]]:

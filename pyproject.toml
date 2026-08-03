@@ -1,7 +1,7 @@
 [project]
 name = "smaug"
 version = "0.1.0"
-description = "Ingestão fiel e auditável dos dados fundamentais da carteira (brapi) — Fase 1."
+description = "Ingestão fiel e auditável dos dados fundamentais da carteira (CVM/B3)."
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [

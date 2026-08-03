@@ -19,11 +19,11 @@ test functions don't need `@pytest.mark.asyncio`.
 
 ## Naming convention — two styles coexist
 
-Older test files (`test_brapi_client.py`, `test_ingest_use_case.py`,
+Older test files (`test_ingest_use_case.py`,
 `test_portfolio.py`, `test_event_bus.py`, `test_completeness_report.py`,
 `test_repository_mapping.py`, `test_cli_format.py`, `test_smoke.py`) use
 `test_should_X_when_Y`. Newer files (`test_analyze.py`, `test_calculator.py`,
-`test_ttm.py`, `test_brapi_price.py`, `test_cvm_source.py`,
+`test_ttm.py`, `test_b3_prices.py`, `test_cvm_source.py`,
 `test_mongo_fundamentals.py`) dropped the `should_`/`when_` scaffolding for a
 plain descriptive name, e.g.
 `test_ttm_sums_isolated_flows_and_takes_latest_stocks`.

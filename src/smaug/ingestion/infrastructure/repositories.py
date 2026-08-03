@@ -26,8 +26,8 @@ class BeanieRawIngestionRepository:
 
         A ticker outside the company it was collected under finds nothing on the
         ticker key (ADR 0030): the mirror stores ELET3/5/6 once, under the filer.
-        So a caller that can name the registrant passes it, and only a brapi
-        caller — which has none — falls back to the ticker.
+        So a caller that can name the registrant passes it, and only a caller
+        that cannot falls back to the ticker.
         """
         key = (
             RawIngestionDocument.cvm_code == cvm_code

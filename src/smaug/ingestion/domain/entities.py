@@ -1,6 +1,6 @@
 """Domain entity for a single raw ingestion record.
 
-Pure domain: a frozen snapshot of one brapi API call. No Beanie, no motor,
+Pure domain: a frozen snapshot of one source call. No Beanie, no motor,
 no httpx here (plan §3.1). The schema mirrors the ``raw_ingestions``
 collection defined in plan §4.1.
 """
@@ -15,7 +15,7 @@ from typing import Any
 
 @dataclass(frozen=True, slots=True)
 class RawIngestion:
-    """One faithful, uninterpreted snapshot of a brapi module response."""
+    """One faithful, uninterpreted snapshot of a source's response."""
 
     ticker: str
     source: str
@@ -28,5 +28,5 @@ class RawIngestion:
     # The registrant that filed it (ADR 0030). ``ticker`` records which code the
     # collection was requested under and stays informational; this is what the
     # readers key on, so a company's classes share one mirror instead of a copy
-    # each. ``None`` for brapi, whose world has no registrant.
+    # each. ``None`` for a source that names no registrant.
     cvm_code: str | None = None

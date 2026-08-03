@@ -15,7 +15,7 @@ each other's internals directly.
 
 | Context | Responsibility |
 |---|---|
-| `ingestion` | Faithful, uninterpreted mirror of brapi/CVM raw data into MongoDB (Phase 1) |
+| `ingestion` | Faithful, uninterpreted mirror of CVM/B3 raw data into MongoDB (Phase 1) |
 | `analysis` | Derives standardized financials, computes indicators, persists to PostgreSQL (Phase 2) |
 | `portfolio` | Static ticker → sector / CVM-code mapping — pure lookup, no persistence |
 | `shared` | Config, DB connections (Mongo + Postgres), EventBus, logging, typed errors |

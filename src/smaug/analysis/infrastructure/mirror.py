@@ -6,8 +6,8 @@ that filed nothing rather than as a query that asked the wrong question.
 
 The mirror is keyed on the registrant (ADR 0030) — ELET3, ELET5 and ELET6 share
 one filing, and one copy of it. A ticker whose registrant cannot be named falls
-back to the ticker key, which is what a brapi-sourced document has and what every
-CVM document had before the key moved.
+back to the ticker key, which is what every CVM document had before the key
+moved.
 """
 
 from __future__ import annotations

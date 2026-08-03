@@ -23,41 +23,48 @@ class UnknownTickerError(SmaugError):
         super().__init__(f"Unknown ticker: {ticker} (not in portfolio)")
 
 
-class BrapiError(SmaugError):
+class SourceError(SmaugError):
     """Base for failures while talking to a data source.
 
-    Named for the first source (brapi); the CVM source raises from the same
-    family so the ingestion use case keeps a single error root to handle.
+    Every source raises from this one family — CVM's archives and B3's files and
+    endpoints alike — so the ingestion use case keeps a single error root to
+    handle. It was called ``BrapiError`` while brapi was the first source; the
+    name outlived the vendor by a year and was corrected when it was removed
+    (ADR 0041).
     """
 
 
-class BrapiAuthError(BrapiError):
-    """Token is missing/invalid (HTTP 401). The whole run must stop."""
+class SourceAuthError(SourceError):
+    """Credentials missing or rejected (HTTP 401). The whole run must stop.
+
+    No source needs a credential today (ADR 0041) — kept because the use case's
+    "stop the run" branch is about the class of failure, not about who raises it.
+    """
 
 
-class BrapiRateLimitError(BrapiError):
-    """Plan limit exceeded (HTTP 402/429). Back off / stop the run."""
+class SourceRateLimitError(SourceError):
+    """The source is refusing the pace (HTTP 402/429). Back off / stop the run."""
 
 
-class BrapiNotFoundError(BrapiError):
+class SourceNotFoundError(SourceError):
     """Ticker or module not found (HTTP 404). Skip this call, keep going."""
 
 
-class BrapiTimeoutError(BrapiError):
+class SourceTimeoutError(SourceError):
     """Transport-layer failure before any HTTP response (timeout / connection).
 
-    An httpx timeout or network error never reaches ``_raise_for_status`` — no
-    response exists to inspect — so it would otherwise escape the ``BrapiError``
-    family and crash the whole ``analyze`` run. Mapping it here lets the price
-    call degrade to null market multiples per ticker, like a plan-gate 403.
+    An httpx timeout or network error never reaches a status check — no response
+    exists to inspect — so it would otherwise escape the ``SourceError`` family
+    and crash the whole ``analyze`` run. Mapping it here lets the price call
+    degrade to null market multiples per ticker.
     """
 
 
-class BrapiForbiddenError(BrapiError):
-    """Ticker requires a higher brapi plan (HTTP 403). Skip this call."""
+class SourceForbiddenError(SourceError):
+    """The source refuses this call outright (HTTP 403). Skip it, keep going."""
 
 
-class CvmDownloadError(BrapiError):
+class CvmDownloadError(SourceError):
     """The CVM yearly ZIP could not be downloaded (retries exhausted or 4xx).
 
     Fatal for the run: the ZIP is shared by every ticker of that year/document,
@@ -65,7 +72,7 @@ class CvmDownloadError(BrapiError):
     """
 
 
-class BrapiUnexpectedStatusError(BrapiError):
+class SourceUnexpectedStatusError(SourceError):
     """Any other non-success HTTP status we did not plan for."""
 
     def __init__(self, status_code: int, message: str) -> None:

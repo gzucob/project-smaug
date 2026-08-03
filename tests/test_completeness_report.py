@@ -1,69 +1,9 @@
-"""Completeness report: quarter counts and sector-directed checks (plan §6)."""
+"""Completeness report: filed-account counts and sector anchors (plan §6)."""
 
 from datetime import UTC, datetime
 
 from smaug.ingestion.application.report import CompletenessReportUseCase
-from smaug.portfolio.domain.sectors import Sector
-from tests.fakes import FakeRawIngestionRepository, load_fixture, make_snapshot
-
-
-async def test_should_count_quarters_and_flag_missing_field_for_commodity() -> None:
-    repo = FakeRawIngestionRepository()
-    payload = load_fixture("petr4_income_quarterly.json")
-    await repo.add(make_snapshot("PETR4", "incomeStatementHistoryQuarterly", payload))
-
-    use_case = CompletenessReportUseCase(
-        repo, ["incomeStatementHistoryQuarterly", "financialData"]
-    )
-    report = await use_case.execute(["PETR4"])
-    ticker_report = report.tickers[0]
-
-    assert ticker_report.sector is Sector.COMMODITY
-    assert ticker_report.max_quarters == 4
-
-    presence = {m.module: m.present for m in ticker_report.modules}
-    assert presence["incomeStatementHistoryQuarterly"] is True
-    assert presence["financialData"] is False
-
-    # totalDebt lives in financialData, which was not collected -> a discovery.
-    assert "totalDebt" in ticker_report.sector_check.missing_fields
-    assert "totalRevenue" in ticker_report.sector_check.present_fields
-
-
-async def test_should_verify_bank_specific_fields_across_modules() -> None:
-    repo = FakeRawIngestionRepository()
-    await repo.add(
-        make_snapshot(
-            "BBAS3",
-            "financialData",
-            {
-                "results": [
-                    {"financialData": {"returnOnEquity": 0.2, "netIncome": 1000}}
-                ]
-            },
-        )
-    )
-    await repo.add(
-        make_snapshot(
-            "BBAS3",
-            "balanceSheetHistoryQuarterly",
-            {"results": [{"balanceSheetHistory": [{"totalStockholderEquity": 5000}]}]},
-        )
-    )
-
-    use_case = CompletenessReportUseCase(
-        repo, ["financialData", "balanceSheetHistoryQuarterly"]
-    )
-    report = await use_case.execute(["BBAS3"])
-    ticker_report = report.tickers[0]
-
-    assert ticker_report.sector is Sector.BANK
-    assert set(ticker_report.sector_check.present_fields) == {
-        "totalStockholderEquity",
-        "netIncome",
-        "returnOnEquity",
-    }
-    assert ticker_report.sector_check.missing_fields == ()
+from tests.fakes import FakeRawIngestionRepository, make_snapshot
 
 
 async def test_cvm_report_counts_accounts_and_checks_bank_anchors() -> None:
@@ -96,7 +36,7 @@ async def test_cvm_report_counts_accounts_and_checks_bank_anchors() -> None:
     )
 
     report = await CompletenessReportUseCase(
-        repo, ["BPA", "BPP", "DRE", "DFC"], source="cvm"
+        repo, ["BPA", "BPP", "DRE", "DFC"]
     ).execute(["BBAS3"])
 
     assert report.depth_label == "accounts"
@@ -127,7 +67,7 @@ async def test_cvm_report_flags_holding_insurer_missing_seguros() -> None:
     )
 
     report = await CompletenessReportUseCase(
-        repo, ["BPA", "BPP", "DRE", "DFC"], source="cvm"
+        repo, ["BPA", "BPP", "DRE", "DFC"]
     ).execute(["CXSE3"])
 
     missing = report.tickers[0].sector_check.missing_fields

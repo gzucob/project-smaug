@@ -4,10 +4,9 @@ Reads the raw mirror and answers, per ticker: which modules arrived, how deep
 they go, and whether the sector-critical signals are present. It only *reads*
 and *counts* — it never derives indicators (that is Phase 2).
 
-The check is source-aware (a ``ReportProfile``): brapi payloads are keyed by
-field name and carry quarterly history, whereas CVM payloads are lists of raw
-accounts (code/name/value) for one period. A missing signal is a Phase 1
-*discovery*, not a bug.
+A CVM payload is a list of raw accounts (code/name/value) for one period, so
+depth is counted in accounts and a sector-critical signal is looked for by its
+filed account. A missing signal is a Phase 1 *discovery*, not a bug.
 """
 
 from __future__ import annotations
@@ -33,30 +32,6 @@ def _no_registrant(_ticker: str) -> None:
 
 
 # --- brapi sector-directed field expectations (plan §6.1) ------------------
-_NON_FINANCIAL_FIELDS: tuple[str, ...] = (
-    "totalRevenue",
-    "netIncome",
-    "ebitda",
-    "totalDebt",
-    "grossProfit",
-)
-_BANK_FIELDS: tuple[str, ...] = (
-    "totalStockholderEquity",
-    "netIncome",
-    "returnOnEquity",
-)
-_INSURER_FIELDS: tuple[str, ...] = (
-    "totalStockholderEquity",
-    "netIncome",
-    "totalRevenue",
-)
-_SECTOR_FIELDS: dict[Sector, tuple[str, ...]] = {
-    Sector.BANK: _BANK_FIELDS,
-    Sector.INSURER: _INSURER_FIELDS,
-    Sector.UTILITY: _NON_FINANCIAL_FIELDS,
-    Sector.COMMODITY: _NON_FINANCIAL_FIELDS,
-    Sector.INDUSTRY: _NON_FINANCIAL_FIELDS,
-}
 
 
 # --- CVM sector-directed account anchors -----------------------------------
@@ -109,7 +84,7 @@ class ModulePresence:
     module: str
     present: bool
     http_status: int | None
-    quarters: int  # brapi: quarters of history; cvm: number of accounts
+    quarters: int  # the CVM payload's number of filed accounts
     fetched_at: datetime | None
 
 
@@ -158,23 +133,6 @@ class ReportProfile(Protocol):
         ...
 
 
-class _BrapiProfile:
-    depth_label = "quarters"
-
-    def count_depth(self, payload: Any) -> int:
-        return _count_quarters(payload)
-
-    def sector_check(
-        self, sector: Sector, payloads: Sequence[Mapping[str, Any]]
-    ) -> SectorCheck:
-        expected = _SECTOR_FIELDS[sector]
-        present = tuple(
-            f for f in expected if any(_has_nonempty(p, f) for p in payloads)
-        )
-        missing = tuple(f for f in expected if f not in present)
-        return SectorCheck(sector, present, missing)
-
-
 class _CvmProfile:
     depth_label = "accounts"
 
@@ -193,10 +151,6 @@ class _CvmProfile:
         return SectorCheck(sector, tuple(present), tuple(missing))
 
 
-def _profile_for(source: str) -> ReportProfile:
-    return _CvmProfile() if source == "cvm" else _BrapiProfile()
-
-
 class CompletenessReportUseCase:
     """Build the completeness report from the raw mirror."""
 
@@ -205,13 +159,12 @@ class CompletenessReportUseCase:
         repository: RawIngestionRepository,
         modules: Sequence[str],
         *,
-        source: str = "brapi",
         sector_resolver: SectorResolver = sector_of,
         registrant_resolver: RegistrantResolver = _no_registrant,
     ) -> None:
         self._repository = repository
         self._modules = tuple(modules)
-        self._profile = _profile_for(source)
+        self._profile: ReportProfile = _CvmProfile()
         self._sector_resolver = sector_resolver
         # A CVM mirror is stored per registrant (ADR 0030), so a ticker that is not
         # the one its company was collected under only finds its modules by code.
@@ -283,37 +236,3 @@ def _cvm_has_anchor(payloads: Sequence[Mapping[str, Any]], anchor: _Anchor) -> b
             ):
                 return True
     return False
-
-
-def _iter_values(payload: Any) -> Iterable[Any]:
-    """Depth-first walk over every nested value in a JSON-like structure."""
-    yield payload
-    if isinstance(payload, Mapping):
-        for value in payload.values():
-            yield from _iter_values(value)
-    elif isinstance(payload, (list, tuple)):
-        for item in payload:
-            yield from _iter_values(item)
-
-
-def _has_nonempty(payload: Any, field: str) -> bool:
-    """True if ``field`` appears anywhere with a non-null, non-empty value."""
-    for node in _iter_values(payload):
-        if isinstance(node, Mapping) and field in node:
-            value = node[field]
-            if value not in (None, "", [], {}):
-                return True
-    return False
-
-
-def _count_quarters(payload: Any) -> int:
-    """Longest list-of-records found — a proxy for how many periods arrived."""
-    best = 0
-    for node in _iter_values(payload):
-        if (
-            isinstance(node, list)
-            and node
-            and all(isinstance(item, Mapping) for item in node)
-        ):
-            best = max(best, len(node))
-    return best

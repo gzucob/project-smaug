@@ -6,21 +6,12 @@ use cases can be exercised deterministically (plan §8).
 
 from __future__ import annotations
 
-import json
 from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from smaug.ingestion.domain.entities import RawIngestion
 from smaug.ingestion.domain.ports import RawFetchResult
-
-_FIXTURES = Path(__file__).parent / "fixtures"
-
-
-def load_fixture(name: str) -> dict[str, Any]:
-    """Load a recorded brapi response from ``tests/fixtures``."""
-    return json.loads((_FIXTURES / name).read_text(encoding="utf-8"))
 
 
 def make_snapshot(
@@ -33,7 +24,7 @@ def make_snapshot(
     """Build a ``RawIngestion`` for tests with sane defaults."""
     return RawIngestion(
         ticker=ticker,
-        source="brapi",
+        source="cvm",
         module=module,
         fetched_at=fetched_at or datetime(2026, 7, 2, tzinfo=UTC),
         request={},

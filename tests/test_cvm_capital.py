@@ -14,7 +14,7 @@ from smaug.ingestion.infrastructure.cvm_capital import (
     CvmCapitalSource,
     CvmTreasurySource,
 )
-from smaug.shared.errors import BrapiNotFoundError
+from smaug.shared.errors import SourceNotFoundError
 
 _PETRO = "33.000.167/0001-01"
 _VALE = "33.592.510/0001-54"
@@ -163,14 +163,14 @@ async def test_fetch_mirrors_every_approval_of_the_same_version(tmp_path: Path) 
 async def test_fetch_raises_for_a_company_absent_from_the_file(tmp_path: Path) -> None:
     _write_zip(tmp_path / "fre_cia_aberta_2025.zip", [_row(_PETRO, version="1")])
 
-    with pytest.raises(BrapiNotFoundError):
+    with pytest.raises(SourceNotFoundError):
         await _source(tmp_path).fetch("VALE3", CAPITAL_MODULE)
 
 
 async def test_fetch_raises_for_an_unmapped_ticker(tmp_path: Path) -> None:
     _write_zip(tmp_path / "fre_cia_aberta_2025.zip", [_row(_PETRO, version="1")])
 
-    with pytest.raises(BrapiNotFoundError):
+    with pytest.raises(SourceNotFoundError):
         await _source(tmp_path).fetch("WEGE3", CAPITAL_MODULE)
 
 
@@ -192,5 +192,5 @@ async def test_treasury_fetch_reports_not_found_when_the_year_has_no_member(
         cache_dir=str(tmp_path),
     )
 
-    with pytest.raises(BrapiNotFoundError):
+    with pytest.raises(SourceNotFoundError):
         await source.fetch("PETR4", TREASURY_MODULE)

@@ -54,7 +54,7 @@ from typing import Any
 import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
-from smaug.shared.errors import BrapiNotFoundError
+from smaug.shared.errors import SourceNotFoundError
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -102,10 +102,10 @@ class B3CashDividendSource:
         root = ticker[:_ROOT_LENGTH]
         supplement = await self._supplement(root)
         if supplement is None:
-            raise BrapiNotFoundError(f"B3 lists no company for {ticker} ({root})")
+            raise SourceNotFoundError(f"B3 lists no company for {ticker} ({root})")
         trading_name = _text(supplement.get("tradingName"))
         if not trading_name:
-            raise BrapiNotFoundError(f"B3 gives no trading name for {ticker} ({root})")
+            raise SourceNotFoundError(f"B3 gives no trading name for {ticker} ({root})")
         rows = await self._dividends(trading_name)
         respelled = trading_name.replace("/", ".")
         if not rows and respelled != trading_name:
@@ -119,7 +119,7 @@ class B3CashDividendSource:
             # A company that has never paid is the normal case for a recent
             # listing, and it is an absence the mirror records rather than an
             # empty list it invents.
-            raise BrapiNotFoundError(f"B3 lists no cash payout for {ticker}")
+            raise SourceNotFoundError(f"B3 lists no cash payout for {ticker}")
 
         code = self._code_of(supplement, ticker)
         return [

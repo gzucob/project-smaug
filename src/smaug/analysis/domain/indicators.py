@@ -29,11 +29,11 @@ class NullReason(StrEnum):
     * ``SOURCE_ACCOUNT_ABSENT`` — we looked for the account and the filing has
       no such line (e.g. no dividend outflow in the DFC that year).
     * ``MISSING_PRICE`` / ``MISSING_SHARE_COUNT`` / ``MISSING_PRIOR_PERIOD`` —
-      an upstream input from another source is missing (brapi price, FRE share
-      count, the prior year's ingestion), split so a report can say *which*.
-      ``MISSING_PRICE`` is the *transient* price miss (a vendor gap for a year);
-      ``PRICE_SYMBOL_NOT_FOUND`` is its non-transient sibling — every price source
-      rejected the symbol itself (a delisted/renamed ticker with no override), so
+      an upstream input from another source is missing (the quote series, the
+      FRE share count, the prior year's ingestion), split so a report can say
+      *which*. ``MISSING_PRICE`` is the *transient* price miss (no session for
+      that year); ``PRICE_SYMBOL_NOT_FOUND`` is its non-transient sibling — the
+      series does not carry the code at all (a delisting, or a rename #193), so
       the null is structural, not a passing outage (#64).
       ``NOT_YET_LISTED`` is the third, at the other end of the timeline: the
       period *precedes the instrument's first trade*, so no source will ever fill
