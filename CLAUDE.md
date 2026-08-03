@@ -32,9 +32,13 @@ PostgreSQL, served by a read API. Both phases are already implemented (see
   chain (Yahoo/brapi) was deleted in ADR 0041, along with the last credential:
   every source is public and unauthenticated. There is no fallback, by design:
   an absent price reads as a null with a named cause instead of as somebody
-  else's number on another basis. It costs the history of a **renamed** ticker:
-  B3 files each year under the code that traded then, so AZZA3 has no 2015
-  (#193).
+  else's number on another basis. Because B3 files each year under the code that
+  traded then, **a year is read under every code the security has traded as**
+  (ADR 0042): the FCA names the codes one registrant filed for a share class, and
+  two of them join only where the price crosses the seam between them — which is
+  what keeps a merger's extinguished side (ALLL3, BRML3, LAME4) out of the
+  survivor's series. A year the named codes cannot cover is a null with a cause,
+  never a partial average.
   **Three price bases
   exist and must never be
   mixed**: as traded · adjusted for splits/groupings/bonuses (what indicators

@@ -50,7 +50,7 @@ import asyncio
 import io
 import json
 import zipfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -84,6 +84,12 @@ _MARKER = slice(43, 47)
 
 _QUOTE_RECORD = "01"
 _SPOT_MARKET = "010"
+
+# A ticker and the earliest year being read -> every code that answers for it,
+# oldest first (``analysis.infrastructure.succession``). Taken as a callable
+# rather than as the class itself: the succession reads this module, and the
+# dependency only runs the other way at composition time.
+CodesResolver = Callable[[str, int], Awaitable[tuple[str, ...]]]
 
 # Prices carry two implied decimals, as every monetary field in the layout does.
 _PRICE_SCALE = Decimal(100)
@@ -163,6 +169,22 @@ class YearQuotes:
             for day, distribution, marker in zip(
                 fields[::3], fields[1::3], fields[2::3], strict=False
             )
+        )
+
+    def first_close(self) -> SessionClose:
+        """The year's first session, decoded without decoding the rest.
+
+        The succession asks every candidate code where its series starts, and for
+        the ~2.3k codes that never changed name the answer is thrown away — so it
+        reads the one pair it needs off the front of the string rather than
+        building the year.
+        """
+        if not self.closes:
+            return SessionClose(session=self.last_session, close=self.last_close)
+        january = date(self.last_session.year, 1, 1).toordinal()
+        day, price = self.closes.split(" ", 2)[:2]
+        return SessionClose(
+            session=date.fromordinal(january + int(day)), close=Decimal(price)
         )
 
     def session_closes(self) -> tuple[SessionClose, ...]:
@@ -610,10 +632,15 @@ class B3BaseChanges:
     """
 
     def __init__(
-        self, archive: CotahistArchive, today: Callable[[], date] = date.today
+        self,
+        archive: CotahistArchive,
+        today: Callable[[], date] = date.today,
+        *,
+        codes: CodesResolver | None = None,
     ) -> None:
         self._archive = archive
         self._today = today
+        self._codes = codes
 
     async def base_changes(
         self, ticker: str, years: Sequence[int]
@@ -631,41 +658,54 @@ class B3BaseChanges:
         earliest year has no predecessor, so a code whose base moved on its very
         first requested session is not dated — the file cannot tell that apart
         from a code that simply started trading.
+
+        **The tape walked is the security's, not the code's** (#193): a company
+        that renamed its code has its earlier actions filed under the earlier
+        code, and a chain that stopped at today's would recover those sessions
+        (the price side joins them) without ever restating them. The codes come
+        back oldest first and never overlap, so reading them in order is still
+        reading one series in date order.
         """
         code = ticker.strip().upper()
+        tapes = (
+            (code,)
+            if self._codes is None
+            else await self._codes(code, min(years, default=self._today().year))
+        )
         changes: list[BaseChange] = []
         span = _Span()
         december: Decimal | None = None
         standing = ""  # the marker in force on the session last read
         published = self._today().year
         for year in sorted({year for year in years if year <= published}):
-            quotes = (await self._archive.year(year)).get(code)
-            if quotes is None:
-                continue
-            series = quotes.session_closes()
-            position = {close.session: index for index, close in enumerate(series)}
-            for state in quotes.rights_states():
-                at = position.get(state.session)
-                if at is None:
+            for tape in tapes:
+                quotes = (await self._archive.year(year)).get(tape)
+                if quotes is None:
                     continue
-                if state.distribution != span.distribution:
-                    # Measured across the cut, so the numerator is the session
-                    # immediately before it — not the previous *change*, which
-                    # can be a year away.
-                    before = series[at - 1].close if at > 0 else december
-                    span = span.opened(
-                        state,
-                        standing=standing,
-                        before=before,
-                        at_open=series[at].close,
-                    )
-                else:
-                    span.seen(state.marker)
-                standing = state.marker
-                change = span.base_change()
-                if change is not None:
-                    changes.append(change)
-            december = quotes.last_close
+                series = quotes.session_closes()
+                position = {close.session: index for index, close in enumerate(series)}
+                for state in quotes.rights_states():
+                    at = position.get(state.session)
+                    if at is None:
+                        continue
+                    if state.distribution != span.distribution:
+                        # Measured across the cut, so the numerator is the session
+                        # immediately before it — not the previous *change*, which
+                        # can be a year away.
+                        before = series[at - 1].close if at > 0 else december
+                        span = span.opened(
+                            state,
+                            standing=standing,
+                            before=before,
+                            at_open=series[at].close,
+                        )
+                    else:
+                        span.seen(state.marker)
+                    standing = state.marker
+                    change = span.base_change()
+                    if change is not None:
+                        changes.append(change)
+                december = quotes.last_close
         return tuple(changes)
 
 
