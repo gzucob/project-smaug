@@ -62,6 +62,10 @@ DEFAULT_CVM_MODULES: tuple[str, ...] = (
     # session quoted on the old base, which is where a price series is cut
     # (ADR 0033). CVM's member stops after the 2023 FRE; B3 has what follows.
     "CAPITAL_EVENT_B3",
+    # The cash B3 says the company paid, with the closing price each payment went
+    # ex against. No published series carries the dividend-adjusted price, so the
+    # third basis is rebuilt from this (ADR 0039).
+    "CASH_DIVIDEND_B3",
 )
 
 
