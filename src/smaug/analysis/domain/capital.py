@@ -375,7 +375,9 @@ def _filed_steps(
         if ratio is None:
             ratio = _reconciled_ratio(earlier, later, previous_year, year, exchange)
         if ratio is None:
-            ratio = _witnessed_ratio(earlier, later, previous_year, year, changes)
+            ratio = _witnessed_ratio(
+                earlier, later, previous_year, year, changes, exchange
+            )
         if ratio is not None:
             steps.append(_FiledStep(year, ratio))
             continue
@@ -561,6 +563,7 @@ def _witnessed_ratio(
     previous_year: int,
     year: int,
     changes: Sequence[BaseChange],
+    exchange: Sequence[ExchangeAction] = (),
 ) -> Decimal | None:
     """A ratio the counts leave dirty and B3's tape says happened anyway.
 
@@ -584,6 +587,32 @@ def _witnessed_ratio(
 
     More than one base change in the window (``_gap_window``) means the counts
     cannot say which is which, and the gap keeps its factor of 1.
+
+    A **third** source, once the two agree, gets the last word on the *size*:
+    where B3's own event feed also marks something in the window, and its own
+    factor explains the tape's observed ratio *better than the grid's guess
+    does*, the feed's factor is used instead of the candidate (#202). The feed
+    is exact and dated where the grid is inference rounded to the nearest
+    plausible fraction — ``_reconciled_ratio`` (ADR 0038) already prefers it
+    outright when it reconciles with the filed move, and this is the same
+    preference applied where it does not, because the filed move is exactly
+    what a rounding issuance is expected to have dirtied.
+
+    This is not the coincidence ADR 0037 already described (a plausible ratio
+    near a tape event of a different size) — it is a gap still waiting on its
+    *next* FRE reaching, through ``_gap_window``'s filing-lag margin, into a
+    real, later, independently-confirmed action that belongs to that future
+    gap. SOJA3 is the clean case: the feed and the tape agree with *each other*
+    (1.049, 1.044 — 0.4% apart) on an event the grid's pick (1.154) is 10% from
+    either. TRIS3 is the reason this prefers rather than vetoes: its candidate
+    (1.923) is a real match ADR 0037 measured at 3% residual error, and the
+    feed's own factor (2.0) is closer still to what the tape saw (6.1% vs
+    9.7%) — a plain veto would have thrown away a working restatement instead
+    of sharpening it. The preference only fires when the feed genuinely
+    explains the tape *better*: DEXP3's December 2025 feed entry (1.125) is
+    farther from that session's own reading (1.188) than the grid's guess is,
+    so it is left exactly as before rather than swapped in on the strength of
+    being a feed at all.
     """
     if earlier <= 0 or later <= 0 or earlier == later:
         return None
@@ -593,10 +622,11 @@ def _witnessed_ratio(
         # smaller than its own error; and a 5% bonus is arithmetically the same
         # move as a 5% follow-on. Re-measured against a live witness (ADR 0045,
         # after ADR 0037's own CYRE3 evidence turned out to be a stale one): of
-        # the 13 gaps this line alone blocks, roughly half are real actions lost
-        # with the floor and half are coincidences or a misattributed later
-        # event (#202) — with no cheap way yet to tell them apart, the floor
-        # stays the safer default.
+        # the 13 gaps this line alone blocks, some are real actions lost with the
+        # floor, some would be corrected by the feed preference below were the
+        # floor not standing in front of it (ADR 0047), and the rest stay the
+        # coincidence ADR 0037 already described — with no cheap way to fully
+        # sort them, the floor stays the safer default regardless.
         return None
     window = _gap_window(previous_year, year)
     inside = [c for c in changes if window[0] <= c.session <= window[1]]
@@ -609,6 +639,18 @@ def _witnessed_ratio(
     observed = inside[0].ratio
     if (observed > 1) != (candidate > 1) or not _is_same_size(candidate, observed):
         return None
+    feed_product = Decimal(1)
+    feed_found = False
+    for action in exchange:
+        if window[0] <= action.effective <= window[1] and action.ratio > 0:
+            feed_product *= action.ratio
+            feed_found = True
+    if (
+        feed_found
+        and (feed_product > 1) == (observed > 1)
+        and abs(feed_product - observed) < abs(candidate - observed)
+    ):
+        return feed_product
     return candidate
 
 

@@ -290,6 +290,45 @@ def test_a_tape_event_of_another_size_does_not_confirm_the_ratio() -> None:
     assert restatement_factors(filed, changes=tape)[2022] == 1
 
 
+def test_the_feed_corrects_a_grid_guess_that_matched_the_wrong_event() -> None:
+    """BRML3 (#202): a gap still waiting on its next FRE reaches, through the
+    window's filing-lag margin, into a real and differently-sized action that
+    belongs to that future gap. The grid finds a plausible ratio near the
+    dirty filed number (24/17); B3's feed and the tape agree with *each
+    other* on a much smaller one instead.
+    """
+    filed = {2016: Decimal(1_000_000), 2017: Decimal(1_406_920)}  # dirty, 40.69%
+    tape = [_change("2017-05-02", "1.15448")]
+    exchange = [_exchange("2017-04-29", "1.15", "2017-04-28")]
+
+    grid_only = restatement_factors(filed, changes=tape)
+    with_feed = restatement_factors(filed, changes=tape, exchange=exchange)
+
+    # Without the feed, the grid's nearest plausible fraction (24/17) clears
+    # the tape's ±25% tolerance and is used.
+    assert abs(grid_only[2016] - Decimal(24) / Decimal(17)) < Decimal("0.0001")
+    # With it, the feed's own factor — closer to what the tape actually saw —
+    # replaces the guess.
+    assert with_feed[2016] == Decimal("1.15")
+
+
+def test_the_feed_does_not_override_a_guess_it_explains_worse() -> None:
+    """The feed only outranks the grid's guess when it is the *better*
+    explanation of what the tape saw (#202) — a feed present in the window is
+    not enough on its own, since the tape's own session can carry noise of
+    its own (up to 10% at its worst, ADR 0035).
+    """
+    filed = {2023: Decimal(1_000_000), 2024: Decimal(1_612_000)}  # dirty, 61.2%
+    tape = [_change("2024-06-01", "1.65")]
+    exchange = [_exchange("2024-05-30", "1.5", "2024-05-20")]
+
+    factors = restatement_factors(filed, changes=tape, exchange=exchange)
+
+    # The grid's 21/13 (1.61538) is closer to the tape's 1.65 than the feed's
+    # 1.5 is, so it is kept.
+    assert abs(factors[2023] - Decimal(21) / Decimal(13)) < Decimal("0.0001")
+
+
 def test_a_falling_count_is_not_explained_by_an_event_that_handed_shares_out() -> None:
     # LREN3's 2021->2022 move is a buyback cancellation and the nearest thing on
     # the tape is a bonus. Same magnitude, opposite direction, different event.
