@@ -99,6 +99,17 @@ class DoctorReport:
 
     tickers: tuple[TickerCoverage, ...]
 
+    @property
+    def unclassified(self) -> int:
+        """The exchange-scale coverage gate (#169): a cell with no named cause.
+
+        Every other null already carries a ``NullReason`` an ADR put a name to;
+        one that does not is either a mapping bug or a cause not yet vocabularied
+        (ADR 0008) — either way, the one finding here that asks for work, not a
+        state of the world already explained.
+        """
+        return sum(e.unclassified for t in self.tickers for e in t.exercises)
+
 
 def _coverage_of(indicators: Indicators) -> tuple[IndicatorCoverage, ...]:
     """Classify every indicator cell as value / named-null / unclassified."""
