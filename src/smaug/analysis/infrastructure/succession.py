@@ -28,11 +28,19 @@ from smaug.analysis.domain.succession import (
     CodeWindow,
     Explains,
     candidates_of,
+    crosses,
     joined,
     structural_gap,
 )
 from smaug.analysis.infrastructure.b3_prices import CotahistArchive
-from smaug.portfolio.domain.securities import SiblingCodesResolver, no_siblings
+from smaug.portfolio.domain.securities import (
+    RegistrantNamesResolver,
+    SiblingCodesResolver,
+    confirms_name,
+    no_names,
+    no_siblings,
+    share_class_suffix,
+)
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -50,6 +58,10 @@ TimelineReader = Callable[[str], Awaitable[Sequence[RestatementStep]]]
 # window can actually falsify (see ``_chain``).
 _LOOKBACK_YEARS = 2
 
+# How far back the tape may be asked to name a code the cadastre cannot. Each
+# hop is a rename, and no security in the window has had more than two.
+_MAX_TAPE_HOPS = 4
+
 
 def _unknown_listed_since(ticker: str) -> date | None:
     return None
@@ -63,11 +75,13 @@ class CodeSuccession:
         archive: CotahistArchive,
         *,
         siblings: SiblingCodesResolver = no_siblings,
+        names: RegistrantNamesResolver = no_names,
         listed_since: ListedSinceResolver = _unknown_listed_since,
         today: Callable[[], date] = date.today,
     ) -> None:
         self._archive = archive
         self._siblings = siblings
+        self._names = names
         self._listed_since = listed_since
         self._today = today
         self._chains: dict[str, tuple[int, tuple[CodeWindow, ...]]] = {}
@@ -158,9 +172,17 @@ class CodeSuccession:
                 for sibling in self._siblings(code)
                 if (window := await self._window(sibling, opened)) is not None
             ]
-            resolved = candidates_of(
-                served, siblings, listed_since=self._listed_since(ticker)
-            )
+            floor = self._listed_since(ticker)
+            resolved = candidates_of(served, siblings, listed_since=floor)
+            for _hop in range(_MAX_TAPE_HOPS):
+                # The cadastre stops at 2018 (``FIRST_YEAR_WITH_TRADING_CODES``),
+                # so a code retired before it is named by nothing — and the walk
+                # above simply ends. The tape can still propose one (#198).
+                found = await self._tape_predecessor(code, resolved[0], opened)
+                if found is None:
+                    break
+                siblings.append(found)
+                resolved = candidates_of(served, siblings, listed_since=floor)
             if len(resolved) > 1:
                 logger.info(
                     "%s has traded as %s since %d (#193)",
@@ -170,6 +192,75 @@ class CodeSuccession:
                 )
         self._chains[code] = (since, resolved)
         return resolved
+
+    async def _tape_predecessor(
+        self, ticker: str, head: CodeWindow, since: int
+    ) -> CodeWindow | None:
+        """The code that stopped where ``head`` started, if the tape names one.
+
+        A rename leaves a signature the cadastre is not needed to read: one code
+        prints its last session, and on the very next one another starts, at the
+        same price. Over the whole window that signature fires 65 times and is
+        right nearly always — but "nearly" is what #190 is about, so it is only
+        ever a *proposal*. Two independent records have to agree (ADR 0044):
+
+        * the **tape**, which must offer a candidate of the same class stopping on
+          the session immediately before, whose price carries over;
+        * **CVM's cadastre**, which must have filed this registrant under the name
+          B3 printed beside that candidate at some point. Brookfield's BISA3
+          stopped the session before Celpa's CELP3 began, 8 characters and 18%
+          apart — and Celpa was never called Brookfield.
+
+        The two witnesses are also what disambiguates. Codes retire on the same
+        day by coincidence — Melhoramentos' MSPA3 printed its last session on the
+        one before Engie's EGIE3 opened, alongside Tractebel's TBLE3 — so
+        uniqueness is required of the *survivors*, not of the proposals.
+        """
+        before = await self._preceding_session(head.first_session)
+        if before is None:
+            return None
+        wanted = share_class_suffix(head.code)
+        proposed = {
+            code
+            for year in {before.year, head.first_session.year}
+            for code, quotes in (await self._archive.year(year)).items()
+            if quotes.last_session == before
+            and code != head.code
+            and share_class_suffix(code) == wanted
+        }
+        filed = self._names(ticker)
+        survivors: list[tuple[CodeWindow, str]] = []
+        for code in sorted(proposed):
+            candidate = await self._window(code, since)
+            if candidate is None or not crosses(candidate.last_close, head.first_close):
+                continue
+            printed = await self._tape_name(candidate)
+            if printed and confirms_name(filed, printed):
+                survivors.append((candidate, printed))
+        if len(survivors) != 1:
+            return None
+        candidate, printed = survivors[0]
+        logger.info(
+            "%s: the tape puts %s before %s and CVM filed as %r (#198)",
+            ticker,
+            candidate.code,
+            head.code,
+            printed,
+        )
+        return candidate
+
+    async def _tape_name(self, window: CodeWindow) -> str:
+        quotes = (await self._archive.year(window.last_session.year)).get(window.code)
+        return "" if quotes is None else quotes.name
+
+    async def _preceding_session(self, session: date) -> date | None:
+        """The trading session before ``session``, across the year boundary."""
+        for year in (session.year, session.year - 1):
+            calendar = await self._calendar(year)
+            earlier = [day for day in calendar if day < session]
+            if earlier:
+                return earlier[-1]
+        return None
 
     async def _window(self, code: str, since: int) -> CodeWindow | None:
         """Where ``code``'s series starts and ends inside the readable years."""
