@@ -53,6 +53,7 @@ class FakePrice:
         year: YearPrices | None = None,
         by_symbol: dict[str, MarketData] | None = None,
         year_by_symbol: dict[str, YearPrices] | None = None,
+        year_by_symbol_and_year: dict[tuple[str, int], YearPrices] | None = None,
         error: Exception | None = None,
         get_error: Exception | None = None,
         year_error: Exception | None = None,
@@ -64,6 +65,11 @@ class FakePrice:
         # every symbol gets the same price, which is enough for most tests.
         self._by_symbol = by_symbol
         self._year_by_symbol = year_by_symbol
+        # ``year_by_symbol_and_year`` additionally varies by year — needed for a
+        # class whose price appears only from some year on (TAEE4 first trades in
+        # 2017, #164), which ``year_by_symbol`` cannot express since it answers the
+        # same way for every year asked.
+        self._year_by_symbol_and_year = year_by_symbol_and_year
         # ``error`` fails both sides; ``get_error``/``year_error`` fail one only,
         # so a test can knock out the live quote while the year history survives.
         self._get_error = get_error if get_error is not None else error
@@ -79,6 +85,8 @@ class FakePrice:
     async def year_prices(self, ticker: str, year: int) -> YearPrices:
         if self._year_error is not None:
             raise self._year_error
+        if self._year_by_symbol_and_year is not None:
+            return self._year_by_symbol_and_year.get((ticker, year), YearPrices())
         if self._year_by_symbol is not None:
             return self._year_by_symbol.get(ticker, YearPrices())
         return self._year or YearPrices()
@@ -679,6 +687,47 @@ async def test_a_priced_ticker_with_a_vendor_gap_stays_a_transient_miss() -> Non
 
     closed = [a for a in repo.saved if a.reference_date == date(2015, 12, 31)]
     assert closed[0].indicators.null_reasons["pe"] is not NullReason.NOT_YET_LISTED
+
+
+async def test_a_sibling_class_not_yet_traded_is_named_not_yet_listed() -> None:
+    # The real #164 shape: TAEE11 (the unit) trades fine, but its components
+    # TAEE3/TAEE4 print no B3 session until 2017 — nearly every share moves
+    # bundled in the unit until enough free float trades loose. The FCA's
+    # Data_Inicio_Listagem cannot tell this apart from an ordinary listing date
+    # (it reads 2006 for TAEE4 too, same as TAEE11 — the ticker-level check below
+    # would not fire), so the cause has to come from B3's own tape: TAEE3/TAEE4
+    # get a price from 2017 on, none in 2015.
+    annual = StandardizedFinancials(
+        reference_date=date(2015, 12, 31),
+        sector=Sector.UTILITY,
+        period_start=date(2015, 1, 1),
+        net_income=Decimal(600),
+        equity=Decimal(3600),
+    )
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"TAEE11": []}, annuals={"TAEE11": [annual]}),
+        FakePrice(
+            year_by_symbol_and_year={
+                ("TAEE11", 2015): YearPrices(nominal_avg=Decimal(22)),
+                ("TAEE3", 2017): YearPrices(nominal_avg=Decimal(8)),
+                ("TAEE4", 2017): YearPrices(nominal_avg=Decimal(7)),
+            },
+        ),
+        repo,
+        FakeShares({2015: _counts(common=800, preferred=1600)}),
+        listed_since_resolver=lambda ticker: date(2006, 10, 27),
+    )
+
+    await use_case.execute(["TAEE11"])
+
+    closed = [a for a in repo.saved if a.reference_date == date(2015, 12, 31)]
+    assert closed, "the closed year should still be persisted"
+    assert closed[0].price == Decimal(22)  # TAEE11 itself was trading fine
+    assert closed[0].indicators.market_cap is None
+    reasons = closed[0].indicators.null_reasons
+    assert reasons["market_cap"] is NullReason.NOT_YET_LISTED
+    assert reasons["pe"] is NullReason.NOT_YET_LISTED
 
 
 class _ExplodingReader:
