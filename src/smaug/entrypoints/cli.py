@@ -833,6 +833,9 @@ def doctor(
     so ``--all`` summarizes and ``--verbose`` restores the detail. What the
     summary keeps is the part that needs acting on: every ticker carrying a null
     nobody has named.
+
+    Exits non-zero on any unclassified null — the exchange-scale gate #169
+    settled on (ADR 0046), alongside ``test_reference_fidelity``'s nine tickers.
     """
     if all_listed and ticker:
         raise typer.BadParameter("--all and --ticker are mutually exclusive")
@@ -881,7 +884,12 @@ async def _run_doctor(
     else:
         print(format_doctor_summary(report))
         print(format_drift_summary(drift))
-    return 0
+    # The coverage gate (#169, ADR 0046): every named null is a fact about the
+    # world already; an unclassified one is a mapping bug or a cause nothing has
+    # vocabularied yet, and at exchange scale that is the only finding a nine-
+    # ticker fidelity fixture cannot see. The threshold is zero, not a share —
+    # today's mirror already clears it (316,008 cells, 0 unclassified).
+    return 1 if report.unclassified else 0
 
 
 @app.command()

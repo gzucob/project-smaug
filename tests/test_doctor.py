@@ -172,3 +172,35 @@ async def test_doctor_reports_ticker_without_persisted_analysis() -> None:
     (ticker_cov,) = report.tickers
     assert ticker_cov.ticker == "TAEE11"
     assert ticker_cov.exercises == ()
+
+
+async def test_doctor_report_sums_unclassified_across_every_ticker() -> None:
+    """#169: the exchange-scale coverage gate is this count reaching zero."""
+    fully_named = Indicators(
+        null_reasons=dict.fromkeys(indicator_names(), NullReason.MISSING_PRICE)
+    )
+    bare = Indicators()  # every field null, no reason → every cell unclassified
+    repo = FakeRepo(
+        latest={
+            "PETR4": _analysis(
+                "PETR4",
+                view=VIEW_TTM,
+                reference_date=date(2025, 9, 30),
+                indicators=fully_named,
+            )
+        },
+        history={
+            "WEGE3": [
+                _analysis(
+                    "WEGE3",
+                    view=VIEW_CLOSED_YEAR,
+                    reference_date=date(2024, 12, 31),
+                    indicators=bare,
+                )
+            ]
+        },
+    )
+
+    report = await DoctorUseCase(repo).execute(["PETR4", "WEGE3"])
+
+    assert report.unclassified == len(indicator_names())
