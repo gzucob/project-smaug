@@ -634,39 +634,50 @@ async def test_analyze_degrades_when_price_times_out() -> None:
     assert out[0].price is None
 
 
-async def test_a_year_before_the_ticker_listed_is_named_not_yet_listed() -> None:
-    # #153: CXSE3 listed on 2021-04-29, so its 2020 row can have no price at all.
-    # The evidence is the FCA's own Data_Inicio_Negociacao, never the earliest
-    # datum in a price series — that answers "when did this code first trade",
-    # which is a different question: TAEE4 has been listed since 2006 and B3's own
-    # file shows it did not trade a single session in 2015.
-    annual = StandardizedFinancials(
+async def test_a_year_before_the_tickers_first_trade_gets_no_row() -> None:
+    # ADR 0048 (reopening #153): CXSE3 listed 2021-04-29, so 2020 — a fiscal year
+    # CVM filed before its own first B3 session — is not a row this analysis
+    # produces at all, not even one with a correctly-named null price. The
+    # evidence is B3's own tape walked forward from the candidate year, never the
+    # FCA: CXSE3 gets a price from 2021 on, none in 2020.
+    annual_2020 = StandardizedFinancials(
         reference_date=date(2020, 12, 31),
         sector=Sector.INSURER,
         period_start=date(2020, 1, 1),
         net_income=Decimal(600),
         equity=Decimal(3600),
     )
+    annual_2021 = StandardizedFinancials(
+        reference_date=date(2021, 12, 31),
+        sector=Sector.INSURER,
+        period_start=date(2021, 1, 1),
+        net_income=Decimal(700),
+        equity=Decimal(4000),
+    )
     repo = FakeRepo()
     use_case = AnalyzePortfolioUseCase(
-        FakeReader({"CXSE3": []}, annuals={"CXSE3": [annual]}),
-        FakePrice(year=YearPrices()),  # no source has a price
+        FakeReader({"CXSE3": []}, annuals={"CXSE3": [annual_2020, annual_2021]}),
+        FakePrice(
+            year_by_symbol_and_year={
+                ("CXSE3", 2021): YearPrices(nominal_avg=Decimal(12)),
+            },
+        ),
         repo,
-        FakeShares({2020: _counts(common=800)}),
-        listed_since_resolver=lambda ticker: date(2021, 4, 29),
+        FakeShares({2020: _counts(common=800), 2021: _counts(common=800)}),
     )
 
     await use_case.execute(["CXSE3"])
 
-    closed = [a for a in repo.saved if a.reference_date == date(2020, 12, 31)]
-    assert closed, "the closed year should still be persisted"
-    assert closed[0].indicators.null_reasons["pe"] is NullReason.NOT_YET_LISTED
+    closed_years = {
+        a.reference_date.year for a in repo.saved if a.view == "closed_year"
+    }
+    assert closed_years == {2021}  # 2020 produced no row at all
 
 
 async def test_a_priced_ticker_with_a_vendor_gap_stays_a_transient_miss() -> None:
-    # The failure the FCA date exists to prevent: an instrument that WAS trading
-    # in the year, whose price merely went missing, must keep the transient cause.
-    # Attributing "not yet listed" here would state a falsehood about the world.
+    # A ticker the tape never prices, in any direction, is left alone rather than
+    # guessed at: there is no later year to prove it "had not started yet", so the
+    # row survives and keeps the ordinary transient cause.
     annual = StandardizedFinancials(
         reference_date=date(2015, 12, 31),
         sector=Sector.UTILITY,
@@ -680,12 +691,12 @@ async def test_a_priced_ticker_with_a_vendor_gap_stays_a_transient_miss() -> Non
         FakePrice(year=YearPrices()),
         repo,
         FakeShares({2015: _counts(common=800)}),
-        listed_since_resolver=lambda ticker: date(2006, 10, 27),
     )
 
     await use_case.execute(["TAEE11"])
 
     closed = [a for a in repo.saved if a.reference_date == date(2015, 12, 31)]
+    assert closed, "an unresolved gap keeps its row rather than being suppressed"
     assert closed[0].indicators.null_reasons["pe"] is not NullReason.NOT_YET_LISTED
 
 
@@ -694,9 +705,8 @@ async def test_a_sibling_class_not_yet_traded_is_named_not_yet_listed() -> None:
     # TAEE3/TAEE4 print no B3 session until 2017 — nearly every share moves
     # bundled in the unit until enough free float trades loose. The FCA's
     # Data_Inicio_Listagem cannot tell this apart from an ordinary listing date
-    # (it reads 2006 for TAEE4 too, same as TAEE11 — the ticker-level check below
-    # would not fire), so the cause has to come from B3's own tape: TAEE3/TAEE4
-    # get a price from 2017 on, none in 2015.
+    # (it reads 2006 for TAEE4 too, same as TAEE11), so the cause has to come
+    # from B3's own tape: TAEE3/TAEE4 get a price from 2017 on, none in 2015.
     annual = StandardizedFinancials(
         reference_date=date(2015, 12, 31),
         sector=Sector.UTILITY,
@@ -716,7 +726,6 @@ async def test_a_sibling_class_not_yet_traded_is_named_not_yet_listed() -> None:
         ),
         repo,
         FakeShares({2015: _counts(common=800, preferred=1600)}),
-        listed_since_resolver=lambda ticker: date(2006, 10, 27),
     )
 
     await use_case.execute(["TAEE11"])

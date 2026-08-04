@@ -776,7 +776,6 @@ async def _run_analyze(
                 shares_reader=shares_reader,
                 classification_resolver=_classification_resolver(identities),
                 classes_resolver=_classes_resolver(identities),
-                listed_since_resolver=_listed_since_resolver(identities),
             )
             run = await use_case.execute(tickers)
     finally:
