@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
 
@@ -102,16 +102,6 @@ ClassificationResolver = Callable[[str], Classification]
 # registry-backed resolver so an on-demand ticker is capitalized too (#110).
 ClassesResolver = Callable[[str], tuple[ShareClass, ...]]
 
-# When a ticker was admitted to listing (``portfolio.domain.listings``). A closed
-# year that ends before it cannot have a price in any source, which is a fact
-# about the world rather than a gap of ours (#153). Defaults to "unknown", which
-# simply never makes the claim.
-ListedSinceResolver = Callable[[str], date | None]
-
-
-def _unknown_listed_since(ticker: str) -> date | None:
-    return None
-
 
 def _default_classification(ticker: str) -> Classification:
     """Snapshot-only resolver: the committed B3 taxonomy, or an unknown ticker."""
@@ -175,7 +165,6 @@ class AnalyzePortfolioUseCase:
         clock: Clock = _utc_now,
         classification_resolver: ClassificationResolver = _default_classification,
         classes_resolver: ClassesResolver = listed_classes,
-        listed_since_resolver: ListedSinceResolver = _unknown_listed_since,
     ) -> None:
         self._reader = reader
         self._price_provider = price_provider
@@ -184,7 +173,6 @@ class AnalyzePortfolioUseCase:
         self._clock = clock
         self._classification_resolver = classification_resolver
         self._classes_resolver = classes_resolver
-        self._listed_since_resolver = listed_since_resolver
 
     async def execute(self, tickers: Iterable[str]) -> AnalysisRun:
         """Analyze each ticker, and never let one of them end the run.
@@ -217,10 +205,15 @@ class AnalyzePortfolioUseCase:
 
     async def _analyze_ticker(self, ticker: str) -> list[TickerAnalysis]:
         quarters = await self._reader.history(ticker)
-        annuals = await self._reader.annuals(ticker)
-        if not quarters and not annuals:
+        filed = await self._reader.annuals(ticker)
+        if not quarters and not filed:
             logger.warning("No CVM fundamentals for %s; skipping", ticker)
             return []
+        # Ahead of everything else: a fiscal year filed before the ticker's own
+        # first B3 session is not a row this analysis produces at all (ADR 0048),
+        # and filtering here — rather than per closed-year row — keeps a
+        # suppressed year out of the TTM's growth/CAGR comparisons too.
+        annuals = await self._traded_annuals(ticker, filed)
 
         classification = self._classification_resolver(ticker)
         computed_at = self._clock()
@@ -245,6 +238,38 @@ class AnalyzePortfolioUseCase:
             await self._repository.save(analysis)
         logger.info("Analyzed %s: %d view(s)", ticker, len(analyses))
         return analyses
+
+    async def _traded_annuals(
+        self, ticker: str, annuals: list[StandardizedFinancials]
+    ) -> list[StandardizedFinancials]:
+        """The closed exercises ``ticker`` was actually trading in, oldest first.
+
+        A fiscal year CVM filed before the security's own first B3 session is not
+        a row this analysis produces — not with a null price, not with nothing
+        (ADR 0048): the market has no opinion on a company that was not yet on
+        it, and every reference platform this project is measured against agrees.
+
+        Walked oldest → newest so a year already known to have priced settles the
+        question for every year after it (``seen_priced``): once true, a later
+        empty year is an ordinary transient gap, not a pre-listing one, and the
+        row stays. Only a year that has never yet priced asks the tape whether
+        some *later* year does — the same read ``_market_for_year`` already
+        performs for the rows that survive, so this costs nothing new. A ticker
+        that never prices at all, in any direction, is left in rather than
+        guessed at: the absence has no later year to explain it, so it stays a
+        plain transient gap instead of a claim this analysis cannot back.
+        """
+        traded: list[StandardizedFinancials] = []
+        seen_priced = False
+        for annual in annuals:
+            year = annual.reference_date.year
+            if (await self._year_prices(ticker, year)).nominal_avg is not None:
+                seen_priced = True
+                traded.append(annual)
+                continue
+            if seen_priced or not await self._not_yet_traded(ticker, year):
+                traded.append(annual)
+        return traded
 
     async def _ttm_analysis(
         self,
@@ -337,18 +362,6 @@ class AnalyzePortfolioUseCase:
             cap_null_reason=cap_null_reason,
         )
 
-    def _not_yet_listed(self, ticker: str, year: int) -> bool:
-        """Whether ``year`` ends before ``ticker`` was listed.
-
-        Only ever consulted once the cap has already come out null, so the claim
-        needs *both* that no source had a price and that the registry puts the
-        listing later. The date alone would not be enough: it records admission as
-        the FCA now states it, and a filer that migrated segments can carry a date
-        later than its real debut.
-        """
-        listed_since = self._listed_since_resolver(ticker)
-        return listed_since is not None and listed_since.year > year
-
     async def _sibling_not_yet_traded(
         self,
         classes: tuple[ShareClass, ...],
@@ -356,26 +369,28 @@ class AnalyzePortfolioUseCase:
         year: int,
     ) -> bool:
         """Whether the cap is null because a *sibling* class had not started
-        trading yet — never the analysed ticker itself (``_not_yet_listed``
-        already covers that case, off the FCA rather than the tape).
+        trading yet — never the analysed ticker itself, which ``_traded_annuals``
+        has already kept out of this year's row if it applied (ADR 0048).
         """
         for share_class in classes:
-            if prices.get(
-                share_class.symbol
-            ) is None and await self._class_not_yet_traded(share_class.symbol, year):
+            if prices.get(share_class.symbol) is None and await self._not_yet_traded(
+                share_class.symbol, year
+            ):
                 return True
         return False
 
-    async def _class_not_yet_traded(self, symbol: str, year: int) -> bool:
+    async def _not_yet_traded(self, symbol: str, year: int) -> bool:
         """Whether ``symbol`` prints its first B3 session only after ``year``.
 
         Reads B3's own tape forward from ``year``, never the FCA's
-        ``Data_Inicio_Listagem``: that column is what the 2026-07-30 correction to
-        #164 already proved unreliable for exactly this case — it reads 2006 for
-        TAEE4, same as TAEE11, because CVM's admission date is not B3's first
-        trade. Bounded at the current year, so a class that never trades again
-        reads as a plain gap rather than a claim about a debut that has not
-        happened.
+        ``Data_Inicio_Listagem`` (ADR 0048): that column is provably wrong at
+        exchange scale in both directions — it reads 2006 for TAEE4 (#164), same
+        as TAEE11, and it reads 2025 for Natura (NATU3), which B3 shows trading
+        since at least 2012. ``symbol`` is either the analysed ticker itself
+        (``_traded_annuals``) or a sibling class in its cap
+        (``_sibling_not_yet_traded``) — the question is the same either way.
+        Bounded at the current year, so a symbol that never trades again reads as
+        a plain gap rather than a claim about a debut that has not happened.
         """
         limit = self._clock().year
         for candidate_year in range(year + 1, limit + 1):
@@ -442,24 +457,19 @@ class AnalyzePortfolioUseCase:
             # generic MISSING_PRICE the cap reports, so the null is non-transient in
             # ``smaug doctor`` (#64).
             cap_null_reason = own.null_reason
-        if cap is None and self._not_yet_listed(ticker, year):
-            # Outranks both: the year ends before the instrument existed, so there
-            # was never a price to miss. Taken from the FCA, never from a price
-            # vendor — a vendor's earliest datum is its own coverage, and for an
-            # illiquid class it lands years late (#153).
-            cap_null_reason = NullReason.NOT_YET_LISTED
         if (
             cap is None
             and cap_null_reason is NullReason.MISSING_PRICE
             and await self._sibling_not_yet_traded(classes, prices, year)
         ):
-            # The analysed ticker itself was trading (``_not_yet_listed`` above
-            # found nothing) but a *sibling* class was not: a unit's component can
-            # carry an FCA listing date from the company's IPO while B3 prints no
-            # session for it for years, because nearly every share moves bundled in
-            # the unit until enough free float trades loose (#164) — TAEE4 files
-            # 2006, its first B3 session is 2017-05-10. The FCA cannot tell this
-            # apart from a class that is simply illiquid, so the tape does.
+            # The analysed ticker itself was trading this year (``_traded_annuals``
+            # would have dropped the row otherwise) but a *sibling* class was not:
+            # a unit's component can carry an FCA listing date from the company's
+            # IPO while B3 prints no session for it for years, because nearly
+            # every share moves bundled in the unit until enough free float trades
+            # loose (#164) — TAEE4 files 2006, its first B3 session is 2017-05-10.
+            # The FCA cannot tell this apart from a class that is simply illiquid,
+            # so the tape does (ADR 0048).
             cap_null_reason = NullReason.NOT_YET_LISTED
         market = MarketData(
             price=own.nominal_avg,

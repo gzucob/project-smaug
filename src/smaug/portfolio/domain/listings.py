@@ -1,26 +1,31 @@
 """When each curated ticker was admitted to listing on B3.
 
-A closed year that ends before a ticker was listed cannot have a price in any
-source — that is a fact about the world, not a gap of ours, and it is what lets
-the analysis call such a null deliberate rather than a warning (#153).
+**Not consulted for whether the analysis produces a row.** That question used
+to be asked of this column (`#153`) and no longer is (ADR 0048): a cross-check
+against B3's own tape found this date wrong at exchange scale in both
+directions — WEGE3 reads 2007-06-22 though WEG has traded since the 1970s, and
+Natura's own record (outside the curated nine, so read straight off the
+registry) reads 2025, decades after B3 shows it trading. Neither error is safe
+to build a "not yet listed" claim on, so `AnalyzePortfolioUseCase` now asks B3's
+own tape instead (`_not_yet_traded`) and no longer imports this module at all.
 
-The date is the FCA's ``Data_Inicio_Listagem``, and the column matters. Its
-neighbour ``Data_Inicio_Negociacao`` is the start of trading **in the current
-listing segment**, not the instrument's debut: it reads 2018-05-14 for PETR4 and
-2017-12-22 for VALE3, which are their Nível 2 and Novo Mercado migrations. Using
-it would have declared Vale unlisted in 2016.
+What this date still bounds is a **code-succession chain**
+(`analysis.infrastructure.succession.CodeSuccession`): when walking backwards
+through a security's earlier trading codes, a candidate whose sessions stop
+before this date cannot be this security's earlier self — it belonged to
+whatever the registrant was before this listing existed. A floor for that walk,
+not a birth certificate for pricing.
+
+The date is the FCA's ``Data_Inicio_Listagem``. Its neighbour
+``Data_Inicio_Negociacao`` is the start of trading **in the current listing
+segment**, not the instrument's debut: it reads 2018-05-14 for PETR4 and
+2017-12-22 for VALE3, which are their Nível 2 and Novo Mercado migrations —
+using it would have bounded the chain walk too late.
 
 Curated here for the nine for the same reason ``LISTED_CLASSES`` is: they keep
 their verified keys and never trigger an FCA download (``_registry_identities``).
 Any other ticker resolves from the registry on demand, which reads the same
-column.
-
-**The column is a floor, not a birth certificate.** It records admission to
-listing as the FCA now states it, and a company that migrated segments can carry
-the later date — WEGE3 reads 2007-06-22 though WEG has traded since the 1970s.
-That is why the analysis only calls a year "not yet listed" when it *also* found
-no price anywhere: the date alone may be late, and being late is precisely the
-error this exists to avoid making in the other direction.
+column, uncurated.
 """
 
 from __future__ import annotations
