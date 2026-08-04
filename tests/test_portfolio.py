@@ -2,23 +2,13 @@
 
 import pytest
 
-from smaug.portfolio.domain.sectors import (
-    Sector,
-    portfolio_tickers,
-    require_portfolio_tickers,
-    sector_from_cvm,
-    sector_of,
-)
+from smaug.portfolio.domain.sectors import PORTFOLIO, Sector, sector_from_cvm, sector_of
 from smaug.portfolio.domain.share_classes import (
     ShareKind,
     is_unit,
     listed_classes,
 )
 from smaug.shared.errors import UnknownTickerError
-
-
-def test_should_list_nine_tickers_when_portfolio_read() -> None:
-    assert len(portfolio_tickers()) == 9
 
 
 def test_should_map_the_ticker_to_its_sector() -> None:
@@ -33,20 +23,10 @@ def test_should_raise_unknown_ticker_error_when_ticker_unknown() -> None:
         sector_of("NOPE3")
 
 
-def test_should_pass_require_portfolio_tickers_when_all_known() -> None:
-    require_portfolio_tickers(portfolio_tickers())  # no raise
-
-
-def test_should_raise_require_portfolio_tickers_when_one_is_unknown() -> None:
-    # A typo mixed with real tickers is a user error, caught up front (#60).
-    with pytest.raises(UnknownTickerError, match="ZZZZ99"):
-        require_portfolio_tickers(["PETR4", "ZZZZ99"])
-
-
-def test_every_portfolio_ticker_has_its_listed_classes() -> None:
+def test_every_curated_ticker_has_its_listed_classes() -> None:
     # A ticker with no composition cannot be capitalized (ADR 0014), so the map
-    # must not fall behind the portfolio.
-    for ticker in portfolio_tickers():
+    # must not fall behind the curated sector fallback.
+    for ticker in PORTFOLIO:
         assert listed_classes(ticker), ticker
 
 

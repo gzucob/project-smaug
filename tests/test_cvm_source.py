@@ -13,7 +13,7 @@ from smaug.ingestion.infrastructure.cvm_source import (
     _Statement,
 )
 from smaug.portfolio.domain.cvm_codes import TICKER_TO_CVM_CODE
-from smaug.portfolio.domain.sectors import portfolio_tickers
+from smaug.portfolio.domain.sectors import PORTFOLIO
 from smaug.shared.errors import CvmDownloadError, SourceNotFoundError
 from tests.fakes import no_sleep
 
@@ -71,7 +71,7 @@ def _source(tmp_path: Path, mapping: dict[str, str]) -> CvmDataSource:
 
 def test_every_portfolio_ticker_has_a_cvm_code() -> None:
     # A missing code would make that ticker silently skip during collection.
-    assert set(portfolio_tickers()) == set(TICKER_TO_CVM_CODE)
+    assert set(PORTFOLIO) == set(TICKER_TO_CVM_CODE)
     assert all(code.strip() for code in TICKER_TO_CVM_CODE.values())
 
 

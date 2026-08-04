@@ -1,9 +1,13 @@
-"""FastAPI read API for the computed indicators (Phase 2 delivery).
+"""FastAPI read API for the computed indicators, plus the portfolio's write
+surface (Phase 2 delivery).
 
 Serves the latest persisted analysis per ticker as JSON — the surface the
-front-end will consume. This is the composition root for the read side: it wires
-the Postgres repository and maps domain entities to Pydantic response models.
-Computation/persistence is the ``analyze`` CLI command; this only reads.
+front-end consumes. This is the composition root for the API: it wires the
+Postgres repositories and maps domain entities to Pydantic response models.
+Computation/persistence of *analysis* stays the ``analyze`` CLI command's job
+(``CLAUDE.md``'s "the API is a read API, not a write one" — still true for
+indicators); the portfolio (which tickers the user favorited, #151) is the one
+thing this API is allowed to write, since it is not computed, only chosen.
 """
 
 from __future__ import annotations
@@ -12,19 +16,33 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
+from smaug.portfolio.application.manage_portfolio import ManagePortfolioUseCase
+from smaug.portfolio.domain.entities import PortfolioTicker
+from smaug.portfolio.infrastructure.sql_repository import SqlAlchemyPortfolioRepository
 from smaug.shared.config import get_settings
+from smaug.shared.errors import UnknownTickerError
 from smaug.shared.sql_db import create_engine, create_session_factory
 
 _settings = get_settings()
-_repository = SqlAlchemyAnalysisRepository(
-    create_session_factory(create_engine(_settings))
-)
+_session_factory = create_session_factory(create_engine(_settings))
+_repository = SqlAlchemyAnalysisRepository(_session_factory)
+_portfolio = ManagePortfolioUseCase(SqlAlchemyPortfolioRepository(_session_factory))
 
 app = FastAPI(title="smaug — análise fundamentalista", version="0.1.0")
+# The only cross-origin caller is PR 2's Next.js Route Handler proxying the
+# favorite-ticker toggle — every read stays server-side (RULES_FRONTEND), so
+# this never needs to admit a browser origin, only that one server.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(_settings.api_cors_origins),
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["*"],
+)
 
 
 class IndicatorsResponse(BaseModel):
@@ -127,6 +145,17 @@ class TickerViewsResponse(BaseModel):
     history: list[AnalysisResponse]  # closed years, oldest → newest
 
 
+class PortfolioTickerResponse(BaseModel):
+    """One favorited ticker (#151)."""
+
+    ticker: str
+    added_at: datetime
+
+
+def _to_portfolio_response(entry: PortfolioTicker) -> PortfolioTickerResponse:
+    return PortfolioTickerResponse(ticker=entry.ticker, added_at=entry.added_at)
+
+
 def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
     return AnalysisResponse(
         ticker=analysis.ticker,
@@ -169,3 +198,31 @@ async def get_analysis(ticker: str) -> TickerViewsResponse:
         ttm=_to_response(ttm) if ttm is not None else None,
         history=[_to_response(a) for a in history],
     )
+
+
+@app.get("/portfolio", response_model=list[PortfolioTickerResponse])
+async def list_portfolio() -> list[PortfolioTickerResponse]:
+    """Every favorited ticker, oldest favorite first."""
+    return [_to_portfolio_response(p) for p in await _portfolio.list()]
+
+
+@app.post("/portfolio/{ticker}", response_model=PortfolioTickerResponse)
+async def add_to_portfolio(ticker: str) -> PortfolioTickerResponse:
+    """Favorite a ticker. Idempotent — favoriting one already in stays a no-op.
+
+    422 only on a ticker that does not even have the *shape* of a B3 trading
+    code (``is_trading_code``) — not a registry lookup: the front-end only ever
+    shows the favorite button on a ticker page that already loaded real
+    analysis data, so a shaped ticker reaching here is already established.
+    """
+    try:
+        entry = await _portfolio.add(ticker)
+    except UnknownTickerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _to_portfolio_response(entry)
+
+
+@app.delete("/portfolio/{ticker}", status_code=204)
+async def remove_from_portfolio(ticker: str) -> None:
+    """Un-favorite a ticker. Idempotent — removing one already absent is a no-op."""
+    await _portfolio.remove(ticker)

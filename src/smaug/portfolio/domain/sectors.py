@@ -3,12 +3,16 @@
 This is a hard-coded de/para, never a semantic inference. Phase 2 will use
 the sector to pick the right set of criteria; Phase 1 uses it only to drive
 the sector-directed completeness check (plan §6).
+
+``PORTFOLIO`` is a curated sector *fallback/override* for these nine — it is
+no longer the portfolio-membership list (#151 moved that to Postgres,
+``portfolio.infrastructure.sql_repository``); a ticker outside this dict
+still resolves a sector via ``sector_from_cvm``, curated or not.
 """
 
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Iterable
 from enum import StrEnum
 
 from smaug.shared.errors import UnknownTickerError
@@ -36,11 +40,6 @@ PORTFOLIO: dict[str, Sector] = {
     "BBSE3": Sector.INSURER,
     "CXSE3": Sector.INSURER,
 }
-
-
-def portfolio_tickers() -> tuple[str, ...]:
-    """Return the portfolio tickers in a stable order."""
-    return tuple(PORTFOLIO.keys())
 
 
 def sector_of(ticker: str) -> Sector:
@@ -82,16 +81,3 @@ def sector_from_cvm(cvm_sector: str) -> Sector:
     ):
         return Sector.COMMODITY
     return Sector.INDUSTRY
-
-
-def require_portfolio_tickers(tickers: Iterable[str]) -> None:
-    """Reject the first ticker not in the portfolio, raising ``UnknownTickerError``.
-
-    A ticker absent from the portfolio is a user input error the moment it is
-    passed — not a data-source 404. Ingest stays batch-resilient for real
-    filings, but a typo is caught up front (like the analyze path, #13/#60)
-    instead of being folded into the collection log as an expected skip.
-    """
-    for ticker in tickers:
-        if ticker not in PORTFOLIO:
-            raise UnknownTickerError(ticker)

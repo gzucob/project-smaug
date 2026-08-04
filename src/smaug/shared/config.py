@@ -96,6 +96,13 @@ class Settings(BaseSettings):
         default="postgresql+asyncpg://smaug:smaug@localhost:5432/smaug"
     )
 
+    # ---- API (Phase 2 read API + the portfolio's write surface, #151) ----
+    # Every existing read is fetched server-side by the frontend (RULES_FRONTEND:
+    # "no CORS surface"). The one exception is the favorite-ticker toggle, proxied
+    # through a same-origin Next.js route — so this only ever needs to admit that
+    # one server, never the browser directly.
+    api_cors_origins: tuple[str, ...] = Field(default=("http://localhost:3000",))
+
 
 def get_settings() -> Settings:
     """Build a fresh Settings instance (composition-root helper)."""

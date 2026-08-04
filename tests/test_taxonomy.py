@@ -1,6 +1,6 @@
 """B3 taxonomy snapshot and the CVM single-level fallback (ADR 0024)."""
 
-from smaug.portfolio.domain.sectors import portfolio_tickers
+from smaug.portfolio.domain.sectors import PORTFOLIO
 from smaug.portfolio.domain.taxonomy import (
     Classification,
     b3_classification,
@@ -10,7 +10,7 @@ from smaug.portfolio.domain.taxonomy import (
 
 
 def test_snapshot_covers_every_portfolio_ticker_with_three_levels() -> None:
-    for ticker in portfolio_tickers():
+    for ticker in PORTFOLIO:
         c = b3_classification(ticker)
         assert c is not None, ticker
         assert c.setor, ticker
