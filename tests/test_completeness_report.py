@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 from smaug.ingestion.application.report import CompletenessReportUseCase
-from tests.fakes import FakeRawIngestionRepository, make_snapshot
+from tests.fakes import FakeRawIngestionRepository, fake_sector_resolver, make_snapshot
 
 
 async def test_cvm_report_counts_accounts_and_checks_bank_anchors() -> None:
@@ -36,7 +36,7 @@ async def test_cvm_report_counts_accounts_and_checks_bank_anchors() -> None:
     )
 
     report = await CompletenessReportUseCase(
-        repo, ["BPA", "BPP", "DRE", "DFC"]
+        repo, ["BPA", "BPP", "DRE", "DFC"], sector_resolver=fake_sector_resolver
     ).execute(["BBAS3"])
 
     assert report.depth_label == "accounts"
@@ -67,7 +67,7 @@ async def test_cvm_report_flags_holding_insurer_missing_seguros() -> None:
     )
 
     report = await CompletenessReportUseCase(
-        repo, ["BPA", "BPP", "DRE", "DFC"]
+        repo, ["BPA", "BPP", "DRE", "DFC"], sector_resolver=fake_sector_resolver
     ).execute(["CXSE3"])
 
     missing = report.tickers[0].sector_check.missing_fields

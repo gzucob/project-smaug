@@ -19,10 +19,10 @@ from typing import Any, Protocol
 
 from smaug.ingestion.domain.repositories import RawIngestionRepository
 from smaug.portfolio.domain.company import RegistrantResolver
-from smaug.portfolio.domain.sectors import Sector, sector_of
+from smaug.portfolio.domain.sectors import Sector
 
-# Curated nine by default; the CLI injects a registry-backed resolver so the
-# report can describe an on-demand ticker too.
+# A CVM-registry-backed resolver, injected at the composition root (cli.py) —
+# no per-ticker override exists to default to (#212).
 SectorResolver = Callable[[str], Sector]
 
 
@@ -159,7 +159,7 @@ class CompletenessReportUseCase:
         repository: RawIngestionRepository,
         modules: Sequence[str],
         *,
-        sector_resolver: SectorResolver = sector_of,
+        sector_resolver: SectorResolver,
         registrant_resolver: RegistrantResolver = _no_registrant,
     ) -> None:
         self._repository = repository

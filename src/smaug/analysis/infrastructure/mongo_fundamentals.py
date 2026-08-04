@@ -35,7 +35,7 @@ from smaug.analysis.domain.financials import (
 )
 from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
 from smaug.portfolio.domain.company import RegistrantResolver
-from smaug.portfolio.domain.sectors import Sector, sector_of
+from smaug.portfolio.domain.sectors import Sector
 
 _STATEMENTS = ("BPA", "BPP", "DRE", "DFC", "DMPL")
 
@@ -762,13 +762,13 @@ class MongoFundamentalsReader:
         self,
         collection: RawCollection,
         *,
-        sector_resolver: Callable[[str], Sector] = sector_of,
+        sector_resolver: Callable[[str], Sector],
         registrant_resolver: RegistrantResolver = no_registrant,
     ) -> None:
         self._collection = collection
         # The sector only seeds the ``expected_regime`` fallback (the filed regime,
-        # read off the statement, decides applicability). Curated for the nine;
-        # the CLI injects a registry-backed resolver for on-demand tickers.
+        # read off the statement, decides applicability). The CLI injects a
+        # registry-backed resolver, unconditionally (#212).
         self._sector_resolver = sector_resolver
         # Which registrant's filings to read (ADR 0030) — the same resolution, from
         # the same registry, that the sector one uses.

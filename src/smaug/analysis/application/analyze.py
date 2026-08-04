@@ -48,7 +48,7 @@ from smaug.analysis.domain.ports import (
     SharesReader,
 )
 from smaug.analysis.domain.ttm import build_ttm
-from smaug.portfolio.domain.share_classes import ShareClass, listed_classes
+from smaug.portfolio.domain.share_classes import ShareClass
 from smaug.portfolio.domain.taxonomy import Classification, classify
 from smaug.shared.errors import SourceError, UnknownTickerError
 from smaug.shared.logging import get_logger
@@ -97,9 +97,9 @@ class AnalysisRun:
 # so an on-demand ticker outside it degrades to the CVM single level (ADR 0024).
 ClassificationResolver = Callable[[str], Classification]
 
-# How a ticker's listed share classes are resolved for the cap (ADR 0014).
-# Defaults to the curated nine (``listed_classes``); the CLI passes a
-# registry-backed resolver so an on-demand ticker is capitalized too (#110).
+# How a ticker's listed share classes are resolved for the cap (ADR 0014). The
+# CLI passes a registry-backed resolver, unconditionally, for every ticker
+# (#110, #212).
 ClassesResolver = Callable[[str], tuple[ShareClass, ...]]
 
 
@@ -164,7 +164,7 @@ class AnalyzePortfolioUseCase:
         *,
         clock: Clock = _utc_now,
         classification_resolver: ClassificationResolver = _default_classification,
-        classes_resolver: ClassesResolver = listed_classes,
+        classes_resolver: ClassesResolver,
     ) -> None:
         self._reader = reader
         self._price_provider = price_provider

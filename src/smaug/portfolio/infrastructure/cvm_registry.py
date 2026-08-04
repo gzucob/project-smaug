@@ -11,9 +11,9 @@ the ticker has to be resolved to those keys. That link lives in the CVM's
     ``Setor_Atividade`` and ``Situacao_Registro_CVM``, also keyed by CNPJ.
 
 So ``ticker -> CNPJ`` (securities) joined with ``CNPJ -> CD_CVM`` (general) gives
-the full identity. This replaces the hand-curated ``cvm_codes.py`` maps for any
-ticker outside the nine, and scales to the whole exchange (the batch-ingestion
-slice of M2 reuses the same index).
+the full identity — resolved this way for every ticker, no hand-picked shortcut
+(#212), and it scales to the whole exchange (the batch-ingestion slice of M2
+reuses the same index).
 
 Follows the same download-once / cache / read-in-a-thread shape as
 ``CvmDataSource``; the FCA CSVs are latin-1, semicolon-separated like every CVM
@@ -68,6 +68,9 @@ class _Security:
     trading: bool
     version: int
     listed_since: date | None = None
+    # Underlying shares this ticker's own row bundles, when the row is a unit
+    # ("Units ..."); ``None`` for a plain ON/PN class.
+    unit_shares: int | None = None
 
 
 @dataclass
@@ -100,7 +103,7 @@ def _is_unit(valor_mobiliario: str) -> bool:
     return _fold(valor_mobiliario).strip().startswith("units")
 
 
-_TICKER_RE = re.compile(r"\b[A-Z]{4}\d{1,2}\b")
+_UNIT_COMPONENT_RE = re.compile(r"(\d+)\s*([A-Z]{4}\d{1,2})")
 
 
 def _kind_from_suffix(symbol: str) -> ShareKind | None:
@@ -113,18 +116,20 @@ def _kind_from_suffix(symbol: str) -> ShareKind | None:
     return None
 
 
-def _unit_classes(composition: str) -> list[tuple[str, ShareKind]]:
-    """Underlying ON/PN classes named in a unit's ``Composicao_BDR_Unit``.
+def _unit_composition(composition: str) -> list[tuple[int, str, ShareKind]]:
+    """Quantity + underlying ON/PN classes named in a unit's ``Composicao_BDR_Unit``.
 
     Some companies file only the unit on the FCA (Klabin lists KLBN11, never
     KLBN3/KLBN4), but the unit row spells its bundle out — e.g. "1 KLBN3 +
-    4 KLBN4". Parse the class tickers from it, keyed by suffix.
+    4 KLBN4". Parse the leading quantity alongside each class ticker, keyed by
+    suffix: the quantities summed are how many underlying shares one unit is
+    worth (#212), which the FRE itself never publishes.
     """
-    resolved: list[tuple[str, ShareKind]] = []
-    for symbol in _TICKER_RE.findall(composition.upper()):
+    resolved: list[tuple[int, str, ShareKind]] = []
+    for qty, symbol in _UNIT_COMPONENT_RE.findall(composition.upper()):
         kind = _kind_from_suffix(symbol)
         if kind is not None:
-            resolved.append((symbol, kind))
+            resolved.append((int(qty), symbol, kind))
     return resolved
 
 
@@ -254,6 +259,7 @@ class CvmCompanyRegistry:
                 situation=company.situation,
                 listed_since=security.listed_since,
                 share_classes=classes.get(security.cnpj, ()),
+                shares_per_unit=security.unit_shares,
             )
         return index
 
@@ -290,6 +296,8 @@ class CvmCompanyRegistry:
         A single pass: the ticker map keys off ``Codigo_Negociacao``; the class
         accumulator gathers the company's trading ON/PN symbols (units and BDRs
         are skipped by ``_share_kind``) so the cap knows what to price (ADR 0014).
+        A unit row also carries its own bundle ratio (``unit_shares``), parsed
+        from the same ``Composicao_BDR_Unit`` text (#212).
         """
         securities: dict[str, _Security] = {}
         classes: dict[str, _ClassAccumulator] = {}
@@ -303,11 +311,20 @@ class CvmCompanyRegistry:
                 if not ticker or not cnpj:
                     continue
                 trading = not (row.get("Data_Fim_Negociacao") or "").strip()
+                valor = row.get("Valor_Mobiliario") or ""
+                kind = _share_kind(valor)
+                composition = (
+                    _unit_composition(row.get("Composicao_BDR_Unit") or "")
+                    if kind is None and _is_unit(valor)
+                    else ()
+                )
+                unit_shares = sum(qty for qty, _, _ in composition) or None
                 candidate = _Security(
                     cnpj=cnpj,
                     trading=trading,
                     version=_int(row.get("Versao")),
                     listed_since=_iso_date(row.get("Data_Inicio_Listagem")),
+                    unit_shares=unit_shares,
                 )
                 current = securities.get(ticker)
                 if current is None or _prefer(candidate, current):
@@ -315,16 +332,12 @@ class CvmCompanyRegistry:
 
                 if not trading:
                     continue
-                valor = row.get("Valor_Mobiliario") or ""
-                kind = _share_kind(valor)
                 if kind is not None:
                     classes.setdefault(cnpj, _ClassAccumulator()).add(kind, ticker)
-                elif _is_unit(valor):
+                elif composition:
                     # A unit-only filer (Klabin) names its classes in the bundle.
                     accumulator = classes.setdefault(cnpj, _ClassAccumulator())
-                    for symbol, unit_kind in _unit_classes(
-                        row.get("Composicao_BDR_Unit") or ""
-                    ):
+                    for _qty, symbol, unit_kind in composition:
                         accumulator.add(unit_kind, symbol)
         return securities, classes
 

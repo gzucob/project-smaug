@@ -12,6 +12,8 @@ from typing import Any
 
 from smaug.ingestion.domain.entities import RawIngestion
 from smaug.ingestion.domain.ports import RawFetchResult
+from smaug.portfolio.domain.sectors import Sector
+from smaug.portfolio.domain.share_classes import ShareClass, ShareKind
 
 
 def make_snapshot(
@@ -119,3 +121,66 @@ class FakeDataSource:
                 payload=payload,
             )
         ]
+
+
+# --- Sector / share-class facts, for tests only -----------------------------
+#
+# Production code resolves both, for every ticker, from a live CVM FCA
+# download (``CvmCompanyRegistry`` — #212): there is no per-ticker shortcut
+# left anywhere under ``src/``. A unit test still needs *some* answer for the
+# handful of tickers its fixtures name, so it keeps its own small, explicit
+# copy here rather than reaching for the network.
+
+_FAKE_SECTORS: dict[str, Sector] = {
+    "PETR4": Sector.COMMODITY,
+    "VALE3": Sector.COMMODITY,
+    "SAPR11": Sector.UTILITY,
+    "TAEE11": Sector.UTILITY,
+    "WEGE3": Sector.INDUSTRY,
+    "BBAS3": Sector.BANK,
+    "BBDC4": Sector.BANK,
+    "BBSE3": Sector.INSURER,
+    "CXSE3": Sector.INSURER,
+}
+
+
+def fake_sector_resolver(ticker: str) -> Sector:
+    """A ``Sector`` for the tickers this suite's fixtures name; else INDUSTRY."""
+    return _FAKE_SECTORS.get(ticker, Sector.INDUSTRY)
+
+
+def _on(symbol: str) -> ShareClass:
+    return ShareClass(symbol=symbol, kind=ShareKind.COMMON)
+
+
+def _pn(symbol: str) -> ShareClass:
+    return ShareClass(symbol=symbol, kind=ShareKind.PREFERRED)
+
+
+# The classes each fixture's company lists, including the ticker's own
+# siblings — PETR4 is analyzed, but Petrobras is worth PETR3 + PETR4.
+_FAKE_CLASSES: dict[str, tuple[ShareClass, ...]] = {
+    "PETR4": (_on("PETR3"), _pn("PETR4")),
+    "VALE3": (_on("VALE3"),),
+    "SAPR11": (_on("SAPR3"), _pn("SAPR4")),
+    "TAEE11": (_on("TAEE3"), _pn("TAEE4")),
+    "WEGE3": (_on("WEGE3"),),
+    "BBAS3": (_on("BBAS3"),),
+    "BBDC4": (_on("BBDC3"), _pn("BBDC4")),
+    "BBSE3": (_on("BBSE3"),),
+    "CXSE3": (_on("CXSE3"),),
+}
+
+
+def fake_classes_resolver(ticker: str) -> tuple[ShareClass, ...]:
+    """The listed ON/PN classes for the tickers this suite's fixtures name."""
+    return _FAKE_CLASSES.get(ticker, ())
+
+
+# Underlying shares one unit bundles — both fixtures' units are 1 ON + 2 PN.
+_FAKE_UNIT_COMPOSITION: dict[str, int] = {"SAPR11": 3, "TAEE11": 3}
+
+
+def fake_unit_composition_resolver(ticker: str) -> int | None:
+    """Underlying shares one unit bundles, for the tickers this suite names."""
+    return _FAKE_UNIT_COMPOSITION.get(ticker)

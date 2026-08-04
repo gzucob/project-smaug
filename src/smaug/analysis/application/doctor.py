@@ -26,10 +26,10 @@ from smaug.analysis.domain.indicators import (
     indicator_names,
 )
 from smaug.analysis.domain.ports import AnalysisRepository
-from smaug.portfolio.domain.sectors import Sector, sector_of
+from smaug.portfolio.domain.sectors import Sector
 
-# See ``analyze.SectorResolver``: the curated nine by default, a registry-backed
-# resolver for on-demand tickers, injected at the composition root.
+# A CVM-registry-backed resolver, injected at the composition root (cli.py) —
+# no per-ticker override exists to default to (#212).
 SectorResolver = Callable[[str], Sector]
 
 
@@ -136,7 +136,7 @@ class DoctorUseCase:
         self,
         repository: AnalysisRepository,
         *,
-        sector_resolver: SectorResolver = sector_of,
+        sector_resolver: SectorResolver,
     ) -> None:
         self._repository = repository
         self._sector_resolver = sector_resolver
