@@ -22,7 +22,7 @@ each class is summed at: the current quote, or that year's adjusted average.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -349,6 +349,42 @@ class AnalyzePortfolioUseCase:
         listed_since = self._listed_since_resolver(ticker)
         return listed_since is not None and listed_since.year > year
 
+    async def _sibling_not_yet_traded(
+        self,
+        classes: tuple[ShareClass, ...],
+        prices: Mapping[str, Decimal | None],
+        year: int,
+    ) -> bool:
+        """Whether the cap is null because a *sibling* class had not started
+        trading yet — never the analysed ticker itself (``_not_yet_listed``
+        already covers that case, off the FCA rather than the tape).
+        """
+        for share_class in classes:
+            if prices.get(
+                share_class.symbol
+            ) is None and await self._class_not_yet_traded(share_class.symbol, year):
+                return True
+        return False
+
+    async def _class_not_yet_traded(self, symbol: str, year: int) -> bool:
+        """Whether ``symbol`` prints its first B3 session only after ``year``.
+
+        Reads B3's own tape forward from ``year``, never the FCA's
+        ``Data_Inicio_Listagem``: that column is what the 2026-07-30 correction to
+        #164 already proved unreliable for exactly this case — it reads 2006 for
+        TAEE4, same as TAEE11, because CVM's admission date is not B3's first
+        trade. Bounded at the current year, so a class that never trades again
+        reads as a plain gap rather than a claim about a debut that has not
+        happened.
+        """
+        limit = self._clock().year
+        for candidate_year in range(year + 1, limit + 1):
+            if (
+                await self._year_prices(symbol, candidate_year)
+            ).nominal_avg is not None:
+                return True
+        return False
+
     async def _current_quote(self, ticker: str) -> MarketData:
         try:
             return await self._price_provider.get(ticker)
@@ -411,6 +447,19 @@ class AnalyzePortfolioUseCase:
             # was never a price to miss. Taken from the FCA, never from a price
             # vendor — a vendor's earliest datum is its own coverage, and for an
             # illiquid class it lands years late (#153).
+            cap_null_reason = NullReason.NOT_YET_LISTED
+        if (
+            cap is None
+            and cap_null_reason is NullReason.MISSING_PRICE
+            and await self._sibling_not_yet_traded(classes, prices, year)
+        ):
+            # The analysed ticker itself was trading (``_not_yet_listed`` above
+            # found nothing) but a *sibling* class was not: a unit's component can
+            # carry an FCA listing date from the company's IPO while B3 prints no
+            # session for it for years, because nearly every share moves bundled in
+            # the unit until enough free float trades loose (#164) — TAEE4 files
+            # 2006, its first B3 session is 2017-05-10. The FCA cannot tell this
+            # apart from a class that is simply illiquid, so the tape does.
             cap_null_reason = NullReason.NOT_YET_LISTED
         market = MarketData(
             price=own.nominal_avg,
