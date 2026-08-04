@@ -571,7 +571,7 @@ def _witnessed_ratio(
     the ones CVM declared.
 
     Two independent witnesses are required, and neither is enough alone
-    (ADR 0037):
+    (ADR 0037, re-measured against a live witness in ADR 0045):
 
     * the **counts**, whose ratio must sit within ``_WITNESS_BAND`` of a ratio an
       action could plausibly have. Alone this fires on coincidence — measured
@@ -591,9 +591,12 @@ def _witnessed_ratio(
         # Too small for either witness to tell from an issuance. The tape reads
         # the size only to ±25% (ADR 0035), so it cannot corroborate an action
         # smaller than its own error; and a 5% bonus is arithmetically the same
-        # move as a 5% follow-on. Measured: every cell this rule made *worse*
-        # against the vendor series sat here — CYRE3 went from 0.00% error to
-        # 16.00% in all eleven years on a 19/16 that the counts never made.
+        # move as a 5% follow-on. Re-measured against a live witness (ADR 0045,
+        # after ADR 0037's own CYRE3 evidence turned out to be a stale one): of
+        # the 13 gaps this line alone blocks, roughly half are real actions lost
+        # with the floor and half are coincidences or a misattributed later
+        # event (#202) — with no cheap way yet to tell them apart, the floor
+        # stays the safer default.
         return None
     window = _gap_window(previous_year, year)
     inside = [c for c in changes if window[0] <= c.session <= window[1]]
