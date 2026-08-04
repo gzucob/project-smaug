@@ -138,3 +138,9 @@ export interface TickerViews {
   ttm: Analysis | null;
   history: Analysis[]; // closed years, oldest → newest
 }
+
+/** One favorited ticker (#151), mirroring `PortfolioTickerResponse`. */
+export interface PortfolioTicker {
+  ticker: string;
+  added_at: string; // ISO datetime
+}

@@ -2,9 +2,13 @@ import Link from "next/link";
 import { DragonMark } from "@/components/DragonMark";
 import { SectorBadge } from "@/components/SectorBadge";
 import { TickerSearch } from "@/components/TickerSearch";
-import { PORTFOLIO, SECTORS } from "@/lib/sectors";
+import { fetchPortfolioList } from "@/lib/api";
+import { SECTORS } from "@/lib/sectors";
 
-export default function HomePage() {
+export default async function HomePage() {
+  const portfolioResult = await fetchPortfolioList();
+  const shortcuts = portfolioResult.ok ? portfolioResult.data.slice(0, 5) : [];
+
   return (
     <div className="mx-auto max-w-6xl px-5">
       {/* ---------------------------------------------------------- hero --- */}
@@ -40,24 +44,26 @@ export default function HomePage() {
           <TickerSearch />
         </div>
 
-        <div className="rise mt-6 flex flex-wrap items-center justify-center gap-2" style={{ animationDelay: "300ms" }}>
-          <span className="text-xs text-ink-600">Atalhos:</span>
-          {PORTFOLIO.slice(0, 5).map((p) => (
+        {shortcuts.length > 0 && (
+          <div className="rise mt-6 flex flex-wrap items-center justify-center gap-2" style={{ animationDelay: "300ms" }}>
+            <span className="text-xs text-ink-600">Atalhos:</span>
+            {shortcuts.map((p) => (
+              <Link
+                key={p.ticker}
+                href={`/ticker/${p.ticker}`}
+                className="pressable nums rounded-lg border border-gold-500/15 px-2.5 py-1 text-xs font-semibold tracking-wide text-ink-300 hover:border-gold-400/50 hover:text-gold-300"
+              >
+                {p.ticker}
+              </Link>
+            ))}
             <Link
-              key={p.ticker}
-              href={`/ticker/${p.ticker}`}
-              className="pressable nums rounded-lg border border-gold-500/15 px-2.5 py-1 text-xs font-semibold tracking-wide text-ink-300 hover:border-gold-400/50 hover:text-gold-300"
+              href="/portfolio"
+              className="pressable rounded-lg px-2.5 py-1 text-xs font-semibold text-gold-400 hover:text-gold-300"
             >
-              {p.ticker}
+              ver carteira →
             </Link>
-          ))}
-          <Link
-            href="/portfolio"
-            className="pressable rounded-lg px-2.5 py-1 text-xs font-semibold text-gold-400 hover:text-gold-300"
-          >
-            ver carteira →
-          </Link>
-        </div>
+          </div>
+        )}
       </section>
 
       {/* ------------------------------------------------------ features --- */}

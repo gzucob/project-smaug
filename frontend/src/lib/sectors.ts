@@ -55,16 +55,3 @@ export function gemKey(c: Classification): SectorKey {
   }
   return "industry";
 }
-
-/** The target portfolio in stable order (mirrors PORTFOLIO in sectors.py). */
-export const PORTFOLIO: { ticker: string; sector: SectorKey }[] = [
-  { ticker: "PETR4", sector: "commodity" },
-  { ticker: "VALE3", sector: "commodity" },
-  { ticker: "SAPR11", sector: "utility" },
-  { ticker: "TAEE11", sector: "utility" },
-  { ticker: "WEGE3", sector: "industry" },
-  { ticker: "BBAS3", sector: "bank" },
-  { ticker: "BBDC4", sector: "bank" },
-  { ticker: "BBSE3", sector: "insurer" },
-  { ticker: "CXSE3", sector: "insurer" },
-];

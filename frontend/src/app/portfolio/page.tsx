@@ -1,23 +1,40 @@
+import Link from "next/link";
 import { TickerCard } from "@/components/TickerCard";
 import { VaultOffline } from "@/components/VaultOffline";
-import { fetchPortfolio } from "@/lib/api";
-import { PORTFOLIO, SECTORS } from "@/lib/sectors";
-import type { Analysis, SectorKey } from "@/lib/types";
+import { fetchPortfolio, fetchPortfolioList } from "@/lib/api";
+import { SECTORS, gemKey } from "@/lib/sectors";
+import type { Analysis, PortfolioTicker, SectorKey } from "@/lib/types";
 
 export const metadata = { title: "Carteira — Smaug" };
 
 export default async function PortfolioPage() {
-  const result = await fetchPortfolio();
+  const [portfolioResult, analysesResult] = await Promise.all([
+    fetchPortfolioList(),
+    fetchPortfolio(),
+  ]);
 
-  if (!result.ok) {
-    return <VaultOffline message={result.message} />;
+  if (!portfolioResult.ok) {
+    return <VaultOffline message={portfolioResult.message} />;
   }
+  const favorites = portfolioResult.data;
 
   const byTicker = new Map<string, Analysis>();
-  for (const a of result.data) byTicker.set(a.ticker.toUpperCase(), a);
-  const computed = PORTFOLIO.filter((p) => byTicker.has(p.ticker)).length;
+  if (analysesResult.ok) {
+    for (const a of analysesResult.data) byTicker.set(a.ticker.toUpperCase(), a);
+  }
 
+  if (favorites.length === 0) {
+    return <EmptyPortfolio />;
+  }
+
+  const computed = favorites.filter((p) => byTicker.has(p.ticker)).length;
   const sectorsInOrder = Object.keys(SECTORS) as SectorKey[];
+  // Not yet computed has no classification to read a sector from — the same
+  // "industry" default the backend falls back to for an unmatched CVM label.
+  const sectorOf = (p: PortfolioTicker): SectorKey => {
+    const analysis = byTicker.get(p.ticker);
+    return analysis ? gemKey(analysis.classification) : "industry";
+  };
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-14">
@@ -33,15 +50,15 @@ export default async function PortfolioPage() {
         </div>
         <p className="nums text-sm text-ink-500">
           <span className="text-gold-300">{computed}</span> de{" "}
-          {PORTFOLIO.length} tickers analisados
+          {favorites.length} tickers analisados
         </p>
       </header>
 
       <div className="flex flex-col gap-12">
         {sectorsInOrder
-          .filter((key) => PORTFOLIO.some((p) => p.sector === key))
+          .filter((key) => favorites.some((p) => sectorOf(p) === key))
           .map((key, index) => {
-            const tickers = PORTFOLIO.filter((p) => p.sector === key);
+            const tickers = favorites.filter((p) => sectorOf(p) === key);
             const meta = SECTORS[key];
             const color = `var(${meta.colorVar})`;
             return (
@@ -74,7 +91,7 @@ export default async function PortfolioPage() {
                     <TickerCard
                       key={p.ticker}
                       ticker={p.ticker}
-                      sector={p.sector}
+                      sector={key}
                       analysis={byTicker.get(p.ticker) ?? null}
                     />
                   ))}
@@ -83,6 +100,29 @@ export default async function PortfolioPage() {
             );
           })}
       </div>
+    </div>
+  );
+}
+
+function EmptyPortfolio() {
+  return (
+    <div className="mx-auto max-w-2xl px-5 py-24 text-center">
+      <p className="rise text-xs font-semibold uppercase tracking-[0.3em] text-gold-500">
+        O tesouro
+      </p>
+      <h1 className="rise mt-2 font-display text-3xl text-ink-50">
+        A carteira está vazia
+      </h1>
+      <p className="rise mt-4 text-ink-400">
+        Busque um ticker e toque no coração na página dele para começar a
+        guardar seu tesouro.
+      </p>
+      <Link
+        href="/"
+        className="pressable mt-8 inline-block rounded-lg border border-gold-500/20 px-4 py-2 text-sm font-semibold text-gold-300 hover:border-gold-400/50"
+      >
+        Buscar um ticker
+      </Link>
     </div>
   );
 }
