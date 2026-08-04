@@ -8,7 +8,9 @@ applies_to: frontend/**/*.{ts,tsx,css}
 The front-end lives in **`frontend/`** at the repo root — a separate app from
 the Python backend under `src/smaug/`. It is a read-only UI over the Phase 2
 FastAPI analysis API; it never computes indicators, only fetches and formats
-already-computed results.
+already-computed results. The one write it makes is favoriting/un-favoriting a
+ticker (#151) — a preference, not a computation; `CLAUDE.md`'s "the API stays
+read-only" is about *indicators*, and that boundary is untouched.
 
 ## Stack
 
@@ -97,7 +99,13 @@ not in the fonts.
 - **Fetch server-side, in Server Components**, through `src/lib/api.ts`. The
   base URL is `NEXT_PUBLIC_API_BASE` (default `http://localhost:8000`). Because
   fetching is server-side there is **no CORS surface** — do not add
-  client-side calls to the API.
+  client-side calls to the FastAPI base URL. The one deliberate exception is
+  the favorite-ticker toggle (`FavoriteButton`, #151, ADR 0049): a click has
+  nowhere else to originate from, so it calls this app's own same-origin
+  `app/api/portfolio/[ticker]/route.ts`, which is what proxies to FastAPI —
+  the browser itself never gains a cross-origin surface. A new mutation
+  follows the same shape; it does not get its own reason to call FastAPI
+  directly from the client.
 - **The ticker page carries one indicator grid**, the twelve-month window. It
   used to stack a second, identical grid for the latest closed exercise;
   comparing 29 numbers by eye is not a comparison (#32).

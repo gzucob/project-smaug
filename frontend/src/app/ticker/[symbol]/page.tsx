@@ -2,9 +2,10 @@ import Link from "next/link";
 import { HistoryCharts } from "@/components/HistoryCharts";
 import { HistoryStrip } from "@/components/HistoryStrip";
 import { ClassificationBadge } from "@/components/ClassificationBadge";
+import { FavoriteButton } from "@/components/FavoriteButton";
 import { ViewPanel } from "@/components/ViewPanel";
 import { VaultOffline } from "@/components/VaultOffline";
-import { fetchTicker } from "@/lib/api";
+import { fetchPortfolioList, fetchTicker } from "@/lib/api";
 import { count, money, price, yearOf } from "@/lib/format";
 import { gemKey } from "@/lib/sectors";
 import type { Analysis } from "@/lib/types";
@@ -16,7 +17,10 @@ export async function generateMetadata({ params }: { params: Promise<{ symbol: s
 
 export default async function TickerPage({ params }: { params: Promise<{ symbol: string }> }) {
   const { symbol } = await params;
-  const result = await fetchTicker(symbol);
+  const [result, portfolioResult] = await Promise.all([
+    fetchTicker(symbol),
+    fetchPortfolioList(),
+  ]);
 
   if (!result.ok) {
     const notFound = result.status === 404;
@@ -48,6 +52,9 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
   }
 
   const headlinePrice = ttm?.price ?? latestClosed?.price ?? null;
+  const favorited =
+    portfolioResult.ok &&
+    portfolioResult.data.some((p) => p.ticker === result.data.ticker.toUpperCase());
 
   // Scale figures (not ratios): show the company's size at the top, from the live
   // view when there is one, else the latest closed year (#25).
@@ -68,13 +75,16 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
       </div>
 
       <header className="mb-10 flex flex-wrap items-end justify-between gap-6">
-        <div className="rise" style={{ animationDelay: "0ms" }}>
-          <h1 className="nums font-display text-6xl font-bold tracking-tight text-ink-50 sm:text-7xl">
-            {result.data.ticker}
-          </h1>
-          <div className="mt-4">
-            <ClassificationBadge classification={reference.classification} />
+        <div className="rise flex items-center gap-4" style={{ animationDelay: "0ms" }}>
+          <div>
+            <h1 className="nums font-display text-6xl font-bold tracking-tight text-ink-50 sm:text-7xl">
+              {result.data.ticker}
+            </h1>
+            <div className="mt-4">
+              <ClassificationBadge classification={reference.classification} />
+            </div>
           </div>
+          <FavoriteButton ticker={result.data.ticker} favorited={favorited} />
         </div>
         <div className="rise text-right" style={{ animationDelay: "60ms" }}>
           <div className="text-xs uppercase tracking-wide text-ink-500">Preço atual</div>
