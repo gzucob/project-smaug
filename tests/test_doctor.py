@@ -16,6 +16,7 @@ from smaug.analysis.domain.indicators import (
     indicator_names,
 )
 from smaug.portfolio.domain.taxonomy import Classification
+from tests.fakes import fake_sector_resolver
 
 _DEFAULT_CLASSIFICATION = Classification("Commodities")
 
@@ -82,7 +83,9 @@ async def test_doctor_classifies_value_named_and_unclassified() -> None:
         }
     )
 
-    report = await DoctorUseCase(repo).execute(["PETR4"])
+    report = await DoctorUseCase(repo, sector_resolver=fake_sector_resolver).execute(
+        ["PETR4"]
+    )
 
     (ticker_cov,) = report.tickers
     (exercise,) = ticker_cov.exercises
@@ -124,7 +127,9 @@ async def test_doctor_names_missing_price_never_a_bare_null() -> None:
         }
     )
 
-    report = await DoctorUseCase(repo).execute(["BBAS3"])
+    report = await DoctorUseCase(repo, sector_resolver=fake_sector_resolver).execute(
+        ["BBAS3"]
+    )
 
     (exercise,) = report.tickers[0].exercises
     cells = _cells(exercise)
@@ -160,14 +165,18 @@ async def test_doctor_lists_ttm_first_then_closed_years() -> None:
         },
     )
 
-    report = await DoctorUseCase(repo).execute(["WEGE3"])
+    report = await DoctorUseCase(repo, sector_resolver=fake_sector_resolver).execute(
+        ["WEGE3"]
+    )
 
     views = [e.view for e in report.tickers[0].exercises]
     assert views == [VIEW_TTM, VIEW_CLOSED_YEAR, VIEW_CLOSED_YEAR]
 
 
 async def test_doctor_reports_ticker_without_persisted_analysis() -> None:
-    report = await DoctorUseCase(FakeRepo()).execute(["TAEE11"])
+    report = await DoctorUseCase(
+        FakeRepo(), sector_resolver=fake_sector_resolver
+    ).execute(["TAEE11"])
 
     (ticker_cov,) = report.tickers
     assert ticker_cov.ticker == "TAEE11"
@@ -201,6 +210,8 @@ async def test_doctor_report_sums_unclassified_across_every_ticker() -> None:
         },
     )
 
-    report = await DoctorUseCase(repo).execute(["PETR4", "WEGE3"])
+    report = await DoctorUseCase(repo, sector_resolver=fake_sector_resolver).execute(
+        ["PETR4", "WEGE3"]
+    )
 
     assert report.unclassified == len(indicator_names())

@@ -21,7 +21,8 @@ collections (#55), so we mirrored parent-only statements without noticing.
 
 Four real-world quirks are handled here:
   * CVM is keyed by ``CD_CVM``, not by B3 ticker — hence the injected
-    ticker -> code map (see ``portfolio.domain.cvm_codes``).
+    ticker -> code map, resolved for every ticker through the CVM FCA
+    registry (``portfolio.infrastructure.cvm_registry.CvmCompanyRegistry``).
   * An ITR income statement files **two period columns** for the same reference
     date: accumulated from 01-Jan, and the isolated quarter. They differ only by
     ``DT_INI_EXERC``, so that field is part of the statement's identity — without

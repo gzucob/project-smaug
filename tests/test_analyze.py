@@ -19,6 +19,7 @@ from smaug.analysis.domain.indicators import NullReason
 from smaug.portfolio.domain.sectors import Sector
 from smaug.portfolio.domain.share_classes import is_unit
 from smaug.shared.errors import SourceForbiddenError, SourceTimeoutError
+from tests.fakes import fake_classes_resolver
 
 # Four consecutive quarter-ends: the TTM window Jul/2025–Mar/2026.
 _QUARTER_ENDS = (
@@ -170,6 +171,7 @@ async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
         FakePrice(MarketData(price=Decimal(10))),
         repo,
         FakeShares({2026: _counts(common=800, preferred=400)}),
+        classes_resolver=fake_classes_resolver,
     )
 
     out = (await use_case.execute(["PETR4"])).analyses
@@ -209,6 +211,7 @@ async def test_analyze_sums_the_ttm_cap_over_the_listed_share_classes() -> None:
         ),
         repo,
         FakeShares({2026: _counts(common=800, preferred=400)}),
+        classes_resolver=fake_classes_resolver,
     )
 
     await use_case.execute(["PETR4"])
@@ -243,6 +246,7 @@ async def test_analyze_capitalizes_a_unit_from_its_underlying_classes() -> None:
         ),
         repo,
         FakeShares({2026: _counts(common=500, preferred=1000)}),
+        classes_resolver=fake_classes_resolver,
     )
 
     await use_case.execute(["SAPR11"])
@@ -288,6 +292,7 @@ async def test_analyze_computes_growth_against_prior_year_annual() -> None:
         FakePrice(MarketData(price=Decimal(10))),
         repo,
         FakeShares(),
+        classes_resolver=fake_classes_resolver,
     )
 
     await use_case.execute(["PETR4"])
@@ -334,6 +339,7 @@ async def test_analyze_produces_ttm_and_closed_year_views() -> None:
                 2025: _counts(common=800, preferred=400),
             }
         ),
+        classes_resolver=fake_classes_resolver,
     )
 
     out = (await use_case.execute(["PETR4"])).analyses
@@ -388,7 +394,8 @@ async def test_a_closed_years_multiples_divide_by_what_the_shares_traded_at() ->
             year=YearPrices(nominal_avg=Decimal(30), adjusted_avg=Decimal(10)),
         ),
         repo,
-        FakeShares({2024: _counts(common=60, preferred=40)}),  # 100 shares in all
+        FakeShares({2024: _counts(common=60, preferred=40)}),  # 100 shares in all,
+        classes_resolver=fake_classes_resolver,
     )
 
     await use_case.execute(["PETR4"])
@@ -425,6 +432,7 @@ async def test_analyze_prices_closed_year_without_the_live_quote() -> None:
         ),
         repo,
         FakeShares({2024: _counts(common=800, preferred=400)}),
+        classes_resolver=fake_classes_resolver,
     )
 
     await use_case.execute(["PETR4"])
@@ -462,6 +470,7 @@ async def test_delisted_closed_year_names_the_price_null_non_transient() -> None
         FakePrice(year=YearPrices(null_reason=NullReason.PRICE_SYMBOL_NOT_FOUND)),
         repo,
         FakeShares({2024: _counts(common=800, preferred=400)}),
+        classes_resolver=fake_classes_resolver,
     )
 
     await use_case.execute(["PETR4"])
@@ -476,14 +485,22 @@ async def test_delisted_closed_year_names_the_price_null_non_transient() -> None
 async def test_analyze_skips_when_fewer_than_four_quarters() -> None:
     two = _quarters(Sector.COMMODITY, net_income=Decimal(300))[:2]
     use_case = AnalyzePortfolioUseCase(
-        FakeReader({"PETR4": two}), FakePrice(), FakeRepo(), FakeShares()
+        FakeReader({"PETR4": two}),
+        FakePrice(),
+        FakeRepo(),
+        FakeShares(),
+        classes_resolver=fake_classes_resolver,
     )
     assert (await use_case.execute(["PETR4"])).analyses == []
 
 
 async def test_analyze_skips_ticker_without_fundamentals() -> None:
     use_case = AnalyzePortfolioUseCase(
-        FakeReader({}), FakePrice(), FakeRepo(), FakeShares()
+        FakeReader({}),
+        FakePrice(),
+        FakeRepo(),
+        FakeShares(),
+        classes_resolver=fake_classes_resolver,
     )
     assert (await use_case.execute(["PETR4"])).analyses == []
 
@@ -516,6 +533,7 @@ async def test_analyze_divides_each_view_by_that_years_filed_shares() -> None:
                 2026: _counts(common=200, preferred=100),
             }
         ),
+        classes_resolver=fake_classes_resolver,
     )
 
     out = (await use_case.execute(["PETR4"])).analyses
@@ -551,7 +569,8 @@ async def test_analyze_refuses_the_quotes_own_cap_and_share_count() -> None:
             )
         ),
         repo,
-        FakeShares(),  # CVM filed nothing for this ticker
+        FakeShares(),  # CVM filed nothing for this ticker,
+        classes_resolver=fake_classes_resolver,
     )
 
     await use_case.execute(["PETR4"])
@@ -576,7 +595,8 @@ async def test_analyze_keeps_per_share_indicators_when_price_is_missing() -> Non
         ),
         FakePrice(error=SourceForbiddenError("403")),
         repo,
-        FakeShares({2026: _counts(common=400)}),  # BBAS3 lists ON only
+        FakeShares({2026: _counts(common=400)}),  # BBAS3 lists ON only,
+        classes_resolver=fake_classes_resolver,
     )
 
     await use_case.execute(["BBAS3"])
@@ -600,6 +620,7 @@ async def test_analyze_degrades_when_price_unavailable() -> None:
         FakePrice(error=SourceForbiddenError("403")),
         FakeRepo(),
         FakeShares(),
+        classes_resolver=fake_classes_resolver,
     )
 
     out = (await use_case.execute(["BBAS3"])).analyses
@@ -624,6 +645,7 @@ async def test_analyze_degrades_when_price_times_out() -> None:
         FakePrice(error=SourceTimeoutError("read timed out")),
         FakeRepo(),
         FakeShares(),
+        classes_resolver=fake_classes_resolver,
     )
 
     out = (await use_case.execute(["BBAS3"])).analyses
@@ -664,6 +686,7 @@ async def test_a_year_before_the_tickers_first_trade_gets_no_row() -> None:
         ),
         repo,
         FakeShares({2020: _counts(common=800), 2021: _counts(common=800)}),
+        classes_resolver=fake_classes_resolver,
     )
 
     await use_case.execute(["CXSE3"])
@@ -691,6 +714,7 @@ async def test_a_priced_ticker_with_a_vendor_gap_stays_a_transient_miss() -> Non
         FakePrice(year=YearPrices()),
         repo,
         FakeShares({2015: _counts(common=800)}),
+        classes_resolver=fake_classes_resolver,
     )
 
     await use_case.execute(["TAEE11"])
@@ -726,6 +750,7 @@ async def test_a_sibling_class_not_yet_traded_is_named_not_yet_listed() -> None:
         ),
         repo,
         FakeShares({2015: _counts(common=800, preferred=1600)}),
+        classes_resolver=fake_classes_resolver,
     )
 
     await use_case.execute(["TAEE11"])
@@ -774,6 +799,7 @@ async def test_one_ticker_failing_does_not_end_the_run() -> None:
         FakePrice(MarketData(price=Decimal(10))),
         repo,
         FakeShares({2026: _counts(common=800, preferred=400)}),
+        classes_resolver=fake_classes_resolver,
     )
 
     run = await use_case.execute(["BOOM3", "PETR4"])
@@ -793,6 +819,7 @@ async def test_a_ticker_with_nothing_mirrored_is_skipped_not_failed() -> None:
         FakePrice(MarketData(price=Decimal(10))),
         FakeRepo(),
         FakeShares({}),
+        classes_resolver=fake_classes_resolver,
     )
 
     run = await use_case.execute(["NADA3"])

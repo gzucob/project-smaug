@@ -116,9 +116,9 @@ def candidates_of(
     only witness to the date of an action nothing else dates (ADR 0043).
 
     ``listed_since`` is the FCA's ``Data_Inicio_Listagem`` for the security, a
-    floor and not a birth certificate (``portfolio.domain.listings``). A
-    candidate that stops before it belonged to whatever the security was before
-    it existed — ALL's ``ALLL3`` for Rumo — and is never one of these.
+    floor and not a birth certificate. A candidate that stops before it belonged
+    to whatever the security was before it existed — ALL's ``ALLL3`` for Rumo —
+    and is never one of these.
     """
     remaining = [
         candidate

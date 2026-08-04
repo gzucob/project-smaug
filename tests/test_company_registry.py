@@ -2,8 +2,7 @@
 
 No network: a small FCA ZIP is built with the real member names and column
 headers, placed where the cache would be, and read back through the public
-``resolve`` API. The last test proves the registry reproduces the hand-curated
-``cvm_codes.py`` keys for the nine — the contract that lets it stand in for them.
+``resolve`` API — the only way a ticker's registrant keys are resolved (#212).
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ from pathlib import Path
 import httpx
 
 from smaug.portfolio.domain.company import CompanyIdentity
-from smaug.portfolio.domain.cvm_codes import TICKER_TO_CNPJ, TICKER_TO_CVM_CODE
 from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
 
 _YEAR = 2024
@@ -218,43 +216,6 @@ async def test_delisted_listing_loses_to_a_still_trading_one(tmp_path: Path) -> 
     assert identity.cnpj == _KLABIN_CNPJ  # the still-trading listing won
 
 
-async def test_registry_reproduces_the_curated_nine(tmp_path: Path) -> None:
-    """The registry must resolve the nine to the same keys ``cvm_codes.py`` curates.
-
-    This is the contract that lets the registry stand in for the hand maps: build
-    an FCA archive from the curated codes/CNPJs and assert it round-trips.
-    """
-    geral: list[dict[str, str]] = []
-    securities: list[dict[str, str]] = []
-    for ticker, code in TICKER_TO_CVM_CODE.items():
-        cnpj = TICKER_TO_CNPJ[ticker]
-        geral.append(
-            {
-                "CNPJ_Companhia": cnpj,
-                "Versao": "1",
-                "Nome_Empresarial": ticker,
-                "Codigo_CVM": code.zfill(6),  # CVM files it zero-padded
-                "Situacao_Registro_CVM": "Ativo",
-                "Setor_Atividade": "Diversos",
-            }
-        )
-        securities.append(
-            {
-                "CNPJ_Companhia": cnpj,
-                "Versao": "1",
-                "Codigo_Negociacao": ticker,
-                "Mercado": "Bolsa",
-                "Data_Fim_Negociacao": "",
-            }
-        )
-    _write_fca_zip(tmp_path, geral, securities)
-
-    resolved = await _registry(tmp_path).resolve_all(TICKER_TO_CVM_CODE.keys())
-
-    assert {t: i.cd_cvm for t, i in resolved.items()} == TICKER_TO_CVM_CODE
-    assert {t: i.cnpj for t, i in resolved.items()} == TICKER_TO_CNPJ
-
-
 def _cadastre_row(cnpj: str, code: str) -> dict[str, str]:
     return {
         "CNPJ_Companhia": cnpj,
@@ -312,6 +273,9 @@ async def test_share_classes_from_explicit_rows_and_from_a_unit_composition(
     unit = await registry.resolve("WXYZ11")
     assert unit is not None
     assert _classes(unit) == {("WXYZ3", "common"), ("WXYZ4", "preferred")}
+    # "1 WXYZ3 + 4 WXYZ4": one unit bundles 1 + 4 = 5 underlying shares (#212).
+    assert unit.shares_per_unit == 5
+    assert a.shares_per_unit is None  # a plain ON row is not a unit
 
 
 async def test_two_classes_of_the_same_kind_yield_no_classes(tmp_path: Path) -> None:

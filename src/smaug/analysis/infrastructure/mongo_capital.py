@@ -45,7 +45,6 @@ from smaug.analysis.domain.financials import CapitalComposition, ShareCounts
 from smaug.analysis.domain.ports import BaseChangeReader
 from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
 from smaug.portfolio.domain.company import RegistrantResolver
-from smaug.portfolio.domain.share_classes import shares_per_unit
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -200,6 +199,11 @@ def _scaled(counts: ShareCounts, factor: Decimal) -> ShareCounts:
     )
 
 
+def _no_unit_composition(_ticker: str) -> int | None:
+    """The default resolver: no ticker is a unit, so the filed total stands."""
+    return None
+
+
 class MongoSharesReader:
     """Serves the outstanding share counts per fiscal year from the raw mirror."""
 
@@ -209,6 +213,7 @@ class MongoSharesReader:
         *,
         registrant_resolver: RegistrantResolver = no_registrant,
         base_changes: BaseChangeReader | None = None,
+        unit_composition_resolver: Callable[[str], int | None] = _no_unit_composition,
     ) -> None:
         self._collection = collection
         self._registrant = registrant_resolver
@@ -216,12 +221,16 @@ class MongoSharesReader:
         # the very series that will be divided by it (ADR 0035). ``None`` leaves
         # the timeline exactly as ADRs 0033/0034 built it.
         self._base_changes = base_changes
+        # The FCA-derived bundle ratio (``CompanyIdentity.shares_per_unit``,
+        # #212) — curated for no ticker, injected by the CLI like every other
+        # registry-backed resolver.
+        self._unit_composition = unit_composition_resolver
 
     async def outstanding(self, ticker: str, year: int) -> Decimal | None:
         filed = await self.counts(ticker, year)
         if filed is None or filed.total is None:
             return None
-        per_unit = shares_per_unit(ticker)
+        per_unit = self._unit_composition(ticker)
         if per_unit is not None:
             # A unit bundles ``per_unit`` underlying shares (1 ON + 2 PN), so the
             # per-*unit* LPA/VPA divide by the number of units — the earnings and

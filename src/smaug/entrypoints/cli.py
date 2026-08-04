@@ -88,14 +88,12 @@ from smaug.portfolio.application.refresh_taxonomy import (
     TaxonomyDrift,
 )
 from smaug.portfolio.domain.company import CompanyIdentity
-from smaug.portfolio.domain.cvm_codes import TICKER_TO_CNPJ, TICKER_TO_CVM_CODE
-from smaug.portfolio.domain.listings import listed_since
-from smaug.portfolio.domain.sectors import PORTFOLIO, Sector, sector_from_cvm
+from smaug.portfolio.domain.sectors import Sector, sector_from_cvm
 from smaug.portfolio.domain.securities import (
     RegistrantNamesResolver,
     SiblingCodesResolver,
 )
-from smaug.portfolio.domain.share_classes import ShareClass, listed_classes
+from smaug.portfolio.domain.share_classes import ShareClass
 from smaug.portfolio.domain.taxonomy import (
     TAXONOMY_SNAPSHOT,
     Classification,
@@ -132,9 +130,9 @@ class YearPass:
 def _guarded[T](coro: Coroutine[Any, Any, T]) -> T:
     """Run a use-case coroutine, turning an unknown ticker into a clean exit.
 
-    Keeps the raw ``KeyError`` from ``sector_of`` off the terminal — the CLI
-    reports a typo (or a not-yet-added ticker) as one line, like the ingestion
-    side maps a source's HTTP errors to typed ones.
+    Keeps a raw registry-resolution failure off the terminal — the CLI reports a
+    typo (or a not-yet-listed ticker) as one line, like the ingestion side maps
+    a source's HTTP errors to typed ones.
     """
     try:
         return asyncio.run(coro)
@@ -163,22 +161,19 @@ async def _default_tickers(settings: Settings) -> tuple[str, ...]:
 async def _registry_identities(
     settings: Settings, http: httpx.AsyncClient, tickers: tuple[str, ...]
 ) -> dict[str, CompanyIdentity]:
-    """Resolve tickers outside the curated nine via the CVM FCA registry.
+    """Resolve every requested ticker via the CVM FCA registry (#212).
 
-    The nine keep their verified ``cvm_codes.py`` keys and never trigger an FCA
-    download; any other requested ticker is resolved on demand. A ticker that
+    No hand-picked shortcut: every ticker, including the nine that used to skip
+    this call, resolves through a live FCA download/parse. A ticker that
     resolves nowhere is a user error — a typo, or a company CVM does not list —
-    and raises ``UnknownTickerError``, the same clean exit the old curated guard
-    (``require_portfolio_tickers``, removed #151) gave.
+    and raises ``UnknownTickerError``, the same clean exit the old portfolio
+    guard (``require_portfolio_tickers``, removed #151) gave.
     """
-    unknown = [t for t in tickers if t not in PORTFOLIO]
-    if not unknown:
-        return {}
     registry = CvmCompanyRegistry(
         http, year=settings.cvm_year, cache_dir=settings.cvm_cache_dir
     )
-    identities = await registry.resolve_all(unknown)
-    for ticker in unknown:
+    identities = await registry.resolve_all(tickers)
+    for ticker in tickers:
         if ticker not in identities:
             raise UnknownTickerError(ticker)
     return identities
@@ -187,12 +182,10 @@ async def _registry_identities(
 def _sector_resolver(
     identities: dict[str, CompanyIdentity],
 ) -> Callable[[str], Sector]:
-    """A ``Sector`` for any requested ticker: curated for the nine, else the CVM
-    activity label folded to the enum (``sector_from_cvm``)."""
+    """A ``Sector`` for any requested ticker: the CVM activity label folded to
+    the enum (``sector_from_cvm``), unconditionally (#212)."""
 
     def resolve(ticker: str) -> Sector:
-        if ticker in PORTFOLIO:
-            return PORTFOLIO[ticker]
         identity = identities.get(ticker)
         if identity is None:
             raise UnknownTickerError(ticker)
@@ -204,17 +197,10 @@ def _sector_resolver(
 def _registrant_resolver(
     identities: dict[str, CompanyIdentity],
 ) -> Callable[[str], str | None]:
-    """The registrant whose filings a ticker reads (``CD_CVM``, ADR 0030).
-
-    Curated for the nine, registry-resolved for the rest — the same two-step every
-    other resolver here takes, and for the same reason: the nine never trigger an
-    FCA download.
-    """
+    """The registrant whose filings a ticker reads (``CD_CVM``, ADR 0030),
+    resolved from the registry unconditionally (#212)."""
 
     def resolve(ticker: str) -> str | None:
-        curated = TICKER_TO_CVM_CODE.get(ticker)
-        if curated is not None:
-            return curated
         identity = identities.get(ticker)
         return identity.cd_cvm if identity is not None else None
 
@@ -240,16 +226,10 @@ def _classification_resolver(
 def _listed_since_resolver(
     identities: dict[str, CompanyIdentity],
 ) -> Callable[[str], date | None]:
-    """When a ticker was listed: curated for the nine, else the FCA (#153).
-
-    Curated first for the same reason the classes are — the nine never trigger an
-    FCA download, so the registry holds nothing for them.
-    """
+    """When a ticker was listed, from the FCA's ``Data_Inicio_Listagem`` (#153,
+    #212) — the same registry every other resolver here reads."""
 
     def resolve(ticker: str) -> date | None:
-        curated = listed_since(ticker)
-        if curated is not None:
-            return curated
         identity = identities.get(ticker)
         return identity.listed_since if identity is not None else None
 
@@ -259,14 +239,27 @@ def _listed_since_resolver(
 def _classes_resolver(
     identities: dict[str, CompanyIdentity],
 ) -> Callable[[str], tuple[ShareClass, ...]]:
-    """The listed ON/PN classes for the cap: curated for the nine, else FCA."""
+    """The listed ON/PN classes for the cap, from the FCA (ADR 0014, #212)."""
 
     def resolve(ticker: str) -> tuple[ShareClass, ...]:
-        curated = listed_classes(ticker)
-        if curated:
-            return curated
         identity = identities.get(ticker)
         return identity.share_classes if identity is not None else ()
+
+    return resolve
+
+
+def _unit_composition_resolver(
+    identities: dict[str, CompanyIdentity],
+) -> Callable[[str], int | None]:
+    """Underlying shares one unit bundles, from the FCA's parsed ratio (#212).
+
+    Generalizes the old hand-picked ``UNIT_COMPOSITION`` (SAPR11/TAEE11 only) to
+    any unit ticker the FCA lists — Klabin's KLBN11 included.
+    """
+
+    def resolve(ticker: str) -> int | None:
+        identity = identities.get(ticker)
+        return identity.shares_per_unit if identity is not None else None
 
     return resolve
 
@@ -276,14 +269,11 @@ async def _cvm_key_maps(
 ) -> tuple[dict[str, str], dict[str, str]]:
     """The ticker -> CD_CVM and ticker -> CNPJ maps the CVM sources need.
 
-    Curated for the nine (verified, offline), registry-resolved for the rest.
+    Registry-resolved for every ticker, unconditionally (#212).
     """
-    code = {t: TICKER_TO_CVM_CODE[t] for t in tickers if t in TICKER_TO_CVM_CODE}
-    cnpj = {t: TICKER_TO_CNPJ[t] for t in tickers if t in TICKER_TO_CNPJ}
     identities = await _registry_identities(settings, http, tickers)
-    for ticker, identity in identities.items():
-        code[ticker] = identity.cd_cvm
-        cnpj[ticker] = identity.cnpj
+    code = {t: i.cd_cvm for t, i in identities.items()}
+    cnpj = {t: i.cnpj for t, i in identities.items()}
     return code, cnpj
 
 
@@ -318,11 +308,11 @@ def ingest(
 ) -> None:
     """Collect the configured modules for the active source and store the mirror.
 
-    Three scopes: the curated nine (default), an explicit ``--ticker`` list, or
-    ``--all`` — every company the CVM registry lists, which is what M2 means by
-    running at exchange scale. A run over 368 companies and eleven years is one
-    command, because each year's archive is read once and served to every company
-    in it (``--from-year``/``--to-year``).
+    Three scopes: the stored portfolio (default, #151), an explicit ``--ticker``
+    list, or ``--all`` — every company the CVM registry lists, which is what M2
+    means by running at exchange scale. A run over 368 companies and eleven years
+    is one command, because each year's archive is read once and served to every
+    company in it (``--from-year``/``--to-year``).
     """
     if all_listed and ticker:
         raise typer.BadParameter("--all and --ticker are mutually exclusive")
@@ -388,8 +378,7 @@ def _build_data_source(
     """Build the raw source: CVM's archives, with B3's endpoints routed per module.
 
     ``document``/``year`` override the config for one run (e.g. to pull several
-    CVM files). The CVM key maps are resolved upstream (curated nine + FCA
-    registry).
+    CVM files). The CVM key maps are resolved upstream, via the FCA registry.
     """
     doc = (document or settings.cvm_document).upper()
     if doc not in ("ITR", "DFP"):
@@ -777,6 +766,7 @@ async def _run_analyze(
                 # refuse is still the session an action took effect on, and this
                 # is the reader that dates it (ADR 0043).
                 base_changes=B3BaseChanges(archive, codes=succession.candidates),
+                unit_composition_resolver=_unit_composition_resolver(identities),
             )
             cash_events = MongoCashEventReader(
                 mongo[settings.mongo_db]["raw_ingestions"],

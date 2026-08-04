@@ -12,6 +12,7 @@ from smaug.analysis.infrastructure.mongo_fundamentals import (
     standardize,
 )
 from smaug.portfolio.domain.sectors import Sector
+from tests.fakes import fake_sector_resolver
 
 
 def _acc(code: str, name: str, qty: str) -> dict[str, Any]:
@@ -881,7 +882,8 @@ async def test_history_returns_quarters_and_annual_returns_the_dfp() -> None:
                     document_type="DFP",
                 ),
             ]
-        )
+        ),
+        sector_resolver=fake_sector_resolver,
     )
 
     history = await reader.history("PETR4")
@@ -937,7 +939,8 @@ async def test_reader_selects_amendment_consolidated_and_current_period() -> Non
                     ordem="PENULTIMO",
                 ),
             ]
-        )
+        ),
+        sector_resolver=fake_sector_resolver,
     )
 
     annual = await reader.annual("PETR4")
@@ -1012,7 +1015,8 @@ async def test_a_banks_income_statement_comes_from_the_parent_filing() -> None:
                     "BPA", "individual", [_acc("1", "Ativo Total", "1694000")]
                 ),
             ]
-        )
+        ),
+        sector_resolver=fake_sector_resolver,
     )
 
     annual = await reader.annual("BBAS3")
@@ -1053,7 +1057,8 @@ async def test_reader_takes_the_accumulated_column_of_an_itr(reverse: bool) -> N
         _column("2024-09-30", "2024-07-01", "300"),  # isolated quarter
     ]
     reader = MongoFundamentalsReader(
-        _FakeCollection(list(reversed(docs)) if reverse else docs)
+        _FakeCollection(list(reversed(docs)) if reverse else docs),
+        sector_resolver=fake_sector_resolver,
     )
 
     (quarter,) = await reader.history("PETR4")
@@ -1094,7 +1099,8 @@ async def test_the_declared_dividends_come_from_the_parent_dmpl() -> None:
                 _dmpl_filing("consolidated", "-11718859"),  # minority included
                 _dmpl_filing("individual", "-11283288"),  # the parent's charge
             ]
-        )
+        ),
+        sector_resolver=fake_sector_resolver,
     )
 
     annual = await reader.annual("BBDC4")
@@ -1109,7 +1115,8 @@ async def test_reader_uses_the_individual_statement_when_it_is_all_there_is() ->
     reader = MongoFundamentalsReader(
         _FakeCollection(
             [_filed("2024-12-31", "500", version=1, balance_type="individual")]
-        )
+        ),
+        sector_resolver=fake_sector_resolver,
     )
 
     annual = await reader.annual("SAPR11")

@@ -12,10 +12,11 @@ class SmaugError(Exception):
 
 
 class UnknownTickerError(SmaugError):
-    """Ticker is not in the portfolio map — a user input error, not a bug.
+    """Ticker resolves nowhere in the CVM FCA registry — a user input error.
 
-    Raised by ``sector_of`` so the CLI can report a typo (or a not-yet-added
-    ticker) as a single clean line instead of leaking a raw ``KeyError``.
+    Raised by the CLI's registry-backed resolvers so a typo (or a company CVM
+    does not list) is reported as a single clean line instead of a raw lookup
+    failure.
     """
 
     def __init__(self, ticker: str) -> None:

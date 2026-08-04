@@ -34,8 +34,7 @@ from smaug.analysis.domain.financials import (
     StandardizedFinancials,
 )
 from smaug.analysis.domain.indicators import Indicators
-from smaug.portfolio.domain.sectors import Sector, sector_of
-from smaug.shared.errors import UnknownTickerError
+from smaug.portfolio.domain.sectors import Sector
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 _REFERENCE = json.loads((_FIXTURES / "reference_platforms.json").read_text("utf-8"))
@@ -173,14 +172,14 @@ def test_no_closed_year_pays_out_more_than_the_company_is_worth(ticker: str) -> 
         )
 
 
+_BANK_TICKERS = frozenset({"BBAS3", "BBDC4"})
+
+
 def _is_bank(ticker: str) -> bool:
-    # The sector representatives sit outside the static nine-ticker portfolio
-    # map; none of them is a bank, so an unknown ticker reads as "not a bank"
-    # rather than an error.
-    try:
-        return sector_of(ticker) is Sector.BANK
-    except UnknownTickerError:
-        return False
+    # The fixture is self-contained (computed from ``analysis_inputs.json``, not
+    # through a resolver or a live registry call), so the two banks among its
+    # tickers are simply named here rather than resolved.
+    return ticker in _BANK_TICKERS
 
 
 def _roe_tickers() -> list[str]:
