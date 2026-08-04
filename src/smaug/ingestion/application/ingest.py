@@ -7,6 +7,15 @@ limits stop the run, 404 (unknown) and 403 (plan-restricted) skip the call, and
 any single failure never takes the other tickers down with it. A definitive CVM
 ZIP download failure also stops the run — the file is shared by the whole year,
 so every remaining call would fail identically.
+
+``paced_modules`` names which modules actually deserve the post-call sleep
+(#214). It used to apply unconditionally — a flat per-call throttle inherited
+from brapi (removed, ADR 0041), where every module fetch really was one
+rate-limited HTTP request per ticker. Since the move to CVM's yearly ZIPs and
+B3's own series, most modules read an already-downloaded, in-memory-indexed
+archive and touch no network per ticker at all; only a module the composition
+root names here waits between calls. The default is empty — pacing is opt-in,
+not a tax the use case levies on every source by default.
 """
 
 from __future__ import annotations
@@ -74,6 +83,7 @@ class IngestPortfolioUseCase:
         *,
         source: str = "cvm",
         delay_seconds: float = 2.0,
+        paced_modules: frozenset[str] = frozenset(),
         clock: Clock = _utc_now,
         sleep: Sleeper = asyncio.sleep,
     ) -> None:
@@ -83,6 +93,7 @@ class IngestPortfolioUseCase:
         self._modules = tuple(modules)
         self._source = source
         self._delay_seconds = delay_seconds
+        self._paced_modules = paced_modules
         self._clock = clock
         self._sleep = sleep
 
@@ -125,7 +136,8 @@ class IngestPortfolioUseCase:
                 )
             else:
                 outcomes.append(outcome)
-            await self._sleep(self._delay_seconds)
+            if module in self._paced_modules:
+                await self._sleep(self._delay_seconds)
         return False
 
     async def _fetch_and_store(self, ticker: str, module: str) -> FetchOutcome:

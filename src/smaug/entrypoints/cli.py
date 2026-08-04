@@ -540,6 +540,11 @@ async def _ingest_one_year(
             repository=repository,
             event_bus=EventBus(),
             modules=owed,
+            # Only these two hit a live, per-ticker B3 endpoint
+            # (``GetListedSupplementCompany``, ADR 0034/ADR 0039); every other
+            # module reads this year's already-downloaded CVM archive from
+            # memory and owes the call no pause at all (#214).
+            paced_modules=frozenset({CAPITAL_EVENT_B3_MODULE, CASH_DIVIDEND_B3_MODULE}),
         )
         outcomes.extend(await use_case.execute(tickers))
         if any(o.status is OutcomeStatus.ABORTED for o in outcomes):

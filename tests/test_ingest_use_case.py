@@ -143,6 +143,51 @@ class _RegistrantSource:
         ]
 
 
+async def test_only_paced_modules_sleep_between_calls() -> None:
+    # #214: a module reading an already-downloaded CVM archive touches no
+    # network per ticker and owes the run no pause at all — only a module named
+    # in ``paced_modules`` (a live, per-ticker B3 endpoint) does.
+    calls: list[float] = []
+
+    async def _counting_sleep(seconds: float) -> None:
+        calls.append(seconds)
+
+    use_case = IngestPortfolioUseCase(
+        FakeDataSource(),
+        FakeRawIngestionRepository(),
+        EventBus(),
+        ["m1", "m2"],
+        delay_seconds=2.0,
+        paced_modules=frozenset({"m2"}),
+        sleep=_counting_sleep,
+    )
+
+    await use_case.execute(["PETR4"])
+
+    assert calls == [2.0]  # only m2 slept; m1 is unpaced
+
+
+async def test_no_module_is_paced_by_default() -> None:
+    # The old behaviour paced every module unconditionally; the default is now
+    # the opposite — pacing is opt-in, named explicitly by the caller.
+    calls: list[float] = []
+
+    async def _counting_sleep(seconds: float) -> None:
+        calls.append(seconds)
+
+    use_case = IngestPortfolioUseCase(
+        FakeDataSource(),
+        FakeRawIngestionRepository(),
+        EventBus(),
+        ["m1", "m2"],
+        sleep=_counting_sleep,
+    )
+
+    await use_case.execute(["PETR4"])
+
+    assert calls == []
+
+
 async def test_the_registrant_travels_from_the_source_onto_what_is_stored() -> None:
     # The whole read path keys on it (ADR 0030), so a source that names the filer
     # and a store that drops it would leave the mirror unreadable by company.
