@@ -9,9 +9,12 @@ from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from smaug.analysis.infrastructure.sqlalchemy_models import Base
+from smaug.portfolio.infrastructure.sqlalchemy_models import PortfolioBase
 from smaug.shared.config import get_settings
 
-target_metadata = Base.metadata
+# Two bounded contexts, two declarative bases, one Postgres database (#151) —
+# autogenerate needs both to see the whole schema.
+target_metadata = [Base.metadata, PortfolioBase.metadata]
 
 
 def _url() -> str:

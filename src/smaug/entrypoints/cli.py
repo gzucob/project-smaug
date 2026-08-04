@@ -90,12 +90,7 @@ from smaug.portfolio.application.refresh_taxonomy import (
 from smaug.portfolio.domain.company import CompanyIdentity
 from smaug.portfolio.domain.cvm_codes import TICKER_TO_CNPJ, TICKER_TO_CVM_CODE
 from smaug.portfolio.domain.listings import listed_since
-from smaug.portfolio.domain.sectors import (
-    PORTFOLIO,
-    Sector,
-    portfolio_tickers,
-    sector_from_cvm,
-)
+from smaug.portfolio.domain.sectors import PORTFOLIO, Sector, sector_from_cvm
 from smaug.portfolio.domain.securities import (
     RegistrantNamesResolver,
     SiblingCodesResolver,
@@ -110,6 +105,7 @@ from smaug.portfolio.domain.universe import ListedCompany
 from smaug.portfolio.infrastructure.b3_taxonomy import B3TaxonomySource
 from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
 from smaug.portfolio.infrastructure.cvm_securities import CvmSecurityHistory
+from smaug.portfolio.infrastructure.sql_repository import SqlAlchemyPortfolioRepository
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
 from smaug.shared.errors import UnknownTickerError
@@ -147,6 +143,23 @@ def _guarded[T](coro: Coroutine[Any, Any, T]) -> T:
         raise typer.Exit(code=2) from exc
 
 
+async def _default_tickers(settings: Settings) -> tuple[str, ...]:
+    """The user's stored portfolio (#151) — used when neither ``--ticker`` nor
+    ``--all`` is given.
+
+    Reads Postgres directly with its own short-lived engine rather than reusing
+    one a command happens to build later for another reason: ``ingest``/
+    ``report`` never touch Postgres otherwise, and the ticker set has to be
+    known before any of a command's own setup runs.
+    """
+    engine = create_engine(settings)
+    try:
+        repository = SqlAlchemyPortfolioRepository(create_session_factory(engine))
+        return tuple(p.ticker for p in await repository.list())
+    finally:
+        await engine.dispose()
+
+
 async def _registry_identities(
     settings: Settings, http: httpx.AsyncClient, tickers: tuple[str, ...]
 ) -> dict[str, CompanyIdentity]:
@@ -155,8 +168,8 @@ async def _registry_identities(
     The nine keep their verified ``cvm_codes.py`` keys and never trigger an FCA
     download; any other requested ticker is resolved on demand. A ticker that
     resolves nowhere is a user error — a typo, or a company CVM does not list —
-    and raises ``UnknownTickerError``, the same clean exit the curated guard gave
-    (this replaces ``require_portfolio_tickers``).
+    and raises ``UnknownTickerError``, the same clean exit the old curated guard
+    (``require_portfolio_tickers``, removed #151) gave.
     """
     unknown = [t for t in tickers if t not in PORTFOLIO]
     if not unknown:
@@ -314,7 +327,7 @@ def ingest(
     if all_listed and ticker:
         raise typer.BadParameter("--all and --ticker are mutually exclusive")
     years = _years_to_sweep(year, from_year, to_year)
-    tickers = () if all_listed else (tuple(ticker) if ticker else portfolio_tickers())
+    tickers = tuple(ticker) if ticker else ()
     try:
         # _guarded turns an unknown ticker into a clean exit, like analyze (#13).
         exit_code = _guarded(
@@ -359,7 +372,7 @@ def report(
     ),
 ) -> None:
     """Print the completeness report read from the raw mirror."""
-    tickers = tuple(ticker) if ticker else portfolio_tickers()
+    tickers = tuple(ticker) if ticker else ()
     _guarded(_run_report(tickers))
 
 
@@ -454,6 +467,8 @@ async def _run_ingest(
     verbose: bool = False,
 ) -> int:
     settings = get_settings()
+    if not tickers and not whole_exchange:
+        tickers = await _default_tickers(settings)
     client = await init_database(settings)
     repository = BeanieRawIngestionRepository()
     passes: list[YearPass] = []
@@ -597,6 +612,8 @@ def _by_owed_modules(
 
 async def _run_report(tickers: tuple[str, ...]) -> None:
     settings = get_settings()
+    if not tickers:
+        tickers = await _default_tickers(settings)
     client = await init_database(settings)
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
@@ -635,7 +652,7 @@ def analyze(
     """
     if all_listed and ticker:
         raise typer.BadParameter("--all and --ticker are mutually exclusive")
-    tickers = () if all_listed else (tuple(ticker) if ticker else portfolio_tickers())
+    tickers = tuple(ticker) if ticker else ()
     exit_code = _guarded(
         _run_analyze(tickers, whole_exchange=all_listed, verbose=verbose)
     )
@@ -729,6 +746,8 @@ async def _run_analyze(
             if whole_exchange:
                 tickers, identities = await _universe_tickers(settings, http)
             else:
+                if not tickers:
+                    tickers = await _default_tickers(settings)
                 identities = await _registry_identities(settings, http, tickers)
             # The reader keeps a five-value Sector (the internal regime hint); the
             # stored analysis carries the B3 Classification (ADR 0024). Both are
@@ -838,7 +857,7 @@ def doctor(
     """
     if all_listed and ticker:
         raise typer.BadParameter("--all and --ticker are mutually exclusive")
-    tickers = () if all_listed else (tuple(ticker) if ticker else portfolio_tickers())
+    tickers = tuple(ticker) if ticker else ()
     exit_code = _guarded(
         _run_doctor(tickers, whole_exchange=all_listed, verbose=verbose)
     )
@@ -857,6 +876,8 @@ async def _run_doctor(
             if whole_exchange:
                 tickers, identities = await _universe_tickers(settings, http)
             else:
+                if not tickers:
+                    tickers = await _default_tickers(settings)
                 identities = await _registry_identities(settings, http, tickers)
         resolver = _sector_resolver(identities)
         use_case = DoctorUseCase(
