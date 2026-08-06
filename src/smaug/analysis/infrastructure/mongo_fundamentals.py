@@ -302,10 +302,9 @@ def _dividends_paid(dfc: Accounts) -> Decimal | None:
 # amortizações", which a singular-substring search read as absent (#114).
 # "amortizac" (never the looser "amortiza") keeps the financial lines out:
 # "ativos financeiros ao custo amortizado" sits in a 6.01 too. "exaust" is
-# depletion, which KLBN11 files as its own line — Dados de Mercado's EBITDA
-# leaves that line out (its KLBN11 2024 margin is 33.7% vs our 43.1%), but
-# depletion is the D of a pulp company's DD&A and Klabin's own reported 2024
-# EBITDA margin (~41%) sides with including it.
+# depletion, which KLBN11 files as its own line. Depletion is the D of a pulp
+# company's DD&A, so the filed line belongs in the add-back just like depreciation
+# and amortization.
 _DEP_AMORT_NEEDLES = ("deprecia", "amortizac", "exaust")
 
 _PARENTHETICAL = re.compile(r"\([^)]*\)")
@@ -611,8 +610,8 @@ def _as_bank(
     ``gross_profit`` carries 3.03, which for a bank is the net interest income —
     the spread, its closest analogue to a gross result. ``ebit`` carries 3.05,
     which for a bank is profit *before tax*, not before interest: interest is the
-    operation, so there is no line to strip. Both are deliberate approximations,
-    matching what the reference platforms compute (ADR 0015); ``total_debt``,
+    operation, so there is no line to strip. Both are deliberate mappings of the
+    filed bank schema (ADR 0015); ``total_debt``,
     ``current_assets`` and ``current_liabilities`` stay ``None`` because the
     schema has no such lines — the calculator names those nulls inapplicable.
 

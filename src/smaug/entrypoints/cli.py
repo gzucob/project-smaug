@@ -847,8 +847,8 @@ def doctor(
     summary keeps is the part that needs acting on: every ticker carrying a null
     nobody has named.
 
-    Exits non-zero on any unclassified null — the exchange-scale gate #169
-    settled on (ADR 0046), alongside ``test_reference_fidelity``'s nine tickers.
+    Exits non-zero on any unclassified null. This is the exchange-scale coverage
+    gate, not a proof that non-null arithmetic is correct (ADR 0050).
     """
     if all_listed and ticker:
         raise typer.BadParameter("--all and --ticker are mutually exclusive")

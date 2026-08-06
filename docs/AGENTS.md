@@ -75,15 +75,18 @@ it cannot be assigned, closed, or counted. Three findings died that way (#43).
 
 ## Generated reports
 
-Anything that describes the current state of the data — coverage, nulls, a
-divergence from a reference platform — is **produced by a command**, never
-typed by hand. Hand-written state is stale the moment it is committed, and
-nothing recalculates prose.
+Anything that describes the current state of the data — coverage, nulls, or a
+primary-source reconciliation — is **produced by a command**, never typed by
+hand. Hand-written state is stale the moment it is committed, and nothing
+recalculates prose.
 
-- Coverage of the persisted analysis: `smaug doctor` (the M0 gate, #43).
-- Fidelity against the reference platforms: a committed fixture of the
-  platforms' values plus a test with a per-indicator tolerance. A divergence is
-  a **failing test**, not a paragraph.
+- Coverage of the persisted analysis: `smaug doctor --all`. It is the
+  exchange-scale gate for named nulls, not a proof that non-null arithmetic is
+  correct.
+- Arithmetic correctness: tests built from explicit CVM/B3 provenance, declared
+  formulas, accounting reconciliations, and domain invariants (ADR 0050).
+- External aggregator comparisons are disposable exploratory work. Their values
+  are not committed reports, fixtures, or acceptance gates.
 
 A generated report is not committed unless a command can regenerate it byte for
 byte.

@@ -1,6 +1,6 @@
 # 0046 — The fidelity gate stays nine; a coverage gate covers the rest
 
-- **Status:** Accepted
+- **Status:** Superseded by [0050](0050-primary-source-invariants-are-the-correctness-gate.md)
 - **Date:** 2026-08-04
 
 ## Context

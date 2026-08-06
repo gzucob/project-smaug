@@ -280,8 +280,8 @@ def test_bank_null_reasons_name_each_cause() -> None:
 
 
 def test_insurer_null_reasons_split_by_regime() -> None:
-    # ADR 0010: an insurer is the near-mirror of a bank — its margins are
-    # degenerate (both reference platforms show 0%), so they are inapplicable.
+    # ADR 0010: an insurer is the near-mirror of a bank — generic operating
+    # margins are degenerate under its filed schema, so they are inapplicable.
     # ADR 0015: unlike a bank, it files a corporate-shaped balance sheet, so its
     # current ratio computes; but the insurer schema has no borrowings line at all
     # (2.01.04 is "Capitalização" there), so the leverage family is *absent* at the
@@ -340,7 +340,7 @@ def test_insurer_net_debt_is_the_cash_negated() -> None:
     )
     ind = compute(insurer, None, MarketData(market_cap=Decimal(30000)))
 
-    assert ind.net_debt == Decimal(-8000)  # net cash, as the platforms publish
+    assert ind.net_debt == Decimal(-8000)  # no borrowings minus filed cash
     assert ind.enterprise_value == Decimal(22000)  # 30000 − 8000
     assert ind.net_debt_to_equity == Decimal(-8000) / Decimal(9000)
     assert ind.net_debt_to_ebit == Decimal(-8000) / Decimal(3000)

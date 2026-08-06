@@ -30,8 +30,8 @@ export interface Classification {
 export interface Indicators {
   // The whole-firm ratios come on both statement slices (ADR 0026): the bare
   // name pairs the controllers' result with the controllers' equity, and the
-  // `_total` variant pairs the consolidated total (minoritários included) —
-  // the basis the reference platforms publish for margins and ROE.
+  // `_total` variant pairs the consolidated total (minoritários included) with
+  // its consolidated denominator.
   roe: Decimalish;
   roe_total: Decimalish;
   roa: Decimalish;

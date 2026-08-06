@@ -62,6 +62,12 @@ Always restate the stack before proposing architecture or dependencies.
 - The `AGENTS.md` hierarchy — durable engineering rules; `docs/AGENTS.md` says
   which artifact a given fact belongs in.
 
+External aggregator platforms are not sources of truth. They may inform a
+disposable investigation, but their published values are never fixtures,
+acceptance criteria, automated gates, or authorities for selecting an accounting
+or market-data basis. Correctness gates reconcile CVM/B3 inputs, declared formulas,
+and domain invariants (ADR 0050).
+
 What is true about the *data* right now is never a document — it comes from a
 command (`smaug doctor`) and from the tests. `docs/PLANO_FASE1.md`,
 `docs/preview_fase1_criterios_implementacao.md` and `docs/FINDINGS_INDICATORS.md`

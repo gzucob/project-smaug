@@ -56,8 +56,8 @@ class NullReason(StrEnum):
       that runs out.
 
     A null with no recorded reason is *unclassified* — a reportable status of
-    its own (#47). With ``ZERO_DENOMINATOR`` attributed, this should not arise
-    for the nine tickers (the M0 gate: every null has a named cause).
+    its own (#47). ``smaug doctor --all`` gates this across the exchange; formula
+    and reconciliation tests independently protect non-null values (ADR 0050).
     """
 
     INAPPLICABLE_REGIME = "inapplicable_regime"
@@ -80,8 +80,7 @@ class Indicators:
     # are published on both statement slices (ADR 0026): the bare name pairs the
     # controllers' result with the controllers' equity (the listed shares' own
     # return), and the ``_total`` variant pairs the consolidated total — minority
-    # included — with the consolidated denominator, which is the basis the
-    # reference platforms publish for margins and ROE. Per-share and cap-based
+    # included — with the consolidated denominator. Per-share and cap-based
     # indicators have no ``_total`` variant: the share count and the cap are the
     # controllers' instruments, so a total numerator would mix slices.
     roe: Decimal | None = None
@@ -140,8 +139,8 @@ class Indicators:
     # The declared basis (#104): dividends + JCP the parent charged against
     # equity in the period (DMPL), not the cash that left (DFC). The two answer
     # different questions — the cash paid in a year was often declared on the
-    # prior year's profit — and the declared one is what companies and the
-    # reference platforms report payout on.
+    # prior year's profit — and the declared one reconciles to the distribution
+    # the company records against equity.
     payout_declared: Decimal | None = None  # dividends declared / net income
     dividend_yield_declared: Decimal | None = None
     ev_ebitda: Decimal | None = None

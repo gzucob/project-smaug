@@ -370,12 +370,10 @@ async def test_analyze_produces_ttm_and_closed_year_views() -> None:
 
 
 async def test_a_closed_years_multiples_divide_by_what_the_shares_traded_at() -> None:
-    # ADR 0018. The dividend-adjusted series discounts every past price by the payouts
-    # made since, so for a heavy payer it collapses: PETR4's 2022 average reads R$13.15
-    # adjusted against R$30.67 nominal, which turned its dividend yield into 106% — a
-    # number that cannot describe how the market valued the company that year. The
-    # valuation multiples divide by the nominal average; the adjusted one is kept
-    # beside them, for return comparisons, and never reaches the cap.
+    # ADR 0018. A dividend-adjusted series is a total-return ruler, not the price
+    # investors paid in the period. The valuation multiples and dividend yield divide
+    # by the nominal-price cap; the adjusted price stays beside it and never reaches
+    # the cap.
     quarters = _quarters(Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(600))
     annual = StandardizedFinancials(
         reference_date=date(2024, 12, 31),
@@ -407,6 +405,9 @@ async def test_a_closed_years_multiples_divide_by_what_the_shares_traded_at() ->
     assert year.price_adjusted == Decimal(10)
     assert year.indicators.pe == Decimal(30)
     assert year.indicators.dividend_yield == Decimal(400) / Decimal(3000)
+    # Preserve the characteristic that exposed the old basis mix: this filed payout
+    # is below the company's nominal market value, so the computed yield must be < 1.
+    assert year.indicators.dividend_yield < Decimal(1)
 
 
 async def test_analyze_prices_closed_year_without_the_live_quote() -> None:
@@ -785,8 +786,8 @@ class _ExplodingReader:
 
 
 async def test_one_ticker_failing_does_not_end_the_run() -> None:
-    # At nine tickers a traceback was fine; at five hundred it throws away the
-    # ones that had nothing wrong with them, each a minute of price requests.
+    # One malformed payload in an exchange-wide run must not discard every ticker
+    # that had nothing wrong with it.
     repo = FakeRepo()
     use_case = AnalyzePortfolioUseCase(
         _ExplodingReader(
