@@ -39,9 +39,8 @@ export interface IndicatorSpec {
  *
  * A bare indicator name is always the **controllers'** slice — what accrues to
  * the listed shares. Its `_total` sibling is the consolidated group, minority
- * interest included, and it is the basis the reference platforms publish for
- * margins and ROE. Neither is the "right" one: they answer different questions,
- * so a screen must say which it is showing rather than pick silently.
+ * interest included. Neither is the "right" one: they answer different
+ * questions, so a screen must say which it is showing rather than pick silently.
  */
 export type Basis = "controllers" | "total";
 
@@ -52,7 +51,7 @@ export const BASIS_LABEL: Record<Basis, string> = {
 
 export const BASIS_HINT: Record<Basis, string> = {
   controllers: "Fatia dos controladores — o que cabe às ações listadas. Pareia com LPA, VPA e os múltiplos de mercado.",
-  total: "Grupo consolidado, incluindo a parcela dos acionistas minoritários das controladas. É a base que as plataformas de referência publicam.",
+  total: "Grupo consolidado, incluindo a parcela dos acionistas minoritários das controladas. Pareia resultado e patrimônio na mesma fatia.",
 };
 
 /** Indicators published on both slices, keyed by the controllers' name. */
@@ -98,8 +97,7 @@ export const INDICATORS: IndicatorSpec[] = [
   { key: "revenue_growth", label: "Cresc. receita", hint: "Variação da receita frente ao ano anterior", group: "Crescimento", format: signedPct },
   { key: "net_income_growth", label: "Cresc. lucro", hint: "Variação do lucro frente ao ano anterior", group: "Crescimento", format: signedPct },
   // Compounded over a stated window (#144): the endpoints sit five closed
-  // exercises apart. The window is in the label because "CAGR 5A" means
-  // different spans at different reference platforms.
+  // exercises apart, so the window is explicit in the label.
   { key: "revenue_cagr_5y", label: "CAGR receita 5a", hint: "Crescimento anual composto da receita em 5 anos — extremos a 5 exercícios de distância", group: "Crescimento", format: signedPct },
   { key: "ebitda_cagr_5y", label: "CAGR EBITDA 5a", hint: "Crescimento anual composto do EBITDA em 5 anos", group: "Crescimento", format: signedPct },
   { key: "ebit_cagr_5y", label: "CAGR EBIT 5a", hint: "Crescimento anual composto do lucro operacional em 5 anos", group: "Crescimento", format: signedPct },

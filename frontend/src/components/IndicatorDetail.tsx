@@ -305,8 +305,8 @@ export function IndicatorDetail({
         {/* -------------------------------------------------- doc column --- */}
         {/* Two tabs, split by what the reader is asking: "what does this number
             mean" against "how did you arrive at it". The second is the audit
-            trail — formula as computed, and where our arithmetic departs from a
-            platform's — and it was crowding the first. A third ("Comparar",
+            trail — formula as computed and its declared basis — and it was
+            crowding the first. A third ("Comparar",
             #137) lands here when there are enough companies to compare against. */}
         <TabGroup as="section" className="flex flex-col lg:min-h-0 lg:overflow-hidden">
           <TabList className="mb-4 flex gap-1 pr-12">
@@ -389,7 +389,7 @@ export function IndicatorDetail({
  *
  * Always visible for an indicator that has two, even when they happen to agree:
  * the reader has to know a choice exists — "17,3%" and "17,7%" are both correct
- * answers to different questions, and the platforms publish the second one.
+ * answers to different questions.
  */
 function BasisToggle({
   basis,

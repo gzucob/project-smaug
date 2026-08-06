@@ -28,7 +28,7 @@ export interface IndicatorDoc {
   what: string;
   strongIn: RelevanceNote[];
   weakIn: RelevanceNote[];
-  /** A fidelity note: where Smaug's number can differ from a reference platform. */
+  /** A basis or interpretation note that qualifies the formula. */
   caveat?: string;
 }
 
@@ -58,11 +58,11 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "Smaug divide pelo PL de fechamento do período, não pelo PL médio do período. Em anos de forte emissão ou recompra o número diverge de plataformas que usam a média. Este ROE usa a fatia dos controladores nos dois lados da fração; a variante consolidada é o roe_total (ADR 0026).",
+      "Smaug divide pelo PL de fechamento do período, não pelo PL médio do período. Em anos de forte emissão ou recompra, as duas fórmulas respondem perguntas diferentes. Este ROE usa a fatia dos controladores nos dois lados da fração; a variante consolidada é o roe_total (ADR 0026).",
   },
   roe_total: {
     formula: "Lucro líquido consolidado (anualizado) ÷ Patrimônio líquido consolidado",
-    what: "O mesmo ROE, medido sobre o grupo inteiro: lucro e patrimônio incluem a participação dos acionistas minoritários das controladas. É a base que as plataformas de referência publicam como ROE.",
+    what: "O mesmo ROE, medido sobre o grupo inteiro: lucro e patrimônio incluem a participação dos acionistas minoritários das controladas.",
     strongIn: [
       {
         where: "Grupos com controladas relevantes não integrais (bebidas, mineração, software)",
@@ -166,11 +166,11 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "Esta margem usa o lucro dos controladores sobre a receita consolidada — fatias diferentes. A versão de fatia única, que as plataformas publicam, é a net_margin_total (ADR 0026).",
+      "Esta margem usa o lucro dos controladores sobre a receita consolidada — fatias diferentes. A versão que pareia a fatia consolidada nos dois lados é a net_margin_total (ADR 0026).",
   },
   net_margin_total: {
     formula: "Lucro líquido consolidado ÷ Receita líquida (mesmo período, sem anualizar)",
-    what: "A margem líquida em fatia única: o lucro do grupo inteiro (minoritários incluídos) sobre a receita, que só existe consolidada. É a margem que as plataformas de referência publicam.",
+    what: "A margem líquida em fatia única: o lucro do grupo inteiro (minoritários incluídos) sobre a receita, que só existe consolidada.",
     strongIn: [
       {
         where: "Grupos com controladas relevantes não integrais",
@@ -364,7 +364,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "A janela é nossa escolha e as plataformas de referência discordam dela: publicam \"CAGR 5A\" sobre janelas diferentes, o que explica boa parte da divergência contra elas. Aqui os extremos ficam a cinco exercícios de distância (seis pontos), e só os exercícios fechados entram — a janela de 12 meses não é um exercício. Só os dois extremos entram na conta: o caminho entre eles é invisível, e uma queda seguida de recuperação lê igual a um crescimento constante.",
+      "Aqui os extremos ficam a cinco exercícios de distância (seis pontos), e só os exercícios fechados entram — a janela de 12 meses não é um exercício. Só os dois extremos entram na conta: o caminho entre eles é invisível, e uma queda seguida de recuperação lê igual a um crescimento constante.",
   },
   ebitda_cagr_5y: {
     formula: "(EBITDA do exercício ÷ EBITDA de 5 exercícios antes) ^ (1/5) − 1",
@@ -510,7 +510,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
   },
   net_debt_to_equity: {
     formula: "Dívida líquida ÷ Patrimônio líquido",
-    what: "Alavancagem líquida do caixa: quanto de dívida (já descontado o caixa) a empresa carrega para cada real de capital próprio. É a versão desta família que as plataformas destacam.",
+    what: "Alavancagem líquida do caixa: quanto de dívida (já descontado o caixa) a empresa carrega para cada real de capital próprio.",
     strongIn: [
       {
         where: "Energia Elétrica, Telecomunicações, Construção Civil",
@@ -786,11 +786,11 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "No histórico de anos fechados o denominador é o preço médio ajustado por proventos daquele exercício; nos últimos 12 meses é o preço nominal atual. Ver docs/adr/0001.",
+      "No histórico de anos fechados o denominador é o valor de mercado calculado pelo preço nominal médio daquele exercício; nos últimos 12 meses é o valor de mercado pelo preço nominal atual (ADR 0018).",
   },
   payout_declared: {
     formula: "Proventos declarados no exercício (DMPL) ÷ Lucro líquido",
-    what: "Fatia do lucro que a empresa DECLAROU distribuir dentro do exercício — dividendos e JCP debitados do patrimônio na DMPL. É a base sobre a qual as próprias empresas (e as plataformas) reportam o payout.",
+    what: "Fatia do lucro que a empresa DECLAROU distribuir dentro do exercício — dividendos e JCP debitados do patrimônio na DMPL. É a base que reconcilia a distribuição com a movimentação do patrimônio.",
     strongIn: [
       {
         where: "Intermediários Financeiros (bancos)",
@@ -819,8 +819,8 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o JCP declarado no ano é a remuneração daquele ano; o caixa às vezes só sai no exercício seguinte",
       },
       {
-        where: "Comparações com o yield publicado pelas plataformas",
-        why: "as plataformas atribuem proventos ao exercício declarado, não ao ano do pagamento",
+        where: "Comparações entre a base declarada e a base paga",
+        why: "a declaração e a saída de caixa podem cair em exercícios diferentes",
       },
     ],
     weakIn: [

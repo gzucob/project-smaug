@@ -13,8 +13,7 @@ type Column = {
  * Replaces the card strip the *Trajetória* section used to end with. That strip
  * was already trying to be a table — four label/value pairs repeated per year —
  * but laid out as cards it forced a horizontal scroll and put the years side by
- * side while the reader wants to run *down* a column and see a trend. The
- * reference platform settled on a table for the same reason.
+ * side while the reader wants to run *down* a column and see a trend.
  *
  * The columns are statement figures plus the two ratios a reader scans a history
  * for. Everything else lives in the indicator grid, one click from its drill-down.

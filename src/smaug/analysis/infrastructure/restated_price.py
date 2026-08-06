@@ -1,18 +1,16 @@
 """Put an as-traded price on the same share base as the counts it multiplies.
 
-B3 publishes what actually printed on the tape. Yahoo publishes the same series
-**back-adjusted for every corporate action**, and ADR 0027 built on that: share
-counts are restated onto the current base precisely because "the price's base is,
-irrevocably, the current one". Measured over 308 cells, that difference is not
-marginal — BBAS3 diverges by exactly 2x in all ten years, VIVT3 in all eleven,
-HAPV3 by 15x, and Bradesco's annual bonuses compound backwards year on year.
+B3 publishes what actually printed on the tape, while the filed share counts are
+restated onto the current base (ADR 0027). Without the same-base transformation,
+every historical price before a split or grouping would multiply a count expressed
+on another basis.
 
 So an as-traded price needs the same treatment the counts already get, and
 ``cap = price x shares`` is what makes the arithmetic trivial: restating
 multiplies the count by ``k``, so the price is divided by ``k`` and the cap does
-not move at all. What moves is the per-share series and the price a screen shows
-— which is exactly the pair of bases the reference platforms let a reader toggle
-between ("Cotação padrão" / "Cotação ajustada").
+not move at all. What moves is the per-share series and the price a screen shows.
+This split-adjusted basis remains distinct from both the as-traded tape and the
+dividend-adjusted total-return series.
 
 **The factor is deliberately the one the counts used, not a better one.** Even a
 more accurate factor would be the wrong choice: adjusting the price by a number

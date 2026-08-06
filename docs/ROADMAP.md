@@ -3,24 +3,20 @@
 ## Objetivo
 
 Uma plataforma de análise fundamentalista sobre **todos os tickers da B3**,
-alimentada pelos dados abertos da CVM, com **nove tickers do portfólio como foco
-de análise** — são eles que provam que o cálculo está certo antes de o cálculo
-rodar em escala.
+alimentada pelos dados abertos da CVM e da própria B3. O portfólio pessoal é um
+foco de uso do produto, não uma amostra privilegiada nem um oráculo de correção.
 
-Os nove: `PETR4`, `VALE3`, `SAPR11`, `TAEE11`, `WEGE3`, `BBAS3`, `BBDC4`,
-`BBSE3`, `CXSE3` (`portfolio/domain/cvm_codes.py`).
-
-Eles não são uma amostra aleatória: cobrem os três regimes contábeis que a CVM
-publica (padrão, BACEN, SUSEP), duas *units* (`SAPR11`, `TAEE11`) e um caso de
-desdobramento (`BBAS3`). Um indicador que está correto para os nove está correto
-para a maior parte da bolsa.
+A correção é demonstrada por reconciliações com os insumos primários, fórmulas
+declaradas e invariantes de domínio. Casos de teste são escolhidos pela forma dos
+dados — regime contábil, fatia individual ou consolidada, *units*, múltiplas
+classes, tesouraria, eventos societários, período e base de preço — e não por
+pertencerem a uma lista curada.
 
 ## Princípio de ordem
 
-**Estabilizar antes de crescer.** Nenhum indicador novo entra enquanto a
-cobertura dos nove não for conhecida e verde. Escalar um cálculo errado para 400
-empresas só multiplica o erro — e o torna invisível, porque ninguém confere 400
-empresas à mão.
+**Estabilizar antes de crescer.** Nenhum indicador novo entra sem uma fórmula
+declarada, reconciliação dos insumos CVM/B3 e comportamento de nulo testado.
+Escalar um cálculo errado para centenas de empresas só multiplica o erro.
 
 Daí a ordem M0 → M1 → M2 → M3: primeiro **saber o que é verdade**, depois
 **estar certo**, depois **rodar em escala**, depois **interpretar**.
@@ -31,18 +27,16 @@ Daí a ordem M0 → M1 → M2 → M3: primeiro **saber o que é verdade**, depoi
 
 > *Saber o que é verdade.*
 
-Hoje não existe uma resposta confiável para "quais indicadores dos nove tickers
-estão preenchidos, e por que os outros não estão". A verdade sobre o estado dos
-dados vivia em prosa — num log de achados escrito à mão, hoje aposentado (#43) —
-e prosa não recalcula: 38 de 45 exercícios fechados perderam o preço sem ninguém
-notar.
+O estado dos dados não vive em prosa. Cobertura e causas de nulo são calculadas
+a partir da análise persistida, para que uma mudança no espelho ou no cálculo
+apareça no relatório em vez de envelhecer num documento.
 
 Escopo: relatório de cobertura, coleta de preços, higiene do backlog, modelo de
 documentação.
 
-**Gate:** `smaug doctor` — um relatório de cobertura sobre a análise persistida —
-reporta, para cada exercício fechado dos nove tickers, um **status conhecido para
-todo indicador**: ou um valor, ou um nulo com causa nomeada.
+**Gate:** `smaug doctor --all` — um relatório de cobertura sobre a análise
+persistida — reporta um **status conhecido para todo indicador**: ou um valor, ou
+um nulo com causa nomeada.
 
 "Nulo com causa nomeada" é o coração do M0. Hoje um nulo num banco pode ser três
 coisas indistinguíveis: julgamento de domínio (o indicador não se aplica a
@@ -51,25 +45,28 @@ indistinguíveis, não há como afirmar que o sistema está certo.
 
 ---
 
-## M1 — Fidelidade dos 9
+## M1 — Fidelidade às fontes
 
 > *Estar certo.*
 
-Os nove tickers batem com as plataformas de referência (AUVP Analítica,
-Investidor10), **provado por um teste** — não por um parágrafo.
+Os indicadores reconciliam com os dados primários da CVM e da B3 e com as
+fórmulas declaradas pelo domínio, **provado por testes** — não por comparação
+com saídas sem linhagem de agregadores.
 
 Escopo:
 
-- Fixture com os valores das plataformas de referência para os nove tickers,
-  commitada no repositório; um teste compara nosso cálculo contra ela com
-  **tolerância por indicador**. Uma divergência vira uma falha visível de teste.
+- Testes de fórmulas e reconciliação para balanço, margens, valores por ação,
+  dividendos e capitalização por classe.
+- Fixtures reais apenas quando apontam explicitamente para o artefato CVM/B3 de
+  origem; casos sintéticos quando isolam uma propriedade do domínio.
 - **Gating por regime contábil** (padrão / BACEN / SUSEP) substitui o enum
   `Sector` de cinco valores. A aplicabilidade de um indicador é uma propriedade
   do plano de contas que a empresa usa, não do seu setor econômico —
   `is_financial` é um proxy grosseiro disso hoje.
 
-**Gate:** o teste de fidelidade passa para os nove, e todo indicador
-inaplicável é inaplicável por regime declarado, não por exceção codificada.
+**Gate:** a suíte de invariantes passa para todas as formas de dados suportadas,
+e todo indicador inaplicável é inaplicável por regime declarado, não por exceção
+de ticker.
 
 ---
 
@@ -88,10 +85,13 @@ Escopo:
 - Ingestão em lote.
 
 O código de M1 já é **projetado para lote** (registro de companhias, taxonomia)
-antes de **rodar em lote** — mas só roda depois que os nove estiverem fiéis.
+antes de **rodar em lote** — e cada forma nova de dado precisa entrar na suíte de
+invariantes antes de ser aceita em escala.
 
-**Gate:** ingestão e análise de todas as companhias listadas, sem regressão no
-teste de fidelidade dos nove.
+**Gate:** ingestão e análise de todas as companhias listadas, `smaug doctor
+--all` sem nulos não classificados e nenhuma regressão na suíte de fórmulas e
+invariantes. O `doctor` cobre escala; não substitui os testes de valores não
+nulos.
 
 ---
 
@@ -99,8 +99,8 @@ teste de fidelidade dos nove.
 
 > *Interpretar.*
 
-Pipeline de análise por IA sobre os nove tickers, apoiado em dados cuja
-fidelidade já é garantida por teste (M1) e cuja cobertura é conhecida (M0).
+Pipeline de análise por IA sobre o portfólio, apoiado em dados cuja fidelidade
+já é garantida por testes (M1) e cuja cobertura é conhecida (M0).
 
 Escopo definido quando M1 fechar.
 

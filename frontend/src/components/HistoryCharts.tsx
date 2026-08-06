@@ -32,8 +32,8 @@ type ChartSpec = {
  *
  * The page used to carry six per-figure bar charts that had accreted one at a
  * time, and **net debt appeared in none of them** — the figure that decides
- * whether a good year is durable (#142). The reference platform organises the
- * same ground by statement, and pairs the two figures that are read together.
+ * whether a good year is durable (#142). Grouping by statement pairs the filed
+ * figures that are read together.
  *
  * Ratios are deliberately absent here: they have a drill-down of their own with
  * a scale, the asset's own average and the min/max (#31/#34). What belongs on

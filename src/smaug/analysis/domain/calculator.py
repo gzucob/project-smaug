@@ -33,7 +33,7 @@ from smaug.analysis.domain.indicators import Indicators, NullReason
 _MONTHS_IN_YEAR = Decimal(12)
 # Statutory Brazilian corporate rate (IRPJ 25% + CSLL 9%). ROIC's NOPAT uses this
 # flat rate rather than each company's effective rate — a deliberate approximation
-# (see docs/adr/0002-*), matching how the reference platforms simplify.
+# (see docs/adr/0002-*).
 _TAX_RATE = Decimal("0.34")
 
 
@@ -70,8 +70,8 @@ def _sub(a: Decimal | None, b: Decimal | None) -> Decimal | None:
 
 # The compounded-growth window, in years of *variation* (#144). Six closed
 # exercises are needed to span five years of change, and the count is in the
-# indicator's own name (``revenue_cagr_5y``) because the reference platforms
-# publish different windows under the same "CAGR 5A" heading.
+# indicator's own name (``revenue_cagr_5y``): the two endpoints are exactly five
+# exercises apart.
 _CAGR_YEARS = 5
 
 
@@ -132,8 +132,8 @@ def _net_debt(financials: StandardizedFinancials) -> Decimal | None:
     "Capitalização" there, ADR 0015), so what remains of the definition is
     ``0 − cash``. Suppressing it instead surfaced the same economic fact for
     one insurer and hid it for the other: CXSE3 files as a corporate holding
-    and showed its net cash while BBSE3 could not (#103). The platforms
-    publish it for both.
+    and showed its net cash while BBSE3 could not (#103). Applying the same
+    filed-regime rule makes the economic fact consistent across both filers.
     """
     regime = financials.filed_regime or expected_regime(financials.sector)
     if regime is AccountingRegime.INSURANCE:
@@ -144,10 +144,9 @@ def _net_debt(financials: StandardizedFinancials) -> Decimal | None:
 
 
 # Indicators genuinely meaningless under a given accounting regime: the null is
-# an inapplicable-regime null regardless of inputs (#30). Audited per regime
-# against AUVP Analítica + Investidor10 (ADR 0010): a bank reports capital
+# an inapplicable-regime null regardless of inputs (#30). A bank reports capital
 # adequacy (Índice de Basileia), not net debt / EV-EBITDA, and has no EBITDA; an
-# insurer's margins are degenerate (both platforms show 0%).
+# insurer's filed schema makes the generic operating-margin family degenerate.
 #
 # ADR 0015 (#48) closed the three verdicts ADR 0010 had left to the mapping: a
 # bank's balance sheet has no current/non-current split whatsoever, so its
@@ -432,8 +431,8 @@ def _null_reasons(
 ) -> dict[str, NullReason]:
     """Name the cause of every null in ``computed`` (#30).
 
-    Every null now carries a reason — the zero-denominator dead-end is named
-    too (ANL-23), so there is no unclassified status left for the nine tickers.
+    Every null carries a reason, including the zero-denominator dead-end
+    (ANL-23); ``smaug doctor --all`` verifies this at exchange scale.
     """
     inapplicable = _inapplicable(f)
     reasons: dict[str, NullReason] = {}

@@ -10,14 +10,13 @@ Each ticker yields **two perspectives** (see ``analysis-two-views`` design):
 * the **live TTM** view — the trailing twelve months priced on the current
   nominal quote ("how is it valued now"); and
 * one **closed-year** view per ingested annual DFP — that year's fundamentals
-  priced on its dividend-adjusted average ("how it was priced during that year"),
-  which is the basis the reference platforms use for historical multiples.
+  priced on its nominal average ("how it was priced during that year").
 
 Both the share counts and the market cap come from CVM's filed capital
 composition, per fiscal year, so a closed year is priced on the shares that
 existed *that* year. The cap is summed over the company's listed share classes,
 each on its own quote (ADR 0014) — so the two views differ only in *which* price
-each class is summed at: the current quote, or that year's adjusted average.
+each class is summed at: the current quote, or that year's nominal average.
 """
 
 from __future__ import annotations
@@ -177,12 +176,10 @@ class AnalyzePortfolioUseCase:
     async def execute(self, tickers: Iterable[str]) -> AnalysisRun:
         """Analyze each ticker, and never let one of them end the run.
 
-        Nine tickers could afford to fail loudly and together: whatever broke was
-        going to be looked at immediately anyway. Five hundred cannot — an
-        unmapped account or a malformed payload on the two-hundredth would throw
-        away the four hundred that had nothing wrong with them, and each is a
-        minute of price requests. So a ticker's failure is recorded and the run
-        continues, which is the shape the ingestion use case has always had.
+        In an exchange-wide run, an unmapped account or a malformed payload for
+        one ticker must not discard the successful work for every other ticker.
+        A ticker's failure is recorded and the run continues, which is the shape
+        the ingestion use case has always had.
         """
         outcomes: list[TickerOutcome] = []
         for ticker in tickers:
@@ -246,8 +243,7 @@ class AnalyzePortfolioUseCase:
 
         A fiscal year CVM filed before the security's own first B3 session is not
         a row this analysis produces — not with a null price, not with nothing
-        (ADR 0048): the market has no opinion on a company that was not yet on
-        it, and every reference platform this project is measured against agrees.
+        (ADR 0048): the B3 tape cannot price a security before its first session.
 
         Walked oldest → newest so a year already known to have priced settles the
         question for every year after it (``seen_priced``): once true, a later
