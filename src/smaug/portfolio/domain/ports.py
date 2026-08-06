@@ -4,7 +4,7 @@
 other boundary in the codebase. It is a ``ports.py`` rather than a
 ``repositories.py`` because its only implementation is an HTTP data source (the
 CVM FCA archive), not storage — the same distinction ``analysis`` draws for its
-``PriceProvider`` (see ``.claude/RULES/RULES_LAYERS.md``).
+``PriceProvider`` (see ``src/smaug/AGENTS.md``).
 
 ``PortfolioRepository`` sits in the same file even though it *is* storage
 (Postgres) — this context has no separate ``repositories.py`` yet, and one port

@@ -1,9 +1,8 @@
----
-description: Test layout, naming-convention drift, fakes, and battery selection
-applies_to: tests/**/*.py
----
-
 # Testing Rules
+
+The root `AGENTS.md` remains in force. Python tests follow the typing,
+annotation, docstring and Ruff conventions in `src/smaug/AGENTS.md`; read that
+file before changing test code.
 
 ## Layout
 
@@ -50,5 +49,5 @@ preemptively.
 
 ## Pre-Commit Gate
 
-See `.claude/RULES/RULES_GIT_WORKFLOW.md` for the full gate (ruff, mypy,
-pytest) — this file only adds test-selection guidance on top of it.
+See `.github/AGENTS.md` for the full gate (ruff, mypy, pytest) — this file only
+adds test-selection guidance on top of it.

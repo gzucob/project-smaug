@@ -8,9 +8,9 @@ value, a null with a named cause (the ``NullReason`` vocabulary of #30/ADR
 reportable status of its own, never a silent omission.
 
 Read-only: it reads back through the ``AnalysisRepository`` port and never
-recomputes or persists (``CLAUDE.md``: the ``analyze`` CLI is the only write
-surface). The classification is not redone here — it reads the reason each null
-was born with.
+recomputes or persists (root ``AGENTS.md``: the ``analyze`` CLI is the only
+write surface). The classification is not redone here — it reads the reason
+each null was born with.
 """
 
 from __future__ import annotations

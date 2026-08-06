@@ -9,7 +9,7 @@ the fastest-ageing part — the state of the data — silently rotted the rest.
 
 | Artifact | Answers | Lifecycle |
 |---|---|---|
-| `.claude/RULES/` | *How we work* | Durable; changes by decision |
+| `AGENTS.md` hierarchy | *How we work* | Durable; changes by decision |
 | `docs/adr/NNNN-*.md` | *Why we chose* | **Immutable** — superseded, never edited |
 | GitHub issue | *What is left* | Closed when a verifiable acceptance criterion is met |
 | Generated report | *What is true right now* | Never hand-written; produced by a command |
@@ -17,15 +17,15 @@ the fastest-ageing part — the state of the data — silently rotted the rest.
 Before writing a paragraph anywhere, ask which of the four it is. If it is two
 of them, it is two artifacts.
 
-## Rules (`.claude/RULES/`)
+## Rules (`AGENTS.md` hierarchy)
 
 Durable engineering conventions — how to branch, type, test, lay out a context.
 Prescriptive and in the present tense. A rules file describes what the codebase
 *actually does today*, not an aspiration; when the code and a rule disagree, the
 code is the source of truth and the rule gets fixed.
 
-Every rules file is listed in the Rules Index table in `CLAUDE.md`. Adding a
-file without adding its row means nothing will read it.
+Every rules file is listed in the Agent Instructions Index table in the root
+`AGENTS.md`. Adding a file without adding its row means nothing will read it.
 
 ## ADRs (`docs/adr/NNNN-title-in-kebab-case.md`)
 
@@ -69,7 +69,7 @@ it cannot be assigned, closed, or counted. Three findings died that way (#43).
 - **A follow-up discovered while writing an ADR becomes an issue** in the same
   session, before the session ends. The ADR states the decision; the issue
   carries the doubt.
-- Format, namespaces, and required labels: `.claude/RULES/RULES_ISSUES.md`.
+- Format, namespaces, and required labels: `.github/AGENTS.md`.
 - Every issue closes against a **verifiable acceptance criterion** — a command
   that passes, a report row that turns green — not "looks right now".
 
@@ -99,7 +99,7 @@ still gets read as current by whoever finds it first:
 - `docs/PLANO_FASE1.md` — the Phase 1 plan. Its post-implementation section
   became ADR 0006.
 - `docs/preview_fase1_criterios_implementacao.md` — the Phase 1 criteria. Its
-  surviving principles are in `CLAUDE.md`'s *What NOT to Do*.
+  surviving principles are in the root `AGENTS.md`'s *What NOT to Do*.
 
 They remain in git history. **Before deleting a document, migrate what is
 load-bearing out of it** — a decision to an ADR, a doubt to an issue, a fact
@@ -111,4 +111,4 @@ existed.
 
 Documentation prose may be PT-BR (`docs/ROADMAP.md` and user-facing text) or
 English. **ADRs, rules files, issues, commits, and PRs are English** — same as
-the project-wide rule in `CLAUDE.md`.
+the project-wide rule in the root `AGENTS.md`.

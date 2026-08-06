@@ -1,16 +1,11 @@
----
-description: Front-end (Next.js) location, stack, "Smaug" design system, data boundary, and dev workflow
-applies_to: frontend/**/*.{ts,tsx,css}
----
-
 # Front-end Rules
 
 The front-end lives in **`frontend/`** at the repo root — a separate app from
 the Python backend under `src/smaug/`. It is a read-only UI over the Phase 2
 FastAPI analysis API; it never computes indicators, only fetches and formats
 already-computed results. The one write it makes is favoriting/un-favoriting a
-ticker (#151) — a preference, not a computation; `CLAUDE.md`'s "the API stays
-read-only" is about *indicators*, and that boundary is untouched.
+ticker (#151) — a preference, not a computation; the root `AGENTS.md` rule that
+the API stays read-only is about *indicators*, and that boundary is untouched.
 
 ## Stack
 
@@ -256,5 +251,5 @@ animation.
 ## Language
 
 UI-facing text is **PT-BR** (user-facing convention). Identifiers, comments,
-commit messages, and PRs are **English** — same as the project-wide rule in
-`CLAUDE.md`.
+commit messages, and PRs are **English** — same as the project-wide rule in the
+root `AGENTS.md`.
