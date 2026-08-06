@@ -12,6 +12,7 @@ from typing import Any
 
 from smaug.ingestion.domain.entities import RawIngestion
 from smaug.ingestion.domain.ports import RawFetchResult
+from smaug.ingestion.domain.runs import IngestionRun, ParserIdentity
 from smaug.portfolio.domain.sectors import Sector
 from smaug.portfolio.domain.share_classes import ShareClass, ShareKind
 
@@ -93,8 +94,36 @@ class FakeRawIngestionRepository:
         return linked
 
 
+class FakeIngestionRunRepository:
+    """In-memory lifecycle store matching ``IngestionRunRepository``."""
+
+    def __init__(self) -> None:
+        self.items: dict[str, IngestionRun] = {}
+
+    async def add(self, run: IngestionRun) -> IngestionRun:
+        self.items[run.run_id] = run
+        return run
+
+    async def update(self, run: IngestionRun) -> IngestionRun:
+        if run.run_id not in self.items:
+            raise LookupError(f"ingestion run not found: {run.run_id}")
+        self.items[run.run_id] = run
+        return run
+
+    async def get(self, run_id: str) -> IngestionRun | None:
+        return self.items.get(run_id)
+
+    async def recent(self, limit: int) -> tuple[IngestionRun, ...]:
+        ordered = sorted(
+            self.items.values(), key=lambda run: run.started_at, reverse=True
+        )
+        return tuple(ordered[:limit])
+
+
 class FakeDataSource:
     """In-memory ``RawDataSource``: returns canned payloads or raises errors."""
+
+    parser_identity = ParserIdentity("test.fake", 1)
 
     def __init__(
         self,

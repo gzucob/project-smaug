@@ -11,7 +11,10 @@ from typing import Any
 from beanie import init_beanie
 from pymongo import AsyncMongoClient
 
-from smaug.ingestion.infrastructure.models import RawIngestionDocument
+from smaug.ingestion.infrastructure.models import (
+    IngestionRunDocument,
+    RawIngestionDocument,
+)
 from smaug.shared.config import Settings
 
 
@@ -24,6 +27,6 @@ async def init_database(settings: Settings) -> AsyncMongoClient[dict[str, Any]]:
     client: AsyncMongoClient[dict[str, Any]] = AsyncMongoClient(settings.mongo_uri)
     await init_beanie(
         database=client[settings.mongo_db],
-        document_models=[RawIngestionDocument],
+        document_models=[RawIngestionDocument, IngestionRunDocument],
     )
     return client

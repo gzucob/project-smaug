@@ -3,12 +3,14 @@
 from collections.abc import Sequence
 
 from smaug.ingestion.domain.ports import RawFetchResult
+from smaug.ingestion.domain.runs import ParserIdentity
 from smaug.ingestion.infrastructure.routed_source import RoutedDataSource
 
 
 class FakeSource:
     def __init__(self, name: str) -> None:
         self.name = name
+        self.parser_identity = ParserIdentity(f"test.{name}", 1)
         self.calls: list[tuple[str, str]] = []
 
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
@@ -51,3 +53,13 @@ async def test_module_routing_is_case_insensitive() -> None:
     await router.fetch("PETR4", "capital")
 
     assert capital.calls == [("PETR4", "capital")]
+
+
+def test_reports_each_selected_parser_identity_once() -> None:
+    capital, statements = FakeSource("fre"), FakeSource("dfp")
+    router = RoutedDataSource({"CAPITAL": capital}, default=statements)
+
+    assert router.parser_identities(("DRE", "BPA", "CAPITAL")) == (
+        statements.parser_identity,
+        capital.parser_identity,
+    )

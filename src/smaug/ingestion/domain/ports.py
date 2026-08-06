@@ -11,6 +11,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from smaug.ingestion.domain.runs import ParserIdentity
+
 
 @dataclass(frozen=True)
 class RawFetchResult:
@@ -34,6 +36,8 @@ class RawDataSource(Protocol):
     so the source returns one result per filing. The sequence is never empty —
     a source that finds nothing raises a ``SourceError`` subclass instead.
     """
+
+    parser_identity: ParserIdentity
 
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
         """Return the raw results (one per period), or raise a ``SourceError``."""

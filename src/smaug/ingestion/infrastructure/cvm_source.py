@@ -52,6 +52,7 @@ from typing import Any, Literal
 import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
+from smaug.ingestion.domain.runs import ParserIdentity
 from smaug.shared.download import Sleeper, download_zip
 from smaug.shared.errors import SourceNotFoundError
 from smaug.shared.logging import get_logger
@@ -180,6 +181,8 @@ class _Statement:
 
 class CvmDataSource:
     """Fetch one statement (module) for one ticker from CVM open data."""
+
+    parser_identity = ParserIdentity("cvm.statements.csv", 1)
 
     def __init__(
         self,

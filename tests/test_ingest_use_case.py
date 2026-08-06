@@ -3,6 +3,7 @@
 from smaug.ingestion.application.ingest import IngestPortfolioUseCase, OutcomeStatus
 from smaug.ingestion.domain.events import RawIngestionStored
 from smaug.ingestion.domain.ports import RawFetchResult
+from smaug.ingestion.domain.runs import ParserIdentity
 from smaug.shared.errors import (
     CvmDownloadError,
     SourceAuthError,
@@ -15,6 +16,8 @@ from tests.fakes import FakeDataSource, FakeRawIngestionRepository, no_sleep
 
 class _MultiPeriodSource:
     """A source whose single call returns several periods (like a CVM ITR)."""
+
+    parser_identity = ParserIdentity("test.multi-period", 1)
 
     def __init__(self, periods: int) -> None:
         self._periods = periods
@@ -38,13 +41,20 @@ async def test_should_store_and_publish_one_document_per_period() -> None:
     bus.subscribe(RawIngestionStored, lambda event: events.append(event))  # type: ignore[arg-type]
 
     use_case = IngestPortfolioUseCase(
-        _MultiPeriodSource(3), repo, bus, ["BPA"], delay_seconds=0, sleep=no_sleep
+        _MultiPeriodSource(3),
+        repo,
+        bus,
+        ["BPA"],
+        run_id="run-1",
+        delay_seconds=0,
+        sleep=no_sleep,
     )
     outcomes = await use_case.execute(["PETR4"])
 
     assert [o.status for o in outcomes] == [OutcomeStatus.STORED]
     assert len(repo.items) == 3  # one stored document per filed quarter
     assert len(events) == 3
+    assert {item.run_id for item in repo.items} == {"run-1"}
     assert "3 period" in outcomes[0].detail
 
 
@@ -55,7 +65,13 @@ async def test_should_store_and_publish_for_each_module() -> None:
     bus.subscribe(RawIngestionStored, lambda event: events.append(event))  # type: ignore[arg-type]
 
     use_case = IngestPortfolioUseCase(
-        FakeDataSource(), repo, bus, ["m1", "m2"], delay_seconds=0, sleep=no_sleep
+        FakeDataSource(),
+        repo,
+        bus,
+        ["m1", "m2"],
+        run_id="run-1",
+        delay_seconds=0,
+        sleep=no_sleep,
     )
     outcomes = await use_case.execute(["PETR4"])
 
@@ -72,7 +88,13 @@ async def test_should_skip_module_on_404_and_keep_going() -> None:
     repo = FakeRawIngestionRepository()
 
     use_case = IngestPortfolioUseCase(
-        source, repo, EventBus(), ["m1", "m2"], delay_seconds=0, sleep=no_sleep
+        source,
+        repo,
+        EventBus(),
+        ["m1", "m2"],
+        run_id="run-1",
+        delay_seconds=0,
+        sleep=no_sleep,
     )
     outcomes = await use_case.execute(["PETR4"])
 
@@ -86,7 +108,13 @@ async def test_should_skip_module_on_403_plan_restriction_and_keep_going() -> No
     repo = FakeRawIngestionRepository()
 
     use_case = IngestPortfolioUseCase(
-        source, repo, EventBus(), ["m1", "m2"], delay_seconds=0, sleep=no_sleep
+        source,
+        repo,
+        EventBus(),
+        ["m1", "m2"],
+        run_id="run-1",
+        delay_seconds=0,
+        sleep=no_sleep,
     )
     outcomes = await use_case.execute(["BBAS3"])
 
@@ -101,7 +129,13 @@ async def test_should_abort_run_on_auth_error_before_next_ticker() -> None:
     repo = FakeRawIngestionRepository()
 
     use_case = IngestPortfolioUseCase(
-        source, repo, EventBus(), ["m1", "m2"], delay_seconds=0, sleep=no_sleep
+        source,
+        repo,
+        EventBus(),
+        ["m1", "m2"],
+        run_id="run-1",
+        delay_seconds=0,
+        sleep=no_sleep,
     )
     outcomes = await use_case.execute(["PETR4", "VALE3"])
 
@@ -119,7 +153,13 @@ async def test_should_abort_run_when_cvm_zip_download_definitively_fails() -> No
     repo = FakeRawIngestionRepository()
 
     use_case = IngestPortfolioUseCase(
-        source, repo, EventBus(), ["m1", "m2"], delay_seconds=0, sleep=no_sleep
+        source,
+        repo,
+        EventBus(),
+        ["m1", "m2"],
+        run_id="run-1",
+        delay_seconds=0,
+        sleep=no_sleep,
     )
     outcomes = await use_case.execute(["PETR4", "VALE3"])
 
@@ -130,6 +170,8 @@ async def test_should_abort_run_when_cvm_zip_download_definitively_fails() -> No
 
 class _RegistrantSource:
     """A CVM-shaped source: every result names the registrant that filed it."""
+
+    parser_identity = ParserIdentity("test.registrant", 1)
 
     async def fetch(self, ticker: str, module: str) -> list[RawFetchResult]:
         return [
@@ -157,6 +199,7 @@ async def test_only_paced_modules_sleep_between_calls() -> None:
         FakeRawIngestionRepository(),
         EventBus(),
         ["m1", "m2"],
+        run_id="run-1",
         delay_seconds=2.0,
         paced_modules=frozenset({"m2"}),
         sleep=_counting_sleep,
@@ -180,6 +223,7 @@ async def test_no_module_is_paced_by_default() -> None:
         FakeRawIngestionRepository(),
         EventBus(),
         ["m1", "m2"],
+        run_id="run-1",
         sleep=_counting_sleep,
     )
 
@@ -197,6 +241,7 @@ async def test_the_registrant_travels_from_the_source_onto_what_is_stored() -> N
         repository=repo,
         event_bus=EventBus(),
         modules=["BPA"],
+        run_id="run-1",
         source="cvm",
         sleep=no_sleep,
     )

@@ -36,6 +36,7 @@ from typing import Any
 import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
+from smaug.ingestion.domain.runs import ParserIdentity
 from smaug.shared.errors import SourceNotFoundError
 from smaug.shared.logging import get_logger
 
@@ -59,6 +60,8 @@ _ROOT_LENGTH = 4
 
 class B3CapitalEventSource:
     """Fetch the corporate actions B3 publishes for one ticker's company."""
+
+    parser_identity = ParserIdentity("b3.capital-events.json", 1)
 
     def __init__(
         self,

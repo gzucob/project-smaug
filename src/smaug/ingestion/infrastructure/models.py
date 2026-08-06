@@ -29,6 +29,7 @@ class RawIngestionDocument(Document):
     request: dict[str, Any]
     http_status: int
     payload: dict[str, Any]
+    run_id: str | None = None
     cvm_code: str | None = None
 
     class Settings:
@@ -49,5 +50,31 @@ class RawIngestionDocument(Document):
                     ("fetched_at", DESCENDING),
                 ],
                 name="cvm_code_module_fetched_at",
+            ),
+            IndexModel([("run_id", ASCENDING)], name="run_id"),
+        ]
+
+
+class IngestionRunDocument(Document):
+    """Stored lifecycle and provenance of one ingestion command."""
+
+    run_id: str
+    started_at: datetime
+    ended_at: datetime | None = None
+    status: str
+    parameters: dict[str, Any]
+    application_commit: str
+    parsers: list[dict[str, Any]]
+    counts: dict[str, int]
+    failure: str | None = None
+
+    class Settings:
+        name = "ingestion_runs"
+        indexes = [
+            IndexModel([("run_id", ASCENDING)], name="run_id_unique", unique=True),
+            IndexModel([("started_at", DESCENDING)], name="started_at"),
+            IndexModel(
+                [("status", ASCENDING), ("started_at", DESCENDING)],
+                name="status_started_at",
             ),
         ]

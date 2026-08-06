@@ -11,10 +11,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from smaug.ingestion.domain.ports import RawDataSource, RawFetchResult
+from smaug.ingestion.domain.runs import ParserIdentity
 
 
 class RoutedDataSource:
     """Dispatch ``fetch`` to a per-module source, falling back to ``default``."""
+
+    parser_identity = ParserIdentity("smaug.routed-source", 1)
 
     def __init__(
         self, routes: Mapping[str, RawDataSource], *, default: RawDataSource
@@ -38,3 +41,11 @@ class RoutedDataSource:
         source = self._routes.get(module.upper(), self._default)
         archive = getattr(source, "archive_name", None)
         return archive if isinstance(archive, str) else None
+
+    def parser_identities(self, modules: Sequence[str]) -> tuple[ParserIdentity, ...]:
+        """Stable identities of the parsers selected for these modules."""
+        identities = (
+            self._routes.get(module.upper(), self._default).parser_identity
+            for module in modules
+        )
+        return tuple(dict.fromkeys(identities))
