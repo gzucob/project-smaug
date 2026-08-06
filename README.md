@@ -25,7 +25,7 @@ servidos por uma API de leitura. Ambas já estão implementadas — veja
 - Roadmap (objetivo e milestones M0–M3) — [`docs/ROADMAP.md`](docs/ROADMAP.md)
 - Decisões de arquitetura e modelagem (ADRs) — [`docs/adr/`](docs/adr/)
 - Modelo de documentação (regra vs. ADR vs. issue vs. relatório gerado) —
-  [`.claude/RULES/RULES_DOCS.md`](.claude/RULES/RULES_DOCS.md)
+  [`docs/AGENTS.md`](docs/AGENTS.md)
 
 O que é verdade sobre os dados **agora** não vive em documento: vem de um
 comando (`smaug doctor`) e dos testes. Os planos da Fase 1 e o log de achados

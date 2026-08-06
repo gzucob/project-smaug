@@ -59,8 +59,8 @@ Always restate the stack before proposing architecture or dependencies.
 - `docs/ROADMAP.md` — the objective, broken into milestones M0–M3.
 - `docs/adr/` — why each modelling/architecture choice was made. Immutable.
 - GitHub issues — what is left. A follow-up lives here, never in prose.
-- `.claude/RULES/` — durable engineering rules; `RULES_DOCS.md` says which
-  artifact a given fact belongs in.
+- The `AGENTS.md` hierarchy — durable engineering rules; `docs/AGENTS.md` says
+  which artifact a given fact belongs in.
 
 What is true about the *data* right now is never a document — it comes from a
 command (`smaug doctor`) and from the tests. `docs/PLANO_FASE1.md`,
@@ -68,25 +68,38 @@ command (`smaug doctor`) and from the tests. `docs/PLANO_FASE1.md`,
 were retired in #43; their decisions are ADRs 0001–0006, their follow-ups are
 issues, and the files remain in git history.
 
-## Rules Index
+## Agent Instructions Index
+
+`AGENTS.md` is the vendor-neutral source of truth. Instructions are layered by
+directory. When a task starts at the repository root, read the applicable
+nested file before changing that scope.
+
 | File | Covers |
 |---|---|
-| `.claude/RULES/RULES_BRANCHES.md` | Branching, squash-merge, workflow from main |
-| `.claude/RULES/RULES_ISSUES.md` | `[NAMESPACE-NN]` format, area/priority/type labels |
-| `.claude/RULES/RULES_DOCS.md` | Artifact model: rules vs ADR vs issue vs generated report |
-| `.claude/RULES/RULES_GIT_WORKFLOW.md` | Quality gate, commit, push, PR |
-| `.claude/RULES/RULES_LAYERS.md` | Bounded contexts, domain→application→infra→entrypoints hierarchy, EventBus |
-| `.claude/RULES/RULES_ENTITIES.md` | Frozen entities, Beanie/SQLAlchemy models, API DTOs |
-| `.claude/RULES/RULES_REPOSITORIES.md` | Protocol pattern for ports/repositories, infra conversion |
-| `.claude/RULES/RULES_TYPING.md` | mypy strict, `X \| None`, docstring style, Ruff |
-| `.claude/RULES/RULES_TESTING.md` | Test layout, naming convention, battery selection |
-| `.claude/RULES/RULES_FRONTEND.md` | Next.js front-end: stack, "Smaug" design system, data boundary, dev workflow |
+| `AGENTS.md` | Project context, source-of-truth model, global boundaries |
+| `.github/AGENTS.md` | Branching, issues, quality gate, commits, push, PR |
+| `docs/AGENTS.md` | Artifact model: rules vs ADR vs issue vs generated report |
+| `src/smaug/AGENTS.md` | Backend architecture, entities, ports, typing and Ruff |
+| `tests/AGENTS.md` | Test layout, naming convention and battery selection |
+| `frontend/AGENTS.md` | Next.js stack, Smaug design system, data boundary and workflow |
+| `alembic/AGENTS.md` | PostgreSQL migration boundaries |
+| `scripts/AGENTS.md` | Repository scripts and generated artifacts |
 
 ## Architecture (DDD Lite)
 Isolated contexts under `src/smaug/`: `ingestion`, `analysis`, `portfolio`,
 `shared`, `entrypoints`. Layers: domain → application → infrastructure →
 entrypoints. Cross-context communication only via events (in-process EventBus).
-Details in `.claude/RULES/RULES_LAYERS.md`.
+Details in `src/smaug/AGENTS.md`.
+
+## Working Tree Safety
+
+- Preserve unrelated user changes; never overwrite or revert them as part of
+  another task.
+- Before Git or GitHub operations, read `.github/AGENTS.md`.
+- Before editing a scoped area, read its nearest `AGENTS.md` in full.
+- If a sandbox cannot write to the default uv cache, set a temporary cache for
+  the command, for example
+  `UV_CACHE_DIR=/tmp/project-smaug-uv-cache uv run pytest`.
 
 ## What NOT to Do
 - Don't push directly to `main` — always branch + PR + squash.

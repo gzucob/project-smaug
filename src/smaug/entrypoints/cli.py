@@ -2,7 +2,7 @@
 
 Wires config -> Mongo -> source readers -> repository -> use cases, and renders
 results to stdout. No business logic lives here: the commands only assemble
-dependencies and call the use cases (plan §3.1 / CLAUDE.md).
+dependencies and call the use cases (plan §3.1 / ``src/smaug/AGENTS.md``).
 """
 
 from __future__ import annotations

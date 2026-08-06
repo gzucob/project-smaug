@@ -109,7 +109,7 @@ Escopo definido quando M1 fechar.
 ## Onde o resto mora
 
 Este arquivo é a **direção**, não o estado. Seguindo
-`.claude/RULES/RULES_DOCS.md`:
+`docs/AGENTS.md`:
 
 | Pergunta | Onde |
 |---|---|

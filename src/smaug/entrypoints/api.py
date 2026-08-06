@@ -5,7 +5,7 @@ Serves the latest persisted analysis per ticker as JSON — the surface the
 front-end consumes. This is the composition root for the API: it wires the
 Postgres repositories and maps domain entities to Pydantic response models.
 Computation/persistence of *analysis* stays the ``analyze`` CLI command's job
-(``CLAUDE.md``'s "the API is a read API, not a write one" — still true for
+(``AGENTS.md``'s "the API is a read API, not a write one" — still true for
 indicators); the portfolio (which tickers the user favorited, #151) is the one
 thing this API is allowed to write, since it is not computed, only chosen.
 """
