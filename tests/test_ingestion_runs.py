@@ -52,6 +52,8 @@ async def test_completed_run_records_scope_provenance_and_counts() -> None:
         seen_run_ids.append(run_id)
         await service.plan_calls(run_id, 3)
         await service.exclude_calls(run_id, 1)
+        await service.record_artifact(run_id, "sha256:" + "a" * 64)
+        await service.record_artifact(run_id, "sha256:" + "a" * 64)
         await outcome_sink(
             FetchOutcome("PETR4", "DRE", OutcomeStatus.STORED, 200, "1 period")
         )
@@ -79,6 +81,7 @@ async def test_completed_run_records_scope_provenance_and_counts() -> None:
     assert run.counts.remaining == 0
     assert run.application_commit == "abc123"
     assert run.parsers == (ParserIdentity("cvm.statements.csv", 1),)
+    assert run.artifact_ids == ("sha256:" + "a" * 64,)
 
 
 async def test_error_outcome_completes_with_errors_and_abort_is_terminal() -> None:

@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any
 
 from beanie import Document
+from pydantic import Field
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
 
@@ -30,6 +31,7 @@ class RawIngestionDocument(Document):
     http_status: int
     payload: dict[str, Any]
     run_id: str | None = None
+    artifact_id: str | None = None
     cvm_code: str | None = None
 
     class Settings:
@@ -52,6 +54,7 @@ class RawIngestionDocument(Document):
                 name="cvm_code_module_fetched_at",
             ),
             IndexModel([("run_id", ASCENDING)], name="run_id"),
+            IndexModel([("artifact_id", ASCENDING)], name="artifact_id"),
         ]
 
 
@@ -66,6 +69,7 @@ class IngestionRunDocument(Document):
     application_commit: str
     parsers: list[dict[str, Any]]
     counts: dict[str, int]
+    artifact_ids: list[str] = Field(default_factory=list)
     failure: str | None = None
 
     class Settings:

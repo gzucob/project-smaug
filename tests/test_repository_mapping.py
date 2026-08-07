@@ -36,12 +36,16 @@ def _fake_document(**overrides: object) -> SimpleNamespace:
 
 
 def test_should_map_document_to_entity_and_stringify_id() -> None:
-    entity = BeanieRawIngestionRepository._to_entity(_fake_document())  # type: ignore[arg-type]
+    artifact_id = "sha256:" + "a" * 64
+    entity = BeanieRawIngestionRepository._to_entity(  # type: ignore[arg-type]
+        _fake_document(artifact_id=artifact_id)
+    )
 
     assert entity.id == "abc123"
     assert entity.ticker == "PETR4"
     assert entity.module == "financialData"
     assert entity.payload == {"results": [{"symbol": "PETR4"}]}
+    assert entity.artifact_id == artifact_id
 
 
 def test_should_map_document_with_none_id_to_none() -> None:
@@ -56,6 +60,7 @@ def test_should_read_a_legacy_raw_document_without_run_id() -> None:
     entity = BeanieRawIngestionRepository._to_entity(document)  # type: ignore[arg-type]
 
     assert entity.run_id is None
+    assert entity.artifact_id is None
 
 
 def test_should_map_ingestion_run_document_to_domain() -> None:
@@ -75,6 +80,7 @@ def test_should_map_ingestion_run_document_to_domain() -> None:
         },
         application_commit="abc123",
         parsers=[{"name": "cvm.statements.csv", "version": 2}],
+        artifact_ids=["sha256:" + "a" * 64],
         counts={
             "planned": 6,
             "stored": 3,
@@ -91,6 +97,7 @@ def test_should_map_ingestion_run_document_to_domain() -> None:
     assert run.parameters.ticker_scope is TickerScope.ALL
     assert run.parameters.tickers == ("PETR4", "VALE3")
     assert run.parsers[0].name == "cvm.statements.csv"
+    assert run.artifact_ids == ("sha256:" + "a" * 64,)
     assert run.counts.error == 1
     assert run.counts.remaining == 1
 

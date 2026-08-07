@@ -131,6 +131,14 @@ class IngestionRunService:
         parameters = replace(run.parameters, tickers=tuple(tickers))
         return await self._repository.update(replace(run, parameters=parameters))
 
+    async def record_artifact(self, run_id: str, artifact_id: str) -> IngestionRun:
+        """Link immutable source content to a run with set semantics."""
+        run = await self._required(run_id)
+        artifact_ids = tuple(dict.fromkeys((*run.artifact_ids, artifact_id)))
+        if artifact_ids == run.artifact_ids:
+            return run
+        return await self._repository.update(replace(run, artifact_ids=artifact_ids))
+
     async def complete(
         self, run_id: str, outcomes: Sequence[FetchOutcome]
     ) -> IngestionRun:

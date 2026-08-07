@@ -13,6 +13,7 @@ from smaug.ingestion.infrastructure.cvm_source import (
     _Statement,
 )
 from smaug.shared.errors import CvmDownloadError, SourceNotFoundError
+from smaug.shared.local_artifacts import LocalSourceArtifactStore
 from tests.fakes import no_sleep
 
 _HEADER = (
@@ -158,6 +159,61 @@ async def test_fetch_returns_one_result_per_filed_quarter(tmp_path: Path) -> Non
     # Every filing names its filer, which is the key the mirror is read by
     # (ADR 0030) — PETR3 must reach the same statements as PETR4.
     assert {r.cvm_code for r in results} == {"9512"}
+
+
+async def test_stored_artifact_can_be_reparsed_without_network(tmp_path: Path) -> None:
+    source_zip = tmp_path / "source.zip"
+    _statement_zip(
+        source_zip,
+        {
+            "dfp_cia_aberta_BPA_con_2021.csv": [
+                _row("005410", "2021-12-31", "1", "1", "100")
+            ]
+        },
+    )
+    content = source_zip.read_bytes()
+    requests = 0
+
+    def download(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        return httpx.Response(200, content=content, request=request)
+
+    root = tmp_path / "artifacts"
+    async with httpx.AsyncClient(transport=httpx.MockTransport(download)) as http:
+        store = LocalSourceArtifactStore(http, root, sleep=no_sleep)
+        source = CvmDataSource(
+            http,
+            {"WEGE3": "5410"},
+            year=2021,
+            cache_dir=str(tmp_path / "cache"),
+            document="DFP",
+            base_url="https://example.test",
+            artifact_store=store,
+        )
+        first = await source.fetch("WEGE3", "BPA")
+
+    def reject_network(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"unexpected network request: {request.url}")
+
+    artifact_id = first[0].artifact_id
+    assert artifact_id is not None
+    async with httpx.AsyncClient(transport=httpx.MockTransport(reject_network)) as http:
+        replay_store = LocalSourceArtifactStore(http, root)
+        replay = CvmDataSource(
+            http,
+            {"WEGE3": "5410"},
+            year=2021,
+            cache_dir=str(tmp_path / "unused-cache"),
+            document="DFP",
+            artifact_store=replay_store,
+            artifact_id=artifact_id,
+        )
+        second = await replay.fetch("WEGE3", "BPA")
+
+    assert requests == 1
+    assert second[0].payload == first[0].payload
+    assert second[0].artifact_id == artifact_id
 
 
 def test_build_index_keeps_every_version_and_both_balance_types(

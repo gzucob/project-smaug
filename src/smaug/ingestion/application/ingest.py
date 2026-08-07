@@ -165,6 +165,7 @@ class IngestPortfolioUseCase:
                 http_status=response.http_status,
                 payload=response.payload,
                 run_id=self._run_id,
+                artifact_id=response.artifact_id,
                 cvm_code=response.cvm_code,
             )
             stored = await self._repository.add(ingestion)

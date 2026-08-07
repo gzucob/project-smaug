@@ -4,16 +4,20 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 
 from smaug.entrypoints.cli import _by_owed_modules, _work_plan
 from smaug.ingestion.domain.entities import RawIngestion
 from smaug.ingestion.domain.ports import RawFetchResult
 from smaug.ingestion.domain.runs import ParserIdentity
 from smaug.ingestion.infrastructure.routed_source import RoutedDataSource
+from smaug.shared.artifacts import SourceArtifact
 from tests.fakes import FakeRawIngestionRepository
 
 STATEMENTS = "dfp_cia_aberta_2024.zip"
 FRE = "fre_cia_aberta_2024.zip"
+STATEMENTS_ID = "sha256:" + "1" * 64
+FRE_ID = "sha256:" + "2" * 64
 MODULES = ("DRE", "CAPITAL", "CASH_DIVIDEND_B3")
 CODES = {"PETR4": "9512", "VALE3": "4170"}
 
@@ -21,9 +25,18 @@ CODES = {"PETR4": "9512", "VALE3": "4170"}
 class _ArchiveSource:
     """A source that reads one yearly CVM archive."""
 
-    def __init__(self, archive: str) -> None:
+    def __init__(self, archive: str, artifact_id: str) -> None:
         self.archive_name = archive
+        self._artifact = SourceArtifact(
+            artifact_id,
+            artifact_id.removeprefix("sha256:"),
+            1,
+            Path(archive),
+        )
         self.parser_identity = ParserIdentity("test.archive", 1)
+
+    async def artifact(self) -> SourceArtifact:
+        return self._artifact
 
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
         return []
@@ -40,12 +53,17 @@ class _ExchangeSource:
 
 def _source() -> RoutedDataSource:
     return RoutedDataSource(
-        {"CAPITAL": _ArchiveSource(FRE), "CASH_DIVIDEND_B3": _ExchangeSource()},
-        default=_ArchiveSource(STATEMENTS),
+        {
+            "CAPITAL": _ArchiveSource(FRE, FRE_ID),
+            "CASH_DIVIDEND_B3": _ExchangeSource(),
+        },
+        default=_ArchiveSource(STATEMENTS, STATEMENTS_ID),
     )
 
 
-def _mirrored(module: str, code: str, *, file: str | None) -> RawIngestion:
+def _mirrored(
+    module: str, code: str, *, file: str | None, artifact_id: str | None = None
+) -> RawIngestion:
     return RawIngestion(
         ticker="",
         source="cvm",
@@ -55,6 +73,7 @@ def _mirrored(module: str, code: str, *, file: str | None) -> RawIngestion:
         http_status=200,
         payload={},
         cvm_code=code,
+        artifact_id=artifact_id,
     )
 
 
@@ -66,16 +85,20 @@ async def _plan(
 
 async def test_a_new_module_is_owed_by_an_already_mirrored_company() -> None:
     repository = FakeRawIngestionRepository()
-    repository.items.append(_mirrored("DRE", "9512", file=STATEMENTS))
-    repository.items.append(_mirrored("CAPITAL", "9512", file=FRE))
+    repository.items.append(
+        _mirrored("DRE", "9512", file=STATEMENTS, artifact_id=STATEMENTS_ID)
+    )
+    repository.items.append(_mirrored("CAPITAL", "9512", file=FRE, artifact_id=FRE_ID))
 
     assert await _plan(repository) == {"PETR4": ("CASH_DIVIDEND_B3",)}
 
 
 async def test_a_company_owing_nothing_drops_out_of_the_plan() -> None:
     repository = FakeRawIngestionRepository()
-    repository.items.append(_mirrored("DRE", "9512", file=STATEMENTS))
-    repository.items.append(_mirrored("CAPITAL", "9512", file=FRE))
+    repository.items.append(
+        _mirrored("DRE", "9512", file=STATEMENTS, artifact_id=STATEMENTS_ID)
+    )
+    repository.items.append(_mirrored("CAPITAL", "9512", file=FRE, artifact_id=FRE_ID))
     repository.items.append(_mirrored("CASH_DIVIDEND_B3", "9512", file=None))
 
     assert await _plan(repository) == {}
@@ -83,8 +106,43 @@ async def test_a_company_owing_nothing_drops_out_of_the_plan() -> None:
 
 async def test_an_archive_module_is_owed_again_for_another_year() -> None:
     repository = FakeRawIngestionRepository()
-    repository.items.append(_mirrored("DRE", "9512", file="dfp_cia_aberta_2023.zip"))
-    repository.items.append(_mirrored("CAPITAL", "9512", file="fre_2023.zip"))
+    repository.items.append(
+        _mirrored(
+            "DRE",
+            "9512",
+            file="dfp_cia_aberta_2023.zip",
+            artifact_id="sha256:" + "3" * 64,
+        )
+    )
+    repository.items.append(
+        _mirrored(
+            "CAPITAL",
+            "9512",
+            file="fre_2023.zip",
+            artifact_id="sha256:" + "4" * 64,
+        )
+    )
+
+    assert await _plan(repository) == {"PETR4": ("DRE", "CAPITAL", "CASH_DIVIDEND_B3")}
+
+
+async def test_same_filename_with_changed_content_is_owed_again() -> None:
+    repository = FakeRawIngestionRepository()
+    repository.items.append(
+        _mirrored(
+            "DRE",
+            "9512",
+            file=STATEMENTS,
+            artifact_id="sha256:" + "9" * 64,
+        )
+    )
+
+    assert await _plan(repository) == {"PETR4": ("DRE", "CAPITAL", "CASH_DIVIDEND_B3")}
+
+
+async def test_legacy_filename_without_identity_is_recollected_once() -> None:
+    repository = FakeRawIngestionRepository()
+    repository.items.append(_mirrored("DRE", "9512", file=STATEMENTS))
 
     assert await _plan(repository) == {"PETR4": ("DRE", "CAPITAL", "CASH_DIVIDEND_B3")}
 
@@ -100,7 +158,9 @@ async def test_an_exchange_module_is_owed_once_and_never_per_archive() -> None:
 
 async def test_an_unmapped_ticker_is_owed_everything() -> None:
     repository = FakeRawIngestionRepository()
-    repository.items.append(_mirrored("DRE", "9512", file=STATEMENTS))
+    repository.items.append(
+        _mirrored("DRE", "9512", file=STATEMENTS, artifact_id=STATEMENTS_ID)
+    )
 
     plan = await _work_plan(repository, _source(), ("BOOM3",), CODES, MODULES)
 

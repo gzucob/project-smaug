@@ -29,6 +29,7 @@ class _MultiPeriodSource:
                 request={"reference_date": f"2025-{3 * (i + 1):02d}-30"},
                 http_status=200,
                 payload={"reference_date": f"2025-{3 * (i + 1):02d}-30"},
+                artifact_id="sha256:" + "a" * 64,
             )
             for i in range(self._periods)
         ]
@@ -55,6 +56,7 @@ async def test_should_store_and_publish_one_document_per_period() -> None:
     assert len(repo.items) == 3  # one stored document per filed quarter
     assert len(events) == 3
     assert {item.run_id for item in repo.items} == {"run-1"}
+    assert {item.artifact_id for item in repo.items} == {"sha256:" + "a" * 64}
     assert "3 period" in outcomes[0].detail
 
 

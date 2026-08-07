@@ -76,13 +76,15 @@ class FakeRawIngestionRepository:
             )
         )
 
-    async def mirrored_for(self, module: str, *, file: str | None = None) -> set[str]:
+    async def mirrored_for(
+        self, module: str, *, artifact_id: str | None = None
+    ) -> set[str]:
         return {
             item.cvm_code
             for item in self.items
             if item.module == module
             and item.cvm_code is not None
-            and (file is None or item.request.get("file") == file)
+            and (artifact_id is None or item.artifact_id == artifact_id)
         }
 
     async def link_registrant(self, ticker: str, cvm_code: str) -> int:
