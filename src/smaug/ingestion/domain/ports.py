@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from smaug.ingestion.domain.runs import ParserIdentity
+from smaug.shared.artifacts import SourceArtifact
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ class RawFetchResult:
     # company's, not the ticker's — ELET3/5/6 are one filer — so it is the key the
     # mirror is read by (ADR 0030). ``None`` when the source names no filer.
     cvm_code: str | None = None
+    # Identity of the immutable source archive, when this result came from one.
+    artifact_id: str | None = None
 
 
 class RawDataSource(Protocol):
@@ -41,4 +44,13 @@ class RawDataSource(Protocol):
 
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
         """Return the raw results (one per period), or raise a ``SourceError``."""
+        ...
+
+
+@runtime_checkable
+class ArtifactDataSource(Protocol):
+    """A raw source backed by one immutable archive."""
+
+    async def artifact(self) -> SourceArtifact | None:
+        """Acquire or open the exact archive this source will parse."""
         ...

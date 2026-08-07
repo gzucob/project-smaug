@@ -10,8 +10,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from smaug.ingestion.domain.ports import RawDataSource, RawFetchResult
+from smaug.ingestion.domain.ports import (
+    ArtifactDataSource,
+    RawDataSource,
+    RawFetchResult,
+)
 from smaug.ingestion.domain.runs import ParserIdentity
+from smaug.shared.artifacts import SourceArtifact
 
 
 class RoutedDataSource:
@@ -29,18 +34,12 @@ class RoutedDataSource:
         source = self._routes.get(module.upper(), self._default)
         return await source.fetch(ticker, module)
 
-    def archive_for(self, module: str) -> str | None:
-        """The archive whichever source answers ``module`` reads — its resume marker.
-
-        Each module names its own file, not the statements' one for all of them:
-        the share counts come from the FRE and the exchange's modules from no
-        archive at all. ``None`` says "this module has no file to be finished
-        with", which is the honest answer for B3's endpoints — they return the
-        whole history in one call, so presence alone is what marks them done.
-        """
+    async def artifact_for(self, module: str) -> SourceArtifact | None:
+        """Acquire the exact archive used by the source answering ``module``."""
         source = self._routes.get(module.upper(), self._default)
-        archive = getattr(source, "archive_name", None)
-        return archive if isinstance(archive, str) else None
+        if not isinstance(source, ArtifactDataSource):
+            return None
+        return await source.artifact()
 
     def parser_identities(self, modules: Sequence[str]) -> tuple[ParserIdentity, ...]:
         """Stable identities of the parsers selected for these modules."""

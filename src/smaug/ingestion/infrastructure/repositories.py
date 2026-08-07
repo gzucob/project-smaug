@@ -73,23 +73,24 @@ class BeanieRawIngestionRepository:
         )
         return int(result.modified_count)
 
-    async def mirrored_for(self, module: str, *, file: str | None = None) -> set[str]:
+    async def mirrored_for(
+        self, module: str, *, artifact_id: str | None = None
+    ) -> set[str]:
         """Which registrants this module has already been mirrored for.
 
-        The module is half of the predicate and the archive is the other half: a
-        company is done for ``CAPITAL`` in ``fre_cia_aberta_2019.zip`` when a
-        document says that module was read from exactly that file. Asking by
-        registrant alone answered for a module nobody had ever collected (#178).
+        The module is half of the predicate and immutable archive content is the
+        other half. A CVM republication keeps its filename but gets a new artifact
+        id, so it is collected again; identical bytes retain the same id.
 
-        ``file`` is ``None`` for a module that comes from no archive — B3 returns
+        ``artifact_id`` is ``None`` for a module that comes from no archive — B3 returns
         the whole history in one call, so holding the module at all is what marks
         it done. Lets a whole-exchange run resume where it stopped instead of
         appending a second copy of everything it already holds.
         """
         collection = RawIngestionDocument.get_pymongo_collection()
         query: dict[str, object] = {"module": module}
-        if file is not None:
-            query["request.file"] = file
+        if artifact_id is not None:
+            query["artifact_id"] = artifact_id
         codes = await collection.distinct("cvm_code", query)
         return {str(code) for code in codes if code is not None}
 
@@ -110,6 +111,7 @@ class BeanieRawIngestionRepository:
             http_status=ingestion.http_status,
             payload=dict(ingestion.payload),
             run_id=ingestion.run_id,
+            artifact_id=ingestion.artifact_id,
             cvm_code=ingestion.cvm_code,
         )
 
@@ -125,6 +127,7 @@ class BeanieRawIngestionRepository:
             http_status=document.http_status,
             payload=document.payload,
             run_id=getattr(document, "run_id", None),
+            artifact_id=getattr(document, "artifact_id", None),
             cvm_code=document.cvm_code,
         )
 
@@ -185,6 +188,7 @@ class BeanieIngestionRunRepository:
                 {"name": parser.name, "version": parser.version}
                 for parser in run.parsers
             ],
+            artifact_ids=list(run.artifact_ids),
             counts={
                 "planned": run.counts.planned,
                 "excluded": run.counts.excluded,
@@ -219,6 +223,7 @@ class BeanieIngestionRunRepository:
                 ParserIdentity(str(parser["name"]), int(parser["version"]))
                 for parser in document.parsers
             ),
+            artifact_ids=tuple(getattr(document, "artifact_ids", ())),
             counts=IngestionRunCounts(
                 planned=counts.get("planned", 0),
                 excluded=counts.get("excluded", 0),

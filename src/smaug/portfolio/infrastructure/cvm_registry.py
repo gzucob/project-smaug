@@ -38,6 +38,7 @@ import httpx
 from smaug.portfolio.domain.company import CompanyIdentity
 from smaug.portfolio.domain.share_classes import ShareClass, ShareKind
 from smaug.portfolio.domain.universe import ListedCompany, listed_companies
+from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.download import Sleeper, download_zip
 from smaug.shared.logging import get_logger
 
@@ -164,12 +165,17 @@ class CvmCompanyRegistry:
         cache_dir: str,
         base_url: str | None = None,
         sleep: Sleeper = asyncio.sleep,
+        artifact_store: SourceArtifactStore | None = None,
+        artifact_id: str | None = None,
     ) -> None:
         self._http = http_client
         self._year = year
         self._cache_dir = Path(cache_dir)
         self._base_url = (base_url or CVM_FCA_BASE_URL).rstrip("/")
         self._sleep = sleep
+        self._artifact_store = artifact_store
+        self._replay_artifact_id = artifact_id
+        self._artifact: SourceArtifact | None = None
         self._index: dict[str, CompanyIdentity] | None = None
         self._lock = asyncio.Lock()
 
@@ -184,6 +190,10 @@ class CvmCompanyRegistry:
     @property
     def _securities_member(self) -> str:
         return f"fca_cia_aberta_valor_mobiliario_{self._year}.csv"
+
+    async def artifact(self) -> SourceArtifact | None:
+        """Acquire the FCA identity without parsing its members."""
+        return await self._ensure_artifact()
 
     async def resolve(self, ticker: str) -> CompanyIdentity | None:
         index = await self._ensure_loaded()
@@ -216,10 +226,7 @@ class CvmCompanyRegistry:
             cached = self._index
             if cached is not None:
                 return cached
-            self._cache_dir.mkdir(parents=True, exist_ok=True)
-            raw = self._cache_dir / self._zip_name
-            if not raw.exists():
-                await self._download(raw)
+            raw = await self._archive_path()
             index = await asyncio.to_thread(self._build_index, raw)
             self._index = index
             logger.info(
@@ -228,6 +235,30 @@ class CvmCompanyRegistry:
                 len(index),
             )
             return index
+
+    async def _archive_path(self) -> Path:
+        artifact = await self._ensure_artifact()
+        if artifact is not None:
+            return artifact.path
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        raw = self._cache_dir / self._zip_name
+        if not raw.exists():
+            await self._download(raw)
+        return raw
+
+    async def _ensure_artifact(self) -> SourceArtifact | None:
+        if self._artifact_store is None:
+            return None
+        if self._artifact is None:
+            if self._replay_artifact_id is not None:
+                self._artifact = await self._artifact_store.open(
+                    self._replay_artifact_id
+                )
+            else:
+                self._artifact = await self._artifact_store.acquire(
+                    f"{self._base_url}/{self._zip_name}", follow_redirects=True
+                )
+        return self._artifact
 
     async def _download(self, dst: Path) -> None:
         url = f"{self._base_url}/{self._zip_name}"

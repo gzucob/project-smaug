@@ -34,8 +34,10 @@ class RawIngestionRepository(Protocol):
         """Stamp ``cvm_code`` on ``ticker``'s unlinked CVM documents; count them."""
         ...
 
-    async def mirrored_for(self, module: str, *, file: str | None = None) -> set[str]:
-        """Registrants the mirror already holds ``module`` for, scoped to ``file``."""
+    async def mirrored_for(
+        self, module: str, *, artifact_id: str | None = None
+    ) -> set[str]:
+        """Registrants holding ``module``, scoped to immutable source content."""
         ...
 
 

@@ -80,5 +80,6 @@ class IngestionRun:
     parameters: IngestionRunParameters
     application_commit: str
     parsers: tuple[ParserIdentity, ...]
+    artifact_ids: tuple[str, ...] = ()
     counts: IngestionRunCounts = IngestionRunCounts()
     failure: str | None = None

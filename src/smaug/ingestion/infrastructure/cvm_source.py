@@ -53,6 +53,7 @@ import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
 from smaug.ingestion.domain.runs import ParserIdentity
+from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.download import Sleeper, download_zip
 from smaug.shared.errors import SourceNotFoundError
 from smaug.shared.logging import get_logger
@@ -194,6 +195,8 @@ class CvmDataSource:
         document: CvmDocument = "ITR",
         base_url: str | None = None,
         sleep: Sleeper = asyncio.sleep,
+        artifact_store: SourceArtifactStore | None = None,
+        artifact_id: str | None = None,
     ) -> None:
         self._http = http_client
         self._ticker_to_code = dict(ticker_to_code)
@@ -203,6 +206,9 @@ class CvmDataSource:
         self._prefix = _DOCUMENT_PREFIX[document]
         self._base_url = (base_url or _DOCUMENT_BASE_URL[document]).rstrip("/")
         self._sleep = sleep
+        self._artifact_store = artifact_store
+        self._replay_artifact_id = artifact_id
+        self._artifact: SourceArtifact | None = None
         self._index: dict[str, list[_Statement]] | None = None
         self._lock = asyncio.Lock()
 
@@ -214,6 +220,10 @@ class CvmDataSource:
     def archive_name(self) -> str:
         """The yearly archive this source reads — what a mirrored document names."""
         return self._zip_name
+
+    async def artifact(self) -> SourceArtifact | None:
+        """Acquire the archive identity without parsing its members."""
+        return await self._ensure_artifact()
 
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
         """Return every raw statement filed for ``ticker``/``module``.
@@ -255,6 +265,9 @@ class CvmDataSource:
                 http_status=200,
                 payload=self._to_payload(code, statement),
                 cvm_code=code,
+                artifact_id=(
+                    self._artifact.artifact_id if self._artifact is not None else None
+                ),
             )
             for statement in statements
             if statement.module == wanted and statement.accounts
@@ -271,10 +284,7 @@ class CvmDataSource:
             cached = self._index
             if cached is not None:
                 return cached
-            self._cache_dir.mkdir(parents=True, exist_ok=True)
-            raw = self._cache_dir / self._zip_name
-            if not raw.exists():
-                await self._download(raw)
+            raw = await self._archive_path()
             index = await asyncio.to_thread(self._build_index, raw)
             self._index = index
             logger.info(
@@ -286,6 +296,30 @@ class CvmDataSource:
                 sum(len(docs) for docs in index.values()),
             )
             return index
+
+    async def _archive_path(self) -> Path:
+        artifact = await self._ensure_artifact()
+        if artifact is not None:
+            return artifact.path
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        raw = self._cache_dir / self._zip_name
+        if not raw.exists():
+            await self._download(raw)
+        return raw
+
+    async def _ensure_artifact(self) -> SourceArtifact | None:
+        if self._artifact_store is None:
+            return None
+        if self._artifact is None:
+            if self._replay_artifact_id is not None:
+                self._artifact = await self._artifact_store.open(
+                    self._replay_artifact_id
+                )
+            else:
+                self._artifact = await self._artifact_store.acquire(
+                    f"{self._base_url}/{self._zip_name}"
+                )
+        return self._artifact
 
     async def _download(self, dst: Path) -> None:
         """Fetch the yearly ZIP with retry + atomic write (see ``download_zip``).

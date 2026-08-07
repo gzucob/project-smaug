@@ -115,11 +115,13 @@ from smaug.portfolio.infrastructure.b3_taxonomy import B3TaxonomySource
 from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
 from smaug.portfolio.infrastructure.cvm_securities import CvmSecurityHistory
 from smaug.portfolio.infrastructure.sql_repository import SqlAlchemyPortfolioRepository
+from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.build import application_commit
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
 from smaug.shared.errors import UnknownTickerError
 from smaug.shared.events import EventBus
+from smaug.shared.local_artifacts import LocalSourceArtifactStore
 from smaug.shared.logging import get_logger
 from smaug.shared.sql_db import create_engine, create_session_factory
 
@@ -171,7 +173,10 @@ async def _default_tickers(settings: Settings) -> tuple[str, ...]:
 
 
 async def _registry_identities(
-    settings: Settings, http: httpx.AsyncClient, tickers: tuple[str, ...]
+    settings: Settings,
+    http: httpx.AsyncClient,
+    tickers: tuple[str, ...],
+    artifact_store: SourceArtifactStore | None = None,
 ) -> dict[str, CompanyIdentity]:
     """Resolve every requested ticker via the CVM FCA registry (#212).
 
@@ -182,7 +187,10 @@ async def _registry_identities(
     guard (``require_portfolio_tickers``, removed #151) gave.
     """
     registry = CvmCompanyRegistry(
-        http, year=settings.cvm_year, cache_dir=settings.cvm_cache_dir
+        http,
+        year=settings.cvm_year,
+        cache_dir=settings.cvm_cache_dir,
+        artifact_store=artifact_store,
     )
     identities = await registry.resolve_all(tickers)
     for ticker in tickers:
@@ -277,13 +285,16 @@ def _unit_composition_resolver(
 
 
 async def _cvm_key_maps(
-    settings: Settings, http: httpx.AsyncClient, tickers: tuple[str, ...]
+    settings: Settings,
+    http: httpx.AsyncClient,
+    tickers: tuple[str, ...],
+    artifact_store: SourceArtifactStore,
 ) -> tuple[dict[str, str], dict[str, str]]:
     """The ticker -> CD_CVM and ticker -> CNPJ maps the CVM sources need.
 
     Registry-resolved for every ticker, unconditionally (#212).
     """
-    identities = await _registry_identities(settings, http, tickers)
+    identities = await _registry_identities(settings, http, tickers, artifact_store)
     code = {t: i.cd_cvm for t, i in identities.items()}
     cnpj = {t: i.cnpj for t, i in identities.items()}
     return code, cnpj
@@ -394,6 +405,7 @@ def _build_data_source(
     *,
     document: str | None = None,
     year: int | None = None,
+    artifact_store: SourceArtifactStore | None = None,
 ) -> RoutedDataSource:
     """Build the raw source: CVM's archives, with B3's endpoints routed per module.
 
@@ -410,6 +422,7 @@ def _build_data_source(
         year=cvm_year,
         cache_dir=settings.cvm_cache_dir,
         document=cast(CvmDocument, doc),
+        artifact_store=artifact_store,
     )
     # The share counts live in a different CVM archive (FRE), keyed by CNPJ.
     capital = CvmCapitalSource(
@@ -418,6 +431,7 @@ def _build_data_source(
         year=cvm_year,
         cache_dir=settings.cvm_cache_dir,
         ticker_to_code=ticker_to_code,
+        artifact_store=artifact_store,
     )
     # ...and the statements ZIP has a composition of its own, which is the only
     # place treasury shares are filed. Also keyed by CNPJ, not by CD_CVM.
@@ -428,6 +442,7 @@ def _build_data_source(
         cache_dir=settings.cvm_cache_dir,
         ticker_to_code=ticker_to_code,
         document=cast(CvmDocument, doc),
+        artifact_store=artifact_store,
     )
     # The same FRE ZIP also declares the corporate actions outright, which the
     # share counts alone can only be guessed at (ADR 0027 guesses, and conflates
@@ -438,6 +453,7 @@ def _build_data_source(
         year=cvm_year,
         cache_dir=settings.cvm_cache_dir,
         ticker_to_code=ticker_to_code,
+        artifact_store=artifact_store,
     )
     # ...and B3 declares the same events without the counts, but *with* the last
     # session quoted on the old base — the two are complementary, and neither
@@ -512,7 +528,20 @@ async def _run_ingest(
             await run_service.exclude_calls(run_id, count)
 
         async with httpx.AsyncClient(timeout=30.0) as http:
-            companies = await _universe(settings, http) if whole_exchange else ()
+
+            async def artifact_observer(artifact: SourceArtifact) -> None:
+                await run_service.record_artifact(run_id, artifact.artifact_id)
+
+            artifact_store = LocalSourceArtifactStore(
+                http,
+                settings.source_artifact_dir,
+                observer=artifact_observer,
+            )
+            companies = (
+                await _universe(settings, http, artifact_store)
+                if whole_exchange
+                else ()
+            )
             if whole_exchange:
                 selected_tickers = tuple(company.ticker for company in companies)
                 await run_service.resolve_tickers(run_id, selected_tickers)
@@ -535,6 +564,7 @@ async def _run_ingest(
                         run_id=run_id,
                         outcome_sink=outcome_sink,
                         exclusion_sink=exclusion_sink,
+                        artifact_store=artifact_store,
                     )
                 )
 
@@ -553,11 +583,16 @@ async def _run_ingest(
 
 
 async def _universe(
-    settings: Settings, http: httpx.AsyncClient
+    settings: Settings,
+    http: httpx.AsyncClient,
+    artifact_store: SourceArtifactStore | None = None,
 ) -> tuple[ListedCompany, ...]:
     """Every listed company — the iteration unit of a whole-exchange run (#109)."""
     registry = CvmCompanyRegistry(
-        http, year=settings.cvm_year, cache_dir=settings.cvm_cache_dir
+        http,
+        year=settings.cvm_year,
+        cache_dir=settings.cvm_cache_dir,
+        artifact_store=artifact_store,
     )
     companies = await registry.companies()
     logger.info("Universe: %d listed companies", len(companies))
@@ -578,6 +613,7 @@ async def _ingest_one_year(
     run_id: str,
     outcome_sink: Callable[[FetchOutcome], Awaitable[None]],
     exclusion_sink: Callable[[int], Awaitable[None]],
+    artifact_store: SourceArtifactStore,
 ) -> YearPass:
     """Collect one CVM archive year (or the single configured pass).
 
@@ -591,11 +627,19 @@ async def _ingest_one_year(
         cnpj_map = {c.ticker: c.cnpj for c in companies}
         wanted = tuple(c.ticker for c in companies)
     else:
-        code_map, cnpj_map = await _cvm_key_maps(settings, http, tickers)
+        code_map, cnpj_map = await _cvm_key_maps(
+            settings, http, tickers, artifact_store
+        )
         wanted = tickers
 
     source = _build_data_source(
-        settings, http, code_map, cnpj_map, document=document, year=year
+        settings,
+        http,
+        code_map,
+        cnpj_map,
+        document=document,
+        year=year,
+        artifact_store=artifact_store,
     )
     modules = settings.cvm_modules
     plan = dict.fromkeys(wanted, modules)
@@ -692,10 +736,12 @@ async def _work_plan(
     the run reported success having stored nothing. ``--force`` collects
     regardless, which is what a re-run after an amended archive wants.
     """
-    done = {
-        module: await repository.mirrored_for(module, file=source.archive_for(module))
-        for module in modules
-    }
+    artifacts = {module: await source.artifact_for(module) for module in modules}
+    done: dict[str, set[str]] = {}
+    for module, artifact in artifacts.items():
+        done[module] = await repository.mirrored_for(
+            module, artifact_id=artifact.artifact_id if artifact is not None else None
+        )
     plan: dict[str, tuple[str, ...]] = {}
     for ticker in wanted:
         code = code_map.get(ticker)

@@ -41,9 +41,9 @@ async def test_build_data_source_routes_each_module_to_its_own_archive() -> None
     assert isinstance(cvm, RoutedDataSource)
     assert isinstance(cvm._default, CvmDataSource)
     assert isinstance(cvm._routes["CAPITAL"], CvmCapitalSource)
-    assert cvm.archive_for("CAPITAL") == "fre_cia_aberta_2024.zip"
-    assert cvm.archive_for("DRE") == "dfp_cia_aberta_2024.zip"
-    assert cvm.archive_for("CASH_DIVIDEND_B3") is None
+    assert cvm._routes["CAPITAL"].archive_name == "fre_cia_aberta_2024.zip"  # type: ignore[attr-defined]
+    assert cvm._default.archive_name == "dfp_cia_aberta_2024.zip"  # type: ignore[attr-defined]
+    assert await cvm.artifact_for("CASH_DIVIDEND_B3") is None
 
 
 async def test_the_exchange_prices_the_analysis_and_nothing_else_does() -> None:

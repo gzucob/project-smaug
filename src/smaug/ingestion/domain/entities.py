@@ -27,6 +27,9 @@ class RawIngestion:
     # ``None`` only exists for documents written before ingestion runs were
     # introduced. Every new application write supplies a run id.
     run_id: str | None = None
+    # ``None`` for legacy documents and live endpoint responses. Archive-backed
+    # results name the immutable Bronze bytes parsed into this Silver mirror.
+    artifact_id: str | None = None
     id: str | None = None
     # The registrant that filed it (ADR 0030). ``ticker`` records which code the
     # collection was requested under and stays informational; this is what the

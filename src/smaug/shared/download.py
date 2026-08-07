@@ -16,8 +16,10 @@ COTAHIST price series. Importing it out of ``ingestion/infrastructure`` — whic
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 
@@ -33,13 +35,25 @@ _RETRY_DELAYS: tuple[float, ...] = (1.0, 3.0)
 Sleeper = Callable[[float], Awaitable[None]]
 
 
+@dataclass(frozen=True)
+class DownloadResult:
+    """HTTP metadata retained from an archive acquisition."""
+
+    status_code: int
+    etag: str | None
+    last_modified: str | None
+
+
 def _write_atomic(dst: Path, content: bytes) -> None:
     """Write to a sibling temp file and rename, so an interrupted run never
     leaves a truncated ZIP in the cache (a partial file would poison every
     later execution, which trusts ``dst.exists()``)."""
-    tmp = dst.with_suffix(".part")
-    tmp.write_bytes(content)
-    tmp.replace(dst)
+    tmp = dst.with_name(f".{dst.name}.{uuid4().hex}.part")
+    try:
+        tmp.write_bytes(content)
+        tmp.replace(dst)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 async def download_zip(
@@ -49,7 +63,9 @@ async def download_zip(
     *,
     follow_redirects: bool = False,
     sleep: Sleeper = asyncio.sleep,
-) -> None:
+    headers: Mapping[str, str] | None = None,
+    allow_not_modified: bool = False,
+) -> DownloadResult:
     """Fetch ``url`` into ``dst``, retrying transient failures, atomically.
 
     Transport errors (connection cut mid-body, timeouts) and 5xx are
@@ -63,7 +79,10 @@ async def download_zip(
     for attempt in range(1, attempts + 1):
         try:
             response = await http.get(
-                url, timeout=180.0, follow_redirects=follow_redirects
+                url,
+                timeout=180.0,
+                follow_redirects=follow_redirects,
+                headers=headers,
             )
         except httpx.TransportError as exc:
             failure = f"transport error: {exc}"
@@ -71,7 +90,17 @@ async def download_zip(
         else:
             if response.status_code == httpx.codes.OK:
                 await asyncio.to_thread(_write_atomic, dst, response.content)
-                return
+                return DownloadResult(
+                    status_code=response.status_code,
+                    etag=response.headers.get("ETag"),
+                    last_modified=response.headers.get("Last-Modified"),
+                )
+            if allow_not_modified and response.status_code == httpx.codes.NOT_MODIFIED:
+                return DownloadResult(
+                    status_code=response.status_code,
+                    etag=response.headers.get("ETag"),
+                    last_modified=response.headers.get("Last-Modified"),
+                )
             if response.status_code < httpx.codes.INTERNAL_SERVER_ERROR:
                 raise CvmDownloadError(
                     f"HTTP {response.status_code} for {dst.name}: "

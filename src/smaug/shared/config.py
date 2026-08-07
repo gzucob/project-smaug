@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     cvm_year: int = Field(default=2024)
     # Where the downloaded/sanitized CVM ZIPs are cached (gitignored).
     cvm_cache_dir: str = Field(default=".cache/cvm")
+    # Durable Bronze archive storage. Content is immutable and has no automatic
+    # eviction; cache cleanup must never remove ingestion provenance.
+    source_artifact_dir: str = Field(default=".artifacts/sources")
 
     # ---- MongoDB (Phase 1 raw mirror) ----
     mongo_uri: str = Field(default="mongodb://localhost:27017")

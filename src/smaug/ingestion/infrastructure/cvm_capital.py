@@ -40,6 +40,7 @@ from smaug.ingestion.infrastructure.cvm_source import (
     _DOCUMENT_PREFIX,
     CvmDocument,
 )
+from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.download import Sleeper, download_zip
 from smaug.shared.errors import SourceNotFoundError
 from smaug.shared.logging import get_logger
@@ -85,6 +86,8 @@ class CvmCapitalSource:
         ticker_to_code: Mapping[str, str] | None = None,
         base_url: str | None = None,
         sleep: Sleeper = asyncio.sleep,
+        artifact_store: SourceArtifactStore | None = None,
+        artifact_id: str | None = None,
     ) -> None:
         self._http = http_client
         self._ticker_to_cnpj = dict(ticker_to_cnpj)
@@ -96,6 +99,9 @@ class CvmCapitalSource:
         self._cache_dir = Path(cache_dir)
         self._base_url = (base_url or CVM_FRE_BASE_URL).rstrip("/")
         self._sleep = sleep
+        self._artifact_store = artifact_store
+        self._replay_artifact_id = artifact_id
+        self._artifact: SourceArtifact | None = None
         self._index: dict[str, list[dict[str, Any]]] | None = None
         self._lock = asyncio.Lock()
 
@@ -107,6 +113,10 @@ class CvmCapitalSource:
     def archive_name(self) -> str:
         """The yearly archive this source reads — what a mirrored document names."""
         return self._zip_name
+
+    async def artifact(self) -> SourceArtifact | None:
+        """Acquire the FRE identity without parsing its members."""
+        return await self._ensure_artifact()
 
     @property
     def _member_name(self) -> str:
@@ -151,6 +161,9 @@ class CvmCapitalSource:
                 http_status=200,
                 payload=row,
                 cvm_code=self._ticker_to_code.get(ticker),
+                artifact_id=(
+                    self._artifact.artifact_id if self._artifact is not None else None
+                ),
             )
             for row in rows
         ]
@@ -163,10 +176,7 @@ class CvmCapitalSource:
             cached = self._index
             if cached is not None:
                 return cached
-            self._cache_dir.mkdir(parents=True, exist_ok=True)
-            raw = self._cache_dir / self._zip_name
-            if not raw.exists():
-                await self._download(raw)
+            raw = await self._archive_path()
             index = await asyncio.to_thread(self._build_index, raw)
             self._index = index
             logger.info(
@@ -176,6 +186,30 @@ class CvmCapitalSource:
                 len(set(self._ticker_to_cnpj.values())),
             )
             return index
+
+    async def _archive_path(self) -> Path:
+        artifact = await self._ensure_artifact()
+        if artifact is not None:
+            return artifact.path
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        raw = self._cache_dir / self._zip_name
+        if not raw.exists():
+            await self._download(raw)
+        return raw
+
+    async def _ensure_artifact(self) -> SourceArtifact | None:
+        if self._artifact_store is None:
+            return None
+        if self._artifact is None:
+            if self._replay_artifact_id is not None:
+                self._artifact = await self._artifact_store.open(
+                    self._replay_artifact_id
+                )
+            else:
+                self._artifact = await self._artifact_store.acquire(
+                    f"{self._base_url}/{self._zip_name}", follow_redirects=True
+                )
+        return self._artifact
 
     async def _download(self, dst: Path) -> None:
         # Same shared-file reasoning as the statements ZIP: retry + atomic
@@ -270,6 +304,8 @@ class CvmCapitalEventSource:
         ticker_to_code: Mapping[str, str] | None = None,
         base_url: str | None = None,
         sleep: Sleeper = asyncio.sleep,
+        artifact_store: SourceArtifactStore | None = None,
+        artifact_id: str | None = None,
     ) -> None:
         self._http = http_client
         self._ticker_to_cnpj = dict(ticker_to_cnpj)
@@ -278,6 +314,9 @@ class CvmCapitalEventSource:
         self._cache_dir = Path(cache_dir)
         self._base_url = (base_url or CVM_FRE_BASE_URL).rstrip("/")
         self._sleep = sleep
+        self._artifact_store = artifact_store
+        self._replay_artifact_id = artifact_id
+        self._artifact: SourceArtifact | None = None
         self._index: dict[str, list[dict[str, Any]]] | None = None
         self._lock = asyncio.Lock()
 
@@ -289,6 +328,10 @@ class CvmCapitalEventSource:
     def archive_name(self) -> str:
         """The yearly archive this source reads — what a mirrored document names."""
         return self._zip_name
+
+    async def artifact(self) -> SourceArtifact | None:
+        """Acquire the FRE identity without parsing its members."""
+        return await self._ensure_artifact()
 
     @property
     def _member_name(self) -> str:
@@ -328,6 +371,9 @@ class CvmCapitalEventSource:
                 http_status=200,
                 payload=row,
                 cvm_code=self._ticker_to_code.get(ticker),
+                artifact_id=(
+                    self._artifact.artifact_id if self._artifact is not None else None
+                ),
             )
             for row in rows
         ]
@@ -340,8 +386,7 @@ class CvmCapitalEventSource:
             cached = self._index
             if cached is not None:
                 return cached
-            self._cache_dir.mkdir(parents=True, exist_ok=True)
-            raw = self._cache_dir / self._zip_name
+            raw = await self._archive_path()
             if not raw.exists():
                 logger.info(
                     "Downloading CVM FRE %s from %s", self._year, self._base_url
@@ -361,6 +406,27 @@ class CvmCapitalEventSource:
                 len(index),
             )
             return index
+
+    async def _archive_path(self) -> Path:
+        artifact = await self._ensure_artifact()
+        if artifact is not None:
+            return artifact.path
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        return self._cache_dir / self._zip_name
+
+    async def _ensure_artifact(self) -> SourceArtifact | None:
+        if self._artifact_store is None:
+            return None
+        if self._artifact is None:
+            if self._replay_artifact_id is not None:
+                self._artifact = await self._artifact_store.open(
+                    self._replay_artifact_id
+                )
+            else:
+                self._artifact = await self._artifact_store.acquire(
+                    f"{self._base_url}/{self._zip_name}", follow_redirects=True
+                )
+        return self._artifact
 
     def _build_index(self, archive: Path) -> dict[str, list[dict[str, Any]]]:
         index: dict[str, list[dict[str, Any]]] = {}
@@ -439,6 +505,8 @@ class CvmTreasurySource:
         document: CvmDocument = "DFP",
         base_url: str | None = None,
         sleep: Sleeper = asyncio.sleep,
+        artifact_store: SourceArtifactStore | None = None,
+        artifact_id: str | None = None,
     ) -> None:
         self._http = http_client
         self._ticker_to_cnpj = dict(ticker_to_cnpj)
@@ -449,6 +517,9 @@ class CvmTreasurySource:
         self._prefix = _DOCUMENT_PREFIX[document]
         self._base_url = (base_url or _DOCUMENT_BASE_URL[document]).rstrip("/")
         self._sleep = sleep
+        self._artifact_store = artifact_store
+        self._replay_artifact_id = artifact_id
+        self._artifact: SourceArtifact | None = None
         self._index: dict[str, list[dict[str, Any]]] | None = None
         self._lock = asyncio.Lock()
 
@@ -460,6 +531,10 @@ class CvmTreasurySource:
     def archive_name(self) -> str:
         """The yearly archive this source reads — what a mirrored document names."""
         return self._zip_name
+
+    async def artifact(self) -> SourceArtifact | None:
+        """Acquire the statements identity without parsing its members."""
+        return await self._ensure_artifact()
 
     @property
     def _member_name(self) -> str:
@@ -492,6 +567,9 @@ class CvmTreasurySource:
                 http_status=200,
                 payload=row,
                 cvm_code=self._ticker_to_code.get(ticker),
+                artifact_id=(
+                    self._artifact.artifact_id if self._artifact is not None else None
+                ),
             )
             for row in rows
         ]
@@ -504,8 +582,7 @@ class CvmTreasurySource:
             cached = self._index
             if cached is not None:
                 return cached
-            self._cache_dir.mkdir(parents=True, exist_ok=True)
-            raw = self._cache_dir / self._zip_name
+            raw = await self._archive_path()
             if not raw.exists():
                 url = f"{self._base_url}/{self._zip_name}"
                 logger.info("Downloading CVM %s %s", self._document, self._year)
@@ -513,6 +590,27 @@ class CvmTreasurySource:
             index = await asyncio.to_thread(self._build_index, raw)
             self._index = index
             return index
+
+    async def _archive_path(self) -> Path:
+        artifact = await self._ensure_artifact()
+        if artifact is not None:
+            return artifact.path
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        return self._cache_dir / self._zip_name
+
+    async def _ensure_artifact(self) -> SourceArtifact | None:
+        if self._artifact_store is None:
+            return None
+        if self._artifact is None:
+            if self._replay_artifact_id is not None:
+                self._artifact = await self._artifact_store.open(
+                    self._replay_artifact_id
+                )
+            else:
+                self._artifact = await self._artifact_store.acquire(
+                    f"{self._base_url}/{self._zip_name}"
+                )
+        return self._artifact
 
     def _build_index(self, archive: Path) -> dict[str, list[dict[str, Any]]]:
         wanted = set(self._ticker_to_cnpj.values())

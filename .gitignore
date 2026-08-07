@@ -16,6 +16,7 @@ venv/
 
 # Caches de qualidade/teste
 .cache/
+.artifacts/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
