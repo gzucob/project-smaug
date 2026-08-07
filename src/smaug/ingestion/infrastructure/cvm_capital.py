@@ -34,6 +34,7 @@ from typing import Any
 import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
+from smaug.ingestion.domain.runs import ParserIdentity
 from smaug.ingestion.infrastructure.cvm_source import (
     _DOCUMENT_BASE_URL,
     _DOCUMENT_PREFIX,
@@ -71,6 +72,8 @@ def _int(value: str | None) -> int:
 
 class CvmCapitalSource:
     """Fetch the capital composition for one ticker from CVM's yearly FRE file."""
+
+    parser_identity = ParserIdentity("cvm.capital.csv", 1)
 
     def __init__(
         self,
@@ -255,6 +258,8 @@ class CvmCapitalEventSource:
     than inventing an empty event list.
     """
 
+    parser_identity = ParserIdentity("cvm.capital-events.csv", 1)
+
     def __init__(
         self,
         http_client: httpx.AsyncClient,
@@ -420,6 +425,8 @@ class CvmTreasurySource:
     scale column** to tell them apart. So it is mirrored exactly as filed, scale
     problem and all, and resolving that is the reader's problem, not the mirror's.
     """
+
+    parser_identity = ParserIdentity("cvm.treasury.csv", 1)
 
     def __init__(
         self,

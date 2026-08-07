@@ -54,6 +54,7 @@ from typing import Any
 import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
+from smaug.ingestion.domain.runs import ParserIdentity
 from smaug.shared.errors import SourceNotFoundError
 from smaug.shared.logging import get_logger
 
@@ -80,6 +81,8 @@ _MAX_PAGES = 60
 
 class B3CashDividendSource:
     """Fetch every cash payout B3 lists for one ticker's company."""
+
+    parser_identity = ParserIdentity("b3.cash-dividends.json", 1)
 
     def __init__(
         self,

@@ -8,13 +8,26 @@ inserts a new document, never overwrites.
 from __future__ import annotations
 
 from smaug.ingestion.domain.entities import RawIngestion
-from smaug.ingestion.infrastructure.models import RawIngestionDocument
+from smaug.ingestion.domain.runs import (
+    IngestionRun,
+    IngestionRunCounts,
+    IngestionRunParameters,
+    IngestionRunStatus,
+    ParserIdentity,
+    TickerScope,
+)
+from smaug.ingestion.infrastructure.models import (
+    IngestionRunDocument,
+    RawIngestionDocument,
+)
 
 
 class BeanieRawIngestionRepository:
     """Concrete repository over the ``raw_ingestions`` collection."""
 
     async def add(self, ingestion: RawIngestion) -> RawIngestion:
+        if ingestion.run_id is None or not ingestion.run_id.strip():
+            raise ValueError("new raw ingestions require a run_id")
         document = self._to_document(ingestion)
         await document.insert()
         return self._to_entity(document)
@@ -96,6 +109,7 @@ class BeanieRawIngestionRepository:
             request=dict(ingestion.request),
             http_status=ingestion.http_status,
             payload=dict(ingestion.payload),
+            run_id=ingestion.run_id,
             cvm_code=ingestion.cvm_code,
         )
 
@@ -110,5 +124,108 @@ class BeanieRawIngestionRepository:
             request=document.request,
             http_status=document.http_status,
             payload=document.payload,
+            run_id=getattr(document, "run_id", None),
             cvm_code=document.cvm_code,
+        )
+
+
+class BeanieIngestionRunRepository:
+    """Concrete repository over the ``ingestion_runs`` collection."""
+
+    async def add(self, run: IngestionRun) -> IngestionRun:
+        document = self._to_document(run)
+        await document.insert()
+        return self._to_entity(document)
+
+    async def update(self, run: IngestionRun) -> IngestionRun:
+        document = await IngestionRunDocument.find_one(
+            IngestionRunDocument.run_id == run.run_id
+        )
+        if document is None:
+            raise LookupError(f"ingestion run not found: {run.run_id}")
+        replacement = self._to_document(run)
+        replacement.id = document.id
+        await replacement.replace()
+        return self._to_entity(replacement)
+
+    async def get(self, run_id: str) -> IngestionRun | None:
+        document = await IngestionRunDocument.find_one(
+            IngestionRunDocument.run_id == run_id
+        )
+        return self._to_entity(document) if document is not None else None
+
+    async def recent(self, limit: int) -> tuple[IngestionRun, ...]:
+        documents = (
+            await IngestionRunDocument.find_all()
+            .sort("-started_at")
+            .limit(limit)
+            .to_list()
+        )
+        return tuple(self._to_entity(document) for document in documents)
+
+    @staticmethod
+    def _to_document(run: IngestionRun) -> IngestionRunDocument:
+        parameters = run.parameters
+        return IngestionRunDocument(
+            run_id=run.run_id,
+            started_at=run.started_at,
+            ended_at=run.ended_at,
+            status=run.status.value,
+            parameters={
+                "ticker_scope": parameters.ticker_scope.value,
+                "tickers": list(parameters.tickers),
+                "years": list(parameters.years),
+                "document": parameters.document,
+                "modules": list(parameters.modules),
+                "force": parameters.force,
+                "verbose": parameters.verbose,
+            },
+            application_commit=run.application_commit,
+            parsers=[
+                {"name": parser.name, "version": parser.version}
+                for parser in run.parsers
+            ],
+            counts={
+                "planned": run.counts.planned,
+                "excluded": run.counts.excluded,
+                "stored": run.counts.stored,
+                "skipped": run.counts.skipped,
+                "error": run.counts.error,
+                "aborted": run.counts.aborted,
+            },
+            failure=run.failure,
+        )
+
+    @staticmethod
+    def _to_entity(document: IngestionRunDocument) -> IngestionRun:
+        parameters = document.parameters
+        counts = document.counts
+        return IngestionRun(
+            run_id=document.run_id,
+            started_at=document.started_at,
+            ended_at=document.ended_at,
+            status=IngestionRunStatus(document.status),
+            parameters=IngestionRunParameters(
+                ticker_scope=TickerScope(str(parameters["ticker_scope"])),
+                tickers=tuple(str(value) for value in parameters["tickers"]),
+                years=tuple(int(value) for value in parameters["years"]),
+                document=str(parameters["document"]),
+                modules=tuple(str(value) for value in parameters["modules"]),
+                force=bool(parameters["force"]),
+                verbose=bool(parameters["verbose"]),
+            ),
+            application_commit=document.application_commit,
+            parsers=tuple(
+                ParserIdentity(str(parser["name"]), int(parser["version"]))
+                for parser in document.parsers
+            ),
+            counts=IngestionRunCounts(
+                planned=counts.get("planned", 0),
+                excluded=counts.get("excluded", 0),
+                stored=counts["stored"],
+                skipped=counts["skipped"],
+                error=counts["error"],
+                aborted=counts["aborted"],
+            ),
+            failure=document.failure,
         )

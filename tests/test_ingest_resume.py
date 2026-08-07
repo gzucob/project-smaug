@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from smaug.entrypoints.cli import _by_owed_modules, _work_plan
 from smaug.ingestion.domain.entities import RawIngestion
 from smaug.ingestion.domain.ports import RawFetchResult
+from smaug.ingestion.domain.runs import ParserIdentity
 from smaug.ingestion.infrastructure.routed_source import RoutedDataSource
 from tests.fakes import FakeRawIngestionRepository
 
@@ -22,6 +23,7 @@ class _ArchiveSource:
 
     def __init__(self, archive: str) -> None:
         self.archive_name = archive
+        self.parser_identity = ParserIdentity("test.archive", 1)
 
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
         return []
@@ -29,6 +31,8 @@ class _ArchiveSource:
 
 class _ExchangeSource:
     """A source with no archive behind it — B3 answers the whole history at once."""
+
+    parser_identity = ParserIdentity("test.exchange", 1)
 
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
         return []

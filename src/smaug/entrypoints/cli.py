@@ -8,7 +8,7 @@ dependencies and call the use cases (plan §3.1 / ``src/smaug/AGENTS.md``).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Coroutine, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -63,7 +63,15 @@ from smaug.ingestion.application.report import (
     CompletenessReportUseCase,
     TickerReport,
 )
+from smaug.ingestion.application.runs import IngestionRunService
 from smaug.ingestion.domain.repositories import RawIngestionRepository
+from smaug.ingestion.domain.runs import (
+    IngestionRun,
+    IngestionRunParameters,
+    IngestionRunStatus,
+    ParserIdentity,
+    TickerScope,
+)
 from smaug.ingestion.infrastructure.b3_capital_events import (
     CAPITAL_EVENT_B3_MODULE,
     B3CapitalEventSource,
@@ -81,7 +89,10 @@ from smaug.ingestion.infrastructure.cvm_capital import (
     CvmTreasurySource,
 )
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, CvmDocument
-from smaug.ingestion.infrastructure.repositories import BeanieRawIngestionRepository
+from smaug.ingestion.infrastructure.repositories import (
+    BeanieIngestionRunRepository,
+    BeanieRawIngestionRepository,
+)
 from smaug.ingestion.infrastructure.routed_source import RoutedDataSource
 from smaug.portfolio.application.refresh_taxonomy import (
     RefreshTaxonomyUseCase,
@@ -104,6 +115,7 @@ from smaug.portfolio.infrastructure.b3_taxonomy import B3TaxonomySource
 from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
 from smaug.portfolio.infrastructure.cvm_securities import CvmSecurityHistory
 from smaug.portfolio.infrastructure.sql_repository import SqlAlchemyPortfolioRepository
+from smaug.shared.build import application_commit
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
 from smaug.shared.errors import UnknownTickerError
@@ -318,6 +330,13 @@ def ingest(
         raise typer.BadParameter("--all and --ticker are mutually exclusive")
     years = _years_to_sweep(year, from_year, to_year)
     tickers = tuple(ticker) if ticker else ()
+    ticker_scope = (
+        TickerScope.ALL
+        if all_listed
+        else TickerScope.EXPLICIT
+        if tickers
+        else TickerScope.PORTFOLIO
+    )
     try:
         # _guarded turns an unknown ticker into a clean exit, like analyze (#13).
         exit_code = _guarded(
@@ -328,6 +347,7 @@ def ingest(
                 whole_exchange=all_listed,
                 force=force,
                 verbose=verbose,
+                ticker_scope=ticker_scope,
             )
         )
     except NotImplementedError as exc:
@@ -454,34 +474,80 @@ async def _run_ingest(
     whole_exchange: bool = False,
     force: bool = False,
     verbose: bool = False,
+    ticker_scope: TickerScope = TickerScope.EXPLICIT,
 ) -> int:
     settings = get_settings()
-    if not tickers and not whole_exchange:
-        tickers = await _default_tickers(settings)
+    tickers = tuple(dict.fromkeys(tickers))
     client = await init_database(settings)
     repository = BeanieRawIngestionRepository()
+    run_service = IngestionRunService(BeanieIngestionRunRepository())
     passes: list[YearPass] = []
-    try:
+    outcomes: list[FetchOutcome] = []
+    effective_years = tuple(year or settings.cvm_year for year in years)
+    effective_document = (document or settings.cvm_document).upper()
+    parameters = IngestionRunParameters(
+        ticker_scope=ticker_scope,
+        tickers=() if whole_exchange else tickers,
+        years=effective_years,
+        document=effective_document,
+        modules=tuple(settings.cvm_modules),
+        force=force,
+        verbose=verbose,
+    )
+
+    async def collect(
+        run_id: str,
+        lifecycle_sink: Callable[[FetchOutcome], Awaitable[None]],
+    ) -> None:
+        async def outcome_sink(outcome: FetchOutcome) -> None:
+            outcomes.append(outcome)
+            await lifecycle_sink(outcome)
+
+        selected_tickers = tickers
+        if not selected_tickers and not whole_exchange:
+            selected_tickers = await _default_tickers(settings)
+            await run_service.resolve_tickers(run_id, selected_tickers)
+
+        async def exclusion_sink(count: int) -> None:
+            await run_service.exclude_calls(run_id, count)
+
         async with httpx.AsyncClient(timeout=30.0) as http:
             companies = await _universe(settings, http) if whole_exchange else ()
+            if whole_exchange:
+                selected_tickers = tuple(company.ticker for company in companies)
+                await run_service.resolve_tickers(run_id, selected_tickers)
+            await run_service.plan_calls(
+                run_id,
+                len(selected_tickers) * len(settings.cvm_modules) * len(years),
+            )
             for year in years:
                 passes.append(
                     await _ingest_one_year(
                         settings,
                         http,
                         repository,
-                        tickers,
+                        selected_tickers,
                         companies,
                         document=document,
                         year=year,
                         whole_exchange=whole_exchange,
                         force=force,
+                        run_id=run_id,
+                        outcome_sink=outcome_sink,
+                        exclusion_sink=exclusion_sink,
                     )
                 )
+
+    try:
+        await run_service.execute(
+            parameters,
+            application_commit=application_commit(),
+            parsers=_parser_identities(settings.cvm_modules),
+            operation=collect,
+        )
     finally:
         await client.close()
 
-    outcomes = [outcome for pass_ in passes for outcome in pass_.outcomes]
     print(_format_collection_log(outcomes) if verbose else format_batch_log(passes))
     return 1 if any(o.status in _FAILED_STATUSES for o in outcomes) else 0
 
@@ -509,6 +575,9 @@ async def _ingest_one_year(
     year: int | None,
     whole_exchange: bool,
     force: bool,
+    run_id: str,
+    outcome_sink: Callable[[FetchOutcome], Awaitable[None]],
+    exclusion_sink: Callable[[int], Awaitable[None]],
 ) -> YearPass:
     """Collect one CVM archive year (or the single configured pass).
 
@@ -532,6 +601,8 @@ async def _ingest_one_year(
     plan = dict.fromkeys(wanted, modules)
     if whole_exchange and not force:
         plan = await _work_plan(repository, source, wanted, code_map, modules)
+    scheduled = sum(len(owed) for owed in plan.values())
+    await exclusion_sink(len(wanted) * len(modules) - scheduled)
 
     outcomes: list[FetchOutcome] = []
     for owed, tickers in _by_owed_modules(plan):
@@ -540,11 +611,13 @@ async def _ingest_one_year(
             repository=repository,
             event_bus=EventBus(),
             modules=owed,
+            run_id=run_id,
             # Only these two hit a live, per-ticker B3 endpoint
             # (``GetListedSupplementCompany``, ADR 0034/ADR 0039); every other
             # module reads this year's already-downloaded CVM archive from
             # memory and owes the call no pause at all (#214).
             paced_modules=frozenset({CAPITAL_EVENT_B3_MODULE, CASH_DIVIDEND_B3_MODULE}),
+            outcome_sink=outcome_sink,
         )
         outcomes.extend(await use_case.execute(tickers))
         if any(o.status is OutcomeStatus.ABORTED for o in outcomes):
@@ -557,6 +630,49 @@ async def _ingest_one_year(
         companies=len(plan),
         already_mirrored=len(wanted) - len(plan),
     )
+
+
+def _parser_identities(modules: Sequence[str]) -> tuple[ParserIdentity, ...]:
+    """Stable parser catalog matching the composition root's module routes."""
+    routes = {
+        CAPITAL_MODULE: CvmCapitalSource.parser_identity,
+        TREASURY_MODULE: CvmTreasurySource.parser_identity,
+        CAPITAL_EVENT_MODULE: CvmCapitalEventSource.parser_identity,
+        CAPITAL_EVENT_B3_MODULE: B3CapitalEventSource.parser_identity,
+        CASH_DIVIDEND_B3_MODULE: B3CashDividendSource.parser_identity,
+    }
+    selected = (
+        routes.get(module.upper(), CvmDataSource.parser_identity) for module in modules
+    )
+    return tuple(dict.fromkeys(selected))
+
+
+@app.command("ingestion-runs")
+def ingestion_runs(
+    run_id: str | None = typer.Option(None, "--run-id", help="Show one run by id."),
+    limit: int = typer.Option(10, "--limit", min=1, help="Number of recent runs."),
+) -> None:
+    """Read durable ingestion-run summaries for local diagnosis."""
+    runs = _guarded(_run_ingestion_runs(run_id, limit))
+    if run_id is not None and not runs:
+        typer.echo(f"error: ingestion run not found: {run_id}", err=True)
+        raise typer.Exit(code=1)
+    print(format_ingestion_runs(runs))
+
+
+async def _run_ingestion_runs(
+    run_id: str | None, limit: int
+) -> tuple[IngestionRun, ...]:
+    settings = get_settings()
+    client = await init_database(settings)
+    try:
+        service = IngestionRunService(BeanieIngestionRunRepository())
+        if run_id is not None:
+            run = await service.get(run_id)
+            return (run,) if run is not None else ()
+        return await service.recent(limit)
+    finally:
+        await client.close()
 
 
 async def _work_plan(
@@ -1071,6 +1187,46 @@ def format_batch_log(passes: list[YearPass]) -> str:
     calls = sum(len(p.outcomes) for p in passes)
     failed = sum(1 for p in passes for o in p.outcomes if o.status in _FAILED_STATUSES)
     lines.append(f"--- {len(passes)} year(s), {calls} calls, {failed} failed")
+    return "\n".join(lines)
+
+
+def format_ingestion_runs(runs: Sequence[IngestionRun]) -> str:
+    """Render persisted run provenance without reading terminal history."""
+    lines = ["", "=== Ingestion runs ==="]
+    if not runs:
+        lines.append("  (no ingestion runs)")
+        return "\n".join(lines)
+
+    for run in runs:
+        parameters = run.parameters
+        status = run.status.value
+        if run.status is IngestionRunStatus.RUNNING:
+            status += " (incomplete)"
+        ended = run.ended_at.isoformat() if run.ended_at is not None else "-"
+        tickers = ", ".join(parameters.tickers[:8])
+        if len(parameters.tickers) > 8:
+            tickers += ", ..."
+        parsers = ", ".join(f"{parser.name}@{parser.version}" for parser in run.parsers)
+        counts = run.counts
+        lines.extend(
+            [
+                f"  {run.run_id}  {status}",
+                f"    started={run.started_at.isoformat()} ended={ended}",
+                f"    scope={parameters.ticker_scope.value} "
+                f"tickers={len(parameters.tickers)} [{tickers}]",
+                f"    document={parameters.document} "
+                f"years={','.join(str(year) for year in parameters.years)}",
+                f"    modules={','.join(parameters.modules)}",
+                f"    commit={run.application_commit} parsers={parsers}",
+                f"    calls={counts.attempted}/{counts.planned} "
+                f"excluded={counts.excluded} remaining={counts.remaining} "
+                f"stored={counts.stored} "
+                f"skipped={counts.skipped} error={counts.error} "
+                f"aborted={counts.aborted}",
+            ]
+        )
+        if run.failure is not None:
+            lines.append(f"    failure={run.failure}")
     return "\n".join(lines)
 
 

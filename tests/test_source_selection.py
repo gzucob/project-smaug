@@ -3,7 +3,7 @@
 import httpx
 
 from smaug.analysis.infrastructure.b3_prices import CotahistArchive
-from smaug.entrypoints.cli import _build_archive, _build_data_source
+from smaug.entrypoints.cli import _build_archive, _build_data_source, _parser_identities
 from smaug.ingestion.infrastructure.cvm_capital import CvmCapitalSource
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource
 from smaug.ingestion.infrastructure.routed_source import RoutedDataSource
@@ -12,6 +12,20 @@ from smaug.shared.config import DEFAULT_CVM_MODULES, Settings
 
 def test_the_configured_modules_are_the_cvm_ones() -> None:
     assert Settings().cvm_modules == DEFAULT_CVM_MODULES
+
+
+def test_every_configured_parser_has_a_stable_name_and_version() -> None:
+    identities = _parser_identities(Settings().cvm_modules)
+
+    assert {identity.name for identity in identities} == {
+        "cvm.statements.csv",
+        "cvm.capital.csv",
+        "cvm.treasury.csv",
+        "cvm.capital-events.csv",
+        "b3.capital-events.json",
+        "b3.cash-dividends.json",
+    }
+    assert all(identity.version == 1 for identity in identities)
 
 
 async def test_build_data_source_routes_each_module_to_its_own_archive() -> None:

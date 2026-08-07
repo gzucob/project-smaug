@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from smaug.ingestion.domain.entities import RawIngestion
+from smaug.ingestion.domain.runs import IngestionRun
 
 
 class RawIngestionRepository(Protocol):
@@ -35,4 +36,24 @@ class RawIngestionRepository(Protocol):
 
     async def mirrored_for(self, module: str, *, file: str | None = None) -> set[str]:
         """Registrants the mirror already holds ``module`` for, scoped to ``file``."""
+        ...
+
+
+class IngestionRunRepository(Protocol):
+    """Store and query ingestion command provenance."""
+
+    async def add(self, run: IngestionRun) -> IngestionRun:
+        """Persist a newly started run."""
+        ...
+
+    async def update(self, run: IngestionRun) -> IngestionRun:
+        """Persist the latest lifecycle state for an existing run."""
+        ...
+
+    async def get(self, run_id: str) -> IngestionRun | None:
+        """Find one run by its public id."""
+        ...
+
+    async def recent(self, limit: int) -> tuple[IngestionRun, ...]:
+        """Return the most recently started runs, newest first."""
         ...

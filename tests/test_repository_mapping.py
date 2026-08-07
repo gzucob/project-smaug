@@ -5,10 +5,18 @@ Beanie 2.x needs an initialized collection just to *construct* a Document, so
 attributes, so a lightweight stand-in covers the id/None conversion logic.
 """
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
-from smaug.ingestion.infrastructure.repositories import BeanieRawIngestionRepository
+import pytest
+
+from smaug.ingestion.domain.runs import IngestionRunStatus, TickerScope
+from smaug.ingestion.infrastructure.repositories import (
+    BeanieIngestionRunRepository,
+    BeanieRawIngestionRepository,
+)
+from tests.fakes import make_snapshot
 
 
 def _fake_document(**overrides: object) -> SimpleNamespace:
@@ -40,3 +48,61 @@ def test_should_map_document_with_none_id_to_none() -> None:
     entity = BeanieRawIngestionRepository._to_entity(_fake_document(id=None))  # type: ignore[arg-type]
 
     assert entity.id is None
+
+
+def test_should_read_a_legacy_raw_document_without_run_id() -> None:
+    document = _fake_document()
+
+    entity = BeanieRawIngestionRepository._to_entity(document)  # type: ignore[arg-type]
+
+    assert entity.run_id is None
+
+
+def test_should_map_ingestion_run_document_to_domain() -> None:
+    document = SimpleNamespace(
+        run_id="run-123",
+        started_at=datetime(2026, 8, 6, 12, 0, tzinfo=UTC),
+        ended_at=datetime(2026, 8, 6, 12, 5, tzinfo=UTC),
+        status="completed_with_errors",
+        parameters={
+            "ticker_scope": "all",
+            "tickers": ["PETR4", "VALE3"],
+            "years": [2023, 2024],
+            "document": "DFP",
+            "modules": ["DRE", "BPA"],
+            "force": False,
+            "verbose": True,
+        },
+        application_commit="abc123",
+        parsers=[{"name": "cvm.statements.csv", "version": 2}],
+        counts={
+            "planned": 6,
+            "stored": 3,
+            "skipped": 1,
+            "error": 1,
+            "aborted": 0,
+        },
+        failure=None,
+    )
+
+    run = BeanieIngestionRunRepository._to_entity(document)  # type: ignore[arg-type]
+
+    assert run.status is IngestionRunStatus.COMPLETED_WITH_ERRORS
+    assert run.parameters.ticker_scope is TickerScope.ALL
+    assert run.parameters.tickers == ("PETR4", "VALE3")
+    assert run.parsers[0].name == "cvm.statements.csv"
+    assert run.counts.error == 1
+    assert run.counts.remaining == 1
+
+
+async def test_should_reject_a_new_raw_document_without_run_id() -> None:
+    repository = BeanieRawIngestionRepository()
+
+    with pytest.raises(ValueError, match="require a run_id"):
+        await repository.add(make_snapshot("PETR4", "DRE", {}))
+
+    with pytest.raises(ValueError, match="require a run_id"):
+        await repository.add(replace(make_snapshot("PETR4", "DRE", {}), run_id=""))
+
+    with pytest.raises(ValueError, match="require a run_id"):
+        await repository.add(replace(make_snapshot("PETR4", "DRE", {}), run_id=" "))

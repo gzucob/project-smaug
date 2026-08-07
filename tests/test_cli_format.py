@@ -24,10 +24,19 @@ from smaug.entrypoints.cli import (
     format_doctor,
     format_doctor_summary,
     format_drift_summary,
+    format_ingestion_runs,
     format_report,
 )
 from smaug.ingestion.application.ingest import FetchOutcome, OutcomeStatus
 from smaug.ingestion.application.report import CompletenessReportUseCase
+from smaug.ingestion.domain.runs import (
+    IngestionRun,
+    IngestionRunCounts,
+    IngestionRunParameters,
+    IngestionRunStatus,
+    ParserIdentity,
+    TickerScope,
+)
 from smaug.portfolio.domain.sectors import Sector
 from smaug.portfolio.domain.taxonomy import Classification
 from tests.fakes import FakeRawIngestionRepository, fake_sector_resolver, make_snapshot
@@ -44,6 +53,36 @@ def test_should_render_collection_log_with_summary() -> None:
     assert "Collection log" in log
     assert "stored=1" in log
     assert "skipped=1" in log
+
+
+def test_should_render_persisted_run_provenance_and_incomplete_marker() -> None:
+    run = IngestionRun(
+        run_id="run-123",
+        started_at=datetime(2026, 8, 6, 12, 0, tzinfo=UTC),
+        ended_at=None,
+        status=IngestionRunStatus.RUNNING,
+        parameters=IngestionRunParameters(
+            ticker_scope=TickerScope.ALL,
+            tickers=("PETR4", "VALE3"),
+            years=(2023, 2024),
+            document="DFP",
+            modules=("DRE", "BPA"),
+            force=False,
+            verbose=False,
+        ),
+        application_commit="abc123",
+        parsers=(ParserIdentity("cvm.statements.csv", 1),),
+        counts=IngestionRunCounts(planned=10, stored=3, skipped=1),
+    )
+
+    output = format_ingestion_runs((run,))
+
+    assert "run-123  running (incomplete)" in output
+    assert "scope=all tickers=2 [PETR4, VALE3]" in output
+    assert "document=DFP years=2023,2024" in output
+    assert "commit=abc123" in output
+    assert "cvm.statements.csv@1" in output
+    assert "calls=4/10 excluded=0 remaining=6" in output
 
 
 def test_should_render_doctor_coverage_with_named_and_unclassified() -> None:

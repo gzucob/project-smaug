@@ -24,6 +24,9 @@ class RawIngestion:
     request: Mapping[str, Any]
     http_status: int
     payload: Mapping[str, Any]
+    # ``None`` only exists for documents written before ingestion runs were
+    # introduced. Every new application write supplies a run id.
+    run_id: str | None = None
     id: str | None = None
     # The registrant that filed it (ADR 0030). ``ticker`` records which code the
     # collection was requested under and stays informational; this is what the

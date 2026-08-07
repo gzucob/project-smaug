@@ -71,6 +71,9 @@ class FetchOutcome:
     detail: str
 
 
+OutcomeSink = Callable[[FetchOutcome], Awaitable[None]]
+
+
 class IngestPortfolioUseCase:
     """Collect the configured modules for a set of tickers."""
 
@@ -81,21 +84,25 @@ class IngestPortfolioUseCase:
         event_bus: EventBus,
         modules: Sequence[str],
         *,
+        run_id: str,
         source: str = "cvm",
         delay_seconds: float = 2.0,
         paced_modules: frozenset[str] = frozenset(),
         clock: Clock = _utc_now,
         sleep: Sleeper = asyncio.sleep,
+        outcome_sink: OutcomeSink | None = None,
     ) -> None:
         self._client = client
         self._repository = repository
         self._event_bus = event_bus
         self._modules = tuple(modules)
+        self._run_id = run_id
         self._source = source
         self._delay_seconds = delay_seconds
         self._paced_modules = paced_modules
         self._clock = clock
         self._sleep = sleep
+        self._outcome_sink = outcome_sink
 
     async def execute(self, tickers: Iterable[str]) -> list[FetchOutcome]:
         """Run the collection, returning one outcome per attempted call."""
@@ -116,8 +123,9 @@ class IngestPortfolioUseCase:
                 # Fatal for the whole run: no point hammering the rest. The CVM
                 # ZIP is shared by every ticker of the year, so its definitive
                 # download failure dooms all remaining calls identically.
-                outcomes.append(
-                    FetchOutcome(ticker, module, OutcomeStatus.ABORTED, None, str(exc))
+                await self._record(
+                    outcomes,
+                    FetchOutcome(ticker, module, OutcomeStatus.ABORTED, None, str(exc)),
                 )
                 return True
             except (SourceNotFoundError, SourceForbiddenError) as exc:
@@ -125,17 +133,19 @@ class IngestPortfolioUseCase:
                 # 404 = ticker/module unknown; 403 = ticker needs a higher plan.
                 code = 403 if isinstance(exc, SourceForbiddenError) else 404
                 logger.info("Skipping %s/%s: %s", ticker, module, exc)
-                outcomes.append(
-                    FetchOutcome(ticker, module, OutcomeStatus.SKIPPED, code, str(exc))
+                await self._record(
+                    outcomes,
+                    FetchOutcome(ticker, module, OutcomeStatus.SKIPPED, code, str(exc)),
                 )
             except SourceError as exc:
                 # Unexpected, but isolated: record and move on.
                 logger.warning("Error on %s/%s: %s", ticker, module, exc)
-                outcomes.append(
-                    FetchOutcome(ticker, module, OutcomeStatus.ERROR, None, str(exc))
+                await self._record(
+                    outcomes,
+                    FetchOutcome(ticker, module, OutcomeStatus.ERROR, None, str(exc)),
                 )
             else:
-                outcomes.append(outcome)
+                await self._record(outcomes, outcome)
             if module in self._paced_modules:
                 await self._sleep(self._delay_seconds)
         return False
@@ -154,6 +164,7 @@ class IngestPortfolioUseCase:
                 request=response.request,
                 http_status=response.http_status,
                 payload=response.payload,
+                run_id=self._run_id,
                 cvm_code=response.cvm_code,
             )
             stored = await self._repository.add(ingestion)
@@ -171,3 +182,10 @@ class IngestPortfolioUseCase:
         return FetchOutcome(
             ticker, module, OutcomeStatus.STORED, last_status, f"{count} period(s)"
         )
+
+    async def _record(
+        self, outcomes: list[FetchOutcome], outcome: FetchOutcome
+    ) -> None:
+        outcomes.append(outcome)
+        if self._outcome_sink is not None:
+            await self._outcome_sink(outcome)
