@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from smaug.ingestion.domain.runs import IngestionRunStatus, TickerScope
+from smaug.ingestion.infrastructure.models import RawIngestionDocument
 from smaug.ingestion.infrastructure.repositories import (
     BeanieIngestionRunRepository,
     BeanieRawIngestionRepository,
@@ -82,8 +83,9 @@ def test_should_map_ingestion_run_document_to_domain() -> None:
         parsers=[{"name": "cvm.statements.csv", "version": 2}],
         artifact_ids=["sha256:" + "a" * 64],
         counts={
-            "planned": 6,
+            "planned": 7,
             "stored": 3,
+            "unchanged": 1,
             "skipped": 1,
             "error": 1,
             "aborted": 0,
@@ -99,6 +101,7 @@ def test_should_map_ingestion_run_document_to_domain() -> None:
     assert run.parsers[0].name == "cvm.statements.csv"
     assert run.artifact_ids == ("sha256:" + "a" * 64,)
     assert run.counts.error == 1
+    assert run.counts.unchanged == 1
     assert run.counts.remaining == 1
 
 
@@ -113,3 +116,18 @@ async def test_should_reject_a_new_raw_document_without_run_id() -> None:
 
     with pytest.raises(ValueError, match="require a run_id"):
         await repository.add(replace(make_snapshot("PETR4", "DRE", {}), run_id=" "))
+
+
+def test_content_identity_unique_index_excludes_legacy_documents() -> None:
+    index = next(
+        index
+        for index in RawIngestionDocument.Settings.indexes
+        if index.document["name"] == "source_artifact_registrant_filing_content_unique"
+    )
+
+    assert index.document["unique"] is True
+    assert index.document["partialFilterExpression"] == {
+        "registrant_key": {"$type": "string"},
+        "filing_discriminator": {"$type": "string"},
+        "content_hash": {"$type": "string"},
+    }

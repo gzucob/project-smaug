@@ -222,6 +222,9 @@ class IngestionRunService:
 def _counts(outcomes: Sequence[FetchOutcome]) -> IngestionRunCounts:
     return IngestionRunCounts(
         stored=sum(outcome.status is OutcomeStatus.STORED for outcome in outcomes),
+        unchanged=sum(
+            outcome.status is OutcomeStatus.UNCHANGED for outcome in outcomes
+        ),
         skipped=sum(outcome.status is OutcomeStatus.SKIPPED for outcome in outcomes),
         error=sum(outcome.status is OutcomeStatus.ERROR for outcome in outcomes),
         aborted=sum(outcome.status is OutcomeStatus.ABORTED for outcome in outcomes),

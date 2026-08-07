@@ -72,7 +72,7 @@ def test_should_render_persisted_run_provenance_and_incomplete_marker() -> None:
         ),
         application_commit="abc123",
         parsers=(ParserIdentity("cvm.statements.csv", 1),),
-        counts=IngestionRunCounts(planned=10, stored=3, skipped=1),
+        counts=IngestionRunCounts(planned=10, stored=3, unchanged=1, skipped=1),
     )
 
     output = format_ingestion_runs((run,))
@@ -82,7 +82,8 @@ def test_should_render_persisted_run_provenance_and_incomplete_marker() -> None:
     assert "document=DFP years=2023,2024" in output
     assert "commit=abc123" in output
     assert "cvm.statements.csv@1" in output
-    assert "calls=4/10 excluded=0 remaining=6" in output
+    assert "calls=5/10 excluded=0 remaining=5" in output
+    assert "unchanged=1" in output
 
 
 def test_should_render_doctor_coverage_with_named_and_unclassified() -> None:

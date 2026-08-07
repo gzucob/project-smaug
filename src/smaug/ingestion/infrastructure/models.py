@@ -1,8 +1,8 @@
 """Beanie document model for the ``raw_ingestions`` collection (plan §4.1).
 
-Append-only mirror: one document per module call. The compound index
-(ticker, module, fetched_at desc) makes "latest snapshot" lookups cheap for
-the completeness report.
+Append-only mirror: one document per distinct source filing. The compound index
+(ticker, module, fetched_at desc) makes "latest snapshot" lookups cheap for the
+completeness report.
 
 A CVM document also carries the registrant that filed it, indexed the same way:
 that is the key its readers use (ADR 0030), because a filing belongs to a company
@@ -33,6 +33,12 @@ class RawIngestionDocument(Document):
     run_id: str | None = None
     artifact_id: str | None = None
     cvm_code: str | None = None
+    # Legacy mirror documents predate content identity and intentionally remain
+    # outside the partial unique index below. Their old audit history is neither
+    # rewritten nor allowed to prevent new semantically-idempotent writes.
+    registrant_key: str | None = None
+    filing_discriminator: str | None = None
+    content_hash: str | None = None
 
     class Settings:
         name = "raw_ingestions"
@@ -55,6 +61,23 @@ class RawIngestionDocument(Document):
             ),
             IndexModel([("run_id", ASCENDING)], name="run_id"),
             IndexModel([("artifact_id", ASCENDING)], name="artifact_id"),
+            IndexModel(
+                [
+                    ("source", ASCENDING),
+                    ("artifact_id", ASCENDING),
+                    ("registrant_key", ASCENDING),
+                    ("module", ASCENDING),
+                    ("filing_discriminator", ASCENDING),
+                    ("content_hash", ASCENDING),
+                ],
+                name="source_artifact_registrant_filing_content_unique",
+                unique=True,
+                partialFilterExpression={
+                    "registrant_key": {"$type": "string"},
+                    "filing_discriminator": {"$type": "string"},
+                    "content_hash": {"$type": "string"},
+                },
+            ),
         ]
 
 

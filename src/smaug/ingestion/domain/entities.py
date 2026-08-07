@@ -36,3 +36,11 @@ class RawIngestion:
     # readers key on, so a company's classes share one mirror instead of a copy
     # each. ``None`` for a source that names no registrant.
     cvm_code: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RawIngestionWrite:
+    """The persisted filing and whether this attempt created a new version."""
+
+    ingestion: RawIngestion
+    created: bool

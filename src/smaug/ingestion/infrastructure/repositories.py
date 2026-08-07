@@ -1,13 +1,16 @@
 """Beanie-backed implementation of ``RawIngestionRepository``.
 
 The document model never leaks: ``_to_entity`` / ``_to_document`` do the
-translation inside the repository (plan §3.1). Append-only — ``add`` always
-inserts a new document, never overwrites.
+translation inside the repository (plan §3.1). Append-only — ``add`` never
+overwrites; an identical source fact returns its existing document instead.
 """
 
 from __future__ import annotations
 
-from smaug.ingestion.domain.entities import RawIngestion
+from pymongo.errors import DuplicateKeyError
+
+from smaug.ingestion.domain.entities import RawIngestion, RawIngestionWrite
+from smaug.ingestion.domain.identity import FilingIdentity, filing_identity
 from smaug.ingestion.domain.runs import (
     IngestionRun,
     IngestionRunCounts,
@@ -25,12 +28,24 @@ from smaug.ingestion.infrastructure.models import (
 class BeanieRawIngestionRepository:
     """Concrete repository over the ``raw_ingestions`` collection."""
 
-    async def add(self, ingestion: RawIngestion) -> RawIngestion:
+    async def add(self, ingestion: RawIngestion) -> RawIngestionWrite:
         if ingestion.run_id is None or not ingestion.run_id.strip():
             raise ValueError("new raw ingestions require a run_id")
-        document = self._to_document(ingestion)
-        await document.insert()
-        return self._to_entity(document)
+        identity = filing_identity(ingestion)
+        existing = await self._find_by_identity(identity)
+        if existing is not None:
+            return RawIngestionWrite(self._to_entity(existing), created=False)
+        document = self._to_document(ingestion, identity)
+        try:
+            await document.insert()
+        except DuplicateKeyError:
+            # Another worker can insert between our lookup and insert. The unique
+            # index is the authority; read its winner so the attempt stays a no-op.
+            existing = await self._find_by_identity(identity)
+            if existing is None:
+                raise
+            return RawIngestionWrite(self._to_entity(existing), created=False)
+        return RawIngestionWrite(self._to_entity(document), created=True)
 
     async def find_latest(
         self, ticker: str, module: str, *, cvm_code: str | None = None
@@ -101,7 +116,9 @@ class BeanieRawIngestionRepository:
         return {"source": "cvm", "cvm_code": None}
 
     @staticmethod
-    def _to_document(ingestion: RawIngestion) -> RawIngestionDocument:
+    def _to_document(
+        ingestion: RawIngestion, identity: FilingIdentity
+    ) -> RawIngestionDocument:
         return RawIngestionDocument(
             ticker=ingestion.ticker,
             source=ingestion.source,
@@ -113,6 +130,22 @@ class BeanieRawIngestionRepository:
             run_id=ingestion.run_id,
             artifact_id=ingestion.artifact_id,
             cvm_code=ingestion.cvm_code,
+            registrant_key=identity.registrant_key,
+            filing_discriminator=identity.filing_discriminator,
+            content_hash=identity.content_hash,
+        )
+
+    @staticmethod
+    async def _find_by_identity(
+        identity: FilingIdentity,
+    ) -> RawIngestionDocument | None:
+        return await RawIngestionDocument.find_one(
+            RawIngestionDocument.source == identity.source,
+            RawIngestionDocument.artifact_id == identity.artifact_id,
+            RawIngestionDocument.registrant_key == identity.registrant_key,
+            RawIngestionDocument.module == identity.module,
+            RawIngestionDocument.filing_discriminator == identity.filing_discriminator,
+            RawIngestionDocument.content_hash == identity.content_hash,
         )
 
     @staticmethod
@@ -193,6 +226,7 @@ class BeanieIngestionRunRepository:
                 "planned": run.counts.planned,
                 "excluded": run.counts.excluded,
                 "stored": run.counts.stored,
+                "unchanged": run.counts.unchanged,
                 "skipped": run.counts.skipped,
                 "error": run.counts.error,
                 "aborted": run.counts.aborted,
@@ -228,6 +262,7 @@ class BeanieIngestionRunRepository:
                 planned=counts.get("planned", 0),
                 excluded=counts.get("excluded", 0),
                 stored=counts["stored"],
+                unchanged=counts.get("unchanged", 0),
                 skipped=counts["skipped"],
                 error=counts["error"],
                 aborted=counts["aborted"],

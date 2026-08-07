@@ -85,6 +85,68 @@ async def test_should_store_and_publish_for_each_module() -> None:
     assert len(events) == 2
 
 
+async def test_replay_records_unchanged_without_a_new_filing_or_event() -> None:
+    repo = FakeRawIngestionRepository()
+    bus = EventBus()
+    events: list[RawIngestionStored] = []
+    bus.subscribe(RawIngestionStored, lambda event: events.append(event))  # type: ignore[arg-type]
+
+    first = IngestPortfolioUseCase(
+        FakeDataSource(),
+        repo,
+        bus,
+        ["m1"],
+        run_id="run-1",
+        delay_seconds=0,
+        sleep=no_sleep,
+    )
+    replay = IngestPortfolioUseCase(
+        FakeDataSource(),
+        repo,
+        bus,
+        ["m1"],
+        run_id="run-2",
+        delay_seconds=0,
+        sleep=no_sleep,
+    )
+
+    await first.execute(["PETR4"])
+    outcomes = await replay.execute(["PETR4"])
+
+    assert [outcome.status for outcome in outcomes] == [OutcomeStatus.UNCHANGED]
+    assert len(repo.items) == 1
+    assert len(events) == 1
+    assert outcomes[0].detail == "0 stored, 1 unchanged (1 period(s))"
+
+
+async def test_amended_payload_is_stored_as_a_new_version() -> None:
+    repo = FakeRawIngestionRepository()
+    initial = IngestPortfolioUseCase(
+        FakeDataSource(payloads={("PETR4", "m1"): {"value": "10"}}),
+        repo,
+        EventBus(),
+        ["m1"],
+        run_id="run-1",
+        delay_seconds=0,
+        sleep=no_sleep,
+    )
+    amended = IngestPortfolioUseCase(
+        FakeDataSource(payloads={("PETR4", "m1"): {"value": "11"}}),
+        repo,
+        EventBus(),
+        ["m1"],
+        run_id="run-2",
+        delay_seconds=0,
+        sleep=no_sleep,
+    )
+
+    await initial.execute(["PETR4"])
+    outcomes = await amended.execute(["PETR4"])
+
+    assert [outcome.status for outcome in outcomes] == [OutcomeStatus.STORED]
+    assert len(repo.items) == 2
+
+
 async def test_should_skip_module_on_404_and_keep_going() -> None:
     source = FakeDataSource(errors={("PETR4", "m1"): SourceNotFoundError("nope")})
     repo = FakeRawIngestionRepository()
