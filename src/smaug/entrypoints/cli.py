@@ -323,7 +323,7 @@ def ingest(
     force: bool = typer.Option(
         False,
         "--force",
-        help="Re-collect a company already mirrored from that year's archive.",
+        help="Re-collect a mirrored company; identical filings are recorded unchanged.",
     ),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Log every call instead of a per-year summary."
@@ -1267,6 +1267,7 @@ def format_ingestion_runs(runs: Sequence[IngestionRun]) -> str:
                 f"    calls={counts.attempted}/{counts.planned} "
                 f"excluded={counts.excluded} remaining={counts.remaining} "
                 f"stored={counts.stored} "
+                f"unchanged={counts.unchanged} "
                 f"skipped={counts.skipped} error={counts.error} "
                 f"aborted={counts.aborted}",
             ]

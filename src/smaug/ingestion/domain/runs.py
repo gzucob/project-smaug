@@ -54,6 +54,7 @@ class IngestionRunCounts:
     planned: int = 0
     excluded: int = 0
     stored: int = 0
+    unchanged: int = 0
     skipped: int = 0
     error: int = 0
     aborted: int = 0
@@ -61,7 +62,7 @@ class IngestionRunCounts:
     @property
     def attempted(self) -> int:
         """Number of source calls with a known outcome."""
-        return self.stored + self.skipped + self.error + self.aborted
+        return self.stored + self.unchanged + self.skipped + self.error + self.aborted
 
     @property
     def remaining(self) -> int:

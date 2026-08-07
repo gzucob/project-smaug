@@ -9,15 +9,15 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from smaug.ingestion.domain.entities import RawIngestion
+from smaug.ingestion.domain.entities import RawIngestion, RawIngestionWrite
 from smaug.ingestion.domain.runs import IngestionRun
 
 
 class RawIngestionRepository(Protocol):
     """Append-only store of raw ingestion snapshots."""
 
-    async def add(self, ingestion: RawIngestion) -> RawIngestion:
-        """Persist a new snapshot (never overwrites) and return it with its id."""
+    async def add(self, ingestion: RawIngestion) -> RawIngestionWrite:
+        """Persist one unique snapshot, reporting whether this attempt created it."""
         ...
 
     async def find_latest(

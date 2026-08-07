@@ -109,6 +109,30 @@ async def test_error_outcome_completes_with_errors_and_abort_is_terminal() -> No
         assert repository.items["run-123"].status is expected
 
 
+async def test_unchanged_reprocessing_is_counted_as_a_completed_attempt() -> None:
+    repository = FakeIngestionRunRepository()
+    service = _service(repository)
+
+    async def operation(run_id: str, outcome_sink: OutcomeSink) -> None:
+        await service.plan_calls(run_id, 1)
+        await outcome_sink(
+            FetchOutcome("PETR4", "DRE", OutcomeStatus.UNCHANGED, 200, "replayed")
+        )
+
+    await service.execute(
+        _parameters(),
+        application_commit="abc123",
+        parsers=(),
+        operation=operation,
+    )
+
+    run = repository.items["run-123"]
+    assert run.status is IngestionRunStatus.COMPLETED
+    assert run.counts.unchanged == 1
+    assert run.counts.attempted == 1
+    assert run.counts.remaining == 0
+
+
 async def test_unexpected_exception_is_persisted_and_reraised() -> None:
     repository = FakeIngestionRunRepository()
     service = _service(repository)

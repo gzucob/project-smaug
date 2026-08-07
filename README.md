@@ -54,10 +54,14 @@ uv run python -m smaug.entrypoints.cli ingest -t PETR4 -t VALE3
 uv run python -m smaug.entrypoints.cli report
 ```
 
-A coleta é **append-only e re-executável com segurança**: cada chamada grava um
-novo documento em `raw_ingestions` (`ticker + module + fetched_at`), preservando
-o histórico de revisões. Falha em um ticker/módulo não derruba os demais (um
-erro fatal para a fonte para a coleta; 404 pula a chamada).
+A coleta é **append-only e re-executável com segurança**: só uma versão fonte
+distinta cria documento em `raw_ingestions`. A identidade canônica combina fonte,
+artefato, registrante, módulo, discriminador da requisição e conteúdo estrutural;
+horário de coleta e execução não entram nela. Uma repetição, inclusive com
+`--force`, fica registrada na execução como `unchanged`, sem duplicar a versão.
+Uma emenda do payload permanece uma nova versão append-only. Falha em um
+ticker/módulo não derruba os demais (um erro fatal para a fonte para a coleta;
+404 pula a chamada).
 
 ### Fontes de dados
 

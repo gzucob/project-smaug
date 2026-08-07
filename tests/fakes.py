@@ -10,7 +10,8 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
-from smaug.ingestion.domain.entities import RawIngestion
+from smaug.ingestion.domain.entities import RawIngestion, RawIngestionWrite
+from smaug.ingestion.domain.identity import filing_identity
 from smaug.ingestion.domain.ports import RawFetchResult
 from smaug.ingestion.domain.runs import IngestionRun, ParserIdentity
 from smaug.portfolio.domain.sectors import Sector
@@ -47,10 +48,14 @@ class FakeRawIngestionRepository:
     def __init__(self) -> None:
         self.items: list[RawIngestion] = []
 
-    async def add(self, ingestion: RawIngestion) -> RawIngestion:
+    async def add(self, ingestion: RawIngestion) -> RawIngestionWrite:
+        identity = filing_identity(ingestion)
+        for item in self.items:
+            if filing_identity(item) == identity:
+                return RawIngestionWrite(item, created=False)
         stored = replace(ingestion, id=str(len(self.items) + 1))
         self.items.append(stored)
-        return stored
+        return RawIngestionWrite(stored, created=True)
 
     async def find_latest(
         self, ticker: str, module: str, *, cvm_code: str | None = None

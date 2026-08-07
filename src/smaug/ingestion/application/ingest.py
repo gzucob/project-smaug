@@ -55,6 +55,7 @@ class OutcomeStatus(StrEnum):
     """Result of a single ticker/module fetch attempt."""
 
     STORED = "stored"
+    UNCHANGED = "unchanged"
     SKIPPED = "skipped"
     ERROR = "error"
     ABORTED = "aborted"
@@ -155,6 +156,8 @@ class IngestPortfolioUseCase:
         # is a distinct filing and gets its own stored document and event.
         responses = await self._client.fetch(ticker, module)
         last_status: int | None = None
+        stored_count = 0
+        unchanged_count = 0
         for response in responses:
             ingestion = RawIngestion(
                 ticker=ticker,
@@ -168,20 +171,36 @@ class IngestPortfolioUseCase:
                 artifact_id=response.artifact_id,
                 cvm_code=response.cvm_code,
             )
-            stored = await self._repository.add(ingestion)
-            self._event_bus.publish(
-                RawIngestionStored(
-                    ticker=stored.ticker,
-                    module=stored.module,
-                    fetched_at=stored.fetched_at,
-                    http_status=stored.http_status,
+            written = await self._repository.add(ingestion)
+            if written.created:
+                stored = written.ingestion
+                self._event_bus.publish(
+                    RawIngestionStored(
+                        ticker=stored.ticker,
+                        module=stored.module,
+                        fetched_at=stored.fetched_at,
+                        http_status=stored.http_status,
+                    )
                 )
-            )
+                stored_count += 1
+            else:
+                unchanged_count += 1
             last_status = response.http_status
         count = len(responses)
-        logger.info("Stored %s/%s: %d period(s)", ticker, module, count)
+        logger.info(
+            "Collected %s/%s: %d stored, %d unchanged",
+            ticker,
+            module,
+            stored_count,
+            unchanged_count,
+        )
+        status = OutcomeStatus.STORED if stored_count else OutcomeStatus.UNCHANGED
         return FetchOutcome(
-            ticker, module, OutcomeStatus.STORED, last_status, f"{count} period(s)"
+            ticker,
+            module,
+            status,
+            last_status,
+            f"{stored_count} stored, {unchanged_count} unchanged ({count} period(s))",
         )
 
     async def _record(
