@@ -11,10 +11,15 @@ from types import SimpleNamespace
 
 import pytest
 
+from smaug.ingestion.domain.failures import (
+    IngestionFailureClass,
+    IngestionFailureStatus,
+)
 from smaug.ingestion.domain.runs import IngestionRunStatus, TickerScope
 from smaug.ingestion.domain.validation import BatchValidationStatus
 from smaug.ingestion.infrastructure.models import RawIngestionDocument
 from smaug.ingestion.infrastructure.repositories import (
+    BeanieIngestionFailureRepository,
     BeanieIngestionRunRepository,
     BeanieIngestionValidationRepository,
     BeanieRawIngestionRepository,
@@ -105,6 +110,51 @@ def test_should_map_ingestion_run_document_to_domain() -> None:
     assert run.counts.error == 1
     assert run.counts.unchanged == 1
     assert run.counts.remaining == 1
+
+
+def test_should_map_failure_with_all_attempts_and_resolution() -> None:
+    first_failed_at = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    last_failed_at = datetime(2026, 8, 10, 12, 1, tzinfo=UTC)
+    document = SimpleNamespace(
+        failure_id="failure-123",
+        origin_run_id="run-123",
+        ticker="PETR4",
+        registrant="9512",
+        source="cvm",
+        module="DRE",
+        year=2024,
+        artifact_id="sha256:" + "a" * 64,
+        parser={"name": "cvm.statements.csv", "version": 1},
+        failure_class="transient",
+        attempt_count=3,
+        first_failed_at=first_failed_at,
+        last_failed_at=last_failed_at,
+        detail="connection reset",
+        attempts=[
+            {
+                "run_id": "run-123",
+                "first_failed_at": first_failed_at,
+                "last_failed_at": last_failed_at,
+                "attempt_count": 3,
+                "failure_class": "transient",
+                "detail": "connection reset",
+                "artifact_id": "sha256:" + "a" * 64,
+                "parser": {"name": "cvm.statements.csv", "version": 1},
+            }
+        ],
+        status="resolved",
+        resolved_at=datetime(2026, 8, 10, 12, 5, tzinfo=UTC),
+        resolution_run_id="run-456",
+    )
+
+    failure = BeanieIngestionFailureRepository._to_entity(document)  # type: ignore[arg-type]
+
+    assert failure.failure_class is IngestionFailureClass.TRANSIENT
+    assert failure.status is IngestionFailureStatus.RESOLVED
+    assert failure.registrant == "9512"
+    assert failure.attempt_count == 3
+    assert failure.attempts[0].run_id == "run-123"
+    assert failure.resolution_run_id == "run-456"
 
 
 async def test_should_reject_a_new_raw_document_without_run_id() -> None:

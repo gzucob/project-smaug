@@ -21,23 +21,28 @@ not a tax the use case levies on every source by default.
 from __future__ import annotations
 
 import asyncio
+import random
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
+from smaug.ingestion.application.failures import (
+    classify_failure,
+    sanitize_failure_detail,
+)
 from smaug.ingestion.domain.entities import RawIngestion
 from smaug.ingestion.domain.events import RawIngestionStored
+from smaug.ingestion.domain.failures import (
+    FailureOccurrence,
+    IngestionFailureClass,
+)
 from smaug.ingestion.domain.ports import RawDataSource
 from smaug.ingestion.domain.repositories import RawIngestionRepository
+from smaug.ingestion.domain.runs import ParserIdentity
 from smaug.shared.errors import (
-    CvmDownloadError,
-    SourceAuthError,
-    SourceBatchValidationError,
     SourceError,
     SourceForbiddenError,
-    SourceNotFoundError,
-    SourceRateLimitError,
 )
 from smaug.shared.events import EventBus
 from smaug.shared.logging import get_logger
@@ -46,10 +51,16 @@ logger = get_logger(__name__)
 
 Clock = Callable[[], datetime]
 Sleeper = Callable[[float], Awaitable[None]]
+RandomSource = Callable[[], float]
+ArtifactIdResolver = Callable[[str], Awaitable[str | None]]
 
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _random_value() -> float:
+    return float(random.random())
 
 
 class OutcomeStatus(StrEnum):
@@ -75,6 +86,48 @@ class FetchOutcome:
 
 
 OutcomeSink = Callable[[FetchOutcome], Awaitable[None]]
+FailureSink = Callable[[FailureOccurrence], Awaitable[None]]
+ResolutionSink = Callable[[str, str], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    """Bounded scheduling policy for isolated transient source calls."""
+
+    max_attempts: int = 3
+    initial_delay_seconds: float = 1.0
+    maximum_delay_seconds: float = 10.0
+    jitter_ratio: float = 0.2
+
+    def delay_for(self, retry_number: int, random_value: float) -> float:
+        """Return exponential delay with symmetric bounded jitter."""
+        base = min(
+            self.initial_delay_seconds * (2 ** (retry_number - 1)),
+            self.maximum_delay_seconds,
+        )
+        jitter = 1 + self.jitter_ratio * ((2 * random_value) - 1)
+        return float(base * jitter)
+
+
+@dataclass(frozen=True)
+class FailureContext:
+    """Source facts needed to persist a failed call outside source adapters."""
+
+    year: int
+    registrants: dict[str, str]
+    sources: dict[str, str]
+    parsers: dict[str, ParserIdentity]
+    artifact_id_for: ArtifactIdResolver | None = None
+
+
+@dataclass(frozen=True)
+class _FailedFetch:
+    """An exhausted source call, preserving generic retry timing facts."""
+
+    error: SourceError
+    attempt_count: int
+    first_failed_at: datetime
+    last_failed_at: datetime
 
 
 class IngestPortfolioUseCase:
@@ -94,6 +147,11 @@ class IngestPortfolioUseCase:
         clock: Clock = _utc_now,
         sleep: Sleeper = asyncio.sleep,
         outcome_sink: OutcomeSink | None = None,
+        failure_sink: FailureSink | None = None,
+        resolution_sink: ResolutionSink | None = None,
+        failure_context: FailureContext | None = None,
+        retry_policy: RetryPolicy | None = None,
+        random_source: RandomSource = _random_value,
     ) -> None:
         self._client = client
         self._repository = repository
@@ -106,6 +164,11 @@ class IngestPortfolioUseCase:
         self._clock = clock
         self._sleep = sleep
         self._outcome_sink = outcome_sink
+        self._failure_sink = failure_sink
+        self._resolution_sink = resolution_sink
+        self._failure_context = failure_context
+        self._retry_policy = retry_policy or RetryPolicy()
+        self._random_source = random_source
 
     async def execute(self, tickers: Iterable[str]) -> list[FetchOutcome]:
         """Run the collection, returning one outcome per attempted call."""
@@ -120,50 +183,127 @@ class IngestPortfolioUseCase:
     async def _collect_ticker(self, ticker: str, outcomes: list[FetchOutcome]) -> bool:
         """Collect every module for one ticker. Returns True if the run must stop."""
         for module in self._modules:
-            try:
-                outcome = await self._fetch_and_store(ticker, module)
-            except (SourceAuthError, SourceRateLimitError, CvmDownloadError) as exc:
-                # Fatal for the whole run: no point hammering the rest. The CVM
-                # ZIP is shared by every ticker of the year, so its definitive
-                # download failure dooms all remaining calls identically.
-                await self._record(
-                    outcomes,
-                    FetchOutcome(ticker, module, OutcomeStatus.ABORTED, None, str(exc)),
-                )
-                return True
-            except (SourceNotFoundError, SourceForbiddenError) as exc:
-                # Skip just this call; keep collecting the others.
-                # 404 = ticker/module unknown; 403 = ticker needs a higher plan.
-                code = 403 if isinstance(exc, SourceForbiddenError) else 404
-                logger.info("Skipping %s/%s: %s", ticker, module, exc)
-                await self._record(
-                    outcomes,
-                    FetchOutcome(ticker, module, OutcomeStatus.SKIPPED, code, str(exc)),
-                )
-            except SourceBatchValidationError as exc:
-                logger.error("Quarantined %s/%s: %s", ticker, module, exc)
-                await self._record(
-                    outcomes,
-                    FetchOutcome(
-                        ticker,
-                        module,
-                        OutcomeStatus.QUARANTINED,
-                        None,
-                        str(exc),
-                    ),
-                )
-            except SourceError as exc:
-                # Unexpected, but isolated: record and move on.
-                logger.warning("Error on %s/%s: %s", ticker, module, exc)
-                await self._record(
-                    outcomes,
-                    FetchOutcome(ticker, module, OutcomeStatus.ERROR, None, str(exc)),
-                )
+            outcome, failed = await self._fetch_with_retry(ticker, module)
+            if failed is not None:
+                error = failed.error
+                failure_class = classify_failure(error)
+                await self._record_failure(ticker, module, failed, failure_class)
+                if failure_class is IngestionFailureClass.FATAL_SHARED_SOURCE:
+                    # The CVM ZIP is shared by every ticker of the year, so its
+                    # definitive source-level retry remains the authority.
+                    await self._record(
+                        outcomes,
+                        FetchOutcome(
+                            ticker,
+                            module,
+                            OutcomeStatus.ABORTED,
+                            None,
+                            str(error),
+                        ),
+                    )
+                    return True
+                if failure_class is IngestionFailureClass.PERMANENT:
+                    # 404 = ticker/module unknown; 403 = source restriction.
+                    code = 403 if isinstance(error, SourceForbiddenError) else 404
+                    logger.info("Skipping %s/%s: %s", ticker, module, error)
+                    await self._record(
+                        outcomes,
+                        FetchOutcome(
+                            ticker, module, OutcomeStatus.SKIPPED, code, str(error)
+                        ),
+                    )
+                elif failure_class is IngestionFailureClass.VALIDATION:
+                    logger.error("Quarantined %s/%s: %s", ticker, module, error)
+                    await self._record(
+                        outcomes,
+                        FetchOutcome(
+                            ticker,
+                            module,
+                            OutcomeStatus.QUARANTINED,
+                            None,
+                            str(error),
+                        ),
+                    )
+                else:
+                    logger.warning("Error on %s/%s: %s", ticker, module, error)
+                    await self._record(
+                        outcomes,
+                        FetchOutcome(
+                            ticker, module, OutcomeStatus.ERROR, None, str(error)
+                        ),
+                    )
             else:
+                if outcome is None:
+                    raise AssertionError("successful fetch has no outcome")
                 await self._record(outcomes, outcome)
+                if self._resolution_sink is not None:
+                    await self._resolution_sink(ticker, module)
             if module in self._paced_modules:
                 await self._sleep(self._delay_seconds)
         return False
+
+    async def _fetch_with_retry(
+        self, ticker: str, module: str
+    ) -> tuple[FetchOutcome | None, _FailedFetch | None]:
+        """Retry only isolated transient calls; shared ZIP retries stay in source."""
+        first_failed_at: datetime | None = None
+        for attempt in range(1, self._retry_policy.max_attempts + 1):
+            try:
+                return await self._fetch_and_store(ticker, module), None
+            except SourceError as error:
+                now = self._clock()
+                if first_failed_at is None:
+                    first_failed_at = now
+                failure_class = classify_failure(error)
+                if (
+                    failure_class is IngestionFailureClass.TRANSIENT
+                    and attempt < self._retry_policy.max_attempts
+                ):
+                    await self._sleep(
+                        self._retry_policy.delay_for(attempt, self._random_source())
+                    )
+                    continue
+                return None, _FailedFetch(error, attempt, first_failed_at, now)
+        raise AssertionError("bounded retry loop exhausted without a result")
+
+    async def _record_failure(
+        self,
+        ticker: str,
+        module: str,
+        failed: _FailedFetch,
+        failure_class: IngestionFailureClass,
+    ) -> None:
+        if self._failure_sink is None or self._failure_context is None:
+            return
+        artifact_id = getattr(failed.error, "quarantined_artifact_id", None)
+        if (
+            artifact_id is None
+            and failure_class is not IngestionFailureClass.FATAL_SHARED_SOURCE
+            and self._failure_context.artifact_id_for is not None
+        ):
+            try:
+                artifact_id = await self._failure_context.artifact_id_for(module)
+            except SourceError:
+                # The source failure is the fact to persist. A best-effort lookup
+                # must not create a second attempt merely to name absent bytes.
+                pass
+        parser = self._failure_context.parsers.get(module, self._client.parser_identity)
+        await self._failure_sink(
+            FailureOccurrence(
+                ticker=ticker,
+                registrant=self._failure_context.registrants.get(ticker),
+                source=self._failure_context.sources.get(module, self._source),
+                module=module,
+                year=self._failure_context.year,
+                artifact_id=artifact_id,
+                parser=parser,
+                failure_class=failure_class,
+                attempt_count=failed.attempt_count,
+                first_failed_at=failed.first_failed_at,
+                last_failed_at=failed.last_failed_at,
+                detail=sanitize_failure_detail(failed.error),
+            )
+        )
 
     async def _fetch_and_store(self, ticker: str, module: str) -> FetchOutcome:
         # One source call may return several periods (CVM ITR = Q1/Q2/Q3); each

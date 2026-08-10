@@ -12,6 +12,7 @@ from beanie import init_beanie
 from pymongo import AsyncMongoClient
 
 from smaug.ingestion.infrastructure.models import (
+    IngestionFailureDocument,
     IngestionRunDocument,
     IngestionValidationDocument,
     RawIngestionDocument,
@@ -31,6 +32,7 @@ async def init_database(settings: Settings) -> AsyncMongoClient[dict[str, Any]]:
         document_models=[
             RawIngestionDocument,
             IngestionRunDocument,
+            IngestionFailureDocument,
             IngestionValidationDocument,
         ],
     )

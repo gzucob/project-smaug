@@ -7,9 +7,17 @@ overwrites; an identical source fact returns its existing document instead.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pymongo.errors import DuplicateKeyError
 
 from smaug.ingestion.domain.entities import RawIngestion, RawIngestionWrite
+from smaug.ingestion.domain.failures import (
+    FailureAttempt,
+    IngestionFailure,
+    IngestionFailureClass,
+    IngestionFailureStatus,
+)
 from smaug.ingestion.domain.identity import FilingIdentity, filing_identity
 from smaug.ingestion.domain.runs import (
     IngestionRun,
@@ -27,6 +35,7 @@ from smaug.ingestion.domain.validation import (
     ValidationRule,
 )
 from smaug.ingestion.infrastructure.models import (
+    IngestionFailureDocument,
     IngestionRunDocument,
     IngestionValidationDocument,
     RawIngestionDocument,
@@ -279,6 +288,156 @@ class BeanieIngestionRunRepository:
             ),
             failure=document.failure,
         )
+
+
+class BeanieIngestionFailureRepository:
+    """Concrete retry inventory over the ``ingestion_failures`` collection."""
+
+    async def add(self, failure: IngestionFailure) -> IngestionFailure:
+        document = self._to_document(failure)
+        await document.insert()
+        return self._to_entity(document)
+
+    async def update(self, failure: IngestionFailure) -> IngestionFailure:
+        document = await IngestionFailureDocument.find_one(
+            IngestionFailureDocument.failure_id == failure.failure_id
+        )
+        if document is None:
+            raise LookupError(f"ingestion failure not found: {failure.failure_id}")
+        replacement = self._to_document(failure)
+        replacement.id = document.id
+        await replacement.replace()
+        return self._to_entity(replacement)
+
+    async def get(self, failure_id: str) -> IngestionFailure | None:
+        document = await IngestionFailureDocument.find_one(
+            IngestionFailureDocument.failure_id == failure_id
+        )
+        return self._to_entity(document) if document is not None else None
+
+    async def open_for_run(self, run_id: str) -> tuple[IngestionFailure, ...]:
+        documents = (
+            await IngestionFailureDocument.find(
+                IngestionFailureDocument.origin_run_id == run_id,
+                IngestionFailureDocument.status == IngestionFailureStatus.OPEN.value,
+            )
+            .sort("last_failed_at")
+            .to_list()
+        )
+        return tuple(self._to_entity(document) for document in documents)
+
+    async def recent(self, limit: int) -> tuple[IngestionFailure, ...]:
+        documents = (
+            await IngestionFailureDocument.find_all()
+            .sort("-last_failed_at")
+            .limit(limit)
+            .to_list()
+        )
+        return tuple(self._to_entity(document) for document in documents)
+
+    @staticmethod
+    def _to_document(failure: IngestionFailure) -> IngestionFailureDocument:
+        return IngestionFailureDocument(
+            failure_id=failure.failure_id,
+            origin_run_id=failure.origin_run_id,
+            ticker=failure.ticker,
+            registrant=failure.registrant,
+            source=failure.source,
+            module=failure.module,
+            year=failure.year,
+            artifact_id=failure.artifact_id,
+            parser=_parser_to_document(failure.parser),
+            failure_class=failure.failure_class.value,
+            attempt_count=failure.attempt_count,
+            first_failed_at=failure.first_failed_at,
+            last_failed_at=failure.last_failed_at,
+            detail=failure.detail,
+            attempts=[
+                {
+                    "run_id": attempt.run_id,
+                    "first_failed_at": attempt.first_failed_at,
+                    "last_failed_at": attempt.last_failed_at,
+                    "attempt_count": attempt.attempt_count,
+                    "failure_class": attempt.failure_class.value,
+                    "detail": attempt.detail,
+                    "artifact_id": attempt.artifact_id,
+                    "parser": _parser_to_document(attempt.parser),
+                }
+                for attempt in failure.attempts
+            ],
+            status=failure.status.value,
+            resolved_at=failure.resolved_at,
+            resolution_run_id=failure.resolution_run_id,
+        )
+
+    @staticmethod
+    def _to_entity(document: IngestionFailureDocument) -> IngestionFailure:
+        attempts = tuple(_attempt_from_document(value) for value in document.attempts)
+        return IngestionFailure(
+            failure_id=document.failure_id,
+            origin_run_id=document.origin_run_id,
+            ticker=document.ticker,
+            registrant=document.registrant,
+            source=document.source,
+            module=document.module,
+            year=document.year,
+            artifact_id=document.artifact_id,
+            parser=_parser_from_document(document.parser),
+            failure_class=IngestionFailureClass(document.failure_class),
+            attempt_count=document.attempt_count,
+            first_failed_at=document.first_failed_at,
+            last_failed_at=document.last_failed_at,
+            detail=document.detail,
+            attempts=attempts,
+            status=IngestionFailureStatus(document.status),
+            resolved_at=document.resolved_at,
+            resolution_run_id=document.resolution_run_id,
+        )
+
+
+def _parser_to_document(parser: ParserIdentity) -> dict[str, object]:
+    return {"name": parser.name, "version": parser.version}
+
+
+def _parser_from_document(value: dict[str, object]) -> ParserIdentity:
+    name = value.get("name")
+    version = value.get("version")
+    if not isinstance(name, str) or not isinstance(version, int):
+        raise ValueError("stored ingestion failure has an invalid parser identity")
+    return ParserIdentity(name, version)
+
+
+def _attempt_from_document(value: dict[str, object]) -> FailureAttempt:
+    run_id = value.get("run_id")
+    first_failed_at = value.get("first_failed_at")
+    last_failed_at = value.get("last_failed_at")
+    attempt_count = value.get("attempt_count")
+    failure_class = value.get("failure_class")
+    detail = value.get("detail")
+    artifact_id = value.get("artifact_id")
+    parser = value.get("parser")
+    if (
+        not isinstance(run_id, str)
+        or not isinstance(first_failed_at, datetime)
+        or not isinstance(last_failed_at, datetime)
+        or not isinstance(attempt_count, int)
+        or not isinstance(failure_class, str)
+        or not isinstance(detail, str)
+        or artifact_id is not None
+        and not isinstance(artifact_id, str)
+        or not isinstance(parser, dict)
+    ):
+        raise ValueError("stored ingestion failure has an invalid attempt")
+    return FailureAttempt(
+        run_id=run_id,
+        first_failed_at=first_failed_at,
+        last_failed_at=last_failed_at,
+        attempt_count=attempt_count,
+        failure_class=IngestionFailureClass(failure_class),
+        detail=detail,
+        artifact_id=artifact_id,
+        parser=_parser_from_document(parser),
+    )
 
 
 class BeanieIngestionValidationRepository:

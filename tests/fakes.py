@@ -11,6 +11,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from smaug.ingestion.domain.entities import RawIngestion, RawIngestionWrite
+from smaug.ingestion.domain.failures import (
+    IngestionFailure,
+    IngestionFailureStatus,
+)
 from smaug.ingestion.domain.identity import filing_identity
 from smaug.ingestion.domain.ports import RawFetchResult
 from smaug.ingestion.domain.runs import IngestionRun, ParserIdentity
@@ -124,6 +128,47 @@ class FakeIngestionRunRepository:
     async def recent(self, limit: int) -> tuple[IngestionRun, ...]:
         ordered = sorted(
             self.items.values(), key=lambda run: run.started_at, reverse=True
+        )
+        return tuple(ordered[:limit])
+
+
+class FakeIngestionFailureRepository:
+    """In-memory retry inventory matching ``IngestionFailureRepository``."""
+
+    def __init__(self) -> None:
+        self.items: dict[str, IngestionFailure] = {}
+
+    async def add(self, failure: IngestionFailure) -> IngestionFailure:
+        self.items[failure.failure_id] = failure
+        return failure
+
+    async def update(self, failure: IngestionFailure) -> IngestionFailure:
+        if failure.failure_id not in self.items:
+            raise LookupError(f"ingestion failure not found: {failure.failure_id}")
+        self.items[failure.failure_id] = failure
+        return failure
+
+    async def get(self, failure_id: str) -> IngestionFailure | None:
+        return self.items.get(failure_id)
+
+    async def open_for_run(self, run_id: str) -> tuple[IngestionFailure, ...]:
+        return tuple(
+            sorted(
+                (
+                    failure
+                    for failure in self.items.values()
+                    if failure.origin_run_id == run_id
+                    and failure.status is IngestionFailureStatus.OPEN
+                ),
+                key=lambda failure: failure.last_failed_at,
+            )
+        )
+
+    async def recent(self, limit: int) -> tuple[IngestionFailure, ...]:
+        ordered = sorted(
+            self.items.values(),
+            key=lambda failure: failure.last_failed_at,
+            reverse=True,
         )
         return tuple(ordered[:limit])
 
