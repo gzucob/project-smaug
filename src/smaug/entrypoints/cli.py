@@ -8,10 +8,12 @@ dependencies and call the use cases (plan §3.1 / ``src/smaug/AGENTS.md``).
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from time import perf_counter
 from typing import Any, cast
 
 import httpx
@@ -74,6 +76,7 @@ from smaug.ingestion.domain.failures import FailureOccurrence
 from smaug.ingestion.domain.repositories import RawIngestionRepository
 from smaug.ingestion.domain.runs import (
     IngestionRun,
+    IngestionRunMetrics,
     IngestionRunParameters,
     IngestionRunStatus,
     ParserIdentity,
@@ -144,6 +147,7 @@ logger = get_logger("smaug.cli")
 _FAILED_STATUSES = frozenset(
     {OutcomeStatus.ERROR, OutcomeStatus.QUARANTINED, OutcomeStatus.ABORTED}
 )
+_DEFAULT_ARCHIVE_CONCURRENCY = 8
 
 
 @dataclass(frozen=True)
@@ -343,6 +347,12 @@ def ingest(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Log every call instead of a per-year summary."
     ),
+    concurrency: int = typer.Option(
+        _DEFAULT_ARCHIVE_CONCURRENCY,
+        "--concurrency",
+        min=1,
+        help="Maximum concurrent CVM archive workers; live B3 modules remain serial.",
+    ),
 ) -> None:
     """Collect the configured modules for the active source and store the mirror.
 
@@ -373,6 +383,7 @@ def ingest(
                 whole_exchange=all_listed,
                 force=force,
                 verbose=verbose,
+                concurrency=concurrency,
                 ticker_scope=ticker_scope,
             )
         )
@@ -467,6 +478,7 @@ async def _run_ingestion_resume(run_id: str, retry_permanent: bool) -> int:
         years=tuple(call_plan),
         force=True,
         verbose=True,
+        concurrency=parent.parameters.concurrency,
         ticker_scope=TickerScope.EXPLICIT,
         modules=resumed_modules,
         call_plan=call_plan,
@@ -585,6 +597,7 @@ async def _run_ingest(
     whole_exchange: bool = False,
     force: bool = False,
     verbose: bool = False,
+    concurrency: int = _DEFAULT_ARCHIVE_CONCURRENCY,
     ticker_scope: TickerScope = TickerScope.EXPLICIT,
     modules: tuple[str, ...] | None = None,
     call_plan: dict[int, dict[str, tuple[str, ...]]] | None = None,
@@ -613,12 +626,18 @@ async def _run_ingest(
         modules=active_modules,
         force=force,
         verbose=verbose,
+        concurrency=concurrency,
     )
+
+    completed_run_id: str | None = None
 
     async def collect(
         run_id: str,
         lifecycle_sink: Callable[[FetchOutcome], Awaitable[None]],
     ) -> None:
+        nonlocal completed_run_id
+        completed_run_id = run_id
+
         async def outcome_sink(outcome: FetchOutcome) -> None:
             outcomes.append(outcome)
             await lifecycle_sink(outcome)
@@ -630,6 +649,9 @@ async def _run_ingest(
 
         async def exclusion_sink(count: int) -> None:
             await run_service.exclude_calls(run_id, count)
+
+        async def metrics_sink(metrics: IngestionRunMetrics) -> None:
+            await run_service.record_metrics(run_id, metrics)
 
         async with httpx.AsyncClient(timeout=30.0) as http:
             validation_reporter = RunValidationReporter(validation_service, run_id)
@@ -672,6 +694,7 @@ async def _run_ingest(
                         run_id=run_id,
                         outcome_sink=outcome_sink,
                         exclusion_sink=exclusion_sink,
+                        metrics_sink=metrics_sink,
                         artifact_store=artifact_store,
                         validation_reporter=validation_reporter,
                         modules=active_modules,
@@ -682,9 +705,11 @@ async def _run_ingest(
                         ),
                         failure_service=failure_service,
                         retry_failure_ids=retry_failure_ids,
+                        concurrency=concurrency,
                     )
                 )
 
+    run: IngestionRun | None = None
     try:
         await run_service.execute(
             parameters,
@@ -692,10 +717,22 @@ async def _run_ingest(
             parsers=_parser_identities(active_modules),
             operation=collect,
         )
+        if completed_run_id is None:
+            raise AssertionError("ingestion run completed without a run id")
+        run = await run_service.get(completed_run_id)
     finally:
         await client.close()
 
-    print(_format_collection_log(outcomes) if verbose else format_batch_log(passes))
+    if run is None:
+        raise AssertionError("completed ingestion run is not persisted")
+    logger.info(
+        "%s",
+        json.dumps(_metrics_log_event(run), sort_keys=True, separators=(",", ":")),
+    )
+    collection_log = (
+        _format_collection_log(outcomes) if verbose else format_batch_log(passes)
+    )
+    print(f"{collection_log}\n{format_ingestion_metrics(run)}")
     return 1 if any(o.status in _FAILED_STATUSES for o in outcomes) else 0
 
 
@@ -730,12 +767,14 @@ async def _ingest_one_year(
     run_id: str,
     outcome_sink: Callable[[FetchOutcome], Awaitable[None]],
     exclusion_sink: Callable[[int], Awaitable[None]],
+    metrics_sink: Callable[[IngestionRunMetrics], Awaitable[None]],
     artifact_store: SourceArtifactStore,
     validation_reporter: BatchValidationReporter,
     modules: tuple[str, ...],
     call_plan: dict[str, tuple[str, ...]] | None,
     failure_service: IngestionFailureService,
     retry_failure_ids: dict[tuple[str, str, int], str],
+    concurrency: int,
 ) -> YearPass:
     """Collect one CVM archive year (or the single configured pass).
 
@@ -764,11 +803,25 @@ async def _ingest_one_year(
         artifact_store=artifact_store,
         validation_reporter=validation_reporter,
     )
+    artifacts: dict[str, SourceArtifact | None] = {}
+    if whole_exchange and not force:
+        # The resume plan already needs every archive identity. Measuring that
+        # acquisition here adds no source call and preserves the normal abort
+        # semantics of portfolio/forced runs, which fetch inside the use case.
+        artifacts = await _measure_archives(
+            source,
+            modules,
+            run_id=run_id,
+            year=year if year is not None else settings.cvm_year,
+            metrics_sink=metrics_sink,
+        )
     plan = dict.fromkeys(wanted, modules)
     if call_plan is not None:
         plan = call_plan
     elif whole_exchange and not force:
-        plan = await _work_plan(repository, source, wanted, code_map, modules)
+        plan = await _work_plan(
+            repository, source, wanted, code_map, modules, artifacts=artifacts
+        )
     scheduled = sum(len(owed) for owed in plan.values())
     if call_plan is None:
         await exclusion_sink(len(wanted) * len(modules) - scheduled)
@@ -815,6 +868,7 @@ async def _ingest_one_year(
             # module reads this year's already-downloaded CVM archive from
             # memory and owes the call no pause at all (#214).
             paced_modules=frozenset({CAPITAL_EVENT_B3_MODULE, CASH_DIVIDEND_B3_MODULE}),
+            max_concurrency=concurrency,
             outcome_sink=outcome_sink,
             failure_sink=failure_sink,
             resolution_sink=resolution_sink,
@@ -831,6 +885,53 @@ async def _ingest_one_year(
         companies=len(plan),
         already_mirrored=len(wanted) - len(plan),
     )
+
+
+async def _measure_archives(
+    source: RoutedDataSource,
+    modules: Sequence[str],
+    *,
+    run_id: str,
+    year: int,
+    metrics_sink: Callable[[IngestionRunMetrics], Awaitable[None]],
+) -> dict[str, SourceArtifact | None]:
+    """Acquire every archive once and record the reproducible source footprint."""
+    artifacts: dict[str, SourceArtifact | None] = {}
+    seen: set[str] = set()
+    for module in dict.fromkeys(modules):
+        started = perf_counter()
+        artifact = await source.artifact_for(module)
+        download_seconds = perf_counter() - started
+        artifacts[module] = artifact
+        if artifact is None:
+            continue
+        cached = artifact.artifact_id in seen
+        seen.add(artifact.artifact_id)
+        metrics = IngestionRunMetrics(
+            download_seconds=download_seconds,
+            archive_bytes=0 if cached else artifact.byte_size,
+            cache_hits=int(cached),
+            cache_misses=int(not cached),
+        )
+        await metrics_sink(metrics)
+        logger.info(
+            "%s",
+            json.dumps(
+                {
+                    "event": "ingestion.archive",
+                    "run_id": run_id,
+                    "year": year,
+                    "module": module,
+                    "artifact_id": artifact.artifact_id,
+                    "download_seconds": download_seconds,
+                    "archive_bytes": 0 if cached else artifact.byte_size,
+                    "cache_hit": cached,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+    return artifacts
 
 
 def _parser_identities(modules: Sequence[str]) -> tuple[ParserIdentity, ...]:
@@ -930,6 +1031,8 @@ async def _work_plan(
     wanted: tuple[str, ...],
     code_map: dict[str, str],
     modules: Sequence[str],
+    *,
+    artifacts: dict[str, SourceArtifact | None] | None = None,
 ) -> dict[str, tuple[str, ...]]:
     """What each company is still owed, module by module — the resume guard.
 
@@ -941,7 +1044,9 @@ async def _work_plan(
     the run reported success having stored nothing. ``--force`` collects
     regardless, which is what a re-run after an amended archive wants.
     """
-    artifacts = {module: await source.artifact_for(module) for module in modules}
+    artifacts = artifacts or {
+        module: await source.artifact_for(module) for module in modules
+    }
     done: dict[str, set[str]] = {}
     for module, artifact in artifacts.items():
         done[module] = await repository.mirrored_for(
@@ -1468,6 +1573,7 @@ def format_ingestion_runs(runs: Sequence[IngestionRun]) -> str:
                 f"    document={parameters.document} "
                 f"years={','.join(str(year) for year in parameters.years)}",
                 f"    modules={','.join(parameters.modules)}",
+                f"    concurrency={parameters.concurrency}",
                 f"    commit={run.application_commit} parsers={parsers}",
                 f"    calls={counts.attempted}/{counts.planned} "
                 f"excluded={counts.excluded} remaining={counts.remaining} "
@@ -1476,11 +1582,76 @@ def format_ingestion_runs(runs: Sequence[IngestionRun]) -> str:
                 f"skipped={counts.skipped} error={counts.error} "
                 f"quarantined={counts.quarantined} "
                 f"aborted={counts.aborted}",
+                _format_metrics_summary(run),
             ]
         )
         if run.failure is not None:
             lines.append(f"    failure={run.failure}")
     return "\n".join(lines)
+
+
+def format_ingestion_metrics(run: IngestionRun) -> str:
+    """Render a run's persisted timing and volume measurements."""
+    return "\n".join(
+        [
+            "",
+            "=== Ingestion metrics ===",
+            f"  {run.run_id}  {run.status.value}",
+            _format_metrics_summary(run),
+        ]
+    )
+
+
+def _format_metrics_summary(run: IngestionRun) -> str:
+    metrics = run.metrics
+    elapsed = _elapsed_seconds(run)
+    elapsed_text = f"{elapsed:.3f}s" if elapsed is not None else "-"
+    throughput = (
+        f"{run.counts.attempted / elapsed:.2f} calls/s"
+        if elapsed is not None and elapsed > 0
+        else "-"
+    )
+    return (
+        f"    metrics elapsed={elapsed_text} throughput={throughput} "
+        f"source={metrics.source_seconds:.3f}s "
+        f"download={metrics.download_seconds:.3f}s parse={metrics.parse_seconds:.3f}s "
+        f"store={metrics.store_seconds:.3f}s "
+        f"retry_wait={metrics.retry_wait_seconds:.3f}s rows={metrics.rows} "
+        f"payload_bytes={metrics.payload_bytes} archive_bytes={metrics.archive_bytes} "
+        f"cache_hit={metrics.cache_hits} cache_miss={metrics.cache_misses}"
+    )
+
+
+def _metrics_log_event(run: IngestionRun) -> dict[str, object]:
+    metrics = run.metrics
+    elapsed = _elapsed_seconds(run)
+    return {
+        "event": "ingestion.run",
+        "run_id": run.run_id,
+        "status": run.status.value,
+        "elapsed_seconds": elapsed,
+        "throughput_calls_per_second": (
+            run.counts.attempted / elapsed
+            if elapsed is not None and elapsed > 0
+            else None
+        ),
+        "source_seconds": metrics.source_seconds,
+        "download_seconds": metrics.download_seconds,
+        "parse_seconds": metrics.parse_seconds,
+        "store_seconds": metrics.store_seconds,
+        "retry_wait_seconds": metrics.retry_wait_seconds,
+        "rows": metrics.rows,
+        "payload_bytes": metrics.payload_bytes,
+        "archive_bytes": metrics.archive_bytes,
+        "cache_hits": metrics.cache_hits,
+        "cache_misses": metrics.cache_misses,
+    }
+
+
+def _elapsed_seconds(run: IngestionRun) -> float | None:
+    if run.ended_at is None:
+        return None
+    return (run.ended_at - run.started_at).total_seconds()
 
 
 def format_ingestion_validations(

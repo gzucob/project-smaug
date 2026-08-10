@@ -13,6 +13,7 @@ from smaug.ingestion.domain.repositories import IngestionRunRepository
 from smaug.ingestion.domain.runs import (
     IngestionRun,
     IngestionRunCounts,
+    IngestionRunMetrics,
     IngestionRunParameters,
     IngestionRunStatus,
     ParserIdentity,
@@ -111,6 +112,15 @@ class IngestionRunService:
         )
         return await self._repository.update(replace(run, counts=counts))
 
+    async def record_metrics(
+        self, run_id: str, metrics: IngestionRunMetrics
+    ) -> IngestionRun:
+        """Persist measured archive work that happens outside a ticker call."""
+        run = await self._required(run_id)
+        return await self._repository.update(
+            replace(run, metrics=_combine_metrics(run.metrics, metrics))
+        )
+
     async def plan_calls(self, run_id: str, count: int) -> IngestionRun:
         """Persist the command's full call space before source work begins."""
         run = await self._required(run_id)
@@ -162,7 +172,13 @@ class IngestionRunService:
             if counts.remaining
             else None
         )
-        return await self._finish(run_id, status, counts=counts, failure=failure)
+        return await self._finish(
+            run_id,
+            status,
+            counts=counts,
+            metrics=_combine_metrics(run.metrics, _metrics(outcomes)),
+            failure=failure,
+        )
 
     async def fail(
         self,
@@ -177,8 +193,13 @@ class IngestionRunService:
             IngestionRunStatus.INTERRUPTED if interrupted else IngestionRunStatus.FAILED
         )
         detail = f"{type(failure).__name__}: {failure}"
+        run = await self._required(run_id)
         return await self._finish(
-            run_id, status, counts=_counts(outcomes), failure=detail
+            run_id,
+            status,
+            counts=_counts(outcomes),
+            metrics=_combine_metrics(run.metrics, _metrics(outcomes)),
+            failure=detail,
         )
 
     async def get(self, run_id: str) -> IngestionRun | None:
@@ -195,6 +216,7 @@ class IngestionRunService:
         status: IngestionRunStatus,
         *,
         counts: IngestionRunCounts,
+        metrics: IngestionRunMetrics | None = None,
         failure: str | None = None,
     ) -> IngestionRun:
         run = await self._required(run_id)
@@ -208,6 +230,7 @@ class IngestionRunService:
             ended_at=self._clock(),
             status=status,
             counts=counts,
+            metrics=metrics if metrics is not None else run.metrics,
             failure=failure,
         )
         return await self._repository.update(terminal)
@@ -231,4 +254,41 @@ def _counts(outcomes: Sequence[FetchOutcome]) -> IngestionRunCounts:
             outcome.status is OutcomeStatus.QUARANTINED for outcome in outcomes
         ),
         aborted=sum(outcome.status is OutcomeStatus.ABORTED for outcome in outcomes),
+    )
+
+
+def _outcome_metrics(outcome: FetchOutcome) -> IngestionRunMetrics:
+    return IngestionRunMetrics(
+        source_seconds=outcome.source_seconds,
+        parse_seconds=outcome.parse_seconds,
+        store_seconds=outcome.store_seconds,
+        retry_wait_seconds=outcome.retry_wait_seconds,
+        payload_bytes=outcome.payload_bytes,
+        rows=outcome.rows,
+        cache_hits=outcome.cache_hits,
+        cache_misses=outcome.cache_misses,
+    )
+
+
+def _metrics(outcomes: Sequence[FetchOutcome]) -> IngestionRunMetrics:
+    metrics = IngestionRunMetrics()
+    for outcome in outcomes:
+        metrics = _combine_metrics(metrics, _outcome_metrics(outcome))
+    return metrics
+
+
+def _combine_metrics(
+    left: IngestionRunMetrics, right: IngestionRunMetrics
+) -> IngestionRunMetrics:
+    return IngestionRunMetrics(
+        source_seconds=left.source_seconds + right.source_seconds,
+        parse_seconds=left.parse_seconds + right.parse_seconds,
+        store_seconds=left.store_seconds + right.store_seconds,
+        retry_wait_seconds=left.retry_wait_seconds + right.retry_wait_seconds,
+        download_seconds=left.download_seconds + right.download_seconds,
+        payload_bytes=left.payload_bytes + right.payload_bytes,
+        archive_bytes=left.archive_bytes + right.archive_bytes,
+        rows=left.rows + right.rows,
+        cache_hits=left.cache_hits + right.cache_hits,
+        cache_misses=left.cache_misses + right.cache_misses,
     )

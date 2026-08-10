@@ -92,6 +92,7 @@ class IngestionRunDocument(Document):
     application_commit: str
     parsers: list[dict[str, Any]]
     counts: dict[str, int]
+    metrics: dict[str, float | int] = Field(default_factory=dict)
     artifact_ids: list[str] = Field(default_factory=list)
     failure: str | None = None
 

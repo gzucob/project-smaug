@@ -34,6 +34,13 @@ class RoutedDataSource:
         source = self._routes.get(module.upper(), self._default)
         return await source.fetch(ticker, module)
 
+    def cache_key(self, module: str) -> str | None:
+        """Name the source-local index shared by calls for this module."""
+        source = self._routes.get(module.upper(), self._default)
+        if not isinstance(source, ArtifactDataSource):
+            return None
+        return f"{source.parser_identity.name}:{id(source)}"
+
     async def artifact_for(self, module: str) -> SourceArtifact | None:
         """Acquire the exact archive used by the source answering ``module``."""
         source = self._routes.get(module.upper(), self._default)

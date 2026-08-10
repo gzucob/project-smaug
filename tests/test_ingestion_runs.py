@@ -136,6 +136,43 @@ async def test_unchanged_reprocessing_is_counted_as_a_completed_attempt() -> Non
     assert run.counts.remaining == 0
 
 
+async def test_completed_run_persists_timing_volume_and_cache_metrics() -> None:
+    repository = FakeIngestionRunRepository()
+    service = _service(repository)
+
+    async def operation(run_id: str, outcome_sink: OutcomeSink) -> None:
+        await service.plan_calls(run_id, 1)
+        await outcome_sink(
+            FetchOutcome(
+                "PETR4",
+                "DRE",
+                OutcomeStatus.STORED,
+                200,
+                "stored",
+                source_seconds=1.25,
+                parse_seconds=0.5,
+                store_seconds=0.5,
+                retry_wait_seconds=0.75,
+                payload_bytes=123,
+                rows=4,
+                cache_misses=1,
+            )
+        )
+
+    await service.execute(
+        _parameters(), application_commit="abc123", parsers=(), operation=operation
+    )
+
+    metrics = repository.items["run-123"].metrics
+    assert metrics.source_seconds == 1.25
+    assert metrics.parse_seconds == 0.5
+    assert metrics.store_seconds == 0.5
+    assert metrics.retry_wait_seconds == 0.75
+    assert metrics.payload_bytes == 123
+    assert metrics.rows == 4
+    assert metrics.cache_misses == 1
+
+
 async def test_unexpected_exception_is_persisted_and_reraised() -> None:
     repository = FakeIngestionRunRepository()
     service = _service(repository)
