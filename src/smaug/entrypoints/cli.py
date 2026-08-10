@@ -52,7 +52,9 @@ from smaug.analysis.infrastructure.succession import (
     CodeSuccession,
     SuccessionPriceProvider,
 )
+from smaug.ingestion.application.failures import IngestionFailureService
 from smaug.ingestion.application.ingest import (
+    FailureContext,
     FetchOutcome,
     IngestPortfolioUseCase,
     OutcomeStatus,
@@ -68,6 +70,7 @@ from smaug.ingestion.application.validation import (
     IngestionValidationService,
     RunValidationReporter,
 )
+from smaug.ingestion.domain.failures import FailureOccurrence
 from smaug.ingestion.domain.repositories import RawIngestionRepository
 from smaug.ingestion.domain.runs import (
     IngestionRun,
@@ -98,6 +101,7 @@ from smaug.ingestion.infrastructure.cvm_capital import (
 )
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, CvmDocument
 from smaug.ingestion.infrastructure.repositories import (
+    BeanieIngestionFailureRepository,
     BeanieIngestionRunRepository,
     BeanieIngestionValidationRepository,
     BeanieRawIngestionRepository,
@@ -397,6 +401,79 @@ def _years_to_sweep(
     return tuple(range(from_year, to_year + 1))
 
 
+@app.command("ingestion-resume")
+def ingestion_resume(
+    run_id: str = typer.Option(
+        ..., "--run-id", help="Run whose failed calls to retry."
+    ),
+    retry_permanent: bool = typer.Option(
+        False,
+        "--retry-permanent",
+        help="Explicitly retry recorded permanent absences.",
+    ),
+) -> None:
+    """Retry eligible failed calls from one previous ingestion run."""
+    try:
+        exit_code = _guarded(_run_ingestion_resume(run_id, retry_permanent))
+    except (LookupError, ValueError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    raise typer.Exit(code=exit_code)
+
+
+async def _run_ingestion_resume(run_id: str, retry_permanent: bool) -> int:
+    """Select one run's safe retries and compose a new, narrower ingestion run."""
+    settings = get_settings()
+    client = await init_database(settings)
+    try:
+        run_service = IngestionRunService(BeanieIngestionRunRepository())
+        parent = await run_service.get(run_id)
+        if parent is None:
+            raise LookupError(f"ingestion run not found: {run_id}")
+        failure_service = IngestionFailureService(BeanieIngestionFailureRepository())
+        failures = await failure_service.eligible_for_run(
+            run_id,
+            current_parsers=_parser_by_module(parent.parameters.modules),
+            current_sources=_source_by_module(parent.parameters.modules),
+            retry_permanent=retry_permanent,
+        )
+    finally:
+        await client.close()
+
+    if not failures:
+        typer.echo("No eligible failed calls for this run.")
+        return 0
+
+    mutable_plan: dict[int, dict[str, list[str]]] = {}
+    retry_failure_ids: dict[tuple[str, str, int], str] = {}
+    for failure in failures:
+        planned_modules = mutable_plan.setdefault(failure.year, {}).setdefault(
+            failure.ticker, []
+        )
+        planned_modules.append(failure.module)
+        retry_failure_ids[(failure.ticker, failure.module, failure.year)] = (
+            failure.failure_id
+        )
+    call_plan = {
+        year: {ticker: tuple(modules) for ticker, modules in plan.items()}
+        for year, plan in mutable_plan.items()
+    }
+    tickers = tuple(dict.fromkeys(failure.ticker for failure in failures))
+    resumed_modules = tuple(dict.fromkeys(failure.module for failure in failures))
+    typer.echo(f"Resuming {len(failures)} failed call(s) from run {run_id}.")
+    return await _run_ingest(
+        tickers,
+        document=parent.parameters.document,
+        years=tuple(call_plan),
+        force=True,
+        verbose=True,
+        ticker_scope=TickerScope.EXPLICIT,
+        modules=resumed_modules,
+        call_plan=call_plan,
+        retry_failure_ids=retry_failure_ids,
+    )
+
+
 @app.command()
 def report(
     ticker: list[str] | None = typer.Option(
@@ -509,12 +586,18 @@ async def _run_ingest(
     force: bool = False,
     verbose: bool = False,
     ticker_scope: TickerScope = TickerScope.EXPLICIT,
+    modules: tuple[str, ...] | None = None,
+    call_plan: dict[int, dict[str, tuple[str, ...]]] | None = None,
+    retry_failure_ids: dict[tuple[str, str, int], str] | None = None,
 ) -> int:
     settings = get_settings()
     tickers = tuple(dict.fromkeys(tickers))
+    active_modules = modules or tuple(settings.cvm_modules)
+    retry_failure_ids = retry_failure_ids or {}
     client = await init_database(settings)
     repository = BeanieRawIngestionRepository()
     run_service = IngestionRunService(BeanieIngestionRunRepository())
+    failure_service = IngestionFailureService(BeanieIngestionFailureRepository())
     validation_service = IngestionValidationService(
         BeanieIngestionValidationRepository()
     )
@@ -527,7 +610,7 @@ async def _run_ingest(
         tickers=() if whole_exchange else tickers,
         years=effective_years,
         document=effective_document,
-        modules=tuple(settings.cvm_modules),
+        modules=active_modules,
         force=force,
         verbose=verbose,
     )
@@ -567,11 +650,14 @@ async def _run_ingest(
             if whole_exchange:
                 selected_tickers = tuple(company.ticker for company in companies)
                 await run_service.resolve_tickers(run_id, selected_tickers)
-            await run_service.plan_calls(
-                run_id,
-                len(selected_tickers) * len(settings.cvm_modules) * len(years),
+            planned = (
+                sum(len(owed) for plan in call_plan.values() for owed in plan.values())
+                if call_plan is not None
+                else len(selected_tickers) * len(active_modules) * len(years)
             )
+            await run_service.plan_calls(run_id, planned)
             for year in years:
+                effective_year = year or settings.cvm_year
                 passes.append(
                     await _ingest_one_year(
                         settings,
@@ -588,6 +674,14 @@ async def _run_ingest(
                         exclusion_sink=exclusion_sink,
                         artifact_store=artifact_store,
                         validation_reporter=validation_reporter,
+                        modules=active_modules,
+                        call_plan=(
+                            call_plan.get(effective_year)
+                            if call_plan is not None
+                            else None
+                        ),
+                        failure_service=failure_service,
+                        retry_failure_ids=retry_failure_ids,
                     )
                 )
 
@@ -595,7 +689,7 @@ async def _run_ingest(
         await run_service.execute(
             parameters,
             application_commit=application_commit(),
-            parsers=_parser_identities(settings.cvm_modules),
+            parsers=_parser_identities(active_modules),
             operation=collect,
         )
     finally:
@@ -638,6 +732,10 @@ async def _ingest_one_year(
     exclusion_sink: Callable[[int], Awaitable[None]],
     artifact_store: SourceArtifactStore,
     validation_reporter: BatchValidationReporter,
+    modules: tuple[str, ...],
+    call_plan: dict[str, tuple[str, ...]] | None,
+    failure_service: IngestionFailureService,
+    retry_failure_ids: dict[tuple[str, str, int], str],
 ) -> YearPass:
     """Collect one CVM archive year (or the single configured pass).
 
@@ -666,12 +764,43 @@ async def _ingest_one_year(
         artifact_store=artifact_store,
         validation_reporter=validation_reporter,
     )
-    modules = settings.cvm_modules
     plan = dict.fromkeys(wanted, modules)
-    if whole_exchange and not force:
+    if call_plan is not None:
+        plan = call_plan
+    elif whole_exchange and not force:
         plan = await _work_plan(repository, source, wanted, code_map, modules)
     scheduled = sum(len(owed) for owed in plan.values())
-    await exclusion_sink(len(wanted) * len(modules) - scheduled)
+    if call_plan is None:
+        await exclusion_sink(len(wanted) * len(modules) - scheduled)
+
+    effective_year = year if year is not None else settings.cvm_year
+    parsers = _parser_by_module(modules)
+    sources = _source_by_module(modules)
+
+    async def artifact_id_for(module: str) -> str | None:
+        artifact = await source.artifact_for(module)
+        return artifact.artifact_id if artifact is not None else None
+
+    async def failure_sink(occurrence: FailureOccurrence) -> None:
+        key = (occurrence.ticker, occurrence.module, occurrence.year)
+        await failure_service.record(
+            run_id,
+            occurrence,
+            retry_of=retry_failure_ids.get(key),
+        )
+
+    async def resolution_sink(ticker: str, module: str) -> None:
+        failure_id = retry_failure_ids.get((ticker, module, effective_year))
+        if failure_id is not None:
+            await failure_service.resolve(failure_id, run_id=run_id)
+
+    failure_context = FailureContext(
+        year=effective_year,
+        registrants=code_map,
+        sources=sources,
+        parsers=parsers,
+        artifact_id_for=artifact_id_for,
+    )
 
     outcomes: list[FetchOutcome] = []
     for owed, tickers in _by_owed_modules(plan):
@@ -687,6 +816,9 @@ async def _ingest_one_year(
             # memory and owes the call no pause at all (#214).
             paced_modules=frozenset({CAPITAL_EVENT_B3_MODULE, CASH_DIVIDEND_B3_MODULE}),
             outcome_sink=outcome_sink,
+            failure_sink=failure_sink,
+            resolution_sink=resolution_sink,
+            failure_context=failure_context,
         )
         outcomes.extend(await use_case.execute(tickers))
         if any(o.status is OutcomeStatus.ABORTED for o in outcomes):
@@ -694,7 +826,7 @@ async def _ingest_one_year(
             # meet the same one (a dead ZIP is dead for every module).
             break
     return YearPass(
-        year=year if year is not None else settings.cvm_year,
+        year=effective_year,
         outcomes=outcomes,
         companies=len(plan),
         already_mirrored=len(wanted) - len(plan),
@@ -703,6 +835,11 @@ async def _ingest_one_year(
 
 def _parser_identities(modules: Sequence[str]) -> tuple[ParserIdentity, ...]:
     """Stable parser catalog matching the composition root's module routes."""
+    return tuple(dict.fromkeys(_parser_by_module(modules).values()))
+
+
+def _parser_by_module(modules: Sequence[str]) -> dict[str, ParserIdentity]:
+    """Current parser identity for every requested module."""
     routes = {
         CAPITAL_MODULE: CvmCapitalSource.parser_identity,
         TREASURY_MODULE: CvmTreasurySource.parser_identity,
@@ -710,10 +847,16 @@ def _parser_identities(modules: Sequence[str]) -> tuple[ParserIdentity, ...]:
         CAPITAL_EVENT_B3_MODULE: B3CapitalEventSource.parser_identity,
         CASH_DIVIDEND_B3_MODULE: B3CashDividendSource.parser_identity,
     }
-    selected = (
-        routes.get(module.upper(), CvmDataSource.parser_identity) for module in modules
-    )
-    return tuple(dict.fromkeys(selected))
+    return {
+        module: routes.get(module.upper(), CvmDataSource.parser_identity)
+        for module in modules
+    }
+
+
+def _source_by_module(modules: Sequence[str]) -> dict[str, str]:
+    """Name the public source endpoint backing each configured module."""
+    b3_modules = {CAPITAL_EVENT_B3_MODULE, CASH_DIVIDEND_B3_MODULE}
+    return {module: "b3" if module in b3_modules else "cvm" for module in modules}
 
 
 @app.command("ingestion-runs")

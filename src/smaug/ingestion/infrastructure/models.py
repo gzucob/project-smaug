@@ -107,6 +107,45 @@ class IngestionRunDocument(Document):
         ]
 
 
+class IngestionFailureDocument(Document):
+    """Durable retry inventory for calls that did not mirror source data."""
+
+    failure_id: str
+    origin_run_id: str
+    ticker: str
+    registrant: str | None = None
+    source: str
+    module: str
+    year: int
+    artifact_id: str | None = None
+    parser: dict[str, object]
+    failure_class: str
+    attempt_count: int
+    first_failed_at: datetime
+    last_failed_at: datetime
+    detail: str
+    attempts: list[dict[str, object]]
+    status: str
+    resolved_at: datetime | None = None
+    resolution_run_id: str | None = None
+
+    class Settings:
+        name = "ingestion_failures"
+        indexes = [
+            IndexModel(
+                [("failure_id", ASCENDING)], name="failure_id_unique", unique=True
+            ),
+            IndexModel(
+                [("origin_run_id", ASCENDING), ("status", ASCENDING)],
+                name="origin_run_status",
+            ),
+            IndexModel(
+                [("status", ASCENDING), ("last_failed_at", DESCENDING)],
+                name="status_last_failed_at",
+            ),
+        ]
+
+
 class IngestionValidationDocument(Document):
     """One versioned source-batch validation report and its raw evidence."""
 
