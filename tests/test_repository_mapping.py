@@ -97,6 +97,18 @@ def test_should_map_ingestion_run_document_to_domain() -> None:
             "error": 1,
             "aborted": 0,
         },
+        metrics={
+            "source_seconds": 1.5,
+            "parse_seconds": 0.75,
+            "store_seconds": 0.25,
+            "retry_wait_seconds": 0.5,
+            "download_seconds": 2.0,
+            "payload_bytes": 99,
+            "archive_bytes": 1000,
+            "rows": 3,
+            "cache_hits": 2,
+            "cache_misses": 1,
+        },
         failure=None,
     )
 
@@ -110,6 +122,8 @@ def test_should_map_ingestion_run_document_to_domain() -> None:
     assert run.counts.error == 1
     assert run.counts.unchanged == 1
     assert run.counts.remaining == 1
+    assert run.metrics.archive_bytes == 1000
+    assert run.metrics.cache_hits == 2
 
 
 def test_should_map_failure_with_all_attempts_and_resolution() -> None:

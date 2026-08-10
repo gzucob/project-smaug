@@ -22,6 +22,7 @@ from smaug.ingestion.domain.identity import FilingIdentity, filing_identity
 from smaug.ingestion.domain.runs import (
     IngestionRun,
     IngestionRunCounts,
+    IngestionRunMetrics,
     IngestionRunParameters,
     IngestionRunStatus,
     ParserIdentity,
@@ -232,6 +233,7 @@ class BeanieIngestionRunRepository:
                 "modules": list(parameters.modules),
                 "force": parameters.force,
                 "verbose": parameters.verbose,
+                "concurrency": parameters.concurrency,
             },
             application_commit=run.application_commit,
             parsers=[
@@ -249,6 +251,18 @@ class BeanieIngestionRunRepository:
                 "quarantined": run.counts.quarantined,
                 "aborted": run.counts.aborted,
             },
+            metrics={
+                "source_seconds": run.metrics.source_seconds,
+                "parse_seconds": run.metrics.parse_seconds,
+                "store_seconds": run.metrics.store_seconds,
+                "retry_wait_seconds": run.metrics.retry_wait_seconds,
+                "download_seconds": run.metrics.download_seconds,
+                "payload_bytes": run.metrics.payload_bytes,
+                "archive_bytes": run.metrics.archive_bytes,
+                "rows": run.metrics.rows,
+                "cache_hits": run.metrics.cache_hits,
+                "cache_misses": run.metrics.cache_misses,
+            },
             failure=run.failure,
         )
 
@@ -256,6 +270,7 @@ class BeanieIngestionRunRepository:
     def _to_entity(document: IngestionRunDocument) -> IngestionRun:
         parameters = document.parameters
         counts = document.counts
+        metrics = getattr(document, "metrics", {})
         return IngestionRun(
             run_id=document.run_id,
             started_at=document.started_at,
@@ -269,6 +284,7 @@ class BeanieIngestionRunRepository:
                 modules=tuple(str(value) for value in parameters["modules"]),
                 force=bool(parameters["force"]),
                 verbose=bool(parameters["verbose"]),
+                concurrency=int(parameters.get("concurrency", 1)),
             ),
             application_commit=document.application_commit,
             parsers=tuple(
@@ -285,6 +301,18 @@ class BeanieIngestionRunRepository:
                 error=counts["error"],
                 quarantined=counts.get("quarantined", 0),
                 aborted=counts["aborted"],
+            ),
+            metrics=IngestionRunMetrics(
+                source_seconds=float(metrics.get("source_seconds", 0.0)),
+                parse_seconds=float(metrics.get("parse_seconds", 0.0)),
+                store_seconds=float(metrics.get("store_seconds", 0.0)),
+                retry_wait_seconds=float(metrics.get("retry_wait_seconds", 0.0)),
+                download_seconds=float(metrics.get("download_seconds", 0.0)),
+                payload_bytes=int(metrics.get("payload_bytes", 0)),
+                archive_bytes=int(metrics.get("archive_bytes", 0)),
+                rows=int(metrics.get("rows", 0)),
+                cache_hits=int(metrics.get("cache_hits", 0)),
+                cache_misses=int(metrics.get("cache_misses", 0)),
             ),
             failure=document.failure,
         )

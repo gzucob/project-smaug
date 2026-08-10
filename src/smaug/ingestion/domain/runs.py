@@ -45,6 +45,7 @@ class IngestionRunParameters:
     modules: tuple[str, ...]
     force: bool
     verbose: bool
+    concurrency: int = 1
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,22 @@ class IngestionRunCounts:
 
 
 @dataclass(frozen=True)
+class IngestionRunMetrics:
+    """Measured work for one ingestion run, independent of its outcomes."""
+
+    source_seconds: float = 0.0
+    parse_seconds: float = 0.0
+    store_seconds: float = 0.0
+    retry_wait_seconds: float = 0.0
+    download_seconds: float = 0.0
+    payload_bytes: int = 0
+    archive_bytes: int = 0
+    rows: int = 0
+    cache_hits: int = 0
+    cache_misses: int = 0
+
+
+@dataclass(frozen=True)
 class IngestionRun:
     """One durable ingestion command and its best-known result."""
 
@@ -91,4 +108,5 @@ class IngestionRun:
     parsers: tuple[ParserIdentity, ...]
     artifact_ids: tuple[str, ...] = ()
     counts: IngestionRunCounts = IngestionRunCounts()
+    metrics: IngestionRunMetrics = IngestionRunMetrics()
     failure: str | None = None

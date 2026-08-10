@@ -1,6 +1,16 @@
 """Ingestion use case: store, publish, and resilience (plan §5.1)."""
 
-from smaug.ingestion.application.ingest import IngestPortfolioUseCase, OutcomeStatus
+import asyncio
+import json
+import logging
+
+import pytest
+
+from smaug.ingestion.application.ingest import (
+    FailureContext,
+    IngestPortfolioUseCase,
+    OutcomeStatus,
+)
 from smaug.ingestion.domain.events import RawIngestionStored
 from smaug.ingestion.domain.ports import RawFetchResult
 from smaug.ingestion.domain.runs import ParserIdentity
@@ -33,6 +43,34 @@ class _MultiPeriodSource:
                 artifact_id="sha256:" + "a" * 64,
             )
             for i in range(self._periods)
+        ]
+
+
+class _CachedConcurrentSource:
+    """An archive-like source that yields long enough to expose concurrency."""
+
+    parser_identity = ParserIdentity("test.cached-concurrent", 1)
+
+    def __init__(self) -> None:
+        self.active = 0
+        self.maximum_active = 0
+
+    def cache_key(self, _module: str) -> str | None:
+        return "test-archive"
+
+    async def fetch(self, ticker: str, module: str) -> list[RawFetchResult]:
+        self.active += 1
+        self.maximum_active = max(self.maximum_active, self.active)
+        await asyncio.sleep(0)
+        self.active -= 1
+        return [
+            RawFetchResult(
+                module=module,
+                request={"ticker": ticker},
+                http_status=200,
+                payload={"ticker": ticker},
+                artifact_id="sha256:" + "a" * 64,
+            )
         ]
 
 
@@ -84,6 +122,81 @@ async def test_should_store_and_publish_for_each_module() -> None:
     ]
     assert len(repo.items) == 2
     assert len(events) == 2
+
+
+async def test_bounded_archive_workers_preserve_order_and_measure_cache() -> None:
+    source = _CachedConcurrentSource()
+    use_case = IngestPortfolioUseCase(
+        source,
+        FakeRawIngestionRepository(),
+        EventBus(),
+        ["DRE"],
+        run_id="run-1",
+        max_concurrency=2,
+        delay_seconds=0,
+        sleep=no_sleep,
+    )
+
+    outcomes = await use_case.execute(["PETR4", "VALE3", "BBAS3"])
+
+    assert [outcome.ticker for outcome in outcomes] == ["PETR4", "VALE3", "BBAS3"]
+    assert source.maximum_active == 2
+    assert sum(outcome.cache_misses for outcome in outcomes) == 1
+    assert sum(outcome.cache_hits for outcome in outcomes) == 2
+    assert all(outcome.rows == 1 for outcome in outcomes)
+    assert all(outcome.payload_bytes > 0 for outcome in outcomes)
+
+
+async def test_paced_modules_stay_serial_with_archive_workers() -> None:
+    source = _CachedConcurrentSource()
+    use_case = IngestPortfolioUseCase(
+        source,
+        FakeRawIngestionRepository(),
+        EventBus(),
+        ["B3"],
+        run_id="run-1",
+        max_concurrency=8,
+        paced_modules=frozenset({"B3"}),
+        delay_seconds=0,
+        sleep=no_sleep,
+    )
+
+    await use_case.execute(["PETR4", "VALE3", "BBAS3"])
+
+    assert source.maximum_active == 1
+
+
+async def test_outcome_log_is_correlated_and_structured(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="smaug.ingestion.application.ingest")
+    use_case = IngestPortfolioUseCase(
+        FakeDataSource(),
+        FakeRawIngestionRepository(),
+        EventBus(),
+        ["DRE"],
+        run_id="run-telemetry",
+        failure_context=FailureContext(
+            year=2024, registrants={}, sources={}, parsers={}
+        ),
+        delay_seconds=0,
+        sleep=no_sleep,
+    )
+
+    await use_case.execute(["PETR4"])
+
+    events = [
+        json.loads(record.message)
+        for record in caplog.records
+        if record.name == "smaug.ingestion.application.ingest"
+        and record.message.startswith("{")
+    ]
+    event = next(event for event in events if event["event"] == "ingestion.call")
+    assert event["run_id"] == "run-telemetry"
+    assert event["ticker"] == "PETR4"
+    assert event["module"] == "DRE"
+    assert event["year"] == 2024
+    assert event["rows"] == 1
 
 
 async def test_replay_records_unchanged_without_a_new_filing_or_event() -> None:

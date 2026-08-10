@@ -48,6 +48,15 @@ class RawDataSource(Protocol):
 
 
 @runtime_checkable
+class CacheAwareRawDataSource(Protocol):
+    """A source that exposes its in-memory archive-cache scope."""
+
+    def cache_key(self, module: str) -> str | None:
+        """Return a key for a reusable source index, if this module has one."""
+        ...
+
+
+@runtime_checkable
 class ArtifactDataSource(Protocol):
     """A raw source backed by one immutable archive."""
 

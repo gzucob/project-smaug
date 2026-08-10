@@ -24,6 +24,7 @@ from smaug.entrypoints.cli import (
     format_doctor,
     format_doctor_summary,
     format_drift_summary,
+    format_ingestion_metrics,
     format_ingestion_runs,
     format_ingestion_validations,
     format_report,
@@ -33,6 +34,7 @@ from smaug.ingestion.application.report import CompletenessReportUseCase
 from smaug.ingestion.domain.runs import (
     IngestionRun,
     IngestionRunCounts,
+    IngestionRunMetrics,
     IngestionRunParameters,
     IngestionRunStatus,
     ParserIdentity,
@@ -92,6 +94,47 @@ def test_should_render_persisted_run_provenance_and_incomplete_marker() -> None:
     assert "cvm.statements.csv@1" in output
     assert "calls=5/10 excluded=0 remaining=5" in output
     assert "unchanged=1" in output
+
+
+def test_ingestion_metrics_include_throughput_volume_and_cache_behavior() -> None:
+    run = IngestionRun(
+        run_id="run-123",
+        started_at=datetime(2026, 8, 6, 12, 0, tzinfo=UTC),
+        ended_at=datetime(2026, 8, 6, 12, 0, 2, tzinfo=UTC),
+        status=IngestionRunStatus.COMPLETED,
+        parameters=IngestionRunParameters(
+            ticker_scope=TickerScope.EXPLICIT,
+            tickers=("PETR4",),
+            years=(2024,),
+            document="DFP",
+            modules=("DRE",),
+            force=False,
+            verbose=False,
+            concurrency=8,
+        ),
+        application_commit="abc123",
+        parsers=(),
+        counts=IngestionRunCounts(planned=4, stored=4),
+        metrics=IngestionRunMetrics(
+            source_seconds=1.25,
+            download_seconds=0.5,
+            parse_seconds=1.0,
+            store_seconds=0.25,
+            payload_bytes=120,
+            archive_bytes=1024,
+            rows=4,
+            cache_hits=3,
+            cache_misses=1,
+        ),
+    )
+
+    output = format_ingestion_metrics(run)
+
+    assert "elapsed=2.000s" in output
+    assert "throughput=2.00 calls/s" in output
+    assert "rows=4" in output
+    assert "archive_bytes=1024" in output
+    assert "cache_hit=3 cache_miss=1" in output
 
 
 def test_should_render_quarantine_evidence_and_reprocessing_guidance() -> None:
