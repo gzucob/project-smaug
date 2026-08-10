@@ -35,6 +35,16 @@ import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
 from smaug.ingestion.domain.runs import ParserIdentity
+from smaug.ingestion.domain.validation import (
+    BatchValidationReporter,
+    SourceBatchValidation,
+)
+from smaug.ingestion.infrastructure.batch_validation import (
+    CsvMemberSpec,
+    quarantined_archive_validation,
+    record_or_quarantine,
+    validate_csv_archive,
+)
 from smaug.ingestion.infrastructure.cvm_source import (
     _DOCUMENT_BASE_URL,
     _DOCUMENT_PREFIX,
@@ -42,7 +52,7 @@ from smaug.ingestion.infrastructure.cvm_source import (
 )
 from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.download import Sleeper, download_zip
-from smaug.shared.errors import SourceNotFoundError
+from smaug.shared.errors import CvmDownloadError, SourceNotFoundError
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -71,6 +81,32 @@ def _int(value: str | None) -> int:
     return int(value) if value else 0
 
 
+def _member_validation(
+    archive: Path,
+    *,
+    source: str,
+    batch: str,
+    parser: ParserIdentity,
+    artifact: SourceArtifact | None,
+    year: int,
+    member: str,
+    columns: frozenset[str],
+    registrant_column: str,
+    period_column: str,
+    require_member: bool,
+) -> SourceBatchValidation:
+    return validate_csv_archive(
+        archive,
+        source=source,
+        batch=batch,
+        parser=parser,
+        artifact=artifact,
+        expected_year=year,
+        members=(CsvMemberSpec(member, columns, registrant_column, period_column),),
+        require_member=require_member,
+    )
+
+
 class CvmCapitalSource:
     """Fetch the capital composition for one ticker from CVM's yearly FRE file."""
 
@@ -88,6 +124,7 @@ class CvmCapitalSource:
         sleep: Sleeper = asyncio.sleep,
         artifact_store: SourceArtifactStore | None = None,
         artifact_id: str | None = None,
+        validation_reporter: BatchValidationReporter | None = None,
     ) -> None:
         self._http = http_client
         self._ticker_to_cnpj = dict(ticker_to_cnpj)
@@ -102,6 +139,8 @@ class CvmCapitalSource:
         self._artifact_store = artifact_store
         self._replay_artifact_id = artifact_id
         self._artifact: SourceArtifact | None = None
+        self._validation_reporter = validation_reporter
+        self._validated = False
         self._index: dict[str, list[dict[str, Any]]] | None = None
         self._lock = asyncio.Lock()
 
@@ -177,6 +216,38 @@ class CvmCapitalSource:
             if cached is not None:
                 return cached
             raw = await self._archive_path()
+            if not self._validated:
+                validation = await asyncio.to_thread(
+                    _member_validation,
+                    raw,
+                    source="cvm",
+                    batch=self._zip_name,
+                    parser=self.parser_identity,
+                    artifact=self._artifact,
+                    year=self._year,
+                    member=self._member_name,
+                    columns=frozenset(
+                        {
+                            "CNPJ_Companhia",
+                            "Nome_Companhia",
+                            "Data_Referencia",
+                            "Versao",
+                            "ID_Capital_Social",
+                            "Tipo_Capital",
+                            "Data_Autorizacao_Aprovacao",
+                            "Valor_Capital",
+                            "Prazo_Integralizacao",
+                            "Quantidade_Acoes_Ordinarias",
+                            "Quantidade_Acoes_Preferenciais",
+                            "Quantidade_Total_Acoes",
+                        }
+                    ),
+                    registrant_column="CNPJ_Companhia",
+                    period_column="Data_Referencia",
+                    require_member=True,
+                )
+                await record_or_quarantine(self._validation_reporter, validation)
+                self._validated = True
             index = await asyncio.to_thread(self._build_index, raw)
             self._index = index
             logger.info(
@@ -206,9 +277,25 @@ class CvmCapitalSource:
                     self._replay_artifact_id
                 )
             else:
-                self._artifact = await self._artifact_store.acquire(
-                    f"{self._base_url}/{self._zip_name}", follow_redirects=True
-                )
+                try:
+                    self._artifact = await self._artifact_store.acquire(
+                        f"{self._base_url}/{self._zip_name}", follow_redirects=True
+                    )
+                except CvmDownloadError as exc:
+                    if exc.quarantined_artifact_id is None:
+                        raise
+                    await record_or_quarantine(
+                        self._validation_reporter,
+                        quarantined_archive_validation(
+                            batch=self._zip_name,
+                            parser=self.parser_identity,
+                            artifact_id=exc.quarantined_artifact_id,
+                            detail=str(exc),
+                        ),
+                    )
+                    raise AssertionError(
+                        "quarantined archive returned unexpectedly"
+                    ) from exc
         return self._artifact
 
     async def _download(self, dst: Path) -> None:
@@ -306,6 +393,7 @@ class CvmCapitalEventSource:
         sleep: Sleeper = asyncio.sleep,
         artifact_store: SourceArtifactStore | None = None,
         artifact_id: str | None = None,
+        validation_reporter: BatchValidationReporter | None = None,
     ) -> None:
         self._http = http_client
         self._ticker_to_cnpj = dict(ticker_to_cnpj)
@@ -317,6 +405,8 @@ class CvmCapitalEventSource:
         self._artifact_store = artifact_store
         self._replay_artifact_id = artifact_id
         self._artifact: SourceArtifact | None = None
+        self._validation_reporter = validation_reporter
+        self._validated = False
         self._index: dict[str, list[dict[str, Any]]] | None = None
         self._lock = asyncio.Lock()
 
@@ -387,17 +477,39 @@ class CvmCapitalEventSource:
             if cached is not None:
                 return cached
             raw = await self._archive_path()
-            if not raw.exists():
-                logger.info(
-                    "Downloading CVM FRE %s from %s", self._year, self._base_url
-                )
-                await download_zip(
-                    self._http,
-                    f"{self._base_url}/{self._zip_name}",
+            if not self._validated:
+                validation = await asyncio.to_thread(
+                    _member_validation,
                     raw,
-                    follow_redirects=True,
-                    sleep=self._sleep,
+                    source="cvm",
+                    batch=self._zip_name,
+                    parser=self.parser_identity,
+                    artifact=self._artifact,
+                    year=self._year,
+                    member=self._member_name,
+                    columns=frozenset(
+                        {
+                            "CNPJ_Companhia",
+                            "Nome_Companhia",
+                            "Data_Referencia",
+                            "Versao",
+                            "ID_Capital_Social_Desdobramento",
+                            "Data_Aprovacao",
+                            "Tipo_Evento",
+                            "Quantidade_Acoes_Ordinarias_Antes_Aprovacao",
+                            "Quantidade_Acoes_Preferenciais_Antes_Aprovacao",
+                            "Quantidade_Total_Acoes_Antes_Aprovacao",
+                            "Quantidade_Acoes_Ordinarias_Depois_Aprovacao",
+                            "Quantidade_Acoes_Preferenciais_Depois_Aprovacao",
+                            "Quantidade_Total_Acoes_Depois_Aprovacao",
+                        }
+                    ),
+                    registrant_column="CNPJ_Companhia",
+                    period_column="Data_Referencia",
+                    require_member=False,
                 )
+                await record_or_quarantine(self._validation_reporter, validation)
+                self._validated = True
             index = await asyncio.to_thread(self._build_index, raw)
             self._index = index
             logger.info(
@@ -412,7 +524,17 @@ class CvmCapitalEventSource:
         if artifact is not None:
             return artifact.path
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        return self._cache_dir / self._zip_name
+        raw = self._cache_dir / self._zip_name
+        if not raw.exists():
+            logger.info("Downloading CVM FRE %s from %s", self._year, self._base_url)
+            await download_zip(
+                self._http,
+                f"{self._base_url}/{self._zip_name}",
+                raw,
+                follow_redirects=True,
+                sleep=self._sleep,
+            )
+        return raw
 
     async def _ensure_artifact(self) -> SourceArtifact | None:
         if self._artifact_store is None:
@@ -423,9 +545,25 @@ class CvmCapitalEventSource:
                     self._replay_artifact_id
                 )
             else:
-                self._artifact = await self._artifact_store.acquire(
-                    f"{self._base_url}/{self._zip_name}", follow_redirects=True
-                )
+                try:
+                    self._artifact = await self._artifact_store.acquire(
+                        f"{self._base_url}/{self._zip_name}", follow_redirects=True
+                    )
+                except CvmDownloadError as exc:
+                    if exc.quarantined_artifact_id is None:
+                        raise
+                    await record_or_quarantine(
+                        self._validation_reporter,
+                        quarantined_archive_validation(
+                            batch=self._zip_name,
+                            parser=self.parser_identity,
+                            artifact_id=exc.quarantined_artifact_id,
+                            detail=str(exc),
+                        ),
+                    )
+                    raise AssertionError(
+                        "quarantined archive returned unexpectedly"
+                    ) from exc
         return self._artifact
 
     def _build_index(self, archive: Path) -> dict[str, list[dict[str, Any]]]:
@@ -507,6 +645,7 @@ class CvmTreasurySource:
         sleep: Sleeper = asyncio.sleep,
         artifact_store: SourceArtifactStore | None = None,
         artifact_id: str | None = None,
+        validation_reporter: BatchValidationReporter | None = None,
     ) -> None:
         self._http = http_client
         self._ticker_to_cnpj = dict(ticker_to_cnpj)
@@ -520,6 +659,8 @@ class CvmTreasurySource:
         self._artifact_store = artifact_store
         self._replay_artifact_id = artifact_id
         self._artifact: SourceArtifact | None = None
+        self._validation_reporter = validation_reporter
+        self._validated = False
         self._index: dict[str, list[dict[str, Any]]] | None = None
         self._lock = asyncio.Lock()
 
@@ -587,6 +728,36 @@ class CvmTreasurySource:
                 url = f"{self._base_url}/{self._zip_name}"
                 logger.info("Downloading CVM %s %s", self._document, self._year)
                 await download_zip(self._http, url, raw, sleep=self._sleep)
+            if not self._validated:
+                validation = await asyncio.to_thread(
+                    _member_validation,
+                    raw,
+                    source="cvm",
+                    batch=self._zip_name,
+                    parser=self.parser_identity,
+                    artifact=self._artifact,
+                    year=self._year,
+                    member=self._member_name,
+                    columns=frozenset(
+                        {
+                            "CNPJ_CIA",
+                            "DENOM_CIA",
+                            "DT_REFER",
+                            "VERSAO",
+                            "QT_ACAO_ORDIN_CAP_INTEGR",
+                            "QT_ACAO_PREF_CAP_INTEGR",
+                            "QT_ACAO_TOTAL_CAP_INTEGR",
+                            "QT_ACAO_ORDIN_TESOURO",
+                            "QT_ACAO_PREF_TESOURO",
+                            "QT_ACAO_TOTAL_TESOURO",
+                        }
+                    ),
+                    registrant_column="CNPJ_CIA",
+                    period_column="DT_REFER",
+                    require_member=False,
+                )
+                await record_or_quarantine(self._validation_reporter, validation)
+                self._validated = True
             index = await asyncio.to_thread(self._build_index, raw)
             self._index = index
             return index
@@ -607,9 +778,25 @@ class CvmTreasurySource:
                     self._replay_artifact_id
                 )
             else:
-                self._artifact = await self._artifact_store.acquire(
-                    f"{self._base_url}/{self._zip_name}"
-                )
+                try:
+                    self._artifact = await self._artifact_store.acquire(
+                        f"{self._base_url}/{self._zip_name}"
+                    )
+                except CvmDownloadError as exc:
+                    if exc.quarantined_artifact_id is None:
+                        raise
+                    await record_or_quarantine(
+                        self._validation_reporter,
+                        quarantined_archive_validation(
+                            batch=self._zip_name,
+                            parser=self.parser_identity,
+                            artifact_id=exc.quarantined_artifact_id,
+                            detail=str(exc),
+                        ),
+                    )
+                    raise AssertionError(
+                        "quarantined archive returned unexpectedly"
+                    ) from exc
         return self._artifact
 
     def _build_index(self, archive: Path) -> dict[str, list[dict[str, Any]]]:

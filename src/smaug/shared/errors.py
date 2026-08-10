@@ -72,6 +72,16 @@ class CvmDownloadError(SourceError):
     so there is nothing left to collect once it is unavailable.
     """
 
+    def __init__(
+        self, message: str, *, quarantined_artifact_id: str | None = None
+    ) -> None:
+        self.quarantined_artifact_id = quarantined_artifact_id
+        super().__init__(message)
+
+
+class SourceBatchValidationError(SourceError):
+    """A source batch failed a declared validation rule and was quarantined."""
+
 
 class SourceUnexpectedStatusError(SourceError):
     """Any other non-success HTTP status we did not plan for."""

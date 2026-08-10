@@ -19,8 +19,16 @@ from smaug.ingestion.domain.runs import (
     ParserIdentity,
     TickerScope,
 )
+from smaug.ingestion.domain.validation import (
+    BatchValidationStatus,
+    IngestionValidationReport,
+    SourceBatchValidation,
+    ValidationFinding,
+    ValidationRule,
+)
 from smaug.ingestion.infrastructure.models import (
     IngestionRunDocument,
+    IngestionValidationDocument,
     RawIngestionDocument,
 )
 
@@ -229,6 +237,7 @@ class BeanieIngestionRunRepository:
                 "unchanged": run.counts.unchanged,
                 "skipped": run.counts.skipped,
                 "error": run.counts.error,
+                "quarantined": run.counts.quarantined,
                 "aborted": run.counts.aborted,
             },
             failure=run.failure,
@@ -265,7 +274,122 @@ class BeanieIngestionRunRepository:
                 unchanged=counts.get("unchanged", 0),
                 skipped=counts["skipped"],
                 error=counts["error"],
+                quarantined=counts.get("quarantined", 0),
                 aborted=counts["aborted"],
             ),
             failure=document.failure,
+        )
+
+
+class BeanieIngestionValidationRepository:
+    """Concrete repository over the ``ingestion_validations`` collection."""
+
+    async def add(self, report: IngestionValidationReport) -> IngestionValidationReport:
+        document = self._to_document(report)
+        await document.insert()
+        return self._to_entity(document)
+
+    async def get(self, report_id: str) -> IngestionValidationReport | None:
+        document = await IngestionValidationDocument.find_one(
+            IngestionValidationDocument.report_id == report_id
+        )
+        return self._to_entity(document) if document is not None else None
+
+    async def recent(
+        self, limit: int, *, run_id: str | None = None
+    ) -> tuple[IngestionValidationReport, ...]:
+        query = IngestionValidationDocument.find_all()
+        if run_id is not None:
+            query = IngestionValidationDocument.find(
+                IngestionValidationDocument.run_id == run_id
+            )
+        documents = await query.sort("-recorded_at").limit(limit).to_list()
+        return tuple(self._to_entity(document) for document in documents)
+
+    async def update(
+        self, report: IngestionValidationReport
+    ) -> IngestionValidationReport:
+        document = await IngestionValidationDocument.find_one(
+            IngestionValidationDocument.report_id == report.report_id
+        )
+        if document is None:
+            raise LookupError(
+                f"ingestion validation report not found: {report.report_id}"
+            )
+        replacement = self._to_document(report)
+        replacement.id = document.id
+        await replacement.replace()
+        return self._to_entity(replacement)
+
+    @staticmethod
+    def _to_document(report: IngestionValidationReport) -> IngestionValidationDocument:
+        validation = report.validation
+        return IngestionValidationDocument(
+            report_id=report.report_id,
+            run_id=report.run_id,
+            recorded_at=report.recorded_at,
+            status=report.status.value,
+            source=validation.source,
+            batch=validation.batch,
+            module=validation.module,
+            artifact_id=validation.artifact_id,
+            parser={
+                "name": validation.parser.name,
+                "version": validation.parser.version,
+            },
+            rules=[
+                {"name": rule.name, "version": rule.version}
+                for rule in validation.rules
+            ],
+            observations=dict(validation.observations),
+            findings=[
+                {"code": item.code, "detail": item.detail}
+                for item in validation.findings
+            ],
+            evidence=dict(validation.evidence),
+            approved_at=report.approved_at,
+            approval_note=report.approval_note,
+        )
+
+    @staticmethod
+    def _to_entity(document: IngestionValidationDocument) -> IngestionValidationReport:
+        parser = document.parser
+        parser_name = parser.get("name")
+        parser_version = parser.get("version")
+        if not isinstance(parser_name, str) or not isinstance(parser_version, int):
+            raise ValueError("stored validation report has an invalid parser identity")
+        rules: list[ValidationRule] = []
+        for rule in document.rules:
+            name = rule.get("name")
+            version = rule.get("version")
+            if not isinstance(name, str) or not isinstance(version, int):
+                raise ValueError("stored validation report has an invalid rule")
+            rules.append(ValidationRule(name, version))
+        observations: dict[str, str | int | bool] = {}
+        for key, value in document.observations.items():
+            if not isinstance(value, (str, int, bool)):
+                raise ValueError("stored validation report has an invalid observation")
+            observations[key] = value
+        validation = SourceBatchValidation(
+            source=document.source,
+            batch=document.batch,
+            module=document.module,
+            artifact_id=document.artifact_id,
+            parser=ParserIdentity(parser_name, parser_version),
+            rules=tuple(rules),
+            observations=observations,
+            findings=tuple(
+                ValidationFinding(item["code"], item["detail"])
+                for item in document.findings
+            ),
+            evidence=document.evidence,
+        )
+        return IngestionValidationReport(
+            report_id=document.report_id,
+            run_id=document.run_id,
+            recorded_at=document.recorded_at,
+            validation=validation,
+            status=BatchValidationStatus(document.status),
+            approved_at=document.approved_at,
+            approval_note=document.approval_note,
         )

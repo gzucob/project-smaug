@@ -11,6 +11,7 @@ from typing import Protocol
 
 from smaug.ingestion.domain.entities import RawIngestion, RawIngestionWrite
 from smaug.ingestion.domain.runs import IngestionRun
+from smaug.ingestion.domain.validation import IngestionValidationReport
 
 
 class RawIngestionRepository(Protocol):
@@ -58,4 +59,28 @@ class IngestionRunRepository(Protocol):
 
     async def recent(self, limit: int) -> tuple[IngestionRun, ...]:
         """Return the most recently started runs, newest first."""
+        ...
+
+
+class IngestionValidationRepository(Protocol):
+    """Durable validation and quarantine facts for ingestion runs."""
+
+    async def add(self, report: IngestionValidationReport) -> IngestionValidationReport:
+        """Persist one batch admission decision."""
+        ...
+
+    async def get(self, report_id: str) -> IngestionValidationReport | None:
+        """Find one validation report by its public id."""
+        ...
+
+    async def recent(
+        self, limit: int, *, run_id: str | None = None
+    ) -> tuple[IngestionValidationReport, ...]:
+        """Return reports newest first, optionally scoped to one run."""
+        ...
+
+    async def update(
+        self, report: IngestionValidationReport
+    ) -> IngestionValidationReport:
+        """Persist an operator approval without changing the original evidence."""
         ...

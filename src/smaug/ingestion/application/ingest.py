@@ -33,6 +33,7 @@ from smaug.ingestion.domain.repositories import RawIngestionRepository
 from smaug.shared.errors import (
     CvmDownloadError,
     SourceAuthError,
+    SourceBatchValidationError,
     SourceError,
     SourceForbiddenError,
     SourceNotFoundError,
@@ -58,6 +59,7 @@ class OutcomeStatus(StrEnum):
     UNCHANGED = "unchanged"
     SKIPPED = "skipped"
     ERROR = "error"
+    QUARANTINED = "quarantined"
     ABORTED = "aborted"
 
 
@@ -137,6 +139,18 @@ class IngestPortfolioUseCase:
                 await self._record(
                     outcomes,
                     FetchOutcome(ticker, module, OutcomeStatus.SKIPPED, code, str(exc)),
+                )
+            except SourceBatchValidationError as exc:
+                logger.error("Quarantined %s/%s: %s", ticker, module, exc)
+                await self._record(
+                    outcomes,
+                    FetchOutcome(
+                        ticker,
+                        module,
+                        OutcomeStatus.QUARANTINED,
+                        None,
+                        str(exc),
+                    ),
                 )
             except SourceError as exc:
                 # Unexpected, but isolated: record and move on.

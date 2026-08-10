@@ -141,19 +141,23 @@ class LocalSourceArtifactStore:
             with zipfile.ZipFile(stage) as archive:
                 corrupt_member = archive.testzip()
         except (OSError, zipfile.BadZipFile) as exc:
+            quarantine_id = self._quarantine(stage, f"archive-integrity: {exc}")
             raise CvmDownloadError(
-                "downloaded source is not a valid ZIP archive"
+                "downloaded source is not a valid ZIP archive "
+                f"(quarantined as {quarantine_id})",
+                quarantined_artifact_id=quarantine_id,
             ) from exc
         if corrupt_member is not None:
-            raise CvmDownloadError(f"corrupt ZIP member: {corrupt_member}")
+            quarantine_id = self._quarantine(
+                stage, f"archive-integrity: corrupt member {corrupt_member}"
+            )
+            raise CvmDownloadError(
+                "corrupt ZIP member: "
+                f"{corrupt_member} (quarantined as {quarantine_id})",
+                quarantined_artifact_id=quarantine_id,
+            )
 
-        digest = hashlib.sha256()
-        byte_size = 0
-        with stage.open("rb") as source:
-            while chunk := source.read(1024 * 1024):
-                digest.update(chunk)
-                byte_size += len(chunk)
-        sha256 = digest.hexdigest()
+        sha256, byte_size = self._identity(stage)
         artifact_id = f"sha256:{sha256}"
         destination = self._blob_path(sha256)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -163,6 +167,41 @@ class LocalSourceArtifactStore:
             stage.replace(destination)
         self._write_manifest(artifact_id, sha256, byte_size)
         return SourceArtifact(artifact_id, sha256, byte_size, destination)
+
+    def _quarantine(self, stage: Path, reason: str) -> str:
+        """Retain malformed source bytes and a local validation report for replay."""
+        sha256, byte_size = self._identity(stage)
+        artifact_id = f"sha256:{sha256}"
+        destination = (
+            self._root / "quarantine" / "sha256" / sha256[:2] / f"{sha256}.zip"
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            stage.unlink()
+        else:
+            stage.replace(destination)
+        report = self._root / "quarantine" / "manifests" / sha256[:2] / f"{sha256}.json"
+        self._write_json_atomic(
+            report,
+            {
+                "artifact_id": artifact_id,
+                "byte_size": byte_size,
+                "reason": reason,
+                "sha256": sha256,
+                "status": "quarantined",
+            },
+        )
+        return artifact_id
+
+    @staticmethod
+    def _identity(path: Path) -> tuple[str, int]:
+        digest = hashlib.sha256()
+        byte_size = 0
+        with path.open("rb") as source:
+            while chunk := source.read(1024 * 1024):
+                digest.update(chunk)
+                byte_size += len(chunk)
+        return digest.hexdigest(), byte_size
 
     def _open(self, artifact_id: str) -> SourceArtifact:
         match = _ARTIFACT_ID.fullmatch(artifact_id)

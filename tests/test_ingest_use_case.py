@@ -7,6 +7,7 @@ from smaug.ingestion.domain.runs import ParserIdentity
 from smaug.shared.errors import (
     CvmDownloadError,
     SourceAuthError,
+    SourceBatchValidationError,
     SourceForbiddenError,
     SourceNotFoundError,
 )
@@ -184,6 +185,28 @@ async def test_should_skip_module_on_403_plan_restriction_and_keep_going() -> No
 
     assert outcomes[0].status is OutcomeStatus.SKIPPED
     assert outcomes[0].http_status == 403
+    assert outcomes[1].status is OutcomeStatus.STORED
+    assert len(repo.items) == 1
+
+
+async def test_should_quarantine_invalid_batch_without_storing_its_payload() -> None:
+    source = FakeDataSource(
+        errors={("PETR4", "m1"): SourceBatchValidationError("csv-schema: missing DRE")}
+    )
+    repo = FakeRawIngestionRepository()
+
+    use_case = IngestPortfolioUseCase(
+        source,
+        repo,
+        EventBus(),
+        ["m1", "m2"],
+        run_id="run-1",
+        delay_seconds=0,
+        sleep=no_sleep,
+    )
+    outcomes = await use_case.execute(["PETR4"])
+
+    assert outcomes[0].status is OutcomeStatus.QUARANTINED
     assert outcomes[1].status is OutcomeStatus.STORED
     assert len(repo.items) == 1
 

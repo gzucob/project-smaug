@@ -12,9 +12,11 @@ from types import SimpleNamespace
 import pytest
 
 from smaug.ingestion.domain.runs import IngestionRunStatus, TickerScope
+from smaug.ingestion.domain.validation import BatchValidationStatus
 from smaug.ingestion.infrastructure.models import RawIngestionDocument
 from smaug.ingestion.infrastructure.repositories import (
     BeanieIngestionRunRepository,
+    BeanieIngestionValidationRepository,
     BeanieRawIngestionRepository,
 )
 from tests.fakes import make_snapshot
@@ -131,3 +133,30 @@ def test_content_identity_unique_index_excludes_legacy_documents() -> None:
         "filing_discriminator": {"$type": "string"},
         "content_hash": {"$type": "string"},
     }
+
+
+def test_should_map_validation_report_with_rules_and_evidence() -> None:
+    document = SimpleNamespace(
+        report_id="validation-123",
+        run_id="run-123",
+        recorded_at=datetime(2026, 8, 10, tzinfo=UTC),
+        status="quarantined",
+        source="b3",
+        batch="GetListedCashDividends:BBDC",
+        module="CASH_DIVIDEND_B3",
+        artifact_id=None,
+        parser={"name": "b3.cash-dividends.json", "version": 1},
+        rules=[{"name": "coverage-established", "version": 1}],
+        observations={"rows": 0, "coverage_established": False},
+        findings=[{"code": "response-schema", "detail": "missing totalPages"}],
+        evidence={"results": []},
+        approved_at=None,
+        approval_note=None,
+    )
+
+    report = BeanieIngestionValidationRepository._to_entity(document)  # type: ignore[arg-type]
+
+    assert report.status is BatchValidationStatus.QUARANTINED
+    assert report.validation.rules[0].name == "coverage-established"
+    assert report.validation.findings[0].detail == "missing totalPages"
+    assert report.validation.evidence == {"results": []}

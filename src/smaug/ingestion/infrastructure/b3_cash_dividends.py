@@ -49,12 +49,19 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Never
 
 import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
 from smaug.ingestion.domain.runs import ParserIdentity
+from smaug.ingestion.domain.validation import (
+    BatchValidationReporter,
+    SourceBatchValidation,
+    ValidationFinding,
+    ValidationRule,
+)
+from smaug.ingestion.infrastructure.batch_validation import record_or_quarantine
 from smaug.shared.errors import SourceNotFoundError
 from smaug.shared.logging import get_logger
 
@@ -77,6 +84,11 @@ _PAGE_SIZE = 100
 # A company paying monthly since the nineties reaches ~900 rows; the bound only
 # exists so a malformed ``totalPages`` cannot spin.
 _MAX_PAGES = 60
+_RULES = (
+    ValidationRule("response-schema", 1),
+    ValidationRule("coverage-established", 1),
+    ValidationRule("record-count", 1),
+)
 
 
 class B3CashDividendSource:
@@ -90,10 +102,12 @@ class B3CashDividendSource:
         *,
         ticker_to_code: Mapping[str, str] | None = None,
         base_url: str | None = None,
+        validation_reporter: BatchValidationReporter | None = None,
     ) -> None:
         self._http = http_client
         self._ticker_to_code = dict(ticker_to_code or {})
         self._base_url = (base_url or B3_LISTED_BASE_URL).rstrip("/")
+        self._validation_reporter = validation_reporter
 
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
         """Every cash-dividend row B3 lists, one result per row.
@@ -105,11 +119,20 @@ class B3CashDividendSource:
         root = ticker[:_ROOT_LENGTH]
         supplement = await self._supplement(root)
         if supplement is None:
-            raise SourceNotFoundError(f"B3 lists no company for {ticker} ({root})")
+            await self._quarantine(
+                root,
+                "coverage-established",
+                "B3 supplement response is absent or not a JSON object",
+            )
         trading_name = _text(supplement.get("tradingName"))
         if not trading_name:
-            raise SourceNotFoundError(f"B3 gives no trading name for {ticker} ({root})")
-        rows = await self._dividends(trading_name)
+            await self._quarantine(
+                root,
+                "response-schema",
+                "B3 supplement lacks a tradingName",
+                evidence=supplement,
+            )
+        rows = await self._dividends(root, trading_name)
         respelled = trading_name.replace("/", ".")
         if not rows and respelled != trading_name:
             logger.info(
@@ -117,12 +140,32 @@ class B3CashDividendSource:
                 trading_name,
                 respelled,
             )
-            rows = await self._dividends(respelled)
+            rows = await self._dividends(root, respelled)
         if not rows:
             # A company that has never paid is the normal case for a recent
             # listing, and it is an absence the mirror records rather than an
             # empty list it invents.
+            await self._record(self._validation(root, rows=0))
             raise SourceNotFoundError(f"B3 lists no cash payout for {ticker}")
+
+        if not all(isinstance(row, Mapping) for row in rows):
+            await self._quarantine(
+                root,
+                "response-schema",
+                "B3 dividends contains a non-object row",
+            )
+        required = {"typeStock", "lastDatePriorEx", "corporateAction", "valueCash"}
+        missing = next(
+            (sorted(required - set(row)) for row in rows if required - set(row)),
+            None,
+        )
+        if missing is not None:
+            await self._quarantine(
+                root,
+                "response-schema",
+                f"B3 dividends row lacks {', '.join(missing)}",
+            )
+        await self._record(self._validation(root, rows=len(rows)))
 
         code = self._code_of(supplement, ticker)
         return [
@@ -152,13 +195,14 @@ class B3CashDividendSource:
     async def _supplement(self, root: str) -> Mapping[str, Any] | None:
         body = await self._json(
             f"{self._base_url}/GetListedSupplementCompany/"
-            + _encoded({"issuingCompany": root, "language": "pt-br"})
+            + _encoded({"issuingCompany": root, "language": "pt-br"}),
+            root,
         )
         if isinstance(body, list):
             body = body[0] if body else None
         return body if isinstance(body, dict) else None
 
-    async def _dividends(self, trading_name: str) -> list[Mapping[str, Any]]:
+    async def _dividends(self, root: str, trading_name: str) -> list[Mapping[str, Any]]:
         rows: list[Mapping[str, Any]] = []
         page = 1
         while page <= _MAX_PAGES:
@@ -171,36 +215,131 @@ class B3CashDividendSource:
                         "pageSize": _PAGE_SIZE,
                         "tradingName": trading_name,
                     }
-                )
+                ),
+                root,
             )
             if not isinstance(body, dict):
-                break
+                await self._quarantine(
+                    root,
+                    "response-schema",
+                    "B3 dividends response is not a JSON object",
+                    evidence={"response": body},
+                )
             results = body.get("results")
-            if not isinstance(results, list) or not results:
-                break
-            rows.extend(row for row in results if isinstance(row, dict))
-            total = body.get("page")
-            pages = total.get("totalPages") if isinstance(total, Mapping) else None
-            if not isinstance(pages, int) or page >= pages:
+            page_data = body.get("page")
+            pages = (
+                page_data.get("totalPages") if isinstance(page_data, Mapping) else None
+            )
+            returned_page = (
+                page_data.get("pageNumber") if isinstance(page_data, Mapping) else None
+            )
+            if (
+                not isinstance(results, list)
+                or not isinstance(pages, int)
+                or not isinstance(returned_page, int)
+                or pages < 0
+                or returned_page != page
+            ):
+                await self._quarantine(
+                    root,
+                    "response-schema",
+                    "B3 dividends response lacks a matching page contract",
+                    evidence=body,
+                )
+            if not all(isinstance(row, Mapping) for row in results):
+                await self._quarantine(
+                    root,
+                    "response-schema",
+                    "B3 dividends results contains a non-object row",
+                    evidence=body,
+                )
+            if not results:
+                if page < pages:
+                    await self._quarantine(
+                        root,
+                        "coverage-established",
+                        f"B3 returned an empty page {page} before page {pages}",
+                        evidence=body,
+                    )
+                return rows
+            if page > pages:
+                await self._quarantine(
+                    root,
+                    "coverage-established",
+                    f"B3 returned rows on page {page} beyond page {pages}",
+                    evidence=body,
+                )
+            rows.extend(results)
+            if page >= pages:
                 break
             page += 1
+        if page > _MAX_PAGES:
+            await self._quarantine(
+                root,
+                "coverage-established",
+                f"B3 pagination exceeds {_MAX_PAGES} pages",
+            )
         return rows
 
-    async def _json(self, url: str) -> Any:
+    async def _json(self, url: str, root: str) -> Any:
         try:
             response = await self._http.get(
                 url, headers={"User-Agent": _USER_AGENT}, timeout=30.0
             )
         except httpx.HTTPError as exc:
             logger.warning("B3 dividend call failed: %s", exc)
-            return None
+            await self._quarantine(root, "coverage-established", str(exc))
         if response.status_code != httpx.codes.OK or not response.text.strip():
-            return None
+            await self._quarantine(
+                root,
+                "coverage-established",
+                f"B3 returned HTTP {response.status_code} or an empty body",
+            )
         try:
             return response.json()
         except ValueError:
             logger.warning("B3 dividend call did not return JSON: %s", url)
-            return None
+            await self._quarantine(root, "response-schema", "B3 response is not JSON")
+
+    def _validation(
+        self,
+        root: str,
+        *,
+        rows: int,
+        findings: tuple[ValidationFinding, ...] = (),
+        evidence: Mapping[str, object] | None = None,
+    ) -> SourceBatchValidation:
+        return SourceBatchValidation(
+            source="b3",
+            batch=f"GetListedCashDividends:{root}",
+            module=CASH_DIVIDEND_B3_MODULE,
+            parser=self.parser_identity,
+            rules=_RULES,
+            observations={"rows": rows, "coverage_established": not findings},
+            findings=findings,
+            evidence=evidence or {},
+        )
+
+    async def _record(self, validation: SourceBatchValidation) -> None:
+        await record_or_quarantine(self._validation_reporter, validation)
+
+    async def _quarantine(
+        self,
+        root: str,
+        code: str,
+        detail: str,
+        *,
+        evidence: Mapping[str, object] | None = None,
+    ) -> Never:
+        await self._record(
+            self._validation(
+                root,
+                rows=0,
+                findings=(ValidationFinding(code, detail),),
+                evidence=evidence,
+            )
+        )
+        raise AssertionError("quarantined batch returned unexpectedly")
 
     def _code_of(self, body: Mapping[str, Any], ticker: str) -> str | None:
         """The registrant the mirror is keyed on (ADR 0030)."""

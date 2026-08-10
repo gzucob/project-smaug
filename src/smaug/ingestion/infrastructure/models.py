@@ -105,3 +105,34 @@ class IngestionRunDocument(Document):
                 name="status_started_at",
             ),
         ]
+
+
+class IngestionValidationDocument(Document):
+    """One versioned source-batch validation report and its raw evidence."""
+
+    report_id: str
+    run_id: str
+    recorded_at: datetime
+    status: str
+    source: str
+    batch: str
+    module: str | None = None
+    artifact_id: str | None = None
+    parser: dict[str, object]
+    rules: list[dict[str, object]]
+    observations: dict[str, object]
+    findings: list[dict[str, str]]
+    evidence: dict[str, object]
+    approved_at: datetime | None = None
+    approval_note: str | None = None
+
+    class Settings:
+        name = "ingestion_validations"
+        indexes = [
+            IndexModel(
+                [("report_id", ASCENDING)], name="report_id_unique", unique=True
+            ),
+            IndexModel([("run_id", ASCENDING), ("recorded_at", DESCENDING)]),
+            IndexModel([("status", ASCENDING), ("recorded_at", DESCENDING)]),
+            IndexModel([("artifact_id", ASCENDING)], name="artifact_id"),
+        ]
