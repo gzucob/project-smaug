@@ -87,6 +87,7 @@ async def test_completed_run_records_scope_provenance_and_counts() -> None:
 async def test_error_outcome_completes_with_errors_and_abort_is_terminal() -> None:
     for outcome_status, expected in (
         (OutcomeStatus.ERROR, IngestionRunStatus.COMPLETED_WITH_ERRORS),
+        (OutcomeStatus.QUARANTINED, IngestionRunStatus.COMPLETED_WITH_ERRORS),
         (OutcomeStatus.ABORTED, IngestionRunStatus.ABORTED),
     ):
         repository = FakeIngestionRunRepository()
@@ -106,7 +107,9 @@ async def test_error_outcome_completes_with_errors_and_abort_is_terminal() -> No
             operation=operation,
         )
 
-        assert repository.items["run-123"].status is expected
+        run = repository.items["run-123"]
+        assert run.status is expected
+        assert run.counts.quarantined == (outcome_status is OutcomeStatus.QUARANTINED)
 
 
 async def test_unchanged_reprocessing_is_counted_as_a_completed_attempt() -> None:

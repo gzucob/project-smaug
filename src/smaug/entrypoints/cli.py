@@ -64,6 +64,10 @@ from smaug.ingestion.application.report import (
     TickerReport,
 )
 from smaug.ingestion.application.runs import IngestionRunService
+from smaug.ingestion.application.validation import (
+    IngestionValidationService,
+    RunValidationReporter,
+)
 from smaug.ingestion.domain.repositories import RawIngestionRepository
 from smaug.ingestion.domain.runs import (
     IngestionRun,
@@ -71,6 +75,10 @@ from smaug.ingestion.domain.runs import (
     IngestionRunStatus,
     ParserIdentity,
     TickerScope,
+)
+from smaug.ingestion.domain.validation import (
+    BatchValidationReporter,
+    IngestionValidationReport,
 )
 from smaug.ingestion.infrastructure.b3_capital_events import (
     CAPITAL_EVENT_B3_MODULE,
@@ -91,6 +99,7 @@ from smaug.ingestion.infrastructure.cvm_capital import (
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, CvmDocument
 from smaug.ingestion.infrastructure.repositories import (
     BeanieIngestionRunRepository,
+    BeanieIngestionValidationRepository,
     BeanieRawIngestionRepository,
 )
 from smaug.ingestion.infrastructure.routed_source import RoutedDataSource
@@ -128,7 +137,9 @@ from smaug.shared.sql_db import create_engine, create_session_factory
 app = typer.Typer(help="smaug — CVM/B3 ingestion and indicator analysis.")
 logger = get_logger("smaug.cli")
 
-_FAILED_STATUSES = frozenset({OutcomeStatus.ERROR, OutcomeStatus.ABORTED})
+_FAILED_STATUSES = frozenset(
+    {OutcomeStatus.ERROR, OutcomeStatus.QUARANTINED, OutcomeStatus.ABORTED}
+)
 
 
 @dataclass(frozen=True)
@@ -406,6 +417,7 @@ def _build_data_source(
     document: str | None = None,
     year: int | None = None,
     artifact_store: SourceArtifactStore | None = None,
+    validation_reporter: BatchValidationReporter | None = None,
 ) -> RoutedDataSource:
     """Build the raw source: CVM's archives, with B3's endpoints routed per module.
 
@@ -423,6 +435,7 @@ def _build_data_source(
         cache_dir=settings.cvm_cache_dir,
         document=cast(CvmDocument, doc),
         artifact_store=artifact_store,
+        validation_reporter=validation_reporter,
     )
     # The share counts live in a different CVM archive (FRE), keyed by CNPJ.
     capital = CvmCapitalSource(
@@ -432,6 +445,7 @@ def _build_data_source(
         cache_dir=settings.cvm_cache_dir,
         ticker_to_code=ticker_to_code,
         artifact_store=artifact_store,
+        validation_reporter=validation_reporter,
     )
     # ...and the statements ZIP has a composition of its own, which is the only
     # place treasury shares are filed. Also keyed by CNPJ, not by CD_CVM.
@@ -443,6 +457,7 @@ def _build_data_source(
         ticker_to_code=ticker_to_code,
         document=cast(CvmDocument, doc),
         artifact_store=artifact_store,
+        validation_reporter=validation_reporter,
     )
     # The same FRE ZIP also declares the corporate actions outright, which the
     # share counts alone can only be guessed at (ADR 0027 guesses, and conflates
@@ -454,6 +469,7 @@ def _build_data_source(
         cache_dir=settings.cvm_cache_dir,
         ticker_to_code=ticker_to_code,
         artifact_store=artifact_store,
+        validation_reporter=validation_reporter,
     )
     # ...and B3 declares the same events without the counts, but *with* the last
     # session quoted on the old base — the two are complementary, and neither
@@ -462,6 +478,7 @@ def _build_data_source(
         http,
         ticker_to_code=ticker_to_code,
         base_url=settings.b3_listed_base_url,
+        validation_reporter=validation_reporter,
     )
     # ...and the cash it paid out, which no price file carries and which the
     # third price basis is rebuilt from (ADR 0039).
@@ -469,6 +486,7 @@ def _build_data_source(
         http,
         ticker_to_code=ticker_to_code,
         base_url=settings.b3_listed_base_url,
+        validation_reporter=validation_reporter,
     )
     return RoutedDataSource(
         {
@@ -497,6 +515,9 @@ async def _run_ingest(
     client = await init_database(settings)
     repository = BeanieRawIngestionRepository()
     run_service = IngestionRunService(BeanieIngestionRunRepository())
+    validation_service = IngestionValidationService(
+        BeanieIngestionValidationRepository()
+    )
     passes: list[YearPass] = []
     outcomes: list[FetchOutcome] = []
     effective_years = tuple(year or settings.cvm_year for year in years)
@@ -528,6 +549,7 @@ async def _run_ingest(
             await run_service.exclude_calls(run_id, count)
 
         async with httpx.AsyncClient(timeout=30.0) as http:
+            validation_reporter = RunValidationReporter(validation_service, run_id)
 
             async def artifact_observer(artifact: SourceArtifact) -> None:
                 await run_service.record_artifact(run_id, artifact.artifact_id)
@@ -565,6 +587,7 @@ async def _run_ingest(
                         outcome_sink=outcome_sink,
                         exclusion_sink=exclusion_sink,
                         artifact_store=artifact_store,
+                        validation_reporter=validation_reporter,
                     )
                 )
 
@@ -614,6 +637,7 @@ async def _ingest_one_year(
     outcome_sink: Callable[[FetchOutcome], Awaitable[None]],
     exclusion_sink: Callable[[int], Awaitable[None]],
     artifact_store: SourceArtifactStore,
+    validation_reporter: BatchValidationReporter,
 ) -> YearPass:
     """Collect one CVM archive year (or the single configured pass).
 
@@ -640,6 +664,7 @@ async def _ingest_one_year(
         document=document,
         year=year,
         artifact_store=artifact_store,
+        validation_reporter=validation_reporter,
     )
     modules = settings.cvm_modules
     plan = dict.fromkeys(wanted, modules)
@@ -704,6 +729,26 @@ def ingestion_runs(
     print(format_ingestion_runs(runs))
 
 
+@app.command("ingestion-validations")
+def ingestion_validations(
+    run_id: str | None = typer.Option(None, "--run-id", help="Filter by run id."),
+    limit: int = typer.Option(20, "--limit", min=1, help="Number of reports."),
+    approve: str | None = typer.Option(
+        None,
+        "--approve",
+        help="Approve one quarantine after review; it never releases raw data.",
+    ),
+    note: str = typer.Option("", "--note", help="Operator approval rationale."),
+) -> None:
+    """Inspect source-batch validation reports and record an operator review."""
+    try:
+        reports = _guarded(_run_ingestion_validations(run_id, limit, approve, note))
+    except (LookupError, ValueError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    print(format_ingestion_validations(reports))
+
+
 async def _run_ingestion_runs(
     run_id: str | None, limit: int
 ) -> tuple[IngestionRun, ...]:
@@ -715,6 +760,23 @@ async def _run_ingestion_runs(
             run = await service.get(run_id)
             return (run,) if run is not None else ()
         return await service.recent(limit)
+    finally:
+        await client.close()
+
+
+async def _run_ingestion_validations(
+    run_id: str | None,
+    limit: int,
+    approve: str | None,
+    note: str,
+) -> tuple[IngestionValidationReport, ...]:
+    settings = get_settings()
+    client = await init_database(settings)
+    try:
+        service = IngestionValidationService(BeanieIngestionValidationRepository())
+        if approve is not None:
+            await service.approve(approve, note)
+        return await service.recent(limit, run_id=run_id)
     finally:
         await client.close()
 
@@ -1207,7 +1269,7 @@ def format_batch_log(passes: list[YearPass]) -> str:
     A whole-exchange run makes ~3,300 calls a year, so the per-call log stops
     being a log and becomes a wall. What a summary must never do is hide a
     failure behind a number: a skip is counted (a company that did not file that
-    year is the normal case), an error or an abort is named.
+    year is the normal case), and an error, quarantine, or abort is named.
     """
     lines: list[str] = ["", "=== Collection log ==="]
     for pass_ in passes:
@@ -1269,11 +1331,44 @@ def format_ingestion_runs(runs: Sequence[IngestionRun]) -> str:
                 f"stored={counts.stored} "
                 f"unchanged={counts.unchanged} "
                 f"skipped={counts.skipped} error={counts.error} "
+                f"quarantined={counts.quarantined} "
                 f"aborted={counts.aborted}",
             ]
         )
         if run.failure is not None:
             lines.append(f"    failure={run.failure}")
+    return "\n".join(lines)
+
+
+def format_ingestion_validations(
+    reports: Sequence[IngestionValidationReport],
+) -> str:
+    """Render durable batch validation evidence and the replay/approval workflow."""
+    lines = ["", "=== Ingestion validations ==="]
+    if not reports:
+        lines.append("  (no validation reports)")
+        return "\n".join(lines)
+    for report in reports:
+        validation = report.validation
+        rules = ", ".join(f"{rule.name}@{rule.version}" for rule in validation.rules)
+        lines.append(f"  {report.report_id}  {report.status.value} run={report.run_id}")
+        lines.append(
+            f"    {validation.source}:{validation.batch} "
+            f"parser={validation.parser.name}@{validation.parser.version}"
+        )
+        lines.append(f"    artifact={validation.artifact_id or '-'} rules={rules}")
+        if validation.findings:
+            lines.extend(
+                f"    !! {finding.code}: {finding.detail}"
+                for finding in validation.findings
+            )
+        if report.approval_note is not None:
+            lines.append(f"    approval={report.approval_note}")
+    lines.append(
+        "--- Approval records review only. After a parser/rule version bump, rerun "
+        "the same ingest command with --force; an unchanged CVM URL reuses its "
+        "SHA-256 archive."
+    )
     return "\n".join(lines)
 
 

@@ -13,6 +13,7 @@ from pymongo import AsyncMongoClient
 
 from smaug.ingestion.infrastructure.models import (
     IngestionRunDocument,
+    IngestionValidationDocument,
     RawIngestionDocument,
 )
 from smaug.shared.config import Settings
@@ -27,6 +28,10 @@ async def init_database(settings: Settings) -> AsyncMongoClient[dict[str, Any]]:
     client: AsyncMongoClient[dict[str, Any]] = AsyncMongoClient(settings.mongo_uri)
     await init_beanie(
         database=client[settings.mongo_db],
-        document_models=[RawIngestionDocument, IngestionRunDocument],
+        document_models=[
+            RawIngestionDocument,
+            IngestionRunDocument,
+            IngestionValidationDocument,
+        ],
     )
     return client

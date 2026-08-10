@@ -53,9 +53,19 @@ import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
 from smaug.ingestion.domain.runs import ParserIdentity
+from smaug.ingestion.domain.validation import (
+    BatchValidationReporter,
+    SourceBatchValidation,
+)
+from smaug.ingestion.infrastructure.batch_validation import (
+    quarantined_archive_validation,
+    record_or_quarantine,
+    statement_members,
+    validate_csv_archive,
+)
 from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.download import Sleeper, download_zip
-from smaug.shared.errors import SourceNotFoundError
+from smaug.shared.errors import CvmDownloadError, SourceNotFoundError
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -197,6 +207,7 @@ class CvmDataSource:
         sleep: Sleeper = asyncio.sleep,
         artifact_store: SourceArtifactStore | None = None,
         artifact_id: str | None = None,
+        validation_reporter: BatchValidationReporter | None = None,
     ) -> None:
         self._http = http_client
         self._ticker_to_code = dict(ticker_to_code)
@@ -209,6 +220,8 @@ class CvmDataSource:
         self._artifact_store = artifact_store
         self._replay_artifact_id = artifact_id
         self._artifact: SourceArtifact | None = None
+        self._validation_reporter = validation_reporter
+        self._validated = False
         self._index: dict[str, list[_Statement]] | None = None
         self._lock = asyncio.Lock()
 
@@ -285,6 +298,10 @@ class CvmDataSource:
             if cached is not None:
                 return cached
             raw = await self._archive_path()
+            if not self._validated:
+                validation = await asyncio.to_thread(self._validate_archive, raw)
+                await record_or_quarantine(self._validation_reporter, validation)
+                self._validated = True
             index = await asyncio.to_thread(self._build_index, raw)
             self._index = index
             logger.info(
@@ -296,6 +313,19 @@ class CvmDataSource:
                 sum(len(docs) for docs in index.values()),
             )
             return index
+
+    def _validate_archive(self, archive_path: Path) -> SourceBatchValidation:
+        with zipfile.ZipFile(archive_path) as archive:
+            members = statement_members(archive.namelist(), _classify)
+        return validate_csv_archive(
+            archive_path,
+            source="cvm",
+            batch=self._zip_name,
+            parser=self.parser_identity,
+            artifact=self._artifact,
+            expected_year=self._year,
+            members=members,
+        )
 
     async def _archive_path(self) -> Path:
         artifact = await self._ensure_artifact()
@@ -316,9 +346,25 @@ class CvmDataSource:
                     self._replay_artifact_id
                 )
             else:
-                self._artifact = await self._artifact_store.acquire(
-                    f"{self._base_url}/{self._zip_name}"
-                )
+                try:
+                    self._artifact = await self._artifact_store.acquire(
+                        f"{self._base_url}/{self._zip_name}"
+                    )
+                except CvmDownloadError as exc:
+                    if exc.quarantined_artifact_id is None:
+                        raise
+                    await record_or_quarantine(
+                        self._validation_reporter,
+                        quarantined_archive_validation(
+                            batch=self._zip_name,
+                            parser=self.parser_identity,
+                            artifact_id=exc.quarantined_artifact_id,
+                            detail=str(exc),
+                        ),
+                    )
+                    raise AssertionError(
+                        "quarantined archive returned unexpectedly"
+                    ) from exc
         return self._artifact
 
     async def _download(self, dst: Path) -> None:

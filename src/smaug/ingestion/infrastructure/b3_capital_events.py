@@ -31,12 +31,19 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Never
 
 import httpx
 
 from smaug.ingestion.domain.ports import RawFetchResult
 from smaug.ingestion.domain.runs import ParserIdentity
+from smaug.ingestion.domain.validation import (
+    BatchValidationReporter,
+    SourceBatchValidation,
+    ValidationFinding,
+    ValidationRule,
+)
+from smaug.ingestion.infrastructure.batch_validation import record_or_quarantine
 from smaug.shared.errors import SourceNotFoundError
 from smaug.shared.logging import get_logger
 
@@ -56,6 +63,11 @@ _USER_AGENT = "Mozilla/5.0"
 # what is left over (``PETR4`` -> ``PETR``, ``B3SA3`` -> ``B3SA``). Not "the
 # letters": a root can carry a digit of its own.
 _ROOT_LENGTH = 4
+_RULES = (
+    ValidationRule("response-schema", 1),
+    ValidationRule("coverage-established", 1),
+    ValidationRule("record-count", 1),
+)
 
 
 class B3CapitalEventSource:
@@ -69,10 +81,12 @@ class B3CapitalEventSource:
         *,
         ticker_to_code: Mapping[str, str] | None = None,
         base_url: str | None = None,
+        validation_reporter: BatchValidationReporter | None = None,
     ) -> None:
         self._http = http_client
         self._ticker_to_code = dict(ticker_to_code or {})
         self._base_url = (base_url or B3_LISTED_BASE_URL).rstrip("/")
+        self._validation_reporter = validation_reporter
 
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
         """Every stock-dividend row B3 lists for the company behind ``ticker``.
@@ -85,13 +99,49 @@ class B3CapitalEventSource:
         root = ticker[:_ROOT_LENGTH]
         body = await self._supplement(root)
         if body is None:
-            raise SourceNotFoundError(f"B3 lists no company for {ticker} ({root})")
+            await self._quarantine(
+                root,
+                "coverage-established",
+                "B3 supplement response is absent or not a JSON object",
+            )
         rows = body.get("stockDividends")
-        if not isinstance(rows, list) or not rows:
+        if not isinstance(rows, list):
+            await self._quarantine(
+                root,
+                "response-schema",
+                "B3 supplement lacks a stockDividends list",
+                evidence=body,
+            )
+        if not rows:
             # A company with no corporate action in its history is the normal
             # case, and it is an absence the mirror records rather than an empty
             # list it invents.
+            await self._record(self._validation(root, rows=0))
             raise SourceNotFoundError(f"B3 lists no corporate action for {ticker}")
+        if not all(isinstance(row, dict) for row in rows):
+            await self._quarantine(
+                root,
+                "response-schema",
+                "B3 stockDividends contains a non-object row",
+                evidence=body,
+            )
+        required = {"isinCode", "approvedOn", "label"}
+        missing = next(
+            (
+                sorted(required - set(row))
+                for row in rows
+                if isinstance(row, dict) and required - set(row)
+            ),
+            None,
+        )
+        if missing is not None:
+            await self._quarantine(
+                root,
+                "response-schema",
+                f"B3 stockDividends row lacks {', '.join(missing)}",
+                evidence=body,
+            )
+        await self._record(self._validation(root, rows=len(rows)))
 
         code = self._code_of(body, ticker)
         return [
@@ -116,6 +166,46 @@ class B3CapitalEventSource:
             for row in rows
             if isinstance(row, dict)
         ]
+
+    def _validation(
+        self,
+        root: str,
+        *,
+        rows: int,
+        findings: tuple[ValidationFinding, ...] = (),
+        evidence: Mapping[str, object] | None = None,
+    ) -> SourceBatchValidation:
+        return SourceBatchValidation(
+            source="b3",
+            batch=f"GetListedSupplementCompany:{root}",
+            module=CAPITAL_EVENT_B3_MODULE,
+            parser=self.parser_identity,
+            rules=_RULES,
+            observations={"rows": rows, "coverage_established": not findings},
+            findings=findings,
+            evidence=evidence or {},
+        )
+
+    async def _record(self, validation: SourceBatchValidation) -> None:
+        await record_or_quarantine(self._validation_reporter, validation)
+
+    async def _quarantine(
+        self,
+        root: str,
+        code: str,
+        detail: str,
+        *,
+        evidence: Mapping[str, object] | None = None,
+    ) -> Never:
+        await self._record(
+            self._validation(
+                root,
+                rows=0,
+                findings=(ValidationFinding(code, detail),),
+                evidence=evidence,
+            )
+        )
+        raise AssertionError("quarantined batch returned unexpectedly")
 
     async def _supplement(self, root: str) -> Mapping[str, Any] | None:
         payload = _encoded({"issuingCompany": root, "language": "pt-br"})

@@ -11,11 +11,12 @@ import json
 import httpx
 import pytest
 
+from smaug.ingestion.domain.validation import SourceBatchValidation
 from smaug.ingestion.infrastructure.b3_capital_events import (
     CAPITAL_EVENT_B3_MODULE,
     B3CapitalEventSource,
 )
-from smaug.shared.errors import SourceNotFoundError
+from smaug.shared.errors import SourceBatchValidationError, SourceNotFoundError
 
 BBAS_ROWS = [
     {
@@ -138,12 +139,33 @@ async def test_a_company_with_no_corporate_action_is_an_absence_not_a_blank() ->
             await source.fetch("BBAS3", CAPITAL_EVENT_B3_MODULE)
 
 
-async def test_an_empty_body_is_how_b3_says_it_lists_no_such_company() -> None:
+async def test_an_empty_body_quarantines_unestablished_coverage() -> None:
     source, http, _ = _source(None)
 
     async with http:
-        with pytest.raises(SourceNotFoundError):
+        with pytest.raises(SourceBatchValidationError, match="coverage-established"):
             await source.fetch("BBAS3", CAPITAL_EVENT_B3_MODULE)
+
+
+async def test_invalid_b3_output_is_retained_in_the_validation_report() -> None:
+    class _Reporter:
+        def __init__(self) -> None:
+            self.reports: list[SourceBatchValidation] = []
+
+        async def record(self, validation: SourceBatchValidation) -> None:
+            self.reports.append(validation)
+
+    reporter = _Reporter()
+    source, http, _ = _source({"codeCVM": "1023"})
+    source._validation_reporter = reporter
+
+    async with http:
+        with pytest.raises(SourceBatchValidationError, match="response-schema"):
+            await source.fetch("BBAS3", CAPITAL_EVENT_B3_MODULE)
+
+    report = reporter.reports[0]
+    assert report.status.value == "quarantined"
+    assert report.evidence == {"codeCVM": "1023"}
 
 
 async def test_the_endpoint_answering_with_a_list_is_unwrapped() -> None:

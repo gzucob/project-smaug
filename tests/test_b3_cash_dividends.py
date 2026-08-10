@@ -17,7 +17,7 @@ from smaug.ingestion.infrastructure.b3_cash_dividends import (
     CASH_DIVIDEND_B3_MODULE,
     B3CashDividendSource,
 )
-from smaug.shared.errors import SourceNotFoundError
+from smaug.shared.errors import SourceBatchValidationError, SourceNotFoundError
 
 SUPPLEMENT = {"tradingName": "BRADESCO", "codeCVM": "906"}
 ROWS = [
@@ -141,6 +141,21 @@ async def test_a_company_that_has_never_paid_is_an_absence_not_an_empty_list() -
 
     async with httpx.AsyncClient(transport=_Empty()) as http:
         with pytest.raises(SourceNotFoundError):
+            await B3CashDividendSource(http).fetch("RDNI3", CASH_DIVIDEND_B3_MODULE)
+
+
+async def test_malformed_pagination_quarantines_coverage() -> None:
+    class _Malformed(_Transport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            if "GetListedSupplementCompany" in str(request.url):
+                return httpx.Response(200, json=SUPPLEMENT)
+            return httpx.Response(
+                200,
+                json={"page": {"totalPages": 1}, "results": []},
+            )
+
+    async with httpx.AsyncClient(transport=_Malformed()) as http:
+        with pytest.raises(SourceBatchValidationError, match="response-schema"):
             await B3CashDividendSource(http).fetch("RDNI3", CASH_DIVIDEND_B3_MODULE)
 
 

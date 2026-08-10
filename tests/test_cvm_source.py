@@ -6,13 +6,18 @@ from pathlib import Path
 import httpx
 import pytest
 
+from smaug.ingestion.domain.validation import SourceBatchValidation
 from smaug.ingestion.infrastructure.cvm_source import (
     _ENCODING,
     CvmDataSource,
     _classify,
     _Statement,
 )
-from smaug.shared.errors import CvmDownloadError, SourceNotFoundError
+from smaug.shared.errors import (
+    CvmDownloadError,
+    SourceBatchValidationError,
+    SourceNotFoundError,
+)
 from smaug.shared.local_artifacts import LocalSourceArtifactStore
 from tests.fakes import no_sleep
 
@@ -214,6 +219,72 @@ async def test_stored_artifact_can_be_reparsed_without_network(tmp_path: Path) -
     assert requests == 1
     assert second[0].payload == first[0].payload
     assert second[0].artifact_id == artifact_id
+
+
+async def test_invalid_statement_schema_is_reported_and_quarantined(
+    tmp_path: Path,
+) -> None:
+    class _Reporter:
+        def __init__(self) -> None:
+            self.reports: list[SourceBatchValidation] = []
+
+        async def record(self, validation: SourceBatchValidation) -> None:
+            self.reports.append(validation)
+
+    _statement_zip(
+        tmp_path / "dfp_cia_aberta_2021.zip",
+        {"dfp_cia_aberta_BPA_con_2021.csv": ["not;the;CVM;schema"]},
+        header="CD_CVM;DT_REFER",
+    )
+    reporter = _Reporter()
+    async with httpx.AsyncClient() as http:
+        source = CvmDataSource(
+            http,
+            {"WEGE3": "5410"},
+            year=2021,
+            cache_dir=str(tmp_path),
+            document="DFP",
+            validation_reporter=reporter,
+        )
+        with pytest.raises(SourceBatchValidationError, match="csv-schema"):
+            await source.fetch("WEGE3", "BPA")
+
+    report = reporter.reports[0]
+    assert report.artifact_id is None
+    assert report.findings[0].code == "csv-schema"
+
+
+async def test_invalid_archive_is_attached_to_the_run_quarantine(
+    tmp_path: Path,
+) -> None:
+    class _Reporter:
+        def __init__(self) -> None:
+            self.reports: list[SourceBatchValidation] = []
+
+        async def record(self, validation: SourceBatchValidation) -> None:
+            self.reports.append(validation)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, content=b"not a zip", request=request)
+        )
+    ) as http:
+        reporter = _Reporter()
+        source = CvmDataSource(
+            http,
+            {"WEGE3": "5410"},
+            year=2021,
+            cache_dir=str(tmp_path / "cache"),
+            document="DFP",
+            base_url="https://example.test",
+            artifact_store=LocalSourceArtifactStore(http, tmp_path / "artifacts"),
+            validation_reporter=reporter,
+        )
+        with pytest.raises(SourceBatchValidationError, match="archive-integrity"):
+            await source.fetch("WEGE3", "BPA")
+
+    assert reporter.reports[0].artifact_id is not None
+    assert reporter.reports[0].findings[0].code == "archive-integrity"
 
 
 def test_build_index_keeps_every_version_and_both_balance_types(

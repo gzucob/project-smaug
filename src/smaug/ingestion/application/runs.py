@@ -153,7 +153,7 @@ class IngestionRunService:
             status = IngestionRunStatus.ABORTED
         elif counts.remaining:
             status = IngestionRunStatus.FAILED
-        elif counts.error:
+        elif counts.error or counts.quarantined:
             status = IngestionRunStatus.COMPLETED_WITH_ERRORS
         else:
             status = IngestionRunStatus.COMPLETED
@@ -227,5 +227,8 @@ def _counts(outcomes: Sequence[FetchOutcome]) -> IngestionRunCounts:
         ),
         skipped=sum(outcome.status is OutcomeStatus.SKIPPED for outcome in outcomes),
         error=sum(outcome.status is OutcomeStatus.ERROR for outcome in outcomes),
+        quarantined=sum(
+            outcome.status is OutcomeStatus.QUARANTINED for outcome in outcomes
+        ),
         aborted=sum(outcome.status is OutcomeStatus.ABORTED for outcome in outcomes),
     )

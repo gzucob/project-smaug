@@ -14,6 +14,7 @@ from smaug.ingestion.domain.entities import RawIngestion, RawIngestionWrite
 from smaug.ingestion.domain.identity import filing_identity
 from smaug.ingestion.domain.ports import RawFetchResult
 from smaug.ingestion.domain.runs import IngestionRun, ParserIdentity
+from smaug.ingestion.domain.validation import IngestionValidationReport
 from smaug.portfolio.domain.sectors import Sector
 from smaug.portfolio.domain.share_classes import ShareClass, ShareKind
 
@@ -125,6 +126,40 @@ class FakeIngestionRunRepository:
             self.items.values(), key=lambda run: run.started_at, reverse=True
         )
         return tuple(ordered[:limit])
+
+
+class FakeIngestionValidationRepository:
+    """In-memory validation-report store matching its ingestion domain port."""
+
+    def __init__(self) -> None:
+        self.items: dict[str, IngestionValidationReport] = {}
+
+    async def add(self, report: IngestionValidationReport) -> IngestionValidationReport:
+        self.items[report.report_id] = report
+        return report
+
+    async def get(self, report_id: str) -> IngestionValidationReport | None:
+        return self.items.get(report_id)
+
+    async def recent(
+        self, limit: int, *, run_id: str | None = None
+    ) -> tuple[IngestionValidationReport, ...]:
+        reports = self.items.values()
+        if run_id is not None:
+            reports = (report for report in reports if report.run_id == run_id)
+        return tuple(
+            sorted(reports, key=lambda report: report.recorded_at, reverse=True)[:limit]
+        )
+
+    async def update(
+        self, report: IngestionValidationReport
+    ) -> IngestionValidationReport:
+        if report.report_id not in self.items:
+            raise LookupError(
+                f"ingestion validation report not found: {report.report_id}"
+            )
+        self.items[report.report_id] = report
+        return report
 
 
 class FakeDataSource:

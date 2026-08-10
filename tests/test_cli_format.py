@@ -25,6 +25,7 @@ from smaug.entrypoints.cli import (
     format_doctor_summary,
     format_drift_summary,
     format_ingestion_runs,
+    format_ingestion_validations,
     format_report,
 )
 from smaug.ingestion.application.ingest import FetchOutcome, OutcomeStatus
@@ -36,6 +37,13 @@ from smaug.ingestion.domain.runs import (
     IngestionRunStatus,
     ParserIdentity,
     TickerScope,
+)
+from smaug.ingestion.domain.validation import (
+    BatchValidationStatus,
+    IngestionValidationReport,
+    SourceBatchValidation,
+    ValidationFinding,
+    ValidationRule,
 )
 from smaug.portfolio.domain.sectors import Sector
 from smaug.portfolio.domain.taxonomy import Classification
@@ -84,6 +92,31 @@ def test_should_render_persisted_run_provenance_and_incomplete_marker() -> None:
     assert "cvm.statements.csv@1" in output
     assert "calls=5/10 excluded=0 remaining=5" in output
     assert "unchanged=1" in output
+
+
+def test_should_render_quarantine_evidence_and_reprocessing_guidance() -> None:
+    report = IngestionValidationReport(
+        report_id="validation-123",
+        run_id="run-123",
+        recorded_at=datetime(2026, 8, 10, tzinfo=UTC),
+        status=BatchValidationStatus.QUARANTINED,
+        validation=SourceBatchValidation(
+            source="cvm",
+            batch="dfp_cia_aberta_2024.zip",
+            module="DRE",
+            artifact_id="sha256:" + "a" * 64,
+            parser=ParserIdentity("cvm.statements.csv", 1),
+            rules=(ValidationRule("csv-schema", 1),),
+            findings=(ValidationFinding("csv-schema", "DRE lacks VL_CONTA"),),
+        ),
+    )
+
+    output = format_ingestion_validations((report,))
+
+    assert "validation-123  quarantined run=run-123" in output
+    assert "csv-schema@1" in output
+    assert "DRE lacks VL_CONTA" in output
+    assert "rerun the same ingest command with --force" in output
 
 
 def test_should_render_doctor_coverage_with_named_and_unclassified() -> None:

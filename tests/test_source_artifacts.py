@@ -137,6 +137,12 @@ async def test_invalid_zip_never_enters_the_artifact_namespace(tmp_path: Path) -
 
     assert not tuple((root / "sha256").glob("*/*.zip"))
     assert not tuple((tmp_path / ".sources-staging").glob("*"))
+    quarantined = tuple((root / "quarantine" / "sha256").glob("*/*.zip"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == b"not a zip"
+    reports = tuple((root / "quarantine" / "manifests").glob("*/*.json"))
+    assert len(reports) == 1
+    assert json.loads(reports[0].read_text())["status"] == "quarantined"
 
 
 async def test_open_replays_stored_content_without_network(tmp_path: Path) -> None:
