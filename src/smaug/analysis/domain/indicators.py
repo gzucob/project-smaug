@@ -94,7 +94,9 @@ class Indicators:
     roe_total: Decimal | None = None  # total net income / total equity
     roa: Decimal | None = None
     roa_total: Decimal | None = None  # total net income / total assets
-    roic: Decimal | None = None  # NOPAT (EBIT·(1−tax)) / invested capital
+    # The name states the tax model rather than presenting the 34% proxy as an
+    # issuer-specific after-tax return (ADR 0057).
+    roic_statutory: Decimal | None = None
     net_margin: Decimal | None = None
     net_margin_total: Decimal | None = None  # total net income / revenue
     gross_margin: Decimal | None = None
@@ -111,6 +113,8 @@ class Indicators:
     bvps: Decimal | None = None  # VPA — book value per share
     # Leverage / liquidity
     net_debt: Decimal | None = None
+    cash_equivalents: Decimal | None = None
+    current_financial_investments: Decimal | None = None
     net_debt_to_ebitda: Decimal | None = None
     net_debt_to_ebit: Decimal | None = None
     net_debt_to_equity: Decimal | None = None
@@ -200,12 +204,13 @@ class Indicators:
     # Scale figures (absolute reais / a share count) — the market-side inputs the
     # calculator already builds its multiples from, persisted so the front-end can
     # show them at the top of a ticker page. ``market_cap`` is the sum over the
-    # listed classes (ADR 0014); ``enterprise_value`` is ``cap + net_debt`` and is
-    # null wherever ``net_debt`` is (banks: inapplicable); ``shares`` is the filed
-    # closing count used by BVPS and market cap; it is not CPC 41's weighted EPS
-    # denominator.
+    # listed classes (ADR 0014); ``enterprise_value`` is ``cap + net_debt +
+    # non_controlling_interests`` so it matches consolidated EBIT/EBITDA;
+    # ``shares`` is the filed closing count used by BVPS and market cap; it is not
+    # CPC 41's weighted EPS denominator.
     market_cap: Decimal | None = None
     enterprise_value: Decimal | None = None
+    non_controlling_interests: Decimal | None = None
     shares: Decimal | None = None
     # Why each null field is null, keyed by the field's name. Only null fields
     # appear; a null field with no entry is unclassified (see ``NullReason``).

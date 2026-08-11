@@ -1,6 +1,6 @@
 # 0002 — NOPAT uses a flat statutory tax rate; capex is gross; payout shares its period basis
 
-- **Status:** Accepted
+- **Status:** Accepted — ROIC perimeter and naming superseded by [0057](0057-valuation-stocks-share-one-cutoff-and-one-perimeter.md)
 - **Date:** 2026-07-08
 - **Provenance:** recorded retroactively on 2026-07-10 from F8 of
   `docs/FINDINGS_INDICATORS.md` (deleted; recoverable in git history). See `.claude/RULES/RULES_DOCS.md`.

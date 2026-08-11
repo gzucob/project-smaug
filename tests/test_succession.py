@@ -118,7 +118,11 @@ class _StaticPrices:
         quotes = (await self._archive.year(year)).get(ticker)
         if quotes is None:
             return YearPrices()
-        return YearPrices(nominal_avg=quotes.average)
+        return YearPrices(
+            nominal_avg=quotes.average,
+            closing=quotes.last_close,
+            closing_session=quotes.last_session,
+        )
 
 
 # --- the decision -----------------------------------------------------------
@@ -300,6 +304,8 @@ async def test_the_rename_year_averages_the_whole_year_not_its_tail() -> None:
     # Served today from AZZA3 alone, this year would average 50.695.
     expected = (Decimal("48") + Decimal("48.65") + Decimal("50.39") + Decimal("51")) / 4
     assert prices.nominal_avg == expected
+    assert prices.closing == Decimal("51")
+    assert prices.closing_session == date(2024, 8, 2)
     assert prices.null_reason is None
 
 

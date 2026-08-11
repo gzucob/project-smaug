@@ -204,7 +204,10 @@ async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
     assert saved.indicators.roe == Decimal("0.2")  # 1200 / 6000
     assert saved.price == Decimal(10)  # current nominal quote
     assert saved.price_adjusted is None  # nothing paid out since a live quote
-    assert saved.price_basis == "ttm_current_nominal"
+    assert saved.price_basis == "b3_latest_close"
+    assert saved.share_count_basis == "cvm_latest_filed_outstanding_current_base"
+    assert saved.liquidity_basis == "cpc03_cash_and_cash_equivalents"
+    assert saved.roic_tax_basis == "br_statutory_34pct"
     # Both classes quote at 10 here → cap = 10 × (800 + 400) = 12000.
     assert saved.indicators.company_pe == Decimal(10)  # 12000 / 1200
     assert saved.indicators.company_pb == Decimal(2)  # 12000 / 6000
@@ -324,8 +327,8 @@ async def test_sibling_classes_keep_company_scope_but_get_own_multiples() -> Non
         FakeReader({}, annuals={"PETR3": [on], "PETR4": [pn]}),
         FakePrice(
             year_by_symbol={
-                "PETR3": YearPrices(nominal_avg=Decimal(12)),
-                "PETR4": YearPrices(nominal_avg=Decimal(10)),
+                "PETR3": YearPrices(nominal_avg=Decimal(12), closing=Decimal(12)),
+                "PETR4": YearPrices(nominal_avg=Decimal(10), closing=Decimal(10)),
             }
         ),
         repo,
@@ -381,9 +384,9 @@ async def test_unit_dividend_yield_composes_each_fca_component() -> None:
         FakeReader({}, annuals={"SAPR11": [annual]}),
         FakePrice(
             year_by_symbol={
-                "SAPR3": YearPrices(nominal_avg=Decimal(8)),
-                "SAPR4": YearPrices(nominal_avg=Decimal(7)),
-                "SAPR11": YearPrices(nominal_avg=Decimal(22)),
+                "SAPR3": YearPrices(nominal_avg=Decimal(8), closing=Decimal(8)),
+                "SAPR4": YearPrices(nominal_avg=Decimal(7), closing=Decimal(7)),
+                "SAPR11": YearPrices(nominal_avg=Decimal(22), closing=Decimal(22)),
             }
         ),
         repo,
@@ -515,7 +518,7 @@ async def test_december_ttm_growth_matches_closed_year_growth() -> None:
         FakeReader({"PETR4": quarters}, annuals={"PETR4": annuals}),
         FakePrice(
             MarketData(price=Decimal(10)),
-            year=YearPrices(nominal_avg=Decimal(10)),
+            year=YearPrices(nominal_avg=Decimal(10), closing=Decimal(10)),
         ),
         repo,
         FakeShares(),
@@ -568,7 +571,11 @@ async def test_analyze_produces_ttm_and_closed_year_views() -> None:
         FakeReader({"PETR4": quarters}, annuals={"PETR4": [annual_2024, annual_2025]}),
         FakePrice(
             MarketData(price=Decimal(10)),
-            year=YearPrices(nominal_avg=Decimal(8), adjusted_avg=Decimal(6)),
+            year=YearPrices(
+                nominal_avg=Decimal(8),
+                adjusted_avg=Decimal(6),
+                closing=Decimal(9),
+            ),
         ),
         repo,
         FakeShares(
@@ -588,17 +595,16 @@ async def test_analyze_produces_ttm_and_closed_year_views() -> None:
     views = {(a.view, a.reference_date): a for a in out}
 
     ttm = views[("ttm_live", date(2026, 3, 31))]
-    assert ttm.price_basis == "ttm_current_nominal"
+    assert ttm.price_basis == "b3_latest_close"
     assert ttm.price == Decimal(10)  # current nominal quote
 
     y2025 = views[("closed_year", date(2025, 12, 31))]
-    assert y2025.price_basis == "nominal_year_avg"
-    assert y2025.price == Decimal(8)  # what the shares traded at that year
+    assert y2025.price_basis == "b3_year_end_close"
+    assert y2025.price == Decimal(9)  # B3's last close at the fiscal cut-off
     assert y2025.price_adjusted == Decimal(6)  # the total-return ruler, kept aside
-    # cap = nominal_avg × shares(2025) = 8 × 1200 = 9600 (ADR 0018)
-    #   → P/E = 9600/600 = 16, P/VP = 9600/3600
-    assert y2025.indicators.company_pe == Decimal(16)
-    assert y2025.indicators.company_pb == Decimal(9600) / Decimal(3600)
+    # cap = closing × shares(2025) = 9 × 1200 = 10800 (ADR 0057).
+    assert y2025.indicators.company_pe == Decimal(18)
+    assert y2025.indicators.company_pb == Decimal(10800) / Decimal(3600)
     # YoY vs the 2024 DFP: net income (600 - 500) / 500 = 0.2.
     assert y2025.indicators.net_income_growth == Decimal("0.2")
 
@@ -607,11 +613,10 @@ async def test_analyze_produces_ttm_and_closed_year_views() -> None:
     assert y2024.indicators.net_income_growth is None
 
 
-async def test_a_closed_years_multiples_divide_by_what_the_shares_traded_at() -> None:
-    # ADR 0018. A dividend-adjusted series is a total-return ruler, not the price
-    # investors paid in the period. The valuation multiples and dividend yield divide
-    # by the nominal-price cap; the adjusted price stays beside it and never reaches
-    # the cap.
+async def test_closed_year_valuation_uses_the_cutoff_not_the_annual_average() -> None:
+    # ADR 0057: an annual-average price times the closing share count is neither a
+    # point-in-time cap nor an average cap when issuance or buybacks move the count.
+    # The close drives valuation; both averages stay outside the cap.
     quarters = _quarters(Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(600))
     annual = StandardizedFinancials(
         reference_date=date(2024, 12, 31),
@@ -627,7 +632,11 @@ async def test_a_closed_years_multiples_divide_by_what_the_shares_traded_at() ->
         FakePrice(
             MarketData(price=Decimal(10)),
             # The adjusted average is a third of the nominal one — a PETR4-shaped gap.
-            year=YearPrices(nominal_avg=Decimal(30), adjusted_avg=Decimal(10)),
+            year=YearPrices(
+                nominal_avg=Decimal(30),
+                adjusted_avg=Decimal(10),
+                closing=Decimal(32),
+            ),
         ),
         repo,
         FakeShares({2024: _counts(common=60, preferred=40)}),  # 100 shares in all,
@@ -637,13 +646,12 @@ async def test_a_closed_years_multiples_divide_by_what_the_shares_traded_at() ->
     await use_case.execute(["PETR4"])
     year = next(a for a in repo.saved if a.view == "closed_year")
 
-    # cap = 30 × 100 = 3000 → P/E 30, DY 13.3%. On the adjusted basis the same year
-    # would read cap 1000, P/E 10 and a 40% yield.
-    assert year.price == Decimal(30)
+    # cap = closing 32 × 100 = 3200. The annual averages remain separate series.
+    assert year.price == Decimal(32)
     assert year.price_adjusted == Decimal(10)
-    assert year.indicators.company_pe == Decimal(30)
+    assert year.indicators.company_pe == Decimal(32)
     assert year.indicators.company_cash_yield_paid_in_period == (
-        Decimal(400) / Decimal(3000)
+        Decimal(400) / Decimal(3200)
     )
     # Preserve the characteristic that exposed the old basis mix: this filed payout
     # is below the company's nominal market value, so the computed yield must be < 1.
@@ -669,7 +677,11 @@ async def test_analyze_prices_closed_year_without_the_live_quote() -> None:
         FakeReader({"PETR4": quarters}, annuals={"PETR4": [annual_2024]}),
         FakePrice(
             get_error=SourceTimeoutError("quote down"),
-            year=YearPrices(nominal_avg=Decimal(8), adjusted_avg=Decimal(6)),
+            year=YearPrices(
+                nominal_avg=Decimal(8),
+                adjusted_avg=Decimal(6),
+                closing=Decimal(8),
+            ),
         ),
         repo,
         FakeShares({2024: _counts(common=800, preferred=400)}),
@@ -680,7 +692,7 @@ async def test_analyze_prices_closed_year_without_the_live_quote() -> None:
     views = {(a.view, a.reference_date): a for a in repo.saved}
 
     y2024 = views[("closed_year", date(2024, 12, 31))]
-    assert y2024.price == Decimal(8)  # the year's nominal average, no live quote
+    assert y2024.price == Decimal(8)  # the fiscal-year close, no live quote
     assert y2024.indicators.company_pe == Decimal(16)
     assert y2024.indicators.company_pb == Decimal(9600) / Decimal(3600)
 
@@ -769,7 +781,11 @@ async def test_analyze_keeps_cpc41_eps_separate_from_closing_share_counts() -> N
         FakeReader({"PETR4": quarters}, annuals={"PETR4": [annual_2024]}),
         FakePrice(
             MarketData(price=Decimal(10)),
-            year=YearPrices(nominal_avg=Decimal(8), adjusted_avg=Decimal(6)),
+            year=YearPrices(
+                nominal_avg=Decimal(8),
+                adjusted_avg=Decimal(6),
+                closing=Decimal(8),
+            ),
         ),
         repo,
         FakeShares(
@@ -938,7 +954,9 @@ async def test_a_year_before_the_tickers_first_trade_gets_no_row() -> None:
         FakeReader({"CXSE3": []}, annuals={"CXSE3": [annual_2020, annual_2021]}),
         FakePrice(
             year_by_symbol_and_year={
-                ("CXSE3", 2021): YearPrices(nominal_avg=Decimal(12)),
+                ("CXSE3", 2021): YearPrices(
+                    nominal_avg=Decimal(12), closing=Decimal(12)
+                ),
             },
         ),
         repo,
@@ -1002,9 +1020,11 @@ async def test_a_sibling_class_not_yet_traded_is_named_not_yet_listed() -> None:
         FakeReader({"TAEE11": []}, annuals={"TAEE11": [annual]}),
         FakePrice(
             year_by_symbol_and_year={
-                ("TAEE11", 2015): YearPrices(nominal_avg=Decimal(22)),
-                ("TAEE3", 2017): YearPrices(nominal_avg=Decimal(8)),
-                ("TAEE4", 2017): YearPrices(nominal_avg=Decimal(7)),
+                ("TAEE11", 2015): YearPrices(
+                    nominal_avg=Decimal(22), closing=Decimal(22)
+                ),
+                ("TAEE3", 2017): YearPrices(nominal_avg=Decimal(8), closing=Decimal(8)),
+                ("TAEE4", 2017): YearPrices(nominal_avg=Decimal(7), closing=Decimal(7)),
             },
         ),
         repo,

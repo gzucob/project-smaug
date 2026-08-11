@@ -30,7 +30,8 @@ def _nonfinancial() -> StandardizedFinancials:
         gross_profit=Decimal(1500),
         ebit=Decimal(900),  # annualized -> 1200
         ebitda=Decimal(1200),  # annualized -> 1600
-        cash=Decimal(500),
+        cash_equivalents=Decimal(500),
+        current_financial_investments=Decimal(400),
         current_assets=Decimal(4000),
         current_liabilities=Decimal(2000),
         total_debt=Decimal(2000),
@@ -58,7 +59,7 @@ def test_nonfinancial_computes_all_indicators() -> None:
 
     assert ind.roe == Decimal("0.2")  # annualized 1200 / 6000
     assert ind.roa == Decimal("0.1")  # 1200 / 12000
-    assert ind.roic == Decimal("0.1056")  # 1200·(1-0.34) / (6000 + 1500)
+    assert ind.roic_statutory == Decimal(792) / Decimal(8100)
     assert ind.net_margin == Decimal("0.3")  # 900 / 3000 (period ratio)
     assert ind.gross_margin == Decimal("0.5")
     assert ind.ebit_margin == Decimal("0.3")  # 900 / 3000 (period ratio)
@@ -69,6 +70,8 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.eps_diluted == Decimal("1.40")
     assert ind.bvps == Decimal(10)  # 6000 / 600 shares
     assert ind.net_debt == Decimal(1500)  # 2000 - 500
+    assert ind.cash_equivalents == Decimal(500)
+    assert ind.current_financial_investments == Decimal(400)
     assert ind.net_debt_to_ebitda == Decimal("0.9375")  # 1500 / 1600
     assert ind.net_debt_to_ebit == Decimal("1.25")  # 1500 / 1200 annual EBIT
     assert ind.net_debt_to_equity == Decimal("0.25")  # 1500 / 6000
@@ -94,8 +97,12 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.payout_cash_paid_in_period == Decimal(600) / Decimal(900)
     assert ind.dividend_yield == Decimal("0.05")  # R$ 0.60 / paper price R$ 12
     assert ind.company_cash_yield_paid_in_period == Decimal("0.05")
-    assert ind.ev_ebitda == Decimal("8.4375")  # (12000 + 1500) / 1600
-    assert ind.ev_ebit == Decimal("11.25")  # (12000 + 1500) / 1200 annual EBIT
+    # Consolidated EBIT/EBITDA include the minority-owned operations, so EV adds
+    # the R$600 non-controlling interest to cap + net debt (ADR 0057).
+    assert ind.non_controlling_interests == Decimal(600)
+    assert ind.enterprise_value == Decimal(14100)
+    assert ind.ev_ebitda == Decimal(14100) / Decimal(1600)
+    assert ind.ev_ebit == Decimal("11.75")
     assert ind.fcf == Decimal(1200)  # annualized (1000 - 100)
     assert ind.price_to_fcf == Decimal(10)  # 12000 / 1200
     assert ind.fcf_yield == Decimal("0.1")  # 1200 / 12000
@@ -164,6 +171,7 @@ def test_closed_year_leaves_annualization_a_no_op() -> None:
 # mongo_fundamentals._FINANCIAL_UNMAPPED_FIELDS, inlined here so the domain test
 # stays free of infrastructure imports.
 _FINANCIAL_UNMAPPED = frozenset({"dep_amort", "ebitda"})
+_BANK_UNMAPPED = _FINANCIAL_UNMAPPED | frozenset({"current_financial_investments"})
 
 
 def _mapped_bank() -> StandardizedFinancials:
@@ -180,17 +188,19 @@ def _mapped_bank() -> StandardizedFinancials:
         sector=Sector.BANK,
         total_assets=Decimal(90000),
         equity=Decimal(8000),
+        equity_total=Decimal(8000),
         net_income=Decimal(600),  # annualized -> 800
+        net_income_total=Decimal(600),
         eps_basic=Decimal("1.25"),
         eps_diluted=Decimal("1.20"),
         revenue=Decimal(3000),
         gross_profit=Decimal(1200),  # 3.03 — net interest income
         ebit=Decimal(900),  # 3.05 — pre-tax result
-        cash=Decimal(5000),
+        cash_equivalents=Decimal(5000),
         cfo=Decimal(450),  # annualized -> 600
         capex=Decimal(150),  # annualized -> 200
         filed_regime=AccountingRegime.BANK,
-        unmapped_fields=_FINANCIAL_UNMAPPED,
+        unmapped_fields=_BANK_UNMAPPED,
     )
 
 
@@ -219,7 +229,7 @@ def test_bank_computes_the_ratios_its_schema_supports() -> None:
     assert ind.debt_to_equity is None
     assert ind.ev_ebitda is None
     assert ind.ebitda_margin is None
-    assert ind.roic is None
+    assert ind.roic_statutory is None
     assert ind.current_ratio is None
     assert ind.price_to_working_capital is None
     # No prior period -> no growth
@@ -279,8 +289,8 @@ def test_bank_null_reasons_name_each_cause() -> None:
     # Cause 1 — genuinely meaningless for a bank: it reports Basileia, not net debt
     # / EV-EBITDA, and has no EBITDA (ADR 0010). ADR 0015 adds the three the
     # mapping settled: a bank's balance sheet has no current/non-current split, so
-    # its current ratio and P/working-capital are unbuildable, and its ROIC
-    # denominator (equity + net debt) inherits the net-debt verdict.
+    # its current ratio and P/working-capital are unbuildable, and its statutory
+    # ROIC denominator (consolidated equity + net debt) inherits that verdict.
     assert ind.null_reasons["net_debt"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["net_debt_to_ebitda"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["net_debt_to_ebit"] is NullReason.INAPPLICABLE_REGIME
@@ -289,14 +299,16 @@ def test_bank_null_reasons_name_each_cause() -> None:
     assert ind.null_reasons["ev_ebitda"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["ev_ebit"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["ebitda_margin"] is NullReason.INAPPLICABLE_REGIME
-    assert ind.null_reasons["roic"] is NullReason.INAPPLICABLE_REGIME
+    assert ind.null_reasons["roic_statutory"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["current_ratio"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["price_to_working_capital"] is (
         NullReason.INAPPLICABLE_REGIME
     )
-    # Cause 2 — nothing is merely *unmapped* for a bank any more: #48 mapped every
-    # account whose absence used to be a mapping gap. This is the M1 win, so pin it.
-    assert NullReason.SOURCE_ACCOUNT_UNMAPPED not in ind.null_reasons.values()
+    # Cause 2 — the bank chart cannot isolate a current-only investment bucket;
+    # that headline is named unmapped rather than guessed from all financial assets.
+    assert ind.null_reasons["current_financial_investments"] is (
+        NullReason.SOURCE_ACCOUNT_UNMAPPED
+    )
     # Cause 3 — upstream inputs, each named individually:
     assert ind.null_reasons["eps"] is NullReason.MISSING_CPC41_DISCLOSURE
     assert ind.null_reasons["eps_diluted"] is NullReason.MISSING_CPC41_DISCLOSURE
@@ -346,7 +358,7 @@ def test_insurer_null_reasons_split_by_regime() -> None:
     assert ind.null_reasons["ev_ebitda"] is NullReason.SOURCE_ACCOUNT_ABSENT
     # ROIC is inapplicable outright (#103): a cash-rich insurer's invested
     # capital collapses toward zero, so the null precedes any input check.
-    assert ind.null_reasons["roic"] is NullReason.INAPPLICABLE_REGIME
+    assert ind.null_reasons["roic_statutory"] is NullReason.INAPPLICABLE_REGIME
     # Its balance sheet *does* carry the current/non-current split a bank lacks:
     assert ind.current_ratio == Decimal(2)  # 6000 / 3000
     assert "current_ratio" not in ind.null_reasons
@@ -356,7 +368,7 @@ def test_insurer_net_debt_is_the_cash_negated() -> None:
     # #103: the insurance schema has no borrowings line, so net debt is what
     # remains of the definition — 0 − cash. BBSE3 must surface the same economic
     # fact CXSE3 (filing as a corporate holding) already showed. EV and the
-    # net-debt family follow; ROIC's invested capital (equity + net debt) too.
+    # net-debt family follow; statutory ROIC remains inapplicable.
     insurer = StandardizedFinancials(
         reference_date=date(2024, 12, 31),
         sector=Sector.INSURER,
@@ -365,7 +377,8 @@ def test_insurer_net_debt_is_the_cash_negated() -> None:
         net_income=Decimal(2500),
         revenue=Decimal(4000),
         ebit=Decimal(3000),
-        cash=Decimal(8000),
+        cash_equivalents=Decimal(8000),
+        equity_total=Decimal(9000),
         filed_regime=AccountingRegime.INSURANCE,
         unmapped_fields=_FINANCIAL_UNMAPPED,
     )
@@ -380,8 +393,8 @@ def test_insurer_net_debt_is_the_cash_negated() -> None:
     # ROIC does NOT follow: invested capital (equity + net debt = 9000 − 8000)
     # collapses toward zero for a cash-rich insurer and the ratio explodes
     # (BBSE3 2025 came out 1,918%) — inapplicable, same verdict as the bank's.
-    assert ind.roic is None
-    assert ind.null_reasons["roic"] is NullReason.INAPPLICABLE_REGIME
+    assert ind.roic_statutory is None
+    assert ind.null_reasons["roic_statutory"] is NullReason.INAPPLICABLE_REGIME
     # The gross-debt ratio stays null — there is no borrowings line to read:
     assert ind.debt_to_equity is None
     assert ind.null_reasons["debt_to_equity"] is NullReason.SOURCE_ACCOUNT_ABSENT
@@ -456,8 +469,9 @@ def test_insurer_net_debt_family_blames_the_market_input_not_the_debt_line() -> 
         reference_date=date(2024, 12, 31),
         sector=Sector.INSURER,
         equity=Decimal(9000),
+        equity_total=Decimal(9000),
         ebit=Decimal(3000),
-        cash=Decimal(8000),
+        cash_equivalents=Decimal(8000),
         filed_regime=AccountingRegime.INSURANCE,
         unmapped_fields=_FINANCIAL_UNMAPPED,
     )
@@ -518,8 +532,8 @@ def test_a_filer_is_judged_by_the_regime_it_files_even_when_its_sector_agrees() 
 
 
 def test_scale_figures_are_carried_through_to_the_output() -> None:
-    # #25: market cap, enterprise value and the share count are the calculator's own
-    # market-side inputs — persisted, not discarded, so the front-end can show them.
+    # The calculator persists the market inputs and the consolidated EV bridge so
+    # consumers do not have to reconstruct a basis-sensitive value.
     market = MarketData(
         price=Decimal(12), market_cap=Decimal(12000), shares=Decimal(600)
     )
@@ -528,8 +542,8 @@ def test_scale_figures_are_carried_through_to_the_output() -> None:
 
     assert ind.market_cap == Decimal(12000)
     assert ind.shares == Decimal(600)
-    # EV = cap + net debt (total_debt 2000 − cash 500 = 1500).
-    assert ind.enterprise_value == Decimal(13500)
+    # EV = cap + net debt + NCI = 12000 + 1500 + (6600 - 6000).
+    assert ind.enterprise_value == Decimal(14100)
 
 
 def test_enterprise_value_is_inapplicable_for_a_bank() -> None:

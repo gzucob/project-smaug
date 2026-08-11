@@ -360,7 +360,12 @@ class SuccessionPriceProvider:
         if not sessions:
             return await self._inner.year_prices(ticker, year)
         total = sum((close.close for close in sessions), Decimal(0))
-        return YearPrices(nominal_avg=total / Decimal(len(sessions)))
+        last = sessions[-1]
+        return YearPrices(
+            nominal_avg=total / Decimal(len(sessions)),
+            closing=last.close,
+            closing_session=last.session,
+        )
 
     async def _chain(self, ticker: str, year: int) -> tuple[CodeWindow, ...]:
         steps = await self._restatement(ticker)

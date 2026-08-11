@@ -210,7 +210,7 @@ def test_should_render_analysis_with_view_tag() -> None:
             indicators=Indicators(pe_basic=Decimal("11.4")),
             price=Decimal("38.20"),
             price_adjusted=Decimal("30.48"),
-            price_basis="nominal_year_avg",
+            price_basis="b3_year_end_close",
             view="closed_year",
         )
     ]
@@ -219,7 +219,7 @@ def test_should_render_analysis_with_view_tag() -> None:
 
     assert "closed_year" in text
     assert "2024-12-31" in text
-    assert "nominal_year_avg" in text
+    assert "b3_year_end_close" in text
 
 
 async def test_should_render_report_with_missing_marker() -> None:
@@ -251,7 +251,7 @@ def _analysis() -> TickerAnalysis:
         computed_at=datetime(2026, 7, 30, tzinfo=UTC),
         indicators=Indicators(pe_basic=Decimal("11.4")),
         price=Decimal("10"),
-        price_basis="nominal_year_avg",
+        price_basis="b3_year_end_close",
         view="closed_year",
     )
 

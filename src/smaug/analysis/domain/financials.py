@@ -85,7 +85,12 @@ class StandardizedFinancials:
     ebit: Decimal | None = None
     ebitda: Decimal | None = None
     dep_amort: Decimal | None = None
-    cash: Decimal | None = None
+    # Liquidity is split on the CVM taxonomy instead of treating every current
+    # financial investment as cash. CPC 03 requires immediate convertibility and
+    # insignificant value risk; the filed 1.01.01 line names that eligible set,
+    # while 1.01.02 is retained separately rather than silently netted from debt.
+    cash_equivalents: Decimal | None = None
+    current_financial_investments: Decimal | None = None
     current_assets: Decimal | None = None
     current_liabilities: Decimal | None = None
     total_debt: Decimal | None = None
@@ -201,11 +206,14 @@ class SessionClose:
 
 @dataclass(frozen=True)
 class YearPrices:
-    """Average share price over one calendar year, both bases.
+    """Closing and average share prices over one calendar year.
 
     ``nominal_avg`` is the mean of daily closes; ``adjusted_avg`` is the mean of
     dividend-adjusted closes (the total-return series the platforms price
-    historical multiples on). For heavy payers the two diverge a lot.
+    historical multiples on). For heavy payers the two diverge a lot. ``closing``
+    is the last available B3 close in the year, and ``closing_session`` is its
+    exact session. Point-in-time valuation uses that pair; it never multiplies an
+    annual average by a closing share count.
 
     ``null_reason`` explains an *empty* result (both averages ``None``):
     ``PRICE_SYMBOL_NOT_FOUND`` when the source rejected the symbol itself (a
@@ -216,4 +224,6 @@ class YearPrices:
 
     nominal_avg: Decimal | None = None
     adjusted_avg: Decimal | None = None
+    closing: Decimal | None = None
+    closing_session: date | None = None
     null_reason: NullReason | None = None

@@ -37,7 +37,11 @@ class FakeSessions:
         if not self._closes:
             return YearPrices()
         total = sum((c.close for c in self._closes), Decimal(0))
-        return YearPrices(nominal_avg=total / len(self._closes))
+        return YearPrices(
+            nominal_avg=total / len(self._closes),
+            closing=self._closes[-1].close,
+            closing_session=self._closes[-1].session,
+        )
 
     async def year_sessions(self, ticker: str, year: int) -> tuple[SessionClose, ...]:
         return self._closes
@@ -141,6 +145,7 @@ async def test_the_provider_fills_the_adjusted_basis_and_leaves_the_traded_one()
 
     assert prices.nominal_avg == 15  # untouched: what actually printed
     assert prices.adjusted_avg == (Decimal(10) * Decimal("0.9") + Decimal(20)) / 2
+    assert prices.closing == Decimal(20)  # valuation close is never dividend-adjusted
 
 
 async def test_a_company_that_never_paid_has_both_bases_in_one_number() -> None:

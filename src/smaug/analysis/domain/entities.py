@@ -43,12 +43,19 @@ class TickerAnalysis:
     reference_date: date  # CVM period the fundamentals came from
     computed_at: datetime
     indicators: Indicators
-    # The price the market multiples divide by: what the shares actually traded at —
-    # the live quote, or the closed year's nominal average (ADR 0018).
+    # The price the market multiples divide by: B3's last available close for the
+    # view's valuation date. A closed year no longer mixes a mean price with a
+    # closing share count (ADR 0057).
     price: Decimal | None = None
     # The same year's dividend-adjusted average: a total-return ruler, not a
     # valuation one. Kept for return comparisons; ``None`` for the live view, which
     # has had no payout since to adjust for.
     price_adjusted: Decimal | None = None
-    price_basis: str | None = None  # how ``price`` was derived (e.g. nominal_year_avg)
+    price_basis: str | None = None  # how ``price`` and every class cap price derive
+    # Exact bases behind the other stock inputs. These remain populated on a null
+    # result: they describe the requested calculation, not whether its source row
+    # happened to be available.
+    share_count_basis: str | None = None
+    liquidity_basis: str | None = None
+    roic_tax_basis: str | None = None
     view: AnalysisView = VIEW_TTM  # which perspective this row represents

@@ -59,7 +59,7 @@ export function ViewPanel({
           </div>
           {showAdjusted && (
             <div className="nums text-[0.68rem] text-ink-600">
-              ajustado {price(analysis.price_adjusted)}
+              média ajustada {price(analysis.price_adjusted)}
             </div>
           )}
         </div>

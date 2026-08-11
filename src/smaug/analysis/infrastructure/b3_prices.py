@@ -480,7 +480,7 @@ class CotahistArchive:
 
 
 class B3PriceHistory:
-    """A ``PriceHistoryProvider`` reading the closed-year average off COTAHIST."""
+    """A ``PriceHistoryProvider`` reading year prices off COTAHIST."""
 
     def __init__(self, archive: CotahistArchive) -> None:
         self._archive = archive
@@ -496,7 +496,11 @@ class B3PriceHistory:
         # not carry and the valuation multiples do not want (ADR 0018). The
         # corporate-action basis is put on this average by ``RestatedPriceProvider``,
         # which is the only thing that knows the company's share-base history.
-        return YearPrices(nominal_avg=quotes.average)
+        return YearPrices(
+            nominal_avg=quotes.average,
+            closing=quotes.last_close,
+            closing_session=quotes.last_session,
+        )
 
     async def year_sessions(self, ticker: str, year: int) -> tuple[SessionClose, ...]:
         """Every close the code printed in ``year``, as traded.
