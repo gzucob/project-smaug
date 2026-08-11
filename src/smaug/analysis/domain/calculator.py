@@ -116,15 +116,6 @@ def _annualized(
     return value * _MONTHS_IN_YEAR / Decimal(months)
 
 
-def _negated(value: Decimal | None) -> Decimal | None:
-    """Flip a ratio built from a filed expense, which CVM records as negative.
-
-    An efficiency ratio of 34% is a cost, and reporting it as −34% would be a
-    faithful reading of the sign and a useless number to look at.
-    """
-    return None if value is None else -value
-
-
 def _net_debt(financials: StandardizedFinancials) -> Decimal | None:
     """Total debt net of CPC 03 cash equivalents.
 
@@ -159,7 +150,7 @@ def _net_debt(financials: StandardizedFinancials) -> Decimal | None:
 # above, since a deposit is funding, not borrowing. Every *other* indicator a
 # financial filer nulls now falls through to the input check.
 #
-# The three bank ratios (ADR 0021) run the other way: they describe a balance sheet
+# The three bank ratios (ADR 0058) run the other way: they describe a balance sheet
 # that *is* the business, and a company that sells goods has no spread, no loan book
 # and no payroll-against-spread to report. They are inapplicable to everyone else.
 _BANK_ONLY = frozenset({"net_interest_margin", "efficiency_ratio", "cost_of_risk"})
@@ -167,7 +158,13 @@ _BANK_ONLY = frozenset({"net_interest_margin", "efficiency_ratio", "cost_of_risk
 _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
     AccountingRegime.BANK: frozenset(
         {
+            "ebit_margin",
             "ebitda_margin",
+            "ebit_cagr_5y",
+            "price_to_ebit",
+            "fcf",
+            "price_to_fcf",
+            "fcf_yield",
             "net_debt",
             "net_debt_to_ebitda",
             "net_debt_to_ebit",
@@ -300,18 +297,14 @@ _NEEDS: dict[str, _Needs] = {
         accounts=("current_assets", "current_liabilities"), cap=True
     ),
     "net_interest_margin": _Needs(
-        accounts=("gross_profit", "loan_loss_provision", "total_assets")
+        accounts=("bank_interest_result_annualized", "average_earning_assets")
     ),
     "efficiency_ratio": _Needs(
-        accounts=(
-            "gross_profit",
-            "loan_loss_provision",
-            "personnel_expense",
-            "admin_expense",
-            "fee_income",
-        )
+        accounts=("bank_efficiency_expenses", "bank_efficiency_income")
     ),
-    "cost_of_risk": _Needs(accounts=("loan_loss_provision", "loan_book")),
+    "cost_of_risk": _Needs(
+        accounts=("credit_loss_expense_annualized", "average_credit_portfolio")
+    ),
     "dividend_yield": _Needs(price=True, cash_distributions=True),
     "payout_cash_paid_in_period": _Needs(accounts=("dividends_paid", "net_income")),
     "payout_declared_in_period": _Needs(accounts=("dividends_declared", "net_income")),
@@ -415,6 +408,12 @@ def _classify(
     """
     if name in inapplicable:
         return NullReason.INAPPLICABLE_REGIME
+    if (
+        name in _BANK_ONLY
+        and f.bank_ratio_null_reason is not None
+        and any(getattr(f, account) is None for account in needs.accounts)
+    ):
+        return f.bank_ratio_null_reason
     if name in {"eps", "eps_basic"} and f.eps_basic_null_reason is not None:
         return f.eps_basic_null_reason
     if name == "eps_diluted" and f.eps_diluted_null_reason is not None:
@@ -542,9 +541,10 @@ def compute(
     f = current
     # Everything is computed from its inputs and *then* suppressed per regime (#48).
     # The old blanket ``is_financial`` guard is gone: with the mapper reading each
-    # regime's own chart of accounts (ADR 0015), the ratios a financial filer does
-    # support (margins, P/EBIT, FCF) must compute rather than be blanked by their
-    # filer's sector, and the ones it does not are named — once — in
+    # regime's own chart of accounts (ADR 0015), supported ratios compute rather
+    # than being blanked by sector. Bank EBIT/FCF are explicit exceptions because
+    # PBT is not EBIT and deposit-funded CFO-CAPEX is not comparable FCF (ADR 0058).
+    # Unsupported measures are named — once — in
     # ``_INAPPLICABLE_BY_REGIME``, which now drives the value as well as the reason.
     cap = market.market_cap
     annual_net_income = _annualized(f.net_income, f)
@@ -575,20 +575,11 @@ def compute(
         """One account across the closed exercises, oldest → newest."""
         return [getattr(annual, account) for annual in history]
 
-    # The bank's spread, before the cost of default. A bank's 3.03 already deducts
-    # the loan-loss provision (it sits inside the intermediation expenses in the
-    # bank chart of accounts, so adding the provision back — it is filed
-    # negative — recovers the margin the bank earned before writing anything off.
-    # That is the *margem financeira bruta* the banks themselves report.
-    interest_margin = _sub(f.gross_profit, f.loan_loss_provision)
-    annual_interest_margin = _annualized(interest_margin, f)
-    # What the bank's own payroll and back office consume of what it earns: the
-    # spread plus the fees it charges. Both sides annualized, so a quarter compares
-    # to a year (ADR 0021).
-    operating_expense = _add(f.personnel_expense, f.admin_expense)
-    operating_revenue = _add(interest_margin, f.fee_income)
-    annual_provision = _annualized(f.loan_loss_provision, f)
-
+    # Bank ratios only consume explicitly paired, already annualized
+    # regulatory/issuer inputs
+    # (ADR 0058). The CVM-only mapper leaves them null: closing total assets, a
+    # partial operating-revenue subtotal, and a closing net loan book are not
+    # substitutes for the published average/perimeter definitions.
     indicators = Indicators(
         roe=_div(annual_net_income, f.equity),
         roe_total=_div(annual_net_income_total, f.equity_total),
@@ -635,10 +626,11 @@ def compute(
         price_to_assets=_div(cap, f.total_assets),
         price_to_ebit=_div(cap, annual_ebit),
         price_to_working_capital=_div(cap, working_capital),
-        net_interest_margin=_div(annual_interest_margin, f.total_assets),
-        # Expenses are filed negative, so the ratio is negated to read as a cost.
-        efficiency_ratio=_negated(_div(operating_expense, operating_revenue)),
-        cost_of_risk=_negated(_div(annual_provision, f.loan_book)),
+        net_interest_margin=_div(
+            f.bank_interest_result_annualized, f.average_earning_assets
+        ),
+        efficiency_ratio=_div(f.bank_efficiency_expenses, f.bank_efficiency_income),
+        cost_of_risk=_div(f.credit_loss_expense_annualized, f.average_credit_portfolio),
         dividend_yield=_div(market.cash_distributions, market.price),
         payout_cash_paid_in_period=_div(f.dividends_paid, f.net_income),
         payout_declared_in_period=_div(f.dividends_declared, f.net_income),

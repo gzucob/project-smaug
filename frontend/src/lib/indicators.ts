@@ -133,10 +133,10 @@ export const INDICATORS: IndicatorSpec[] = [
   { key: "fcf", label: "Fluxo de caixa livre", hint: "Caixa operacional − investimentos em ativos (CAPEX)", group: "Fluxo de caixa", format: money },
   { key: "price_to_fcf", label: "P/FCL", hint: "Valor de mercado / fluxo de caixa livre", group: "Fluxo de caixa", format: multiple },
   { key: "fcf_yield", label: "FCF yield", hint: "Fluxo de caixa livre / valor de mercado", group: "Fluxo de caixa", format: pct },
-  // Only a bank fills these; every other regime reports them as inapplicable (ADR 0021).
-  { key: "net_interest_margin", label: "Margem financeira", hint: "Spread ganho (antes da provisão para calotes) / ativo total", group: "Banco", format: pct },
-  { key: "efficiency_ratio", label: "Índice de eficiência", hint: "Despesas de pessoal e administrativas / (margem financeira + tarifas) — quanto menor, melhor", group: "Banco", format: pct },
-  { key: "cost_of_risk", label: "Custo do risco", hint: "Provisão para calotes do ano / carteira de crédito", group: "Banco", format: pct },
+  // Only a bank fills these; every other regime reports them as inapplicable (ADR 0058).
+  { key: "net_interest_margin", label: "Margem financeira", hint: "Resultado de juros anualizado / ativos rentáveis médios, no mesmo perímetro", group: "Banco", format: pct },
+  { key: "efficiency_ratio", label: "Índice de eficiência", hint: "Despesas operacionais completas / receitas operacionais completas — quanto menor, melhor", group: "Banco", format: pct },
+  { key: "cost_of_risk", label: "Custo do risco", hint: "Despesa anualizada de perdas de crédito / carteira média de crédito", group: "Banco", format: pct },
 ];
 
 export const INDICATOR_GROUPS: IndicatorGroup[] = [

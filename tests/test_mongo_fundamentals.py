@@ -287,17 +287,19 @@ def test_standardize_bank_reads_its_own_chart_of_accounts() -> None:
     assert f.net_income == Decimal("90")
     assert f.cash_equivalents == Decimal("300")  # bank's CPC 03 total is 1.01
     assert f.current_financial_investments is None
-    assert f.gross_profit == Decimal("140")  # 3.03 — the spread, net of the provision
-    assert f.ebit == Decimal("60")  # 3.05 = pre-tax profit (ADR 0015)
+    assert f.gross_profit == Decimal("140")  # filed 3.03 intermediation result
+    assert f.ebit is None  # 3.05 is pre-tax profit, never EBIT (ADR 0058)
     assert f.cfo == Decimal("500")
     assert f.capex == Decimal("190")  # 150 + 40
-    # The bank lines the ratios of #27 are built on, signed as filed. The provision
-    # is the one inside 3.02 — not the empty 3.04.01 the consolidated chart uses.
+    # The bank-specific CVM lines remain signed as filed. The provision is the one
+    # inside 3.02 — not the empty 3.04.01 the other chart shape uses — but ADR 0058
+    # no longer treats these partial lines as regulatory-ratio inputs.
     assert f.loan_loss_provision == Decimal("-70")
     assert f.fee_income == Decimal("45")
     assert f.personnel_expense == Decimal("-30")
     assert f.admin_expense == Decimal("-20")
     assert f.loan_book == Decimal("2000")  # 2200 gross, less its own 200 provision
+    assert f.bank_ratio_null_reason is NullReason.MISSING_REGULATORY_DISCLOSURE
     # Unbuildable from a bank's schema — never read, never guessed. 2.02 above is
     # the bank's funding (deposits), and must not be mistaken for debt.
     assert f.total_debt is None

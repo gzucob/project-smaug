@@ -1,6 +1,6 @@
 # 0015 — The CVM mapping keys on the filed accounting regime, not the sector
 
-- **Status:** Accepted
+- **Status:** Accepted — bank EBIT and generic FCF decisions superseded by [0058](0058-bank-ratios-require-explicit-average-bases.md)
 - **Date:** 2026-07-13
 
 ## Context

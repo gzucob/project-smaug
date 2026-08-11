@@ -178,7 +178,7 @@ def _direct_child_by_name(
     match read that reserve as the minority interest — reporting a controllers'
     equity larger than the consolidated total (#118). The bank lines keep the
     descendant-scoped ``_child_by_name``: their needles deliberately read at
-    depths that are not stable across filers (ADR 0021).
+    depths that are not stable across filers (ADR 0015/0058).
     """
     prefix = f"{parent}."
     depth = parent.count(".") + 1
@@ -652,20 +652,21 @@ def _as_bank(
 ) -> StandardizedFinancials:
     """A bank's balance sheet has no current/non-current split and no debt line.
 
-    ``gross_profit`` carries 3.03, which for a bank is the net interest income —
-    the spread, its closest analogue to a gross result. ``ebit`` carries 3.05,
-    which for a bank is profit *before tax*, not before interest: interest is the
-    operation, so there is no line to strip. Both are deliberate mappings of the
-    filed bank schema (ADR 0015); ``total_debt``,
+    ``gross_profit`` carries the bank's filed 3.03 intermediation result.
+    ``ebit`` deliberately stays null: 3.05 is profit before tax, not earnings
+    before interest and tax, and exposing it under an EBIT label was a category
+    error (ADR 0058). ``total_debt``,
     ``current_assets`` and ``current_liabilities`` stay ``None`` because the
     schema has no such lines — the calculator names those nulls inapplicable.
 
     Everything below is read **by label, scoped to its parent** rather than by code,
     because the two banks do not agree on the codes: the loan-loss provision is
     3.02.05 for BBAS3 and 3.02.04 for BBDC4 (#27). The provision sits *inside* 3.02
-    and is deducted before the 3.03 spread, which is why ``gross_profit`` for a
-    bank is net of it, and why the
-    calculator adds it back to get the interest margin.
+    and is deducted before the 3.03 result, which is why ``gross_profit`` for a
+    bank is net of it. These CVM lines remain faithful statement facts, but the
+    calculator does not combine them into approximate bank ratios. Average
+    earning assets, the full efficiency perimeter and average credit exposure
+    require an explicit public regulatory/issuer disclosure (ADR 0058).
 
     Índice de Basileia (capital adequacy) is deliberately **not** built here (issue
     #102, ANL-33) — its inputs are regulatory, not accounting. The numerator is the
@@ -683,7 +684,7 @@ def _as_bank(
     """
     return replace(
         base,
-        ebit=_mul(_by_code(dre, "3.05"), dre_s),  # pre-tax result — see docstring
+        ebit=None,  # 3.05 is pre-tax profit, never EBIT (ADR 0058)
         # A bank files the CPC 03-labelled total directly at 1.01 and has no
         # current/non-current split from which to isolate broader investments.
         cash_equivalents=_mul(_by_code(bpa, "1.01"), bpa_s),
@@ -692,6 +693,7 @@ def _as_bank(
         personnel_expense=_mul(_child_by_name(dre, "3.04", "pessoal"), dre_s),
         admin_expense=_mul(_child_by_name(dre, "3.04", "administrativas"), dre_s),
         loan_book=_loan_book(bpa, bpa_s),
+        bank_ratio_null_reason=NullReason.MISSING_REGULATORY_DISCLOSURE,
         unmapped_fields=_BANK_UNMAPPED_FIELDS,
     )
 

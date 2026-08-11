@@ -40,12 +40,10 @@ _DRE_FLOW_FIELDS = (
     "net_income_total",
     "ebit",
     "gross_profit",
-    # Regime-specific DRE lines (ADR 0015/0021) — flows like any other income
-    # line, and left signed as filed: summing preserves the sign the CVM used,
-    # and the calculator is the one that knows which way to read it. Summing the
-    # bank's provision here does not double-count it against the spread: the
-    # calculator takes ``gross_profit − loan_loss_provision``, and Σ of each side
-    # separately is the same arithmetic as Σ of the difference.
+    # Regime-specific CVM DRE lines (ADR 0015) — flows like any other income
+    # line, and left signed as filed: summing preserves the sign the CVM used.
+    # These remain statement facts; ADR 0058 prevents the calculator from turning
+    # them into bank ratios without the missing average/perimeter disclosures.
     "loan_loss_provision",
     "fee_income",
     "personnel_expense",
@@ -253,5 +251,9 @@ def _build_ttm(
         # Null-cause provenance (#30) travels with the window: same filer, same
         # regime and same deliberately-skipped fields as its quarters.
         filed_regime=latest.filed_regime,
+        # Regulatory average/perimeter inputs cannot be reconstructed from four
+        # CVM quarters. Their named cause survives until an explicit source
+        # provides a complete TTM pair (ADR 0058).
+        bank_ratio_null_reason=latest.bank_ratio_null_reason,
         unmapped_fields=latest.unmapped_fields,
     )

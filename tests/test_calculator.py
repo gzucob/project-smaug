@@ -175,13 +175,11 @@ _BANK_UNMAPPED = _FINANCIAL_UNMAPPED | frozenset({"current_financial_investments
 
 
 def _mapped_bank() -> StandardizedFinancials:
-    """A bank as the CVM mapper actually builds it (ADR 0015).
+    """A bank as the CVM mapper actually builds it (ADR 0058).
 
-    It carries what a bank's chart of accounts holds — including 3.03 (net
-    interest income, standing in for gross profit) and 3.05 (pre-tax profit,
-    standing in for EBIT) — and *not* what it lacks: a bank files no debt line and
-    no current/non-current split, so those stay ``None`` at the source rather than
-    being blanked downstream.
+    It carries the faithful CVM lines, but never calls 3.05 EBIT and never turns
+    closing/partial accounts into regulatory ratios. A bank files no debt line or
+    current/non-current split either, so those stay ``None`` at the source.
     """
     return StandardizedFinancials(
         reference_date=_Q3,
@@ -195,11 +193,11 @@ def _mapped_bank() -> StandardizedFinancials:
         eps_diluted=Decimal("1.20"),
         revenue=Decimal(3000),
         gross_profit=Decimal(1200),  # 3.03 — net interest income
-        ebit=Decimal(900),  # 3.05 — pre-tax result
         cash_equivalents=Decimal(5000),
         cfo=Decimal(450),  # annualized -> 600
         capex=Decimal(150),  # annualized -> 200
         filed_regime=AccountingRegime.BANK,
+        bank_ratio_null_reason=NullReason.MISSING_REGULATORY_DISCLOSURE,
         unmapped_fields=_BANK_UNMAPPED,
     )
 
@@ -217,12 +215,19 @@ def test_bank_computes_the_ratios_its_schema_supports() -> None:
     assert ind.pb == Decimal(1)  # paper price 10 / BVPS 10
     assert ind.company_pe == Decimal(10)  # company cap 8000 / profit 800
     assert ind.company_pb == Decimal(1)
-    # Mapped by #48 — these light up for a bank now, with no calculator guard:
+    # The filed intermediation result still supports the generic gross-margin
+    # view. PBT is never mislabeled EBIT, and CFO-CAPEX is not bank free cash flow.
     assert ind.gross_margin == Decimal("0.4")  # 1200 / 3000 — the spread
-    assert ind.ebit_margin == Decimal("0.3")  # 900 / 3000
-    assert ind.price_to_ebit == Decimal(8000) / Decimal(1200)  # ebit annualized
-    assert ind.fcf == Decimal(400)  # (450 - 150), annualized
-    assert ind.price_to_fcf == Decimal(20)  # 8000 / 400
+    for name in (
+        "ebit_margin",
+        "ebit_cagr_5y",
+        "price_to_ebit",
+        "fcf",
+        "price_to_fcf",
+        "fcf_yield",
+    ):
+        assert getattr(ind, name) is None
+        assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
     # Unbuildable from a bank's schema — no debt line, no current/non-current split:
     assert ind.net_debt is None
     assert ind.net_debt_to_ebitda is None
@@ -236,31 +241,69 @@ def test_bank_computes_the_ratios_its_schema_supports() -> None:
     assert ind.revenue_growth is None
 
 
-def test_bank_computes_its_own_three_ratios() -> None:
-    # ADR 0021, shaped on BBAS3's real filing. Its 3.03 spread (1200) is already net
-    # of the loan-loss provision (-600), which the bank chart deducts inside the
-    # intermediation expenses — so the margin the bank earned *before* writing
-    # anything off is 1800, which is the *margem financeira bruta* it reports.
+def test_bbas3_ratios_reconcile_to_the_2024_issuer_disclosure() -> None:
+    # Banco do Brasil 4T24, tables 21/26/37/48. The source explicitly defines
+    # spread as MFB / average earning assets (monthly closing-balance mean),
+    # efficiency as full administrative expense / full operating income, and
+    # credit risk expense against the average credit portfolio.
+    # https://ri.bb.com.br/informacoes-financeiras/central-de-resultados/
     bank = replace(
         _mapped_bank(),
-        reference_date=date(2024, 12, 31),  # a closed year: no annualization
-        total_assets=Decimal(60000),
-        gross_profit=Decimal(1200),
-        loan_loss_provision=Decimal(-600),
-        fee_income=Decimal(400),
-        personnel_expense=Decimal(-500),
-        admin_expense=Decimal(-200),
-        loan_book=Decimal(20000),
+        reference_date=date(2024, 12, 31),
+        bank_interest_result_annualized=Decimal(103_944),
+        average_earning_assets=Decimal(2_137_682),
+        bank_efficiency_expenses=Decimal(36_998),
+        bank_efficiency_income=Decimal(144_688),
+        credit_loss_expense_annualized=Decimal(41_422),
+        average_credit_portfolio=Decimal(1_020_119),
+        bank_ratio_null_reason=None,
     )
 
     ind = compute(bank, None, MarketData(market_cap=Decimal(8000)))
 
-    # spread before provisions = 1200 + 600 = 1800, over 60000 of assets
-    assert ind.net_interest_margin == Decimal("0.03")
-    # (500 + 200) of expense over (1800 + 400) of operating revenue — a cost, so it
-    # reads positive even though CVM files both expenses negative
-    assert ind.efficiency_ratio == Decimal(700) / Decimal(2200)
-    assert ind.cost_of_risk == Decimal(600) / Decimal(20000)  # 600 written off / 20000
+    assert ind.net_interest_margin == Decimal(103_944) / Decimal(2_137_682)
+    assert ind.efficiency_ratio == Decimal(36_998) / Decimal(144_688)
+    assert ind.cost_of_risk == Decimal(41_422) / Decimal(1_020_119)
+    assert ind.net_interest_margin.quantize(Decimal("0.001")) == Decimal("0.049")
+    assert ind.efficiency_ratio.quantize(Decimal("0.001")) == Decimal("0.256")
+    assert ind.cost_of_risk.quantize(Decimal("0.001")) == Decimal("0.041")
+
+
+def test_bbdc4_ratios_reconcile_to_the_4t24_issuer_disclosure() -> None:
+    # Bradesco 4T24. The paired values are normalized to the annualized bases the
+    # issuer publishes: 8.4% client margin, 53.2% quarterly IEO and 3.0% credit
+    # cost. The efficiency denominator includes margin, services, insurance,
+    # associates and taxes exactly as the report's footnote defines it.
+    # https://pessoajuridica.bradesco/assets/classic/pdf/
+    # bradesco-4T24-apresentacao-de-resultados-imprensa.pdf
+    average_earning_assets = Decimal(790_286)
+    average_credit_portfolio = Decimal("994666.6666666666666666666667")
+    bank = replace(
+        _mapped_bank(),
+        reference_date=date(2024, 12, 31),
+        period_start=date(2024, 10, 1),
+        bank_interest_result_annualized=(average_earning_assets * Decimal("0.084")),
+        average_earning_assets=average_earning_assets,
+        bank_efficiency_expenses=Decimal(16_418),
+        bank_efficiency_income=(
+            Decimal(16_995)
+            + Decimal(10_262)
+            + Decimal(5_531)
+            + Decimal(90)
+            - Decimal(2_031)
+        ),
+        credit_loss_expense_annualized=Decimal(29_840),
+        average_credit_portfolio=average_credit_portfolio,
+        bank_ratio_null_reason=None,
+    )
+
+    ind = compute(bank, None, MarketData(market_cap=Decimal(8000)))
+
+    assert ind.net_interest_margin == Decimal("0.084")
+    assert ind.efficiency_ratio is not None
+    assert ind.efficiency_ratio.quantize(Decimal("0.001")) == Decimal("0.532")
+    assert ind.cost_of_risk is not None
+    assert ind.cost_of_risk.quantize(Decimal("0.001")) == Decimal("0.030")
 
 
 def test_the_bank_ratios_are_inapplicable_to_everyone_else() -> None:
@@ -304,6 +347,17 @@ def test_bank_null_reasons_name_each_cause() -> None:
     assert ind.null_reasons["price_to_working_capital"] is (
         NullReason.INAPPLICABLE_REGIME
     )
+    for name in (
+        "ebit_margin",
+        "ebit_cagr_5y",
+        "price_to_ebit",
+        "fcf",
+        "price_to_fcf",
+        "fcf_yield",
+    ):
+        assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
+    for name in ("net_interest_margin", "efficiency_ratio", "cost_of_risk"):
+        assert ind.null_reasons[name] is (NullReason.MISSING_REGULATORY_DISCLOSURE)
     # Cause 2 — the bank chart cannot isolate a current-only investment bucket;
     # that headline is named unmapped rather than guessed from all financial assets.
     assert ind.null_reasons["current_financial_investments"] is (

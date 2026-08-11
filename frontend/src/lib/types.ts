@@ -84,7 +84,7 @@ export interface Indicators {
   fcf: Decimalish;
   price_to_fcf: Decimalish;
   fcf_yield: Decimalish;
-  // Bank-only (ADR 0021): null under every other accounting regime.
+  // Bank-only (ADR 0058): null under every other accounting regime.
   net_interest_margin: Decimalish;
   efficiency_ratio: Decimalish;
   cost_of_risk: Decimalish;
@@ -124,6 +124,7 @@ export type NullReason =
   | "not_yet_listed"
   | "missing_share_count"
   | "missing_unit_composition"
+  | "missing_regulatory_disclosure"
   | "missing_cpc41_disclosure"
   | "missing_weighted_average_shares"
   | "missing_economic_rights"

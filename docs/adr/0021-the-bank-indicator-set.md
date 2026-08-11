@@ -1,6 +1,6 @@
 # 0021 — A bank gets three ratios of its own, read from the parent chart of accounts
 
-- **Status:** Accepted
+- **Status:** Superseded by [0058](0058-bank-ratios-require-explicit-average-bases.md)
 - **Date:** 2026-07-14
 
 ## Context
