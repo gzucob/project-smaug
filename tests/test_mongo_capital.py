@@ -440,7 +440,7 @@ def _b3_event(
     """A ``GetListedSupplementCompany.stockDividends`` row, as B3 publishes it."""
     return {
         "ticker": ticker,
-        "source": "cvm",  # the run's source; the module says where the row is from
+        "source": "b3",
         "module": "CAPITAL_EVENT_B3",
         "fetched_at": datetime(2026, 1, 1, tzinfo=UTC),
         "payload": {

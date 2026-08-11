@@ -446,7 +446,7 @@ class IngestPortfolioUseCase:
             payload_bytes += _serialized_size(response.payload)
             ingestion = RawIngestion(
                 ticker=ticker,
-                source=self._source,
+                source=response.source,
                 module=module,
                 fetched_at=self._clock(),
                 request=response.request,

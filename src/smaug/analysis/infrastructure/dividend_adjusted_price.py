@@ -16,11 +16,13 @@ restatement outermost.
 The live quote is not adjusted. It is today's price, and there is no payment
 after today to put back.
 
-**A unit has no basis here at all.** B3 files a rate per *class* — one for ON,
-another for PN — and none for the bundle. The FCA count alone is insufficient to
-map each class's cash-event history onto a unit total-return series (#38). Leaving
-the column null says that; filling it with the traded price would claim the two
-rulers coincide, which for a payer is the one thing certainly false.
+**A unit has no basis here at all.** B3 files the total-return percentage per
+*class* — one for ON, another for PN — and none for the bundle. Absolute class
+amounts can compose the unit's dividend yield (ADR 0055), but they do not make
+those class percentages a unit percentage: that would also require the unit
+price at every ex event and the bundle composition in force on that date.
+Leaving this column null says that; filling it with the traded price would claim
+the two rulers coincide, which for a payer is the one thing certainly false.
 """
 
 from __future__ import annotations
@@ -61,6 +63,9 @@ class DividendAdjustedPriceProvider:
         if prices.nominal_avg is None or self._is_unit(ticker):
             return prices
         events = await self._events.cash_events(ticker)
+        if events is None:
+            # Missing mirror coverage is not evidence of an empty payment history.
+            return prices
         if not events:
             # A company that has never paid has both bases in one number, and
             # saying so is more useful than leaving the column null.

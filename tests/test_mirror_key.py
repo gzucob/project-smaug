@@ -75,6 +75,16 @@ def test_the_filter_falls_back_to_the_ticker_when_none_does() -> None:
     }
 
 
+def test_the_filter_can_name_an_exchange_source_without_changing_the_key() -> None:
+    assert mirror_filter(
+        "PETR4", lambda _t: "9512", source="b3", module="CASH_DIVIDEND_B3"
+    ) == {
+        "source": "b3",
+        "cvm_code": "9512",
+        "module": "CASH_DIVIDEND_B3",
+    }
+
+
 async def test_a_sibling_class_reads_the_companys_one_mirrored_filing() -> None:
     # Collected once, under the ON code the batch names the company by.
     collection = _FakeCollection([_capital_doc("ELET3", _ELETROBRAS, 2_000_000_000)])

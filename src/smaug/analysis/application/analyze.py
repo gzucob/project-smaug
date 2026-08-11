@@ -23,11 +23,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
 from smaug.analysis.domain.calculator import compute
+from smaug.analysis.domain.dividends import cash_distributions
 from smaug.analysis.domain.entities import (
     VIEW_CLOSED_YEAR,
     VIEW_TTM,
@@ -42,12 +43,17 @@ from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.market_cap import capitalize
 from smaug.analysis.domain.ports import (
     AnalysisRepository,
+    CashEventReader,
     FundamentalsReader,
     PriceProvider,
     SharesReader,
 )
 from smaug.analysis.domain.ttm import build_ttm, build_ttm_as_of
-from smaug.portfolio.domain.share_classes import ShareClass
+from smaug.portfolio.domain.share_classes import (
+    PerShareClass,
+    ShareClass,
+    UnitComponent,
+)
 from smaug.portfolio.domain.taxonomy import Classification, classify
 from smaug.shared.errors import SourceError, UnknownTickerError
 from smaug.shared.logging import get_logger
@@ -100,6 +106,7 @@ ClassificationResolver = Callable[[str], Classification]
 # CLI passes a registry-backed resolver, unconditionally, for every ticker
 # (#110, #212).
 ClassesResolver = Callable[[str], tuple[ShareClass, ...]]
+PerShareResolver = Callable[[str], tuple[UnitComponent, ...]]
 
 
 def _default_classification(ticker: str) -> Classification:
@@ -108,6 +115,10 @@ def _default_classification(ticker: str) -> Classification:
     if classification is None:
         raise UnknownTickerError(ticker)
     return classification
+
+
+def _no_per_share_components(_ticker: str) -> tuple[UnitComponent, ...]:
+    return ()
 
 
 # Both views are priced on what the shares actually traded at: the live TTM on the
@@ -166,6 +177,8 @@ class AnalyzePortfolioUseCase:
         clock: Clock = _utc_now,
         classification_resolver: ClassificationResolver = _default_classification,
         classes_resolver: ClassesResolver,
+        cash_event_reader: CashEventReader | None = None,
+        per_share_resolver: PerShareResolver = _no_per_share_components,
     ) -> None:
         self._reader = reader
         self._price_provider = price_provider
@@ -174,6 +187,8 @@ class AnalyzePortfolioUseCase:
         self._clock = clock
         self._classification_resolver = classification_resolver
         self._classes_resolver = classes_resolver
+        self._cash_events = cash_event_reader
+        self._per_share = per_share_resolver
 
     async def execute(self, tickers: Iterable[str]) -> AnalysisRun:
         """Analyze each ticker, and never let one of them end the run.
@@ -286,7 +301,15 @@ class AnalyzePortfolioUseCase:
         year = current.reference_date.year
         prior_end = _prior_year_end(current.reference_date)
         previous = build_ttm_as_of(quarters, annuals, prior_end)
-        market = await self._market_now(ticker, year, quote)
+        distribution_end = computed_at.date()
+        distribution_start = _prior_year_end(distribution_end) + timedelta(days=1)
+        market = await self._market_now(
+            ticker,
+            year,
+            quote,
+            distribution_start=distribution_start,
+            distribution_end=distribution_end,
+        )
         return TickerAnalysis(
             ticker=ticker,
             classification=classification,
@@ -333,7 +356,13 @@ class AnalyzePortfolioUseCase:
         )
 
     async def _market_now(
-        self, ticker: str, year: int, quote: MarketData
+        self,
+        ticker: str,
+        year: int,
+        quote: MarketData,
+        *,
+        distribution_start: date,
+        distribution_end: date,
     ) -> MarketData:
         """The live market inputs: the ticker's quote + the company's current cap.
 
@@ -354,15 +383,50 @@ class AnalyzePortfolioUseCase:
             for share_class in classes
         }
         cap, cap_null_reason = capitalize(classes, counts, prices)
+        distributions, distributions_reason = await self._cash_distributions(
+            ticker, distribution_start, distribution_end
+        )
         return MarketData(
             price=quote.price,
             market_cap=cap,
             shares=await self._shares_reader.outstanding(ticker, year),
+            cash_distributions=distributions,
             cap_null_reason=cap_null_reason,
             shares_null_reason=self._shares_reader.outstanding_null_reason(
                 ticker, year
             ),
+            cash_distributions_null_reason=distributions_reason,
         )
+
+    async def _cash_distributions(
+        self, ticker: str, start: date, end: date
+    ) -> tuple[Decimal | None, NullReason | None]:
+        """B3 cash rights per analyzed security over an explicit ex-date window."""
+        if self._cash_events is None:
+            return None, NullReason.MISSING_CASH_DISTRIBUTIONS
+        components = self._per_share(ticker)
+        if not components:
+            return None, NullReason.MISSING_ECONOMIC_RIGHTS
+
+        quantities: dict[PerShareClass, int] = {}
+        for component in components:
+            quantities[component.per_share_class] = (
+                quantities.get(component.per_share_class, 0) + component.quantity
+            )
+
+        timeline = await self._shares_reader.restatement_timeline(ticker)
+        total = Decimal(0)
+        for per_share_class, quantity in quantities.items():
+            events = await self._cash_events.cash_events(
+                ticker, per_share_class=per_share_class
+            )
+            if events is None:
+                return None, NullReason.MISSING_CASH_DISTRIBUTIONS
+            amount = cash_distributions(events, start, end, timeline)
+            if amount is None:
+                return None, NullReason.MISSING_CASH_DISTRIBUTION_VALUE
+            total += Decimal(quantity) * amount
+        return total, None
 
     async def _sibling_not_yet_traded(
         self,
@@ -473,13 +537,18 @@ class AnalyzePortfolioUseCase:
             # The FCA cannot tell this apart from a class that is simply illiquid,
             # so the tape does (ADR 0048).
             cap_null_reason = NullReason.NOT_YET_LISTED
+        distributions, distributions_reason = await self._cash_distributions(
+            ticker, date(year, 1, 1), date(year, 12, 31)
+        )
         market = MarketData(
             price=own.nominal_avg,
             market_cap=cap,
             shares=await self._shares_reader.outstanding(ticker, year),
+            cash_distributions=distributions,
             cap_null_reason=cap_null_reason,
             shares_null_reason=self._shares_reader.outstanding_null_reason(
                 ticker, year
             ),
+            cash_distributions_null_reason=distributions_reason,
         )
         return market, own.adjusted_avg

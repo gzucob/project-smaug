@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
+from smaug.analysis.domain.capital import RestatementStep, factor_at
 from smaug.analysis.domain.financials import SessionClose
 
 _PERCENT = Decimal(100)
@@ -38,13 +39,22 @@ class CashEvent:
     """One cash payment, dated by the session it first traded without.
 
     ``percentage`` is B3's own ``corporateActionPrice``: the payment as a share
-    of the closing price it went ex against. It is never a ratio of counts and
-    never touches the share base — the number of shares does not move when a
-    company pays.
+    of the closing price it went ex against. ``amount_per_share`` is B3's cash
+    value divided by its explicit 1/1,000-share quotation scale. The former
+    rebuilds a total-return price; the latter is what per-security dividend
+    yield sums. Either can be absent without inventing the other.
+
+    ``last_with_right`` preserves the price/share base on which B3 quoted the
+    amount. A split or bonus taking effect on the ex session must divide that
+    amount as well as the preceding close before historical yield can compare
+    them on today's base.
     """
 
     effective: date
-    percentage: Decimal
+    percentage: Decimal | None = None
+    amount_per_share: Decimal | None = None
+    last_with_right: date | None = None
+    approval_date: date | None = None
 
 
 def dividend_factor(events: Sequence[CashEvent], session: date) -> Decimal:
@@ -57,9 +67,34 @@ def dividend_factor(events: Sequence[CashEvent], session: date) -> Decimal:
     """
     factor = Decimal(1)
     for event in events:
-        if event.effective > session:
+        if event.effective > session and event.percentage is not None:
             factor *= 1 - event.percentage / _PERCENT
     return factor
+
+
+def cash_distributions(
+    events: Sequence[CashEvent],
+    start: date,
+    end: date,
+    timeline: Sequence[RestatementStep] = (),
+) -> Decimal | None:
+    """Cash rights that went ex in ``[start, end]``, per current-base share.
+
+    The event date identifies which holder earned the cash. Every B3 amount is
+    divided by the share-base changes that followed its last cum-right session,
+    matching the basis used by ``RestatedPriceProvider``. A relevant row whose
+    amount cannot be parsed voids the total instead of being silently skipped.
+    No relevant rows is the economic zero.
+    """
+    total = Decimal(0)
+    for event in events:
+        if not start <= event.effective <= end:
+            continue
+        if event.amount_per_share is None:
+            return None
+        base_date = event.last_with_right or event.effective
+        total += event.amount_per_share / factor_at(timeline, base_date)
+    return total
 
 
 def average_dividend_factor(

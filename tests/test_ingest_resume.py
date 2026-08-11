@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -66,7 +67,7 @@ def _mirrored(
 ) -> RawIngestion:
     return RawIngestion(
         ticker="",
-        source="cvm",
+        source="b3" if module.endswith("_B3") else "cvm",
         module=module,
         fetched_at=datetime(2026, 8, 2, tzinfo=UTC),
         request={"file": file} if file is not None else {"source": "b3"},
@@ -154,6 +155,14 @@ async def test_an_exchange_module_is_owed_once_and_never_per_archive() -> None:
     repository.items.append(_mirrored("CASH_DIVIDEND_B3", "9512", file=None))
 
     assert await _plan(repository) == {"PETR4": ("DRE", "CAPITAL")}
+
+
+async def test_a_legacy_wrong_source_does_not_mask_the_b3_module() -> None:
+    repository = FakeRawIngestionRepository()
+    legacy = _mirrored("CASH_DIVIDEND_B3", "9512", file=None)
+    repository.items.append(replace(legacy, source="cvm"))
+
+    assert await _plan(repository) == {"PETR4": ("DRE", "CAPITAL", "CASH_DIVIDEND_B3")}
 
 
 async def test_an_unmapped_ticker_is_owed_everything() -> None:

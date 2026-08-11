@@ -45,7 +45,7 @@ export function TickerCard({ ticker, sector, analysis }: { ticker: string; secto
       <div className="grid grid-cols-3 gap-2">
         <Metric label="ROE" value={pct(analysis.indicators.roe)} />
         <Metric label="DY" value={pct(analysis.indicators.dividend_yield)} />
-        <Metric label="P/L" value={multiple(analysis.indicators.pe)} />
+        <Metric label="P/L bás." value={multiple(analysis.indicators.pe_basic)} />
       </div>
 
       <div className="mt-auto flex items-center justify-between border-t border-gold-500/8 pt-3">

@@ -110,6 +110,7 @@ def _member_validation(
 class CvmCapitalSource:
     """Fetch the capital composition for one ticker from CVM's yearly FRE file."""
 
+    source = "cvm"
     parser_identity = ParserIdentity("cvm.capital.csv", 1)
 
     def __init__(
@@ -185,6 +186,7 @@ class CvmCapitalSource:
         return [
             RawFetchResult(
                 module=module,
+                source="cvm",
                 request={
                     "source": "cvm",
                     "file": self._zip_name,
@@ -379,6 +381,7 @@ class CvmCapitalEventSource:
     than inventing an empty event list.
     """
 
+    source = "cvm"
     parser_identity = ParserIdentity("cvm.capital-events.csv", 1)
 
     def __init__(
@@ -448,6 +451,7 @@ class CvmCapitalEventSource:
         return [
             RawFetchResult(
                 module=module,
+                source="cvm",
                 request={
                     "source": "cvm",
                     "file": self._zip_name,
@@ -630,6 +634,7 @@ class CvmTreasurySource:
     problem and all, and resolving that is the reader's problem, not the mirror's.
     """
 
+    source = "cvm"
     parser_identity = ParserIdentity("cvm.treasury.csv", 1)
 
     def __init__(
@@ -697,6 +702,7 @@ class CvmTreasurySource:
         return [
             RawFetchResult(
                 module=module,
+                source="cvm",
                 request={
                     "source": "cvm",
                     "file": self._zip_name,

@@ -25,7 +25,7 @@ const COLUMNS: Column[] = [
   { key: "net_debt", label: "Dív. líquida", format: money },
   { key: "net_debt_to_ebitda", label: "Dív.líq./EBITDA", format: multiple },
   { key: "roe", label: "ROE", format: pct },
-  { key: "pe", label: "P/L", format: multiple },
+  { key: "pe_basic", label: "P/L básico", format: multiple },
   { key: "dividend_yield", label: "DY", format: pct },
 ];
 

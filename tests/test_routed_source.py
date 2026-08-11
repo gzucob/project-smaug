@@ -18,6 +18,7 @@ class FakeSource:
         return [
             RawFetchResult(
                 module=module,
+                source=self.name,
                 request={"source": self.name},
                 http_status=200,
                 payload={},

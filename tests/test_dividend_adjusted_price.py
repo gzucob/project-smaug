@@ -11,9 +11,11 @@ from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal
 
+from smaug.analysis.domain.capital import RestatementStep
 from smaug.analysis.domain.dividends import (
     CashEvent,
     average_dividend_factor,
+    cash_distributions,
     dividend_factor,
 )
 from smaug.analysis.domain.financials import MarketData, SessionClose, YearPrices
@@ -42,10 +44,12 @@ class FakeSessions:
 
 
 class FakeEvents:
-    def __init__(self, events: Sequence[CashEvent]) -> None:
-        self._events = tuple(events)
+    def __init__(self, events: Sequence[CashEvent] | None) -> None:
+        self._events = None if events is None else tuple(events)
 
-    async def cash_events(self, ticker: str) -> tuple[CashEvent, ...]:
+    async def cash_events(
+        self, ticker: str, *, per_share_class: object | None = None
+    ) -> tuple[CashEvent, ...] | None:
         return self._events
 
 
@@ -94,6 +98,37 @@ def test_the_year_takes_one_factor_weighted_by_its_sessions() -> None:
     assert average * factor == adjusted_mean
 
 
+def test_cash_rights_are_rebased_with_the_same_later_actions_as_prices() -> None:
+    events = [
+        CashEvent(
+            effective=date(2024, 4, 16),
+            last_with_right=date(2024, 4, 15),
+            amount_per_share=Decimal(2),
+        )
+    ]
+    timeline = [RestatementStep(effective=date(2024, 4, 16), ratio=Decimal(2))]
+
+    assert cash_distributions(
+        events, date(2024, 1, 1), date(2024, 12, 31), timeline
+    ) == Decimal(1)
+
+
+def test_cash_rights_use_the_ex_date_window_and_reject_an_unreadable_amount() -> None:
+    events = [
+        CashEvent(effective=date(2023, 12, 31), amount_per_share=Decimal("0.25")),
+        CashEvent(effective=date(2024, 6, 1), amount_per_share=None),
+    ]
+
+    assert cash_distributions(events, date(2024, 1, 1), date(2024, 12, 31)) is None
+    assert cash_distributions(events, date(2025, 1, 1), date(2025, 12, 31)) == 0
+
+
+def test_total_return_ignores_an_event_that_only_has_an_absolute_amount() -> None:
+    event = CashEvent(effective=date(2025, 7, 1), amount_per_share=Decimal("0.50"))
+
+    assert dividend_factor([event], date(2025, 1, 2)) == 1
+
+
 async def test_the_provider_fills_the_adjusted_basis_and_leaves_the_traded_one() -> (
     None
 ):
@@ -118,6 +153,16 @@ async def test_a_company_that_never_paid_has_both_bases_in_one_number() -> None:
 
     assert prices.nominal_avg == 10
     assert prices.adjusted_avg == 10
+
+
+async def test_an_unmirrored_cash_history_does_not_claim_zero_distributions() -> None:
+    inner = FakeSessions([_close("2025-01-02", "10")])
+    provider = DividendAdjustedPriceProvider(inner, FakeEvents(None))
+
+    prices = await provider.year_prices("RDNI3", 2025)
+
+    assert prices.nominal_avg == 10
+    assert prices.adjusted_avg is None
 
 
 async def test_the_live_quote_passes_through_unadjusted() -> None:

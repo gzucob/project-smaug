@@ -20,6 +20,7 @@ class RawFetchResult:
     """Raw, uninterpreted result of one source call (no infra types)."""
 
     module: str
+    source: str
     request: Mapping[str, Any]
     http_status: int
     payload: Mapping[str, Any]

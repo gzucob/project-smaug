@@ -322,6 +322,7 @@ class MongoSharesReader:
             mirror_filter(
                 ticker,
                 self._registrant,
+                source="b3",
                 module=CAPITAL_EVENT_B3_MODULE,
             )
         ).sort("fetched_at", 1)

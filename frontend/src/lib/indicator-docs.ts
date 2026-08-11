@@ -644,13 +644,13 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
   },
 
   // ------------------------------------------------ múltiplos de mercado ---
-  pe: {
-    formula: "Valor de mercado ÷ Lucro líquido anualizado",
-    what: "Quantos anos de lucro atual o mercado está pagando pela empresa. O múltiplo mais usado e o mais fácil de usar errado.",
+  pe_basic: {
+    formula: "Preço do papel ÷ LPA básico CPC 41 da classe",
+    what: "Quantas vezes o preço do próprio papel representa sua participação básica no lucro, já considerando direitos econômicos e média ponderada da classe.",
     strongIn: [
       {
         where: "Intermediários Financeiros, Previdência e Seguros, Energia Elétrica",
-        why: "lucro recorrente e pouco cíclico: o P/L de hoje é uma boa proxy do de amanhã",
+        why: "lucro recorrente e pouco cíclico: o P/L básico da classe é uma boa régua histórica",
       },
     ],
     weakIn: [
@@ -664,9 +664,25 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
   },
+  pe_diluted: {
+    formula: "Preço do papel ÷ LPA diluído CPC 41 da classe",
+    what: "O P/L após incorporar instrumentos potenciais com efeito diluidor no resultado por ação divulgado pela companhia.",
+    strongIn: [
+      {
+        where: "Empresas com opções, conversíveis ou ações contingentes",
+        why: "mostra o múltiplo caso a diluição economicamente relevante se materialize",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas sem instrumentos diluidores",
+        why: "coincide com o P/L básico; a igualdade é informativa",
+      },
+    ],
+  },
   pb: {
-    formula: "Valor de mercado ÷ Patrimônio líquido",
-    what: "Quanto o mercado paga por cada real de capital contábil. Faz par com o ROE: um P/VP alto só se justifica por um ROE alto e durável.",
+    formula: "Preço do papel ÷ Valor patrimonial por papel",
+    what: "Quanto o mercado paga, neste papel, por cada real de capital contábil alocado a ele. Classes com preços diferentes deixam de receber artificialmente o mesmo P/VP.",
     strongIn: [
       {
         where: "Intermediários Financeiros, Previdência e Seguros, Serviços Financeiros Diversos",
@@ -685,6 +701,39 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       {
         where: "Empresas com PL negativo",
         why: "o múltiplo inverte de sinal e deixa de ser comparável",
+      },
+    ],
+    caveat: "O VPA aloca o patrimônio dos controladores igualmente por ação subjacente em circulação; uma unit soma as quantidades do pacote FCA.",
+  },
+  company_pe: {
+    formula: "Valor de mercado da companhia ÷ Lucro dos controladores anualizado",
+    what: "O múltiplo agregado da companhia inteira. É igual entre classes irmãs e fica separado do P/L por papel.",
+    strongIn: [
+      {
+        where: "Comparações da companhia como um todo",
+        why: "numerador e denominador cobrem o mesmo conjunto de instrumentos dos controladores",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Comparação de PETR3 com PETR4 ou outras classes",
+        why: "não distingue o preço nem os direitos de cada papel",
+      },
+    ],
+  },
+  company_pb: {
+    formula: "Valor de mercado da companhia ÷ Patrimônio dos controladores",
+    what: "O P/VP agregado da empresa, preservado sob nome explícito para não ser confundido com preço por VPA do papel.",
+    strongIn: [
+      {
+        where: "Análise do valor total dos controladores",
+        why: "mantém toda a companhia na mesma fatia contábil",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Comparação entre classes irmãs",
+        why: "é deliberadamente igual para todas elas",
       },
     ],
   },
@@ -768,9 +817,9 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
   },
-  payout: {
-    formula: "Proventos pagos no exercício ÷ Lucro líquido",
-    what: "Fatia do lucro distribuída aos acionistas. O complemento (1 − payout) é o que ficou retido para crescer.",
+  payout_cash_paid_in_period: {
+    formula: "Caixa pago no período (DFC) ÷ Lucro do mesmo período",
+    what: "Compara duas grandezas do mesmo intervalo sem afirmar que o caixa pago nasceu daquele lucro. O nome explicita a defasagem que o antigo payout escondia.",
     strongIn: [
       {
         where: "Energia Elétrica, Água e Saneamento, Telecomunicações",
@@ -792,11 +841,11 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "O numerador vem dos proventos efetivamente pagos no fluxo de caixa do exercício, que podem se referir ao resultado do ano anterior. A base que as empresas reportam é a declarada — publicada ao lado como payout_declared (#104).",
+      "Não é payout por exercício de origem: dividendos aprovados na AGO após o fechamento e pagamentos de declarações anteriores permanecem no período em que o caixa saiu.",
   },
   dividend_yield: {
-    formula: "Proventos pagos no exercício ÷ Valor de mercado",
-    what: "Retorno em caixa que os proventos do período representam sobre o preço da ação.",
+    formula: "Proventos B3 por papel com data ex na janela ÷ Preço do papel",
+    what: "O retorno em proventos do instrumento efetivamente analisado. ON, PN, PNA e PNB usam seus próprios direitos; units somam os componentes do pacote FCA.",
     strongIn: [
       {
         where: "Energia Elétrica, Água e Saneamento, Previdência e Seguros",
@@ -818,19 +867,35 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "No histórico de anos fechados o denominador é o valor de mercado calculado pelo preço nominal médio daquele exercício; nos últimos 12 meses é o valor de mercado pelo preço nominal atual (ADR 0018).",
+      "No histórico, numerador e preço médio nominal são restatados para a mesma base de ações. No TTM, somamos as datas ex dos últimos 12 meses até o cálculo e dividimos pelo preço atual.",
   },
-  payout_declared: {
-    formula: "Proventos declarados no exercício (DMPL) ÷ Lucro líquido",
-    what: "Fatia do lucro que a empresa DECLAROU distribuir dentro do exercício — dividendos e JCP debitados do patrimônio na DMPL. É a base que reconcilia a distribuição com a movimentação do patrimônio.",
+  company_cash_yield_paid_in_period: {
+    formula: "Caixa pago pela companhia no período (DFC) ÷ Valor de mercado da companhia",
+    what: "A antiga medida agregada de caixa pago sobre capitalização, preservada sob nome explícito. Não é o dividend yield de um papel.",
+    strongIn: [
+      {
+        where: "Reconciliação do fluxo de caixa da companhia",
+        why: "mantém numerador e capitalização no escopo agregado",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Comparação entre classes ou units",
+        why: "não carrega direitos nem preços do instrumento individual",
+      },
+    ],
+  },
+  payout_declared_in_period: {
+    formula: "Proventos declarados no período (DMPL) ÷ Lucro líquido do período",
+    what: "Compara o débito de dividendos e JCP na DMPL com o lucro do mesmo período, sem atribuir a declaração ao exercício que originou o lucro.",
     strongIn: [
       {
         where: "Intermediários Financeiros (bancos)",
-        why: "bancos declaram JCP ao longo do próprio exercício: o payout declarado casa com o que o banco anuncia (Bradesco reporta ~62% para 2024; a base paga lia ~34%)",
+        why: "declarações recorrentes de JCP reduzem a defasagem frente à base paga, mas não provam de qual exercício veio o lucro distribuído",
       },
       {
-        where: "Comparações com o payout 'oficial' da empresa",
-        why: "elimina o descasamento de um ano entre declarar e pagar que contamina a base de caixa",
+        where: "Comparação entre declaração e pagamento",
+        why: "evidencia em qual período cada fato entrou na DMPL ou na DFC, sem tratá-los como se fossem o mesmo evento",
       },
     ],
     weakIn: [
@@ -840,15 +905,15 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "Mede o que foi declarado DURANTE o exercício, não o que foi atribuído A ELE: um dividendo aprovado em assembleia meses após o fechamento entra no ano da aprovação. A base paga (payout) continua publicada ao lado.",
+      "Uma AGO pós-fechamento entra no período da declaração. Os dados estruturados disponíveis não identificam com segurança o exercício de origem, por isso o nome não promete essa atribuição.",
   },
-  dividend_yield_declared: {
-    formula: "Proventos declarados no exercício (DMPL) ÷ Valor de mercado",
-    what: "O retorno em proventos medido pelo que foi declarado no período, em vez do caixa que saiu. Para quem declara e paga em anos diferentes, é o yield que antecipa o dinheiro a receber.",
+  company_yield_declared_in_period: {
+    formula: "Proventos declarados no período (DMPL) ÷ Valor de mercado",
+    what: "Quociente agregado entre o que a controladora declarou no período e o valor de mercado da companhia. Não é DY por papel.",
     strongIn: [
       {
         where: "Intermediários Financeiros (bancos)",
-        why: "o JCP declarado no ano é a remuneração daquele ano; o caixa às vezes só sai no exercício seguinte",
+        why: "o JCP aparece no período em que foi registrado na DMPL; o caixa pode sair apenas no período seguinte",
       },
       {
         where: "Comparações entre a base declarada e a base paga",
@@ -862,7 +927,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "Mesma ressalva do payout declarado: a régua é a data da declaração, não o exercício de competência. No histórico de anos fechados o denominador é o preço médio do exercício; no TTM é o preço atual.",
+      "A régua é a data da declaração na DMPL, não o exercício de origem. O denominador é a capitalização agregada, não o preço de uma classe.",
   },
   ev_ebitda: {
     formula: "(Valor de mercado + Dívida líquida) ÷ EBITDA anualizado",
@@ -1101,9 +1166,9 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
   },
-  dividends: {
-    formula: "Proventos pagos no exercício (fluxo de caixa de financiamento)",
-    what: "O caixa que efetivamente saiu da empresa para os acionistas no período, somando dividendos e juros sobre capital próprio.",
+  distributions_per_security: {
+    formula: "Σ proventos B3 por papel cujas datas ex caem na janela",
+    what: "Quanto uma unidade do papel adquiriu em direitos de caixa na janela. A escala 1/1.000 da B3 e as mudanças posteriores da base de ações são normalizadas antes da soma.",
     strongIn: [
       {
         where: "Energia Elétrica, Água e Saneamento, Previdência e Seguros",
@@ -1113,18 +1178,35 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     weakIn: [
       {
         where: "Qualquer subsetor, num ano isolado",
-        why: "o pagamento se refere com frequência ao resultado do exercício anterior, então o valor descasa do lucro exibido ao lado",
+        why: "um provento extraordinário pode dominar a janela e não se repetir",
       },
     ],
   },
 
-  dividends_declared: {
-    formula: "Proventos declarados no exercício (DMPL 5.04, dividendos + JCP)",
-    what: "O valor que a controladora debitou do patrimônio como remuneração aos acionistas durante o período — a contrapartida 'de competência' do caixa pago que a coluna dividends mostra.",
+  company_distributions_paid_in_period: {
+    formula: "Proventos pagos no período (DFC da companhia)",
+    what: "O caixa agregado que saiu da companhia para os acionistas durante o período, sem alocação por classe nem por exercício de origem.",
+    strongIn: [
+      {
+        where: "Reconciliação do fluxo de caixa",
+        why: "é o valor absoluto que a DFC registra",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Leitura por papel ou por exercício de lucro",
+        why: "não informa direitos de classe nem qual lucro financiou o pagamento",
+      },
+    ],
+  },
+
+  company_distributions_declared_in_period: {
+    formula: "Proventos declarados no período (DMPL 5.04, dividendos + JCP)",
+    what: "O valor agregado que a controladora debitou do patrimônio como remuneração aos acionistas durante o período.",
     strongIn: [
       {
         where: "Intermediários Financeiros, Energia Elétrica",
-        why: "onde declarar e pagar caem em anos diferentes, a série declarada é a que casa com o lucro do mesmo ano",
+        why: "onde declarar e pagar caem em anos diferentes, as duas séries revelam a defasagem sem atribuir a declaração ao lucro do mesmo ano",
       },
     ],
     weakIn: [
@@ -1134,7 +1216,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "Lido da DMPL da controladora (individual), que é o que os acionistas listados recebem; sem coluna de minoritários para confundir. Quando só existe a DMPL consolidada, o total pode incluir a fatia declarada aos minoritários das controladas.",
+      "A data é a do registro na DMPL. Uma AGO realizada após o fechamento aparece no período seguinte e não é reatribuída ao exercício anterior sem uma fonte estruturada que declare essa relação.",
   },
 
   // ------------------------------------------------------------ escala ---

@@ -70,7 +70,7 @@ async def test_doctor_classifies_value_named_and_unclassified() -> None:
     indicators = Indicators(
         roe=Decimal("0.18"),  # a value
         net_margin=None,  # null, no reason → unclassified
-        null_reasons={"pe": NullReason.MISSING_PRICE},  # a named null
+        null_reasons={"pe_basic": NullReason.MISSING_PRICE},  # a named null
     )
     repo = FakeRepo(
         latest={
@@ -93,7 +93,7 @@ async def test_doctor_classifies_value_named_and_unclassified() -> None:
     assert len(exercise.indicators) == len(indicator_names())
     cells = _cells(exercise)
     assert cells["roe"] == "value"
-    assert cells["pe"] == "missing_price"
+    assert cells["pe_basic"] == "missing_price"
     assert cells["net_margin"] == "unclassified"
     assert exercise.values == 1
     assert exercise.named_nulls == 1
@@ -103,7 +103,8 @@ async def test_doctor_classifies_value_named_and_unclassified() -> None:
 async def test_doctor_names_missing_price_never_a_bare_null() -> None:
     """#42 in miniature: a closed year that lost its price reads as missing_price."""
     priced_out = dict.fromkeys(
-        ("pe", "pb", "psr", "dividend_yield", "ev_ebitda"), NullReason.MISSING_PRICE
+        ("pe_basic", "pb", "company_pe", "psr", "dividend_yield", "ev_ebitda"),
+        NullReason.MISSING_PRICE,
     )
     indicators = Indicators(
         roe=Decimal("0.2"),

@@ -37,6 +37,7 @@ class _MultiPeriodSource:
         return [
             RawFetchResult(
                 module=module,
+                source="cvm",
                 request={"reference_date": f"2025-{3 * (i + 1):02d}-30"},
                 http_status=200,
                 payload={"reference_date": f"2025-{3 * (i + 1):02d}-30"},
@@ -66,6 +67,7 @@ class _CachedConcurrentSource:
         return [
             RawFetchResult(
                 module=module,
+                source="cvm",
                 request={"ticker": ticker},
                 http_status=200,
                 payload={"ticker": ticker},
@@ -122,6 +124,26 @@ async def test_should_store_and_publish_for_each_module() -> None:
     ]
     assert len(repo.items) == 2
     assert len(events) == 2
+
+
+async def test_each_module_is_persisted_under_its_actual_public_source() -> None:
+    repo = FakeRawIngestionRepository()
+    use_case = IngestPortfolioUseCase(
+        FakeDataSource(sources={"CASH_DIVIDEND_B3": "b3"}),
+        repo,
+        EventBus(),
+        ["DRE", "CASH_DIVIDEND_B3"],
+        run_id="run-source",
+        delay_seconds=0,
+        sleep=no_sleep,
+    )
+
+    await use_case.execute(["PETR4"])
+
+    assert [(item.module, item.source) for item in repo.items] == [
+        ("DRE", "cvm"),
+        ("CASH_DIVIDEND_B3", "b3"),
+    ]
 
 
 async def test_bounded_archive_workers_preserve_order_and_measure_cache() -> None:
@@ -377,6 +399,7 @@ class _RegistrantSource:
         return [
             RawFetchResult(
                 module=module,
+                source="cvm",
                 request={"cvm_code": "9512"},
                 http_status=200,
                 payload={},

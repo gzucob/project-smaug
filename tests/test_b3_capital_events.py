@@ -84,6 +84,7 @@ async def test_every_filed_row_is_mirrored_as_b3_publishes_it() -> None:
         results = await source.fetch("BBAS3", CAPITAL_EVENT_B3_MODULE)
 
     assert len(results) == 3  # including the two ISINs of one event
+    assert {result.source for result in results} == {"b3"}
     split = results[0].payload
     # The factor stays a pt-BR string and the label stays B3's own word: a
     # DESDOBRAMENTO of 100 is a 2:1 split, and knowing that is Phase 2's job.
