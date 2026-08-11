@@ -122,15 +122,16 @@ class MarketData:
     ``market_cap`` is the whole company — the sum over its listed share classes
     (ADR 0014), so for a dual-class ticker it is *not* ``price × shares``.
     ``shares`` is the filed total, the denominator of the per-share indicators
-    only. ``cap_null_reason`` carries which input the use case was missing when
-    it could not build the cap, since a null cap alone cannot say whether a class
-    price or a class share count was the one that went missing.
+    only. The two null-reason fields carry which upstream input was missing when
+    a denominator could not be built: a null number alone cannot distinguish an
+    absent filing from an unreadable unit composition or class price.
     """
 
     price: Decimal | None = None
     market_cap: Decimal | None = None
     shares: Decimal | None = None
     cap_null_reason: NullReason | None = None
+    shares_null_reason: NullReason | None = None
 
 
 @dataclass(frozen=True)

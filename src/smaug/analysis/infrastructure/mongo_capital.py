@@ -20,8 +20,9 @@ Two readings of the same filing, for two different jobs:
   Served for every ticker, units included: the cap needs the underlying classes
   precisely because a unit's quote prices a bundle.
 * ``outstanding`` — the total, the denominator of the per-share indicators
-  (LPA/VPA) alone. Suppressed for a unit, whose per-unit price does not line up
-  with a per-underlying-share figure (#38). See ``portfolio.domain.share_classes``.
+  (LPA/VPA) alone. A unit divides that underlying total by its FCA bundle count;
+  when the FCA identifies a unit but its composition is unreadable, the result
+  is null rather than silently reverting to the underlying-share denominator.
 """
 
 from __future__ import annotations
@@ -42,9 +43,10 @@ from smaug.analysis.domain.capital import (
     restatement_timeline,
 )
 from smaug.analysis.domain.financials import CapitalComposition, ShareCounts
+from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.ports import BaseChangeReader
 from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
-from smaug.portfolio.domain.company import RegistrantResolver
+from smaug.portfolio.domain.company import RegistrantResolver, UnitResolver, no_units
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -214,6 +216,7 @@ class MongoSharesReader:
         registrant_resolver: RegistrantResolver = no_registrant,
         base_changes: BaseChangeReader | None = None,
         unit_composition_resolver: Callable[[str], int | None] = _no_unit_composition,
+        unit_resolver: UnitResolver = no_units,
     ) -> None:
         self._collection = collection
         self._registrant = registrant_resolver
@@ -225,6 +228,7 @@ class MongoSharesReader:
         # #212) — curated for no ticker, injected by the CLI like every other
         # registry-backed resolver.
         self._unit_composition = unit_composition_resolver
+        self._is_unit = unit_resolver
 
     async def outstanding(self, ticker: str, year: int) -> Decimal | None:
         filed = await self.counts(ticker, year)
@@ -236,7 +240,19 @@ class MongoSharesReader:
             # per-*unit* LPA/VPA divide by the number of units — the earnings and
             # book value that pair with the unit's own quoted price (#38).
             return filed.total / per_unit
+        if self._is_unit(ticker):
+            logger.warning(
+                "No readable FCA unit composition for %s; per-unit shares are null",
+                ticker,
+            )
+            return None
         return filed.total
+
+    def outstanding_null_reason(self, ticker: str, year: int) -> NullReason | None:
+        """Name an unreadable unit denominator separately from a missing filing."""
+        if self._is_unit(ticker) and self._unit_composition(ticker) is None:
+            return NullReason.MISSING_UNIT_COMPOSITION
+        return None
 
     async def counts(self, ticker: str, year: int) -> ShareCounts | None:
         """The issued classes net of treasury, restated onto the current base.

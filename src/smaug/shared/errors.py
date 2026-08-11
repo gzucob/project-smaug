@@ -24,6 +24,15 @@ class UnknownTickerError(SmaugError):
         super().__init__(f"Unknown ticker: {ticker} (not in portfolio)")
 
 
+class IneligibleInstrumentError(SmaugError):
+    """A known FCA security that fundamental analysis deliberately excludes."""
+
+    def __init__(self, ticker: str, reason: str) -> None:
+        self.ticker = ticker
+        self.reason = reason
+        super().__init__(f"Ineligible instrument: {ticker} ({reason})")
+
+
 class SourceError(SmaugError):
     """Base for failures while talking to a data source.
 

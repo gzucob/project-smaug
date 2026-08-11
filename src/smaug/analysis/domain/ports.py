@@ -21,6 +21,7 @@ from smaug.analysis.domain.financials import (
     StandardizedFinancials,
     YearPrices,
 )
+from smaug.analysis.domain.indicators import NullReason
 
 
 class FundamentalsReader(Protocol):
@@ -107,6 +108,10 @@ class SharesReader(Protocol):
 
     async def outstanding(self, ticker: str, year: int) -> Decimal | None:
         """Total shares as of ``year``, or the nearest earlier year on file."""
+        ...
+
+    def outstanding_null_reason(self, ticker: str, year: int) -> NullReason | None:
+        """A structural reason the per-security denominator is unavailable."""
         ...
 
     async def counts(self, ticker: str, year: int) -> ShareCounts | None:

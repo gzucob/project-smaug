@@ -149,9 +149,21 @@ async def test_a_unit_has_no_dividend_basis_at_all() -> None:
     coincide, which for a company that pays is the one thing certainly false.
     """
     inner = FakeSessions([_close("2025-01-02", "10")])
-    provider = DividendAdjustedPriceProvider(inner, FakeEvents([]))
+    provider = DividendAdjustedPriceProvider(
+        inner, FakeEvents([]), unit_resolver=lambda ticker: ticker == "TAEE11"
+    )
 
     prices = await provider.year_prices("TAEE11", 2025)
 
     assert prices.nominal_avg == 10
     assert prices.adjusted_avg is None
+
+
+async def test_a_non_unit_suffix_11_security_does_not_take_the_unit_branch() -> None:
+    inner = FakeSessions([_close("2025-01-02", "10")])
+    provider = DividendAdjustedPriceProvider(inner, FakeEvents([]))
+
+    prices = await provider.year_prices("BEEF11", 2025)
+
+    assert prices.nominal_avg == 10
+    assert prices.adjusted_avg == 10

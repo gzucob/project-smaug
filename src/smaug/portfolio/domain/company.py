@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
+from enum import StrEnum
 
 from smaug.portfolio.domain.share_classes import ShareClass
 
@@ -20,6 +21,27 @@ from smaug.portfolio.domain.share_classes import ShareClass
 # every reader of it takes one of these — registry-backed, unconditionally
 # (#212), exactly like ``SectorResolver``.
 RegistrantResolver = Callable[[str], str | None]
+
+
+class InstrumentKind(StrEnum):
+    """The security type the FCA assigns to one trading code."""
+
+    COMMON_SHARE = "common_share"
+    PREFERRED_SHARE = "preferred_share"
+    UNIT = "unit"
+    SUBSCRIPTION_WARRANT = "subscription_warrant"
+    SUBSCRIPTION_RECEIPT = "subscription_receipt"
+    DEPOSITARY_RECEIPT = "depositary_receipt"
+    OTHER = "other"
+
+
+_FUNDAMENTAL_INSTRUMENTS = frozenset(
+    {
+        InstrumentKind.COMMON_SHARE,
+        InstrumentKind.PREFERRED_SHARE,
+        InstrumentKind.UNIT,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -32,6 +54,14 @@ class CompanyIdentity:
     denom: str  # company name (``Nome_Empresarial``)
     cvm_sector: str  # CVM ``Setor_Atividade`` — a single, coarse activity label
     situation: str  # ``Situacao_Registro_CVM`` (e.g. "Ativo", "Cancelado")
+    instrument_kind: InstrumentKind
+    # The FCA's own ``Valor_Mobiliario`` label, kept verbatim so rejecting a
+    # non-equity code can name what the regulator says it is.
+    instrument_type: str
+    # End of this security's trading interval. ``None`` means the FCA row is
+    # current; a dated identity remains resolvable for an explicit diagnosis but
+    # does not enter the listed-equity universe.
+    trading_ended: date | None = None
     # When this security was admitted to listing, per the FCA's
     # ``Data_Inicio_Listagem`` — the registrant's record, not a vendor's. It tells
     # a year that precedes the instrument apart from a year a price source merely
@@ -44,8 +74,31 @@ class CompanyIdentity:
     # ON/PN equity (e.g. a BDR- or unit-only line); the cap then stays null.
     share_classes: tuple[ShareClass, ...] = field(default_factory=tuple)
     # Underlying shares one unit of *this* ticker bundles, parsed from the FCA's
-    # own ``Composicao_BDR_Unit`` text (e.g. "1 KLBN3 + 4 KLBN4" -> 3). ``None``
-    # for a ticker that is not a unit — the per-share indicators then divide by
-    # the filed total directly (#212, generalizing the old hand-picked
-    # ``UNIT_COMPOSITION`` to any unit ticker the FCA lists).
+    # own ``Composicao_BDR_Unit`` text (e.g. "1 KLBN3 + 4 KLBN4" -> 5). ``None``
+    # for a non-unit or an unreadable unit composition. The explicit
+    # ``instrument_kind`` distinguishes those cases so the latter becomes a
+    # named null instead of falling back to the filed underlying total.
     shares_per_unit: int | None = None
+
+
+UnitResolver = Callable[[str], bool]
+
+
+def is_unit(identity: CompanyIdentity) -> bool:
+    """Whether the resolved FCA identity is a unit."""
+    return identity.instrument_kind is InstrumentKind.UNIT
+
+
+def no_units(_ticker: str) -> bool:
+    """The default resolver when no FCA identity map was wired."""
+    return False
+
+
+def fundamental_exclusion(identity: CompanyIdentity) -> str | None:
+    """Why an FCA security cannot enter fundamental analysis, if anything."""
+    if identity.trading_ended is not None:
+        return f"trading ended on {identity.trading_ended.isoformat()}"
+    if identity.instrument_kind not in _FUNDAMENTAL_INSTRUMENTS:
+        label = identity.instrument_type or identity.instrument_kind.value
+        return f"FCA instrument type is {label!r}"
+    return None

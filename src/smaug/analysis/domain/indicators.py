@@ -28,7 +28,8 @@ class NullReason(StrEnum):
       account for this regime; computable in principle, not implemented.
     * ``SOURCE_ACCOUNT_ABSENT`` — we looked for the account and the filing has
       no such line (e.g. no dividend outflow in the DFC that year).
-    * ``MISSING_PRICE`` / ``MISSING_SHARE_COUNT`` / ``MISSING_PRIOR_PERIOD`` —
+    * ``MISSING_PRICE`` / ``MISSING_SHARE_COUNT`` /
+      ``MISSING_UNIT_COMPOSITION`` / ``MISSING_PRIOR_PERIOD`` —
       an upstream input from another source is missing (the quote series, the
       FRE share count, the prior year's ingestion), split so a report can say
       *which*. ``MISSING_PRICE`` is the *transient* price miss (no session for
@@ -67,6 +68,7 @@ class NullReason(StrEnum):
     PRICE_SYMBOL_NOT_FOUND = "price_symbol_not_found"
     NOT_YET_LISTED = "not_yet_listed"
     MISSING_SHARE_COUNT = "missing_share_count"
+    MISSING_UNIT_COMPOSITION = "missing_unit_composition"
     MISSING_PRIOR_PERIOD = "missing_prior_period"
     ZERO_DENOMINATOR = "zero_denominator"
     NON_POSITIVE_ENDPOINT = "non_positive_endpoint"

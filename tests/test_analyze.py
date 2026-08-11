@@ -17,7 +17,6 @@ from smaug.analysis.domain.financials import (
 )
 from smaug.analysis.domain.indicators import NullReason
 from smaug.portfolio.domain.sectors import Sector
-from smaug.portfolio.domain.share_classes import is_unit
 from smaug.shared.errors import SourceForbiddenError, SourceTimeoutError
 from tests.fakes import fake_classes_resolver
 
@@ -100,10 +99,13 @@ class FakeShares:
         self._by_year = by_year or {}
 
     async def outstanding(self, ticker: str, year: int) -> Decimal | None:
-        if is_unit(ticker):
+        if ticker in {"SAPR11", "TAEE11"}:
             return None
         filed = self._by_year.get(year)
         return filed.total if filed is not None else None
+
+    def outstanding_null_reason(self, ticker: str, year: int) -> NullReason | None:
+        return None
 
     async def counts(self, ticker: str, year: int) -> ShareCounts | None:
         return self._by_year.get(year)

@@ -293,8 +293,8 @@ def fake_classes_resolver(ticker: str) -> tuple[ShareClass, ...]:
     return _FAKE_CLASSES.get(ticker, ())
 
 
-# Underlying shares one unit bundles — both fixtures' units are 1 ON + 2 PN.
-_FAKE_UNIT_COMPOSITION: dict[str, int] = {"SAPR11": 3, "TAEE11": 3}
+# Underlying shares one unit bundles, as the FCA declares each composition.
+_FAKE_UNIT_COMPOSITION: dict[str, int] = {"SAPR11": 5, "TAEE11": 3}
 
 
 def fake_unit_composition_resolver(ticker: str) -> int | None:
