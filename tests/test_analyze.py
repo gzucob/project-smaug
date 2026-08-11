@@ -260,35 +260,41 @@ async def test_analyze_capitalizes_a_unit_from_its_underlying_classes() -> None:
     assert saved.indicators.null_reasons["eps"] is NullReason.MISSING_SHARE_COUNT
 
 
-async def test_analyze_computes_growth_against_prior_year_annual() -> None:
-    # TTM window ends 2026-06-30 (year 2026); the prior closed year (2025 DFP) is
-    # the year-over-year growth base. Only two quarters fall in 2025, so build_ttm
-    # does not treat the annual as a Q4 source — it stays the growth comparator.
-    ends = (
-        date(2025, 9, 30),
-        date(2025, 12, 31),
-        date(2026, 3, 31),
-        date(2026, 6, 30),
-    )
+async def test_analyze_compares_ttm_growth_with_the_prior_comparable_ttm() -> None:
+    # Current TTM through Q2/2026 is Q3/Q4 2025 + Q1/Q2 2026 = 1200.
+    # Its prior comparable TTM is Q3/Q4 2024 + Q1/Q2 2025 = 600. Q4 in each
+    # window is reconstructed from the respective DFP, as it is in CVM filings.
     quarters = [
         StandardizedFinancials(
-            reference_date=end,
+            reference_date=date(year, month, day),
             sector=Sector.COMMODITY,
-            revenue=Decimal(1000),
-            net_income=Decimal(300),
+            revenue=Decimal(value),
+            net_income=Decimal(value) / Decimal(10),
             equity=Decimal(6000),
         )
-        for end in ends
+        for year, month, day, value in (
+            (2024, 3, 31, 100),
+            (2024, 6, 30, 100),
+            (2024, 9, 30, 100),
+            (2025, 3, 31, 200),
+            (2025, 6, 30, 200),
+            (2025, 9, 30, 200),
+            (2026, 3, 31, 400),
+            (2026, 6, 30, 400),
+        )
     ]
-    prior = StandardizedFinancials(
-        reference_date=date(2025, 12, 31),
-        sector=Sector.COMMODITY,
-        revenue=Decimal(3200),
-        net_income=Decimal(1000),
-    )
+    annuals = [
+        StandardizedFinancials(
+            reference_date=date(year, 12, 31),
+            sector=Sector.COMMODITY,
+            revenue=Decimal(revenue),
+            net_income=Decimal(revenue) / Decimal(10),
+        )
+        for year, revenue in ((2024, 400), (2025, 800))
+    ]
     repo = FakeRepo()
     use_case = AnalyzePortfolioUseCase(
-        FakeReader({"PETR4": quarters}, annuals={"PETR4": [prior]}),
+        FakeReader({"PETR4": quarters}, annuals={"PETR4": annuals}),
         FakePrice(MarketData(price=Decimal(10))),
         repo,
         FakeShares(),
@@ -298,8 +304,97 @@ async def test_analyze_computes_growth_against_prior_year_annual() -> None:
     await use_case.execute(["PETR4"])
 
     ind = repo.saved[0].indicators
-    assert ind.revenue_growth == Decimal("0.25")  # (4000 - 3200) / 3200
-    assert ind.net_income_growth == Decimal("0.2")  # (1200 - 1000) / 1000
+    assert ind.revenue_growth == Decimal(1)  # (1200 - 600) / 600
+    assert ind.net_income_growth == Decimal(1)
+
+
+async def test_analyze_does_not_fall_back_to_an_annual_for_ttm_growth() -> None:
+    quarters = [
+        StandardizedFinancials(
+            reference_date=end,
+            sector=Sector.COMMODITY,
+            revenue=Decimal(1000),
+            net_income=Decimal(300),
+        )
+        for end in (
+            date(2025, 9, 30),
+            date(2025, 12, 31),
+            date(2026, 3, 31),
+            date(2026, 6, 30),
+        )
+    ]
+    prior_annual = StandardizedFinancials(
+        reference_date=date(2025, 12, 31),
+        sector=Sector.COMMODITY,
+        revenue=Decimal(3200),
+        net_income=Decimal(1000),
+    )
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"PETR4": quarters}, annuals={"PETR4": [prior_annual]}),
+        FakePrice(MarketData(price=Decimal(10))),
+        repo,
+        FakeShares(),
+        classes_resolver=fake_classes_resolver,
+    )
+
+    await use_case.execute(["PETR4"])
+
+    ind = repo.saved[0].indicators
+    assert ind.revenue_growth is None
+    assert ind.net_income_growth is None
+    assert ind.null_reasons["revenue_growth"] is NullReason.MISSING_PRIOR_PERIOD
+    assert ind.null_reasons["net_income_growth"] is NullReason.MISSING_PRIOR_PERIOD
+
+
+async def test_december_ttm_growth_matches_closed_year_growth() -> None:
+    quarters = [
+        StandardizedFinancials(
+            reference_date=date(year, month, day),
+            sector=Sector.COMMODITY,
+            revenue=Decimal(revenue),
+            net_income=Decimal(revenue) / Decimal(10),
+        )
+        for year, revenue in ((2024, 100), (2025, 200))
+        for month, day in ((3, 31), (6, 30), (9, 30))
+    ]
+    annuals = [
+        StandardizedFinancials(
+            reference_date=date(year, 12, 31),
+            sector=Sector.COMMODITY,
+            revenue=Decimal(revenue),
+            net_income=Decimal(revenue) / Decimal(10),
+        )
+        for year, revenue in ((2024, 400), (2025, 800))
+    ]
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"PETR4": quarters}, annuals={"PETR4": annuals}),
+        FakePrice(
+            MarketData(price=Decimal(10)),
+            year=YearPrices(nominal_avg=Decimal(10)),
+        ),
+        repo,
+        FakeShares(),
+        classes_resolver=fake_classes_resolver,
+    )
+
+    analyses = (await use_case.execute(["PETR4"])).analyses
+
+    ttm = next(analysis for analysis in analyses if analysis.view == "ttm_live")
+    year = next(
+        analysis
+        for analysis in analyses
+        if analysis.view == "closed_year"
+        and analysis.reference_date == date(2025, 12, 31)
+    )
+    assert ttm.reference_date == year.reference_date
+    assert ttm.indicators.revenue_growth == year.indicators.revenue_growth == Decimal(1)
+    assert (
+        ttm.indicators.net_income_growth
+        == year.indicators.net_income_growth
+        == Decimal(1)
+    )
 
 
 async def test_analyze_produces_ttm_and_closed_year_views() -> None:

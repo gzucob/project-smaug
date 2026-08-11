@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal
 
 from smaug.analysis.domain.financials import AccountingRegime, StandardizedFinancials
-from smaug.analysis.domain.ttm import _FLOW_FIELDS, build_ttm
+from smaug.analysis.domain.ttm import _FLOW_FIELDS, build_ttm, build_ttm_as_of
 from smaug.portfolio.domain.sectors import Sector
 
 
@@ -230,6 +230,61 @@ def test_ttm_normalizes_ytd_quarters_and_derives_q4_from_annual() -> None:
     assert ttm.revenue == Decimal(500)
     assert ttm.reference_date == date(2025, 12, 31)  # window ends on the closed year
     assert ttm.equity == Decimal(8000)  # stock from the annual (latest balance)
+
+
+def test_ttm_as_of_selects_the_exact_comparable_interim_window() -> None:
+    quarters = [
+        _q(date(year, month, day), revenue=Decimal(value))
+        for year, month, day, value in (
+            (2024, 3, 31, 10),
+            (2024, 6, 30, 20),
+            (2024, 9, 30, 30),
+            (2024, 12, 31, 40),
+            (2025, 3, 31, 50),
+            (2025, 6, 30, 60),
+            (2025, 9, 30, 70),
+        )
+    ]
+
+    q1 = build_ttm_as_of(quarters, [], date(2025, 3, 31))
+    q2 = build_ttm_as_of(quarters, [], date(2025, 6, 30))
+    q3 = build_ttm_as_of(quarters, [], date(2025, 9, 30))
+
+    assert q1 is not None
+    assert q2 is not None
+    assert q3 is not None
+    assert q1.revenue == Decimal(140)  # Q2/24 through Q1/25
+    assert q2.revenue == Decimal(180)  # Q3/24 through Q2/25
+    assert q3.revenue == Decimal(220)  # Q4/24 through Q3/25
+
+
+def test_ttm_as_of_derives_the_closed_fourth_quarter() -> None:
+    quarters = [
+        _q(date(2024, month, day), revenue=Decimal(value))
+        for month, day, value in ((3, 31, 100), (6, 30, 110), (9, 30, 120))
+    ]
+    annual = _q(date(2024, 12, 31), revenue=Decimal(500))
+
+    ttm = build_ttm_as_of(quarters, [annual], date(2024, 12, 31))
+
+    assert ttm is not None
+    assert ttm.reference_date == annual.reference_date
+    assert ttm.revenue == annual.revenue  # Q4 = 500 - (100 + 110 + 120)
+
+
+def test_ttm_as_of_does_not_reach_past_a_missing_quarter() -> None:
+    quarters = [
+        _q(end, revenue=Decimal(100))
+        for end in (
+            date(2024, 3, 31),
+            # Q2/2024 is absent: Q1 must not silently replace it.
+            date(2024, 9, 30),
+            date(2024, 12, 31),
+            date(2025, 3, 31),
+        )
+    ]
+
+    assert build_ttm_as_of(quarters, [], date(2025, 3, 31)) is None
 
 
 def test_ttm_isolates_dfc_flows_on_their_own_year_to_date_span() -> None:

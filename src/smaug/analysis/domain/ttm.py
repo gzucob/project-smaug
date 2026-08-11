@@ -121,6 +121,45 @@ def build_ttm(
     Returns ``None`` when fewer than four isolated quarters can be assembled (the
     window would not span 12 months), so the caller degrades instead of lying.
     """
+    return _build_ttm(quarters, annual)
+
+
+def build_ttm_as_of(
+    quarters: list[StandardizedFinancials],
+    annuals: list[StandardizedFinancials],
+    end: date,
+) -> StandardizedFinancials | None:
+    """Assemble the exact trailing window ending on ``end``.
+
+    This is the comparable-period primitive used by TTM growth. It deliberately
+    refuses an older substitute when one of the four required quarters is
+    absent: four observations spread over more than twelve months are not a TTM.
+    The latest annual available by ``end`` remains eligible to derive its Q4.
+    """
+    eligible_quarters = [q for q in quarters if q.reference_date <= end]
+    eligible_annuals = [a for a in annuals if a.reference_date <= end]
+    annual = (
+        max(eligible_annuals, key=lambda item: item.reference_date)
+        if eligible_annuals
+        else None
+    )
+    return _build_ttm(eligible_quarters, annual, required_end=end)
+
+
+def _year_before(value: date) -> date:
+    """The same fiscal date one year earlier, including a leap-day fallback."""
+    try:
+        return value.replace(year=value.year - 1)
+    except ValueError:
+        return value.replace(year=value.year - 1, day=28)
+
+
+def _build_ttm(
+    quarters: list[StandardizedFinancials],
+    annual: StandardizedFinancials | None,
+    *,
+    required_end: date | None = None,
+) -> StandardizedFinancials | None:
     if not quarters:
         return None
 
@@ -148,6 +187,10 @@ def build_ttm(
 
     refs = sorted(isolated, reverse=True)[:_TTM_QUARTERS]
     if len(refs) < _TTM_QUARTERS:
+        return None
+    if required_end is not None and (
+        refs[0] != required_end or refs[-1] <= _year_before(required_end)
+    ):
         return None
 
     summed: Flows = {}
