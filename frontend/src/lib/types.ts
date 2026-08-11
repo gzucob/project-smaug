@@ -63,17 +63,20 @@ export interface Indicators {
   ebitda_cagr_5y: Decimalish;
   ebit_cagr_5y: Decimalish;
   net_income_cagr_5y: Decimalish;
-  pe: Decimalish;
+  pe_basic: Decimalish;
+  pe_diluted: Decimalish;
   pb: Decimalish;
+  company_pe: Decimalish;
+  company_pb: Decimalish;
   psr: Decimalish;
   price_to_assets: Decimalish;
   price_to_ebit: Decimalish;
   price_to_working_capital: Decimalish;
-  payout: Decimalish;
   dividend_yield: Decimalish;
-  // Declared basis (#104): the DMPL equity charge, not the DFC cash outflow.
-  payout_declared: Decimalish;
-  dividend_yield_declared: Decimalish;
+  payout_cash_paid_in_period: Decimalish;
+  payout_declared_in_period: Decimalish;
+  company_cash_yield_paid_in_period: Decimalish;
+  company_yield_declared_in_period: Decimalish;
   ev_ebitda: Decimalish;
   ev_ebit: Decimalish;
   fcf: Decimalish;
@@ -86,8 +89,9 @@ export interface Indicators {
   revenue: Decimalish;
   net_income: Decimalish;
   net_income_total: Decimalish;
-  dividends: Decimalish;
-  dividends_declared: Decimalish;
+  distributions_per_security: Decimalish;
+  company_distributions_paid_in_period: Decimalish;
+  company_distributions_declared_in_period: Decimalish;
   // Balance-sheet scale in absolute reais (#142) — the ratios divide these away,
   // so a chart of the two sides of the balance sheet needs the sides themselves.
   total_assets: Decimalish;
@@ -120,6 +124,8 @@ export type NullReason =
   | "missing_cpc41_disclosure"
   | "missing_weighted_average_shares"
   | "missing_economic_rights"
+  | "missing_cash_distributions"
+  | "missing_cash_distribution_value"
   | "missing_prior_period"
   | "zero_denominator"
   | "non_positive_endpoint";

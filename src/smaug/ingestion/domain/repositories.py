@@ -37,9 +37,13 @@ class RawIngestionRepository(Protocol):
         ...
 
     async def mirrored_for(
-        self, module: str, *, artifact_id: str | None = None
+        self,
+        module: str,
+        *,
+        source: str,
+        artifact_id: str | None = None,
     ) -> set[str]:
-        """Registrants holding ``module``, scoped to immutable source content."""
+        """Registrants holding ``source``/``module`` and immutable content."""
         ...
 
 

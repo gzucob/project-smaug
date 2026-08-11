@@ -971,25 +971,39 @@ def _parser_identities(modules: Sequence[str]) -> tuple[ParserIdentity, ...]:
     return tuple(dict.fromkeys(_parser_by_module(modules).values()))
 
 
+_MODULE_ADAPTERS = {
+    CAPITAL_MODULE: (CvmCapitalSource.parser_identity, CvmCapitalSource.source),
+    TREASURY_MODULE: (CvmTreasurySource.parser_identity, CvmTreasurySource.source),
+    CAPITAL_EVENT_MODULE: (
+        CvmCapitalEventSource.parser_identity,
+        CvmCapitalEventSource.source,
+    ),
+    CAPITAL_EVENT_B3_MODULE: (
+        B3CapitalEventSource.parser_identity,
+        B3CapitalEventSource.source,
+    ),
+    CASH_DIVIDEND_B3_MODULE: (
+        B3CashDividendSource.parser_identity,
+        B3CashDividendSource.source,
+    ),
+}
+_DEFAULT_ADAPTER = (CvmDataSource.parser_identity, CvmDataSource.source)
+
+
 def _parser_by_module(modules: Sequence[str]) -> dict[str, ParserIdentity]:
     """Current parser identity for every requested module."""
-    routes = {
-        CAPITAL_MODULE: CvmCapitalSource.parser_identity,
-        TREASURY_MODULE: CvmTreasurySource.parser_identity,
-        CAPITAL_EVENT_MODULE: CvmCapitalEventSource.parser_identity,
-        CAPITAL_EVENT_B3_MODULE: B3CapitalEventSource.parser_identity,
-        CASH_DIVIDEND_B3_MODULE: B3CashDividendSource.parser_identity,
-    }
     return {
-        module: routes.get(module.upper(), CvmDataSource.parser_identity)
+        module: _MODULE_ADAPTERS.get(module.upper(), _DEFAULT_ADAPTER)[0]
         for module in modules
     }
 
 
 def _source_by_module(modules: Sequence[str]) -> dict[str, str]:
     """Name the public source endpoint backing each configured module."""
-    b3_modules = {CAPITAL_EVENT_B3_MODULE, CASH_DIVIDEND_B3_MODULE}
-    return {module: "b3" if module in b3_modules else "cvm" for module in modules}
+    return {
+        module: _MODULE_ADAPTERS.get(module.upper(), _DEFAULT_ADAPTER)[1]
+        for module in modules
+    }
 
 
 @app.command("ingestion-runs")
@@ -1080,9 +1094,12 @@ async def _work_plan(
         module: await source.artifact_for(module) for module in modules
     }
     done: dict[str, set[str]] = {}
+    sources = _source_by_module(modules)
     for module, artifact in artifacts.items():
         done[module] = await repository.mirrored_for(
-            module, artifact_id=artifact.artifact_id if artifact is not None else None
+            module,
+            source=sources[module],
+            artifact_id=artifact.artifact_id if artifact is not None else None,
         )
     plan: dict[str, tuple[str, ...]] = {}
     for ticker in wanted:
@@ -1284,6 +1301,7 @@ async def _run_analyze(
             cash_events = MongoCashEventReader(
                 mongo[settings.mongo_db]["raw_ingestions"],
                 registrant_resolver=registrant,
+                validation_collection=mongo[settings.mongo_db]["ingestion_validations"],
             )
             use_case = AnalyzePortfolioUseCase(
                 reader=MongoFundamentalsReader(
@@ -1303,6 +1321,8 @@ async def _run_analyze(
                 shares_reader=shares_reader,
                 classification_resolver=_classification_resolver(identities),
                 classes_resolver=_classes_resolver(identities),
+                cash_event_reader=cash_events,
+                per_share_resolver=_per_share_resolver(identities),
             )
             run = await use_case.execute(tickers)
     finally:
@@ -1868,7 +1888,8 @@ def format_analysis(analyses: list[TickerAnalysis]) -> str:
             f"  gross {_pct(i.gross_margin)}  EBITDA mgn {_pct(i.ebitda_margin)}"
         )
         lines.append(
-            f"  P/L {_num(i.pe)}  P/VP {_num(i.pb)}  EV/EBITDA {_num(i.ev_ebitda)}"
+            f"  P/L básico {_num(i.pe_basic)}  P/VP {_num(i.pb)}"
+            f"  EV/EBITDA {_num(i.ev_ebitda)}"
             f"  DY {_pct(i.dividend_yield)}"
         )
         lines.append(

@@ -73,6 +73,7 @@ _RULES = (
 class B3CapitalEventSource:
     """Fetch the corporate actions B3 publishes for one ticker's company."""
 
+    source = "b3"
     parser_identity = ParserIdentity("b3.capital-events.json", 1)
 
     def __init__(
@@ -147,6 +148,7 @@ class B3CapitalEventSource:
         return [
             RawFetchResult(
                 module=module,
+                source="b3",
                 request={
                     "source": "b3",
                     "endpoint": "GetListedSupplementCompany",

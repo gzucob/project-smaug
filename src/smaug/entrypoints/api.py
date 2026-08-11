@@ -82,16 +82,20 @@ class IndicatorsResponse(BaseModel):
     ebitda_cagr_5y: Decimal | None
     ebit_cagr_5y: Decimal | None
     net_income_cagr_5y: Decimal | None
-    pe: Decimal | None
+    pe_basic: Decimal | None
+    pe_diluted: Decimal | None
     pb: Decimal | None
+    company_pe: Decimal | None
+    company_pb: Decimal | None
     psr: Decimal | None
     price_to_assets: Decimal | None
     price_to_ebit: Decimal | None
     price_to_working_capital: Decimal | None
-    payout: Decimal | None
     dividend_yield: Decimal | None
-    payout_declared: Decimal | None
-    dividend_yield_declared: Decimal | None
+    payout_cash_paid_in_period: Decimal | None
+    payout_declared_in_period: Decimal | None
+    company_cash_yield_paid_in_period: Decimal | None
+    company_yield_declared_in_period: Decimal | None
     ev_ebitda: Decimal | None
     ev_ebit: Decimal | None
     fcf: Decimal | None
@@ -103,8 +107,9 @@ class IndicatorsResponse(BaseModel):
     revenue: Decimal | None
     net_income: Decimal | None
     net_income_total: Decimal | None
-    dividends: Decimal | None
-    dividends_declared: Decimal | None
+    distributions_per_security: Decimal | None
+    company_distributions_paid_in_period: Decimal | None
+    company_distributions_declared_in_period: Decimal | None
     total_assets: Decimal | None
     total_liabilities: Decimal | None
     equity: Decimal | None

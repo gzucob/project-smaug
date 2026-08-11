@@ -72,6 +72,8 @@ class NullReason(StrEnum):
     MISSING_CPC41_DISCLOSURE = "missing_cpc41_disclosure"
     MISSING_WEIGHTED_AVERAGE_SHARES = "missing_weighted_average_shares"
     MISSING_ECONOMIC_RIGHTS = "missing_economic_rights"
+    MISSING_CASH_DISTRIBUTIONS = "missing_cash_distributions"
+    MISSING_CASH_DISTRIBUTION_VALUE = "missing_cash_distribution_value"
     MISSING_PRIOR_PERIOD = "missing_prior_period"
     ZERO_DENOMINATOR = "zero_denominator"
     NON_POSITIVE_ENDPOINT = "non_positive_endpoint"
@@ -137,22 +139,29 @@ class Indicators:
     ebitda_cagr_5y: Decimal | None = None
     ebit_cagr_5y: Decimal | None = None
     net_income_cagr_5y: Decimal | None = None
-    # Market multiples
-    pe: Decimal | None = None
+    # Per-security valuation multiples. P/E names its CPC 41 denominator; P/B
+    # uses the security's own price and the documented closing BVPS allocation.
+    pe_basic: Decimal | None = None
+    pe_diluted: Decimal | None = None
     pb: Decimal | None = None
+    # Whole-company counterparts retained under an explicit scope. Sibling
+    # classes share these because both numerator and denominator cover the firm.
+    company_pe: Decimal | None = None
+    company_pb: Decimal | None = None
     psr: Decimal | None = None  # P/Receita — price / sales
     price_to_assets: Decimal | None = None
     price_to_ebit: Decimal | None = None
     price_to_working_capital: Decimal | None = None
-    payout: Decimal | None = None  # dividends paid / net income
+    # B3 cash rights per security over the view's stated ex-date window / the
+    # analyzed security price on that view's stated price basis.
     dividend_yield: Decimal | None = None
-    # The declared basis (#104): dividends + JCP the parent charged against
-    # equity in the period (DMPL), not the cash that left (DFC). The two answer
-    # different questions — the cash paid in a year was often declared on the
-    # prior year's profit — and the declared one reconciles to the distribution
-    # the company records against equity.
-    payout_declared: Decimal | None = None  # dividends declared / net income
-    dividend_yield_declared: Decimal | None = None
+    # Company-level timing ratios. Neither claims exercise attribution: a
+    # post-closing AGM belongs to the period in which the DMPL records the
+    # declaration, while DFC follows when cash actually left.
+    payout_cash_paid_in_period: Decimal | None = None
+    payout_declared_in_period: Decimal | None = None
+    company_cash_yield_paid_in_period: Decimal | None = None
+    company_yield_declared_in_period: Decimal | None = None
     ev_ebitda: Decimal | None = None
     ev_ebit: Decimal | None = None
     # Free cash flow (CFO − capex)
@@ -173,8 +182,9 @@ class Indicators:
     revenue: Decimal | None = None
     net_income: Decimal | None = None  # controllers' slice — pairs with eps
     net_income_total: Decimal | None = None  # consolidated, minority included
-    dividends: Decimal | None = None
-    dividends_declared: Decimal | None = None  # DMPL charge, not the DFC cash
+    distributions_per_security: Decimal | None = None
+    company_distributions_paid_in_period: Decimal | None = None
+    company_distributions_declared_in_period: Decimal | None = None
     # Balance-sheet scale (absolute reais, at the period's closing instant).
     # Persisted for the same reason as the flows above: the ratios divide the two
     # sides away, so what the company owns against what it owes cannot be

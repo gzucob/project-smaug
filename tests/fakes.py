@@ -87,12 +87,17 @@ class FakeRawIngestionRepository:
         )
 
     async def mirrored_for(
-        self, module: str, *, artifact_id: str | None = None
+        self,
+        module: str,
+        *,
+        source: str,
+        artifact_id: str | None = None,
     ) -> set[str]:
         return {
             item.cvm_code
             for item in self.items
-            if item.module == module
+            if item.source == source
+            and item.module == module
             and item.cvm_code is not None
             and (artifact_id is None or item.artifact_id == artifact_id)
         }
@@ -217,9 +222,11 @@ class FakeDataSource:
         *,
         errors: dict[tuple[str, str], Exception] | None = None,
         payloads: dict[tuple[str, str], dict[str, Any]] | None = None,
+        sources: dict[str, str] | None = None,
     ) -> None:
         self._errors = errors or {}
         self._payloads = payloads or {}
+        self._sources = sources or {}
         self.calls: list[tuple[str, str]] = []
 
     async def fetch(self, ticker: str, module: str) -> list[RawFetchResult]:
@@ -232,6 +239,7 @@ class FakeDataSource:
         return [
             RawFetchResult(
                 module=module,
+                source=self._sources.get(module, "cvm"),
                 request={"params": {"modules": module}},
                 http_status=200,
                 payload=payload,

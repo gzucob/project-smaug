@@ -94,6 +94,7 @@ _RULES = (
 class B3CashDividendSource:
     """Fetch every cash payout B3 lists for one ticker's company."""
 
+    source = "b3"
     parser_identity = ParserIdentity("b3.cash-dividends.json", 1)
 
     def __init__(
@@ -171,6 +172,7 @@ class B3CashDividendSource:
         return [
             RawFetchResult(
                 module=module,
+                source="b3",
                 request={
                     "source": "b3",
                     "endpoint": "GetListedCashDividends",

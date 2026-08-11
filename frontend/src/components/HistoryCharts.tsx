@@ -55,10 +55,10 @@ const GROUPS: ChartGroup[] = [
         seriesLabel: "Lucro líquido",
       },
       {
-        key: "dividends",
-        label: "Dividendos",
-        hint: "Proventos pagos no exercício",
-        kind: "money",
+        key: "distributions_per_security",
+        label: "Proventos por papel",
+        hint: "Direitos de caixa B3 com data ex no exercício",
+        kind: "price",
       },
       {
         key: "fcf",

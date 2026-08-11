@@ -22,6 +22,7 @@ from smaug.analysis.domain.financials import (
     YearPrices,
 )
 from smaug.analysis.domain.indicators import NullReason
+from smaug.portfolio.domain.share_classes import PerShareClass
 
 
 class FundamentalsReader(Protocol):
@@ -164,8 +165,10 @@ class CashEventReader(Protocol):
     price basis (ADR 0039).
     """
 
-    async def cash_events(self, ticker: str) -> Sequence[CashEvent]:
-        """Every payment, oldest first, dated by the first session without it."""
+    async def cash_events(
+        self, ticker: str, *, per_share_class: PerShareClass | None = None
+    ) -> Sequence[CashEvent] | None:
+        """Every class payment, or ``None`` when its mirror is absent."""
         ...
 
 

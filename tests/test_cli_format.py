@@ -174,7 +174,9 @@ def test_should_render_doctor_coverage_with_named_and_unclassified() -> None:
                         reference_date=date(2024, 12, 31),
                         indicators=(
                             IndicatorCoverage("roe", True, None),
-                            IndicatorCoverage("pe", False, NullReason.MISSING_PRICE),
+                            IndicatorCoverage(
+                                "pe_basic", False, NullReason.MISSING_PRICE
+                            ),
                             IndicatorCoverage("net_margin", False, None),
                         ),
                     ),
@@ -205,7 +207,7 @@ def test_should_render_analysis_with_view_tag() -> None:
             ),
             reference_date=date(2024, 12, 31),
             computed_at=datetime(2026, 7, 8, tzinfo=UTC),
-            indicators=Indicators(pe=Decimal("11.4")),
+            indicators=Indicators(pe_basic=Decimal("11.4")),
             price=Decimal("38.20"),
             price_adjusted=Decimal("30.48"),
             price_basis="nominal_year_avg",
@@ -247,7 +249,7 @@ def _analysis() -> TickerAnalysis:
         classification=Classification("Bens Industriais", "Máquinas", "Motores"),
         reference_date=date(2024, 12, 31),
         computed_at=datetime(2026, 7, 30, tzinfo=UTC),
-        indicators=Indicators(pe=Decimal("11.4")),
+        indicators=Indicators(pe_basic=Decimal("11.4")),
         price=Decimal("10"),
         price_basis="nominal_year_avg",
         view="closed_year",
@@ -276,11 +278,11 @@ def test_doctor_summary_counts_causes_but_still_names_an_unclassified_null() -> 
             _coverage(
                 "AAAA3",
                 IndicatorCoverage("roe", True, None),
-                IndicatorCoverage("pe", False, NullReason.MISSING_PRICE),
+                IndicatorCoverage("pe_basic", False, NullReason.MISSING_PRICE),
             ),
             _coverage(
                 "BBBB3",
-                IndicatorCoverage("pe", False, NullReason.MISSING_PRICE),
+                IndicatorCoverage("pe_basic", False, NullReason.MISSING_PRICE),
                 IndicatorCoverage("net_margin", False, None),
             ),
             TickerCoverage(ticker="CCCC3", sector=Sector.INDUSTRY, exercises=()),
@@ -304,7 +306,7 @@ def test_doctor_summary_says_so_when_every_null_is_named() -> None:
             _coverage(
                 "AAAA3",
                 IndicatorCoverage("roe", True, None),
-                IndicatorCoverage("pe", False, NullReason.MISSING_PRICE),
+                IndicatorCoverage("pe_basic", False, NullReason.MISSING_PRICE),
             ),
         )
     )

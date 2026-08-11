@@ -8,6 +8,7 @@ from smaug.analysis.application.analyze import (
     AnalyzePortfolioUseCase,
 )
 from smaug.analysis.domain.capital import RestatementStep
+from smaug.analysis.domain.dividends import CashEvent
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.financials import (
     MarketData,
@@ -17,6 +18,12 @@ from smaug.analysis.domain.financials import (
 )
 from smaug.analysis.domain.indicators import NullReason
 from smaug.portfolio.domain.sectors import Sector
+from smaug.portfolio.domain.share_classes import (
+    PerShareClass,
+    ShareClass,
+    ShareKind,
+    UnitComponent,
+)
 from smaug.shared.errors import SourceForbiddenError, SourceTimeoutError
 from tests.fakes import fake_classes_resolver
 
@@ -115,6 +122,18 @@ class FakeShares:
         return ()
 
 
+class FakeCashEvents:
+    def __init__(self, by_class: dict[PerShareClass, tuple[CashEvent, ...]]) -> None:
+        self._by_class = by_class
+
+    async def cash_events(
+        self, ticker: str, *, per_share_class: PerShareClass | None = None
+    ) -> tuple[CashEvent, ...]:
+        if per_share_class is None:
+            return ()
+        return self._by_class.get(per_share_class, ())
+
+
 def _counts(*, common: int, preferred: int = 0) -> ShareCounts:
     """A filed capital composition. A class with no shares is absent, not zero."""
     return ShareCounts(
@@ -187,8 +206,8 @@ async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
     assert saved.price_adjusted is None  # nothing paid out since a live quote
     assert saved.price_basis == "ttm_current_nominal"
     # Both classes quote at 10 here → cap = 10 × (800 + 400) = 12000.
-    assert saved.indicators.pe == Decimal(10)  # 12000 / 1200
-    assert saved.indicators.pb == Decimal(2)  # 12000 / 6000
+    assert saved.indicators.company_pe == Decimal(10)  # 12000 / 1200
+    assert saved.indicators.company_pb == Decimal(2)  # 12000 / 6000
 
 
 async def test_analyze_sums_the_ttm_cap_over_the_listed_share_classes() -> None:
@@ -220,7 +239,7 @@ async def test_analyze_sums_the_ttm_cap_over_the_listed_share_classes() -> None:
 
     saved = repo.saved[0]
     assert saved.price == Decimal(10)  # the analyzed ticker's own quote, unchanged
-    assert saved.indicators.pb == Decimal(2)  # cap 13600 / 6800, not 12000 / 6800
+    assert saved.indicators.company_pb == Decimal(2)
     assert saved.indicators.eps is None
     assert saved.indicators.null_reasons["eps"] is (
         NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
@@ -259,12 +278,129 @@ async def test_analyze_capitalizes_a_unit_from_its_underlying_classes() -> None:
     saved = repo.saved[0]
     assert saved.price == Decimal(22)  # the unit quote is what the holder sees
     # cap = 8 × 500 + 7 × 1000 = 11000; TTM net income = 4 × 250 = 1000.
-    assert saved.indicators.pe == Decimal(11)
-    assert saved.indicators.pb == Decimal(2)  # 11000 / 5500
+    assert saved.indicators.company_pe == Decimal(11)
+    assert saved.indicators.company_pb == Decimal(2)  # 11000 / 5500
     assert saved.indicators.eps is None
     assert saved.indicators.null_reasons["eps"] is (
         NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
     )
+
+
+async def test_sibling_classes_keep_company_scope_but_get_own_multiples() -> None:
+    on = StandardizedFinancials(
+        reference_date=date(2024, 12, 31),
+        period_start=date(2024, 1, 1),
+        sector=Sector.COMMODITY,
+        net_income=Decimal(1200),
+        eps_basic=Decimal("1.50"),
+        eps_diluted=Decimal("1.45"),
+        equity=Decimal(6800),
+    )
+    pn = StandardizedFinancials(
+        reference_date=date(2024, 12, 31),
+        period_start=date(2024, 1, 1),
+        sector=Sector.COMMODITY,
+        net_income=Decimal(1200),
+        eps_basic=Decimal("1.40"),
+        eps_diluted=Decimal("1.35"),
+        equity=Decimal(6800),
+    )
+    events = FakeCashEvents(
+        {
+            PerShareClass.ORDINARY: (
+                CashEvent(effective=date(2024, 5, 2), amount_per_share=Decimal("0.50")),
+            ),
+            PerShareClass.PREFERRED: (
+                CashEvent(effective=date(2024, 5, 2), amount_per_share=Decimal("0.80")),
+            ),
+        }
+    )
+    classes = (
+        ShareClass("PETR3", ShareKind.COMMON),
+        ShareClass("PETR4", ShareKind.PREFERRED),
+    )
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({}, annuals={"PETR3": [on], "PETR4": [pn]}),
+        FakePrice(
+            year_by_symbol={
+                "PETR3": YearPrices(nominal_avg=Decimal(12)),
+                "PETR4": YearPrices(nominal_avg=Decimal(10)),
+            }
+        ),
+        repo,
+        FakeShares({2024: _counts(common=800, preferred=400)}),
+        classes_resolver=lambda ticker: classes,
+        cash_event_reader=events,
+        per_share_resolver=lambda ticker: (
+            UnitComponent(
+                1,
+                PerShareClass.ORDINARY
+                if ticker == "PETR3"
+                else PerShareClass.PREFERRED,
+                ticker,
+            ),
+        ),
+    )
+
+    await use_case.execute(["PETR3", "PETR4"])
+    by_ticker = {analysis.ticker: analysis for analysis in repo.saved}
+
+    petr3 = by_ticker["PETR3"].indicators
+    petr4 = by_ticker["PETR4"].indicators
+    assert petr3.pe_basic == Decimal(8)
+    assert petr4.pe_basic == Decimal(10) / Decimal("1.40")
+    assert petr3.pb == Decimal(12) / (Decimal(6800) / Decimal(1200))
+    assert petr4.pb == Decimal(10) / (Decimal(6800) / Decimal(1200))
+    assert petr3.dividend_yield == Decimal("0.50") / Decimal(12)
+    assert petr4.dividend_yield == Decimal("0.80") / Decimal(10)
+    assert petr3.company_pe == petr4.company_pe
+    assert petr3.company_pb == petr4.company_pb
+
+
+async def test_unit_dividend_yield_composes_each_fca_component() -> None:
+    annual = StandardizedFinancials(
+        reference_date=date(2024, 12, 31),
+        period_start=date(2024, 1, 1),
+        sector=Sector.UTILITY,
+        net_income=Decimal(500),
+        equity=Decimal(5500),
+    )
+    events = FakeCashEvents(
+        {
+            PerShareClass.ORDINARY: (
+                CashEvent(effective=date(2024, 3, 1), amount_per_share=Decimal("0.10")),
+            ),
+            PerShareClass.PREFERRED: (
+                CashEvent(effective=date(2024, 3, 1), amount_per_share=Decimal("0.20")),
+            ),
+        }
+    )
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({}, annuals={"SAPR11": [annual]}),
+        FakePrice(
+            year_by_symbol={
+                "SAPR3": YearPrices(nominal_avg=Decimal(8)),
+                "SAPR4": YearPrices(nominal_avg=Decimal(7)),
+                "SAPR11": YearPrices(nominal_avg=Decimal(22)),
+            }
+        ),
+        repo,
+        FakeShares({2024: _counts(common=500, preferred=1000)}),
+        classes_resolver=fake_classes_resolver,
+        cash_event_reader=events,
+        per_share_resolver=lambda ticker: (
+            UnitComponent(1, PerShareClass.ORDINARY, "SAPR3"),
+            UnitComponent(4, PerShareClass.PREFERRED, "SAPR4"),
+        ),
+    )
+
+    await use_case.execute(["SAPR11"])
+
+    indicators = repo.saved[0].indicators
+    assert indicators.distributions_per_security == Decimal("0.90")
+    assert indicators.dividend_yield == Decimal("0.90") / Decimal(22)
 
 
 async def test_analyze_compares_ttm_growth_with_the_prior_comparable_ttm() -> None:
@@ -461,8 +597,8 @@ async def test_analyze_produces_ttm_and_closed_year_views() -> None:
     assert y2025.price_adjusted == Decimal(6)  # the total-return ruler, kept aside
     # cap = nominal_avg × shares(2025) = 8 × 1200 = 9600 (ADR 0018)
     #   → P/E = 9600/600 = 16, P/VP = 9600/3600
-    assert y2025.indicators.pe == Decimal(16)
-    assert y2025.indicators.pb == Decimal(9600) / Decimal(3600)
+    assert y2025.indicators.company_pe == Decimal(16)
+    assert y2025.indicators.company_pb == Decimal(9600) / Decimal(3600)
     # YoY vs the 2024 DFP: net income (600 - 500) / 500 = 0.2.
     assert y2025.indicators.net_income_growth == Decimal("0.2")
 
@@ -505,11 +641,13 @@ async def test_a_closed_years_multiples_divide_by_what_the_shares_traded_at() ->
     # would read cap 1000, P/E 10 and a 40% yield.
     assert year.price == Decimal(30)
     assert year.price_adjusted == Decimal(10)
-    assert year.indicators.pe == Decimal(30)
-    assert year.indicators.dividend_yield == Decimal(400) / Decimal(3000)
+    assert year.indicators.company_pe == Decimal(30)
+    assert year.indicators.company_cash_yield_paid_in_period == (
+        Decimal(400) / Decimal(3000)
+    )
     # Preserve the characteristic that exposed the old basis mix: this filed payout
     # is below the company's nominal market value, so the computed yield must be < 1.
-    assert year.indicators.dividend_yield < Decimal(1)
+    assert year.indicators.company_cash_yield_paid_in_period < Decimal(1)
 
 
 async def test_analyze_prices_closed_year_without_the_live_quote() -> None:
@@ -543,13 +681,13 @@ async def test_analyze_prices_closed_year_without_the_live_quote() -> None:
 
     y2024 = views[("closed_year", date(2024, 12, 31))]
     assert y2024.price == Decimal(8)  # the year's nominal average, no live quote
-    assert y2024.indicators.pe == Decimal(16)  # cap 8 × 1200 = 9600 / 600
-    assert y2024.indicators.pb == Decimal(9600) / Decimal(3600)
+    assert y2024.indicators.company_pe == Decimal(16)
+    assert y2024.indicators.company_pb == Decimal(9600) / Decimal(3600)
 
     # The live view still degrades: it legitimately needs the current quote.
     ttm = views[("ttm_live", date(2026, 3, 31))]
     assert ttm.price is None
-    assert ttm.indicators.pe is None
+    assert ttm.indicators.company_pe is None
 
 
 async def test_delisted_closed_year_names_the_price_null_non_transient() -> None:
@@ -581,8 +719,10 @@ async def test_delisted_closed_year_names_the_price_null_non_transient() -> None
 
     y2024 = views[("closed_year", date(2024, 12, 31))]
     assert y2024.price is None
-    assert y2024.indicators.pe is None
-    assert y2024.indicators.null_reasons["pe"] is NullReason.PRICE_SYMBOL_NOT_FOUND
+    assert y2024.indicators.company_pe is None
+    assert y2024.indicators.null_reasons["company_pe"] is (
+        NullReason.PRICE_SYMBOL_NOT_FOUND
+    )
 
 
 async def test_analyze_skips_when_fewer_than_four_quarters() -> None:
@@ -686,9 +826,9 @@ async def test_analyze_refuses_the_quotes_own_cap_and_share_count() -> None:
 
     ind = repo.saved[0].indicators
     assert ind.eps is None
-    assert ind.pe is None  # the quote's own 12000 is not borrowed
+    assert ind.company_pe is None  # the quote's own 12000 is not borrowed
     assert ind.null_reasons["eps"] is NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
-    assert ind.null_reasons["pe"] is NullReason.MISSING_SHARE_COUNT
+    assert ind.null_reasons["company_pe"] is NullReason.MISSING_SHARE_COUNT
 
 
 async def test_analyze_keeps_bvps_when_price_is_missing() -> None:
@@ -717,8 +857,12 @@ async def test_analyze_keeps_bvps_when_price_is_missing() -> None:
         NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
     )
     assert saved.indicators.bvps == Decimal(20)  # 8000 / 400
-    assert saved.indicators.pe is None  # still no price
-    assert saved.indicators.null_reasons["pe"] is NullReason.MISSING_PRICE
+    assert saved.indicators.pe_basic is None  # still no price and no TTM CPC 41 EPS
+    assert saved.indicators.null_reasons["pe_basic"] is (
+        NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
+    )
+    assert saved.indicators.company_pe is None
+    assert saved.indicators.null_reasons["company_pe"] is NullReason.MISSING_PRICE
 
 
 async def test_analyze_degrades_when_price_unavailable() -> None:
@@ -740,7 +884,7 @@ async def test_analyze_degrades_when_price_unavailable() -> None:
 
     assert len(out) == 1
     assert out[0].indicators.roe == Decimal("0.1")  # 800 / 8000, fundamentals survive
-    assert out[0].indicators.pe is None  # no price -> no market multiple
+    assert out[0].indicators.company_pe is None  # no price -> no market multiple
     assert out[0].price is None
 
 
@@ -765,7 +909,7 @@ async def test_analyze_degrades_when_price_times_out() -> None:
 
     assert len(out) == 1
     assert out[0].indicators.roe == Decimal("0.1")  # fundamentals survive
-    assert out[0].indicators.pe is None  # timeout -> no market multiple
+    assert out[0].indicators.company_pe is None  # timeout -> no market multiple
     assert out[0].price is None
 
 
@@ -834,7 +978,9 @@ async def test_a_priced_ticker_with_a_vendor_gap_stays_a_transient_miss() -> Non
 
     closed = [a for a in repo.saved if a.reference_date == date(2015, 12, 31)]
     assert closed, "an unresolved gap keeps its row rather than being suppressed"
-    assert closed[0].indicators.null_reasons["pe"] is not NullReason.NOT_YET_LISTED
+    assert closed[0].indicators.null_reasons["company_pe"] is not (
+        NullReason.NOT_YET_LISTED
+    )
 
 
 async def test_a_sibling_class_not_yet_traded_is_named_not_yet_listed() -> None:
@@ -874,7 +1020,7 @@ async def test_a_sibling_class_not_yet_traded_is_named_not_yet_listed() -> None:
     assert closed[0].indicators.market_cap is None
     reasons = closed[0].indicators.null_reasons
     assert reasons["market_cap"] is NullReason.NOT_YET_LISTED
-    assert reasons["pe"] is NullReason.NOT_YET_LISTED
+    assert reasons["company_pe"] is NullReason.NOT_YET_LISTED
 
 
 class _ExplodingReader:

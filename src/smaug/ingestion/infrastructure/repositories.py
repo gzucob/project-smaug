@@ -107,7 +107,11 @@ class BeanieRawIngestionRepository:
         return int(result.modified_count)
 
     async def mirrored_for(
-        self, module: str, *, artifact_id: str | None = None
+        self,
+        module: str,
+        *,
+        source: str,
+        artifact_id: str | None = None,
     ) -> set[str]:
         """Which registrants this module has already been mirrored for.
 
@@ -121,7 +125,7 @@ class BeanieRawIngestionRepository:
         appending a second copy of everything it already holds.
         """
         collection = RawIngestionDocument.get_pymongo_collection()
-        query: dict[str, object] = {"module": module}
+        query: dict[str, object] = {"source": source, "module": module}
         if artifact_id is not None:
             query["artifact_id"] = artifact_id
         codes = await collection.distinct("cvm_code", query)

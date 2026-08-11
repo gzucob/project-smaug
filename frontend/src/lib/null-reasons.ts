@@ -81,6 +81,16 @@ const COPY: Record<NullReason, ReasonCopy> = {
     long: "A classe econômica ou a composição da unit não reconcilia de forma unívoca com as linhas por ação divulgadas pela companhia.",
     intentional: false,
   },
+  missing_cash_distributions: {
+    short: "sem proventos B3",
+    long: "Os eventos de proventos por classe da B3 não estavam disponíveis para montar esta janela.",
+    intentional: false,
+  },
+  missing_cash_distribution_value: {
+    short: "provento sem valor",
+    long: "A B3 registrou um evento na janela, mas o valor por papel ou sua escala de cotação não pôde ser lido.",
+    intentional: false,
+  },
   missing_prior_period: {
     short: "sem período anterior",
     long: "O histórico não cobre a janela que este indicador precisa — falta o período anterior para a variação, ou faltam exercícios fechados para fechar a janela do crescimento composto.",

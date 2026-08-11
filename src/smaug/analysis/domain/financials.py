@@ -93,8 +93,9 @@ class StandardizedFinancials:
     # Dividends + JCP the parent DECLARED against equity during the period (DMPL
     # 5.04 rows, positive). The paid figure above is the cash that left in the
     # period — often the prior year's profit; the declared figure is the charge
-    # the company itself reports payout on (#104). Year-to-date like the DFC,
-    # isolated on ``dmpl_period_start``.
+    # the company recorded during this period, without proving which exercise
+    # generated it (ADR 0055). Year-to-date like the DFC, isolated on
+    # ``dmpl_period_start``.
     dividends_declared: Decimal | None = None
     # Cash-flow flows (DFC, year-to-date basis — isolated on ``dfc_period_start``).
     cfo: Decimal | None = None  # net cash from operating activities (DFC 6.01)
@@ -141,8 +142,12 @@ class MarketData:
     price: Decimal | None = None
     market_cap: Decimal | None = None
     shares: Decimal | None = None
+    # B3 cash rights whose ex dates fall inside this view's explicit window,
+    # summed per analyzed security on the same restated share base as ``price``.
+    cash_distributions: Decimal | None = None
     cap_null_reason: NullReason | None = None
     shares_null_reason: NullReason | None = None
+    cash_distributions_null_reason: NullReason | None = None
 
 
 @dataclass(frozen=True)

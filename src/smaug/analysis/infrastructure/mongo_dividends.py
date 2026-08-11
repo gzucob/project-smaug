@@ -10,15 +10,16 @@ from typing import Protocol
 from smaug.analysis.domain.dividends import CashEvent
 from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
 from smaug.portfolio.domain.company import RegistrantResolver
+from smaug.portfolio.domain.share_classes import PerShareClass
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
 
 CASH_DIVIDEND_B3_MODULE = "CASH_DIVIDEND_B3"
 
-# B3 files a payment once per class at rates that differ, so a ticker reads only
-# its own. A unit bundles both and B3 files no rate for the bundle; its per-share
-# indicators are already null for the same reason (#38), so it reads nothing here.
+# B3 files a payment once per class at rates that differ, so a plain ticker reads
+# only its own. A unit asks explicitly for each FCA component class and composes
+# the absolute cash rights in the application layer (ADR 0055).
 _CLASS_OF_SUFFIX = {"3": "ON", "4": "PN", "5": "PNA", "6": "PNB"}
 
 
@@ -26,6 +27,17 @@ class RawCollection(Protocol):
     """The subset of a Motor collection this reader uses."""
 
     def find(self, filter: Mapping[str, object]) -> object: ...
+
+
+class ValidationCollection(Protocol):
+    """The validation lookup used to distinguish an established empty batch."""
+
+    async def find_one(
+        self,
+        filter: Mapping[str, object],
+        *,
+        sort: list[tuple[str, int]],
+    ) -> Mapping[str, object] | None: ...
 
 
 class MongoCashEventReader:
@@ -36,11 +48,15 @@ class MongoCashEventReader:
         collection: RawCollection,
         *,
         registrant_resolver: RegistrantResolver = no_registrant,
+        validation_collection: ValidationCollection | None = None,
     ) -> None:
         self._collection = collection
         self._registrant = registrant_resolver
+        self._validations = validation_collection
 
-    async def cash_events(self, ticker: str) -> tuple[CashEvent, ...]:
+    async def cash_events(
+        self, ticker: str, *, per_share_class: PerShareClass | None = None
+    ) -> tuple[CashEvent, ...] | None:
         """Every payment ``ticker``'s class went ex, dated by the first session
         that traded without it.
 
@@ -48,14 +64,25 @@ class MongoCashEventReader:
         is mirrored on every run, so the same payment is stored many times over
         (ADR 0016), and counting one twice would take the cash out twice.
         """
-        share_class = _CLASS_OF_SUFFIX.get(ticker.strip()[-1:])
+        share_class = (
+            per_share_class.value
+            if per_share_class is not None
+            else _CLASS_OF_SUFFIX.get(ticker.strip()[-1:])
+        )
         if share_class is None:
             return ()
         cursor = self._collection.find(
-            mirror_filter(ticker, self._registrant, module=CASH_DIVIDEND_B3_MODULE)
+            mirror_filter(
+                ticker,
+                self._registrant,
+                source="b3",
+                module=CASH_DIVIDEND_B3_MODULE,
+            )
         )
+        mirrored = False
         seen: dict[tuple[str, str, str], CashEvent] = {}
         async for document in cursor:  # type: ignore[attr-defined]
+            mirrored = True
             payload = document.get("payload")
             if not isinstance(payload, Mapping):
                 continue
@@ -63,9 +90,17 @@ class MongoCashEventReader:
                 continue
             prior = _br_date(payload.get("last_date_prior"))
             percentage = _br_decimal(payload.get("percentage_of_price"))
-            if prior is None or percentage is None or percentage <= 0:
-                # A row B3 leaves without a percentage is one whose value rounds
-                # to nothing (``0,0000000001``); skipping it costs no cash.
+            value = _br_decimal(payload.get("value"))
+            quoted = _br_decimal(payload.get("quoted_per_shares"))
+            amount_per_share = (
+                value / quoted
+                if value is not None and quoted is not None and quoted > 0
+                else None
+            )
+            if prior is None or (
+                (percentage is None or percentage <= 0)
+                and (amount_per_share is None or amount_per_share <= 0)
+            ):
                 continue
             key = (
                 _text(payload.get("last_date_prior")),
@@ -77,9 +112,38 @@ class MongoCashEventReader:
                 # right, so the price goes ex the day after — the same cut the
                 # stock events take (ADR 0034).
                 effective=prior + timedelta(days=1),
-                percentage=percentage,
+                percentage=percentage
+                if percentage is not None and percentage > 0
+                else None,
+                amount_per_share=amount_per_share,
+                last_with_right=prior,
+                approval_date=_br_date(payload.get("approval_date")),
             )
+        if not mirrored:
+            return () if await self._confirmed_empty(ticker) else None
         return tuple(sorted(seen.values(), key=lambda event: event.effective))
+
+    async def _confirmed_empty(self, ticker: str) -> bool:
+        """Whether B3 coverage succeeded and returned zero rows for the company."""
+        if self._validations is None:
+            return False
+        root = ticker.strip().upper()[:4]
+        report = await self._validations.find_one(
+            {
+                "source": "b3",
+                "module": CASH_DIVIDEND_B3_MODULE,
+                "batch": f"GetListedCashDividends:{root}",
+            },
+            sort=[("recorded_at", -1)],
+        )
+        if report is None or report.get("status") != "accepted":
+            return False
+        observations = report.get("observations")
+        return (
+            isinstance(observations, Mapping)
+            and observations.get("coverage_established") is True
+            and observations.get("rows") == 0
+        )
 
 
 def _text(value: object) -> str:

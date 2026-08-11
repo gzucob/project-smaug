@@ -193,6 +193,7 @@ class _Statement:
 class CvmDataSource:
     """Fetch one statement (module) for one ticker from CVM open data."""
 
+    source = "cvm"
     parser_identity = ParserIdentity("cvm.statements.csv", 1)
 
     def __init__(
@@ -264,6 +265,7 @@ class CvmDataSource:
         results = [
             RawFetchResult(
                 module=module,
+                source="cvm",
                 request={
                     "source": "cvm",
                     "file": self._zip_name,

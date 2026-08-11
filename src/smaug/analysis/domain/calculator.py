@@ -237,7 +237,9 @@ class _Needs:
 
     accounts: tuple[str, ...] = ()
     cap: bool = False
+    price: bool = False
     shares: bool = False
+    cash_distributions: bool = False
     prior: str | None = None
     # The ``StandardizedFinancials`` field a compounded rate reads across the
     # closed-year series. Set only for the CAGRs, whose null is attributed
@@ -276,8 +278,11 @@ _NEEDS: dict[str, _Needs] = {
     "ebitda_cagr_5y": _Needs(series="ebitda"),
     "ebit_cagr_5y": _Needs(series="ebit"),
     "net_income_cagr_5y": _Needs(series="net_income"),
-    "pe": _Needs(accounts=("net_income",), cap=True),
-    "pb": _Needs(accounts=("equity",), cap=True),
+    "pe_basic": _Needs(accounts=("eps_basic",), price=True),
+    "pe_diluted": _Needs(accounts=("eps_diluted",), price=True),
+    "pb": _Needs(accounts=("equity",), price=True, shares=True),
+    "company_pe": _Needs(accounts=("net_income",), cap=True),
+    "company_pb": _Needs(accounts=("equity",), cap=True),
     "psr": _Needs(accounts=("revenue",), cap=True),
     "price_to_assets": _Needs(accounts=("total_assets",), cap=True),
     "price_to_ebit": _Needs(accounts=("ebit",), cap=True),
@@ -297,10 +302,13 @@ _NEEDS: dict[str, _Needs] = {
         )
     ),
     "cost_of_risk": _Needs(accounts=("loan_loss_provision", "loan_book")),
-    "payout": _Needs(accounts=("dividends_paid", "net_income")),
-    "dividend_yield": _Needs(accounts=("dividends_paid",), cap=True),
-    "payout_declared": _Needs(accounts=("dividends_declared", "net_income")),
-    "dividend_yield_declared": _Needs(accounts=("dividends_declared",), cap=True),
+    "dividend_yield": _Needs(price=True, cash_distributions=True),
+    "payout_cash_paid_in_period": _Needs(accounts=("dividends_paid", "net_income")),
+    "payout_declared_in_period": _Needs(accounts=("dividends_declared", "net_income")),
+    "company_cash_yield_paid_in_period": _Needs(accounts=("dividends_paid",), cap=True),
+    "company_yield_declared_in_period": _Needs(
+        accounts=("dividends_declared",), cap=True
+    ),
     "ev_ebitda": _Needs(accounts=("total_debt", "ebitda"), cap=True),
     "ev_ebit": _Needs(accounts=("total_debt", "ebit"), cap=True),
     "fcf": _Needs(accounts=("cfo", "capex")),
@@ -309,8 +317,11 @@ _NEEDS: dict[str, _Needs] = {
     "revenue": _Needs(accounts=("revenue",)),
     "net_income": _Needs(accounts=("net_income",)),
     "net_income_total": _Needs(accounts=("net_income_total",)),
-    "dividends": _Needs(accounts=("dividends_paid",)),
-    "dividends_declared": _Needs(accounts=("dividends_declared",)),
+    "distributions_per_security": _Needs(cash_distributions=True),
+    "company_distributions_paid_in_period": _Needs(accounts=("dividends_paid",)),
+    "company_distributions_declared_in_period": _Needs(
+        accounts=("dividends_declared",)
+    ),
     # Balance-sheet scale. ``total_liabilities`` is assets less the consolidated
     # equity, so it is missing whenever either side is.
     "total_assets": _Needs(accounts=("total_assets",)),
@@ -370,6 +381,10 @@ def _classify(
         return f.eps_basic_null_reason
     if name == "eps_diluted" and f.eps_diluted_null_reason is not None:
         return f.eps_diluted_null_reason
+    if name == "pe_basic" and f.eps_basic_null_reason is not None:
+        return f.eps_basic_null_reason
+    if name == "pe_diluted" and f.eps_diluted_null_reason is not None:
+        return f.eps_diluted_null_reason
     regime = f.filed_regime or expected_regime(f.sector)
     if needs.series is not None:
         return _classify_cagr(needs.series, f, history)
@@ -392,8 +407,15 @@ def _classify(
         if market.cap_null_reason is not None:
             return market.cap_null_reason
         return NullReason.MISSING_PRICE
+    if needs.price and market.price is None:
+        return NullReason.MISSING_PRICE
     if needs.shares and market.shares is None:
         return market.shares_null_reason or NullReason.MISSING_SHARE_COUNT
+    if needs.cash_distributions and market.cash_distributions is None:
+        return (
+            market.cash_distributions_null_reason
+            or NullReason.MISSING_CASH_DISTRIBUTIONS
+        )
     if needs.prior is not None and (
         previous is None or getattr(previous, needs.prior) is None
     ):
@@ -503,6 +525,7 @@ def compute(
     # Free cash flow: operating cash flow minus capex, annualized like the other
     # flows so a bare year-to-date period is comparable to a full year.
     annual_fcf = _annualized(_sub(f.cfo, f.capex), f)
+    bvps = _div(f.equity, market.shares)
 
     prev_revenue = previous.revenue if previous is not None else None
     prev_net_income = previous.net_income if previous is not None else None
@@ -540,7 +563,7 @@ def compute(
         eps=f.eps_basic,
         eps_basic=f.eps_basic,
         eps_diluted=f.eps_diluted,
-        bvps=_div(f.equity, market.shares),
+        bvps=bvps,
         net_debt=net_debt,
         net_debt_to_ebitda=_div(net_debt, annual_ebitda),
         net_debt_to_ebit=_div(net_debt, annual_ebit),
@@ -560,8 +583,11 @@ def compute(
         ebitda_cagr_5y=_cagr(series("ebitda")),
         ebit_cagr_5y=_cagr(series("ebit")),
         net_income_cagr_5y=_cagr(series("net_income")),
-        pe=_div(cap, annual_net_income),
-        pb=_div(cap, f.equity),
+        pe_basic=_div(market.price, f.eps_basic),
+        pe_diluted=_div(market.price, f.eps_diluted),
+        pb=_div(market.price, bvps),
+        company_pe=_div(cap, annual_net_income),
+        company_pb=_div(cap, f.equity),
         psr=_div(cap, annual_revenue),
         price_to_assets=_div(cap, f.total_assets),
         price_to_ebit=_div(cap, annual_ebit),
@@ -570,10 +596,11 @@ def compute(
         # Expenses are filed negative, so the ratio is negated to read as a cost.
         efficiency_ratio=_negated(_div(operating_expense, operating_revenue)),
         cost_of_risk=_negated(_div(annual_provision, f.loan_book)),
-        payout=_div(f.dividends_paid, f.net_income),
-        dividend_yield=_div(f.dividends_paid, cap),
-        payout_declared=_div(f.dividends_declared, f.net_income),
-        dividend_yield_declared=_div(f.dividends_declared, cap),
+        dividend_yield=_div(market.cash_distributions, market.price),
+        payout_cash_paid_in_period=_div(f.dividends_paid, f.net_income),
+        payout_declared_in_period=_div(f.dividends_declared, f.net_income),
+        company_cash_yield_paid_in_period=_div(f.dividends_paid, cap),
+        company_yield_declared_in_period=_div(f.dividends_declared, cap),
         ev_ebitda=_div(enterprise_value, annual_ebitda),
         ev_ebit=_div(enterprise_value, annual_ebit),
         fcf=annual_fcf,
@@ -582,8 +609,9 @@ def compute(
         revenue=f.revenue,
         net_income=f.net_income,
         net_income_total=f.net_income_total,
-        dividends=f.dividends_paid,
-        dividends_declared=f.dividends_declared,
+        distributions_per_security=market.cash_distributions,
+        company_distributions_paid_in_period=f.dividends_paid,
+        company_distributions_declared_in_period=f.dividends_declared,
         total_assets=f.total_assets,
         total_liabilities=_sub(f.total_assets, f.equity_total),
         equity=f.equity,

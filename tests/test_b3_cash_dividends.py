@@ -82,6 +82,7 @@ async def test_every_row_is_mirrored_as_b3_filed_it() -> None:
         )
 
     assert len(results) == 2
+    assert {result.source for result in results} == {"b3"}
     first = results[0].payload
     # pt-BR as it came, and the scale left in place: ``quotedPerShares`` says
     # whether the payment is per share or per lot of a thousand.
