@@ -480,6 +480,11 @@ async def test_the_names_a_registrant_filed_come_from_every_year(
         [["16.590.234/0001-76", "AZZA3", "Ações Ordinárias", "1"]],
         general=[["16.590.234/0001-76", "AZZAS 2154 S.A."]],
     )
+    # The history reader visits every year in the interval. Empty synthetic
+    # archives keep this source-shaped unit test hermetic instead of making live
+    # CVM calls for the years that carry no fact relevant to the assertion.
+    for year in (2016, 2017, 2018):
+        _fca_archive(tmp_path, year, [])
 
     async with httpx.AsyncClient() as http:
         history = CvmSecurityHistory(
