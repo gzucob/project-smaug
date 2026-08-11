@@ -1324,14 +1324,14 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
   },
 
   // -------------------------------------------------------------- banco ---
-  // Só um banco preenche estes três: o balanço dele é o negócio (ADR 0021).
+  // Só um banco preenche estes três: o balanço dele é o negócio (ADR 0058).
   net_interest_margin: {
-    formula: "Margem financeira bruta (spread antes da provisão) ÷ Ativo total",
-    what: "O quanto o banco ganha de spread — juros que recebe menos juros que paga — sobre cada real de ativo. É o preço do dinheiro dele, antes de descontar os calotes.",
+    formula: "Resultado de juros anualizado ÷ Ativos rentáveis médios",
+    what: "O spread que o banco obtém sobre os ativos que efetivamente geram receita financeira. Numerador e média precisam vir da mesma divulgação, período e perímetro de consolidação.",
     strongIn: [
       {
         where: "Intermediários Financeiros (bancos)",
-        why: "é a receita primária do negócio: emprestar caro e captar barato",
+        why: "é a receita primária do negócio: alocar ativos rentáveis acima do custo de captação",
       },
     ],
     weakIn: [
@@ -1341,12 +1341,12 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "Dividimos pelo ativo total, não pelos ativos rentáveis: o CVM não separa uns dos outros na demonstração estruturada. Isso subestima a margem em relação ao número que o próprio banco publica.",
+      "A demonstração estruturada da CVM não traz a média dos ativos rentáveis nem todos os ajustes do resultado de juros. Sem uma divulgação pública do Banco Central ou do próprio banco com o par completo, o Smaug retorna n/d; ativo total de fechamento não é substituto.",
   },
   efficiency_ratio: {
     formula:
-      "(Despesas com pessoal + administrativas) ÷ (Margem financeira bruta + Tarifas)",
-    what: "Quanto do que o banco ganha é consumido pela própria estrutura — agências, pessoal, back office. Aqui, menor é melhor: 33% significa que um terço da receita vira custo interno.",
+      "Despesas operacionais completas ÷ Receitas operacionais completas (mesmo perímetro)",
+    what: "Quanto da receita operacional definida pelo banco ou regulador é consumido pela estrutura. O denominador inclui todas as linhas declaradas na metodologia — não apenas margem financeira e tarifas. Aqui, menor é melhor.",
     strongIn: [
       {
         where: "Intermediários Financeiros (bancos)",
@@ -1360,11 +1360,11 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "Os bancos publicam um índice gerencial, com ajustes próprios. O nosso sai direto da demonstração, então costuma ficar alguns pontos acima do divulgado.",
+      "Cada banco pode publicar ajustes gerenciais e um perímetro específico. O Smaug só calcula quando recebe numerador e denominador completos da mesma divulgação; a soma parcial das contas CVM permanece n/d.",
   },
   cost_of_risk: {
-    formula: "Provisão para créditos duvidosos (do ano) ÷ Carteira de crédito",
-    what: "Quanto o banco precisou reservar para calotes, em relação a tudo que emprestou. É o preço do risco que ele escolheu correr — e sobe antes do lucro cair.",
+    formula: "Despesa anualizada de perdas de crédito ÷ Carteira média de crédito",
+    what: "Quanto o banco reconheceu de perda ou provisão de crédito sobre a exposição média definida pela mesma metodologia. É o preço do risco que escolheu correr — e costuma subir antes de o lucro cair.",
     strongIn: [
       {
         where: "Intermediários Financeiros (bancos)",
@@ -1377,6 +1377,8 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "a provisão responde a mudanças de política de crédito e a eventos setoriais — só a série de vários anos mostra a tendência",
       },
     ],
+    caveat:
+      "Carteira líquida ou saldo de fechamento não substituem a carteira média e ampliada/prudencial definida na fonte. Sem o par completo e no mesmo perímetro, o indicador fica n/d.",
   },
 };
 

@@ -105,17 +105,30 @@ class StandardizedFinancials:
     # Cash-flow flows (DFC, year-to-date basis — isolated on ``dfc_period_start``).
     cfo: Decimal | None = None  # net cash from operating activities (DFC 6.01)
     capex: Decimal | None = None  # purchases of PP&E + intangibles (positive outflow)
-    # Bank-regime lines (ADR 0015/0021). Signed as filed: the CVM records an expense
-    # as negative and the mirror does not flip it, so the calculator adds a provision
-    # back rather than subtracting it. Read from the consolidated filing selected
-    # for the analysis (ADR 0054), where the loan-loss provision is deducted
-    # *inside* the intermediation expenses — which is why ``gross_profit`` (3.03)
-    # is already net of it.
+    # Bank-regime CVM lines retained as faithful statement facts. Signed as filed:
+    # expenses are negative. They are not enough to reconstruct the bank ratios —
+    # the structured filing has neither the issuer-defined managerial adjustments
+    # nor the required average stocks (ADR 0058).
     loan_loss_provision: Decimal | None = None  # inside DRE 3.02 (negative)
     fee_income: Decimal | None = None  # DRE 3.04 services rendered
     personnel_expense: Decimal | None = None  # DRE 3.04 payroll (negative)
     admin_expense: Decimal | None = None  # DRE 3.04 other administrative (negative)
     loan_book: Decimal | None = None  # BPA 1.02.04, net of its own provision
+    # Regulator/issuer-aligned bank-ratio inputs (ADR 0058). These are paired,
+    # period-consistent values from one explicitly scoped public disclosure — not
+    # aliases for the CVM lines above. Expense inputs are normalized as positive
+    # magnitudes, and the two flow numerators are already annualized on the day-
+    # count basis declared by their source. ``average_*`` means the average basis
+    # declared by that source; a closing balance must never be substituted. The
+    # current CVM-only provider leaves all six null and names why via
+    # ``bank_ratio_null_reason``.
+    bank_interest_result_annualized: Decimal | None = None
+    average_earning_assets: Decimal | None = None
+    bank_efficiency_expenses: Decimal | None = None
+    bank_efficiency_income: Decimal | None = None
+    credit_loss_expense_annualized: Decimal | None = None
+    average_credit_portfolio: Decimal | None = None
+    bank_ratio_null_reason: NullReason | None = None
     # Insurance-regime lines (ADR 0015), same sign convention. Zero for a filer
     # that holds insurers rather than underwriting itself (BBSE3).
     earned_premium: Decimal | None = None  # DRE 3.01.01 "Receitas com Seguros"

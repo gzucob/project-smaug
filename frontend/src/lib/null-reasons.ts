@@ -66,6 +66,11 @@ const COPY: Record<NullReason, ReasonCopy> = {
     long: "A CVM identifica o papel como unit, mas a composição por classe não pôde ser lida integralmente.",
     intentional: false,
   },
+  missing_regulatory_disclosure: {
+    short: "sem dado regulatório",
+    long: "A fórmula exige uma divulgação pública regulatória ou gerencial com estoques médios e perímetro completo. A demonstração estruturada da CVM não traz esses insumos, e o Smaug não substitui por saldos de fechamento ou subtotais.",
+    intentional: false,
+  },
   missing_cpc41_disclosure: {
     short: "sem LPA CPC 41",
     long: "A DRE consolidada entregue à CVM não traz um resultado por ação básico ou diluído reconciliável para esta classe.",

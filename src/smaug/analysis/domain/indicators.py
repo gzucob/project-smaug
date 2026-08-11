@@ -19,7 +19,7 @@ from enum import StrEnum
 class NullReason(StrEnum):
     """Why an indicator is null — the enumerable cause vocabulary of #30.
 
-    Four root causes, keyed on the *accounting regime* (what the company
+    Root causes, keyed on the *accounting regime* (what the company
     actually files) rather than the ``Sector`` enum (ADR 0006):
 
     * ``INAPPLICABLE_REGIME`` — economically meaningless under the filer's
@@ -28,6 +28,10 @@ class NullReason(StrEnum):
       account for this regime; computable in principle, not implemented.
     * ``SOURCE_ACCOUNT_ABSENT`` — we looked for the account and the filing has
       no such line (e.g. no dividend outflow in the DFC that year).
+    * ``MISSING_REGULATORY_DISCLOSURE`` — the formula needs a public
+      regulator/issuer disclosure outside the CVM structured statements, such as
+      average earning assets and a bank's complete efficiency perimeter. No
+      closing-balance or partial-account approximation substitutes for it.
     * ``MISSING_PRICE`` / ``MISSING_SHARE_COUNT`` /
       ``MISSING_UNIT_COMPOSITION`` / ``MISSING_PRIOR_PERIOD`` —
       an upstream input from another source is missing (the quote series, the
@@ -69,6 +73,7 @@ class NullReason(StrEnum):
     NOT_YET_LISTED = "not_yet_listed"
     MISSING_SHARE_COUNT = "missing_share_count"
     MISSING_UNIT_COMPOSITION = "missing_unit_composition"
+    MISSING_REGULATORY_DISCLOSURE = "missing_regulatory_disclosure"
     MISSING_CPC41_DISCLOSURE = "missing_cpc41_disclosure"
     MISSING_WEIGHTED_AVERAGE_SHARES = "missing_weighted_average_shares"
     MISSING_ECONOMIC_RIGHTS = "missing_economic_rights"
@@ -172,13 +177,12 @@ class Indicators:
     fcf: Decimal | None = None  # annualized free cash flow, in absolute reais
     price_to_fcf: Decimal | None = None
     fcf_yield: Decimal | None = None
-    # Bank-only ratios (ADR 0021). A bank's balance sheet is its business, so the
-    # ratios that describe it are its own: how wide the spread it earns is, how much
-    # of that spread its own payroll consumes, and what its lending is costing it in
-    # defaults. Null under every other regime — inapplicable, not missing.
-    net_interest_margin: Decimal | None = None  # spread / total assets
-    efficiency_ratio: Decimal | None = None  # operating expense / operating revenue
-    cost_of_risk: Decimal | None = None  # loan-loss provision / loan book
+    # Bank-only ratios (ADR 0058). Each consumes an explicitly scoped pair from a
+    # public regulator/issuer disclosure. The CVM structured statements alone do
+    # not contain the required average stocks or complete managerial perimeter.
+    net_interest_margin: Decimal | None = None  # interest result / avg earning assets
+    efficiency_ratio: Decimal | None = None  # full expenses / full operating income
+    cost_of_risk: Decimal | None = None  # credit loss / avg credit portfolio
     # Headline financials (absolute reais, the period's own figure — not
     # annualized). Persisted alongside the ratios so the front-end can chart the
     # per-year evolution of revenue / earnings / dividends, which the ratios alone

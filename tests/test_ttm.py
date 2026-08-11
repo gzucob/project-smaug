@@ -123,8 +123,8 @@ def test_ttm_sums_the_total_slice_flow_and_takes_its_stock_from_the_latest() -> 
 
 
 def test_ttm_sums_the_bank_dre_lines_and_takes_the_loan_book_as_a_stock() -> None:
-    # #140: the bank lines (ADR 0021) were absent from the TTM flow list, so the
-    # three bank indicators were null on the live view and only there. Expenses
+    # The raw CVM lines remain available as statement facts even though ADR 0058
+    # forbids using them as substitutes for the regulatory ratio inputs. Expenses
     # stay signed as filed — summing must not flip them.
     quarters = [
         replace(
@@ -186,9 +186,20 @@ def test_ttm_carries_every_numeric_account_on_its_declared_basis() -> None:
 
     assert ttm is not None
     for name in numeric:
-        if name in {"eps_basic", "eps_diluted"}:
+        if name in {
+            "eps_basic",
+            "eps_diluted",
+            "bank_interest_result_annualized",
+            "average_earning_assets",
+            "bank_efficiency_expenses",
+            "bank_efficiency_income",
+            "credit_loss_expense_annualized",
+            "average_credit_portfolio",
+        }:
             # Per-share results carry weighted denominators and cannot be added
-            # across quarters or treated as closing stocks.
+            # across quarters or treated as closing stocks. Bank regulatory
+            # pairs likewise require an explicit TTM disclosure; CVM quarters
+            # cannot manufacture their averages/perimeter.
             expected = None
         elif name == "ebitda":
             expected = Decimal(800)  # recomposed from the summed EBIT + D&A
@@ -208,6 +219,7 @@ def test_ttm_carries_the_null_cause_provenance() -> None:
         replace(
             _q(e, revenue=Decimal(1000)),
             filed_regime=AccountingRegime.BANK,
+            bank_ratio_null_reason=NullReason.MISSING_REGULATORY_DISCLOSURE,
             unmapped_fields=frozenset({"cfo", "capex"}),
         )
         for e in _ENDS
@@ -217,6 +229,7 @@ def test_ttm_carries_the_null_cause_provenance() -> None:
 
     assert ttm is not None
     assert ttm.filed_regime is AccountingRegime.BANK
+    assert ttm.bank_ratio_null_reason is NullReason.MISSING_REGULATORY_DISCLOSURE
     assert ttm.unmapped_fields == frozenset({"cfo", "capex"})
 
 
