@@ -69,6 +69,9 @@ class NullReason(StrEnum):
     NOT_YET_LISTED = "not_yet_listed"
     MISSING_SHARE_COUNT = "missing_share_count"
     MISSING_UNIT_COMPOSITION = "missing_unit_composition"
+    MISSING_CPC41_DISCLOSURE = "missing_cpc41_disclosure"
+    MISSING_WEIGHTED_AVERAGE_SHARES = "missing_weighted_average_shares"
+    MISSING_ECONOMIC_RIGHTS = "missing_economic_rights"
     MISSING_PRIOR_PERIOD = "missing_prior_period"
     ZERO_DENOMINATOR = "zero_denominator"
     NON_POSITIVE_ENDPOINT = "non_positive_endpoint"
@@ -97,7 +100,12 @@ class Indicators:
     ebitda_margin: Decimal | None = None
     asset_turnover: Decimal | None = None  # revenue / total assets
     # Per share
-    eps: Decimal | None = None  # LPA — earnings per share
+    # ``eps`` remains the compatibility alias for the filed basic value. New
+    # consumers use the explicit fields so a P/E can state which CPC 41 basis it
+    # selected rather than silently mixing basic and diluted denominators.
+    eps: Decimal | None = None
+    eps_basic: Decimal | None = None
+    eps_diluted: Decimal | None = None
     bvps: Decimal | None = None  # VPA — book value per share
     # Leverage / liquidity
     net_debt: Decimal | None = None
@@ -184,7 +192,8 @@ class Indicators:
     # show them at the top of a ticker page. ``market_cap`` is the sum over the
     # listed classes (ADR 0014); ``enterprise_value`` is ``cap + net_debt`` and is
     # null wherever ``net_debt`` is (banks: inapplicable); ``shares`` is the filed
-    # count that the per-share indicators divide by.
+    # closing count used by BVPS and market cap; it is not CPC 41's weighted EPS
+    # denominator.
     market_cap: Decimal | None = None
     enterprise_value: Decimal | None = None
     shares: Decimal | None = None

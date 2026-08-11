@@ -65,6 +65,14 @@ class StandardizedFinancials:
     total_assets: Decimal | None = None
     equity: Decimal | None = None  # attributable to controlling shareholders
     net_income: Decimal | None = None  # attributable to controlling shareholders
+    # CPC 41 results as filed for this security's own class (or composed unit).
+    # They are already reais per security and must never be multiplied by the
+    # statement's currency scale. The paired causes distinguish an unavailable
+    # filed result from an arithmetic zero.
+    eps_basic: Decimal | None = None
+    eps_diluted: Decimal | None = None
+    eps_basic_null_reason: NullReason | None = None
+    eps_diluted_null_reason: NullReason | None = None
     # The consolidated totals the controllers' figures above are sliced from —
     # minority interest included (DRE 3.11, BPP 2.03 as filed). Carried alongside
     # because both slices are published numbers answering different questions
@@ -93,9 +101,10 @@ class StandardizedFinancials:
     capex: Decimal | None = None  # purchases of PP&E + intangibles (positive outflow)
     # Bank-regime lines (ADR 0015/0021). Signed as filed: the CVM records an expense
     # as negative and the mirror does not flip it, so the calculator adds a provision
-    # back rather than subtracting it. Read from the parent filing's chart of accounts
-    # (ADR 0019), where the loan-loss provision is deducted *inside* the intermediation
-    # expenses — which is why ``gross_profit`` (3.03) is already net of it.
+    # back rather than subtracting it. Read from the consolidated filing selected
+    # for the analysis (ADR 0054), where the loan-loss provision is deducted
+    # *inside* the intermediation expenses — which is why ``gross_profit`` (3.03)
+    # is already net of it.
     loan_loss_provision: Decimal | None = None  # inside DRE 3.02 (negative)
     fee_income: Decimal | None = None  # DRE 3.04 services rendered
     personnel_expense: Decimal | None = None  # DRE 3.04 payroll (negative)
@@ -121,8 +130,10 @@ class MarketData:
     ``price`` is the analyzed ticker's own quote (a unit's price is the bundle's).
     ``market_cap`` is the whole company — the sum over its listed share classes
     (ADR 0014), so for a dual-class ticker it is *not* ``price × shares``.
-    ``shares`` is the filed total, the denominator of the per-share indicators
-    only. The two null-reason fields carry which upstream input was missing when
+    ``shares`` is the filed closing total, used by stock-at-an-instant measures
+    such as BVPS; CPC 41 earnings per share carries its own weighted denominator
+    inside the issuer's filed basic/diluted result. The two null-reason fields
+    carry which upstream input was missing when
     a denominator could not be built: a null number alone cannot distinguish an
     absent filing from an unreadable unit composition or class price.
     """

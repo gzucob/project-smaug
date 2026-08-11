@@ -33,9 +33,11 @@ from smaug.analysis.domain.financials import (
     StandardizedFinancials,
     expected_regime,
 )
+from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
 from smaug.portfolio.domain.company import RegistrantResolver
 from smaug.portfolio.domain.sectors import Sector
+from smaug.portfolio.domain.share_classes import PerShareClass, UnitComponent
 
 _STATEMENTS = ("BPA", "BPP", "DRE", "DFC", "DMPL")
 
@@ -78,12 +80,6 @@ _CLOSED_YEAR_MONTH = 12
 # whether the statement is consolidated or parent-only). Used as the total whose
 # controllers' share is read — see ``_net_income``.
 #
-# The parent-only line matters for a bank, whose income statement we take from the
-# parent filing (ADR 0019). It has to outrank the "operações continuadas" fallbacks:
-# those sit *above* the profit-sharing deduction, and BBAS3's parent 2024 reads
-# R$39.8 bn there against R$35.3 bn at the bottom line — the R$4.5 bn its employees
-# are paid.
-#
 # The last entry is the pre-2020 bank chart's bottom line (#155). It is last
 # because it is the least specific name of the set, and it must never outrank a
 # modern one; the banks that file it stopped doing so after 2019. Note that the
@@ -100,12 +96,17 @@ _NET_INCOME_TOTAL_NAMES = (
 )
 
 Accounts = Sequence[Mapping[str, Any]]
+PerShareResolver = Callable[[str], tuple[UnitComponent, ...]]
 
 
 class RawCollection(Protocol):
     """Minimal read surface over the ``raw_ingestions`` collection."""
 
     def find(self, filter: Mapping[str, Any], /) -> Any: ...
+
+
+def _no_per_share_components(_ticker: str) -> tuple[UnitComponent, ...]:
+    return ()
 
 
 def _fold(text: str) -> str:
@@ -517,40 +518,70 @@ def _filed_regime(dre: Accounts) -> AccountingRegime | None:
     return None
 
 
-def _bank_dre(
-    chosen: Mapping[str, Any] | None, parent: Mapping[str, Any] | None
-) -> Mapping[str, Any] | None:
-    """The parent-only income statement, when the filer is a bank (ADR 0019).
-
-    A bank files two income statements that **materially disagree**, and only one of
-    them is the result anybody quotes. BBAS3's 2024 DFP: the parent statement closes
-    at R$35.3 bn, the consolidated one at R$29.2 bn — R$26.4 bn of it attributed to
-    the controllers. The bank reports 35.3, the press reports 35.3, and the reference
-    platforms' LPA divides 35.3 (BBDC4: 19.1 bn against the consolidated 17.3 bn).
-    Nobody, anywhere, publishes the consolidated figure: the two statements are drawn
-    under different accounting standards, and the market reads the BACEN one.
-
-    The **balance sheet** stays consolidated — there the market reads the other one
-    (Bradesco's published total assets are the consolidated R$2.07 tn, not the
-    parent's R$1.69 tn). The asymmetry is the filings', not ours.
-
-    Returns ``None`` when the filer is not a bank, or when it filed no parent income
-    statement, leaving the ordinary choice (the consolidated one) in place.
-    """
-    if chosen is None or parent is None:
-        return None
-    if _filed_regime(_accounts_of(chosen)) is not AccountingRegime.BANK:
-        return None
-    return parent
-
-
-def _accounts_of(payload: Mapping[str, Any]) -> Accounts:
+def _accounts_of(payload: Mapping[str, Any] | None) -> Accounts:
+    if payload is None:
+        return ()
     accounts = payload.get("accounts")
     return accounts if isinstance(accounts, Sequence) else ()
 
 
+_PER_SHARE_LABELS: dict[str, PerShareClass] = {
+    "on": PerShareClass.ORDINARY,
+    "ordinaria": PerShareClass.ORDINARY,
+    "ordinarias": PerShareClass.ORDINARY,
+    "pn": PerShareClass.PREFERRED,
+    "preferencial": PerShareClass.PREFERRED,
+    "preferenciais": PerShareClass.PREFERRED,
+    "pna": PerShareClass.PREFERRED_A,
+    "pnb": PerShareClass.PREFERRED_B,
+}
+
+
+def _filed_per_share(
+    dre: Accounts,
+    prefix: str,
+    components: Sequence[UnitComponent],
+) -> tuple[Decimal | None, NullReason | None]:
+    """One filed CPC 41 result for a share class or composed unit.
+
+    CVM does not keep class labels in stable code positions: ``.01`` can be ON,
+    PN or PNA. The label is therefore authoritative and duplicate conflicting
+    values are rejected. Values are already reais per action and deliberately
+    bypass the DRE's thousand-real scale.
+    """
+    if not components:
+        return None, NullReason.MISSING_ECONOMIC_RIGHTS
+
+    values: dict[PerShareClass, set[Decimal]] = {}
+    expected_level = prefix.count(".") + 1
+    for account in dre:
+        code = str(account.get("code", ""))
+        if not code.startswith(f"{prefix}.") or code.count(".") != expected_level:
+            continue
+        per_share_class = _PER_SHARE_LABELS.get(_fold(str(account.get("name", ""))))
+        value = _dec(account.get("quantity"))
+        if per_share_class is not None and value is not None:
+            values.setdefault(per_share_class, set()).add(value)
+
+    if not values:
+        return None, NullReason.MISSING_CPC41_DISCLOSURE
+
+    total = Decimal(0)
+    for component in components:
+        candidates = values.get(component.per_share_class, set())
+        if len(candidates) != 1:
+            return None, NullReason.MISSING_ECONOMIC_RIGHTS
+        total += Decimal(component.quantity) * next(iter(candidates))
+    return total, None
+
+
 def standardize(
-    by_module: Mapping[str, Any], sector: Sector, reference_date: date
+    by_module: Mapping[str, Any],
+    sector: Sector,
+    reference_date: date,
+    *,
+    per_share_components: Sequence[UnitComponent] = (),
+    per_share_accounts: Accounts | None = None,
 ) -> StandardizedFinancials:
     """Build one period's ``StandardizedFinancials`` from its CVM statements.
 
@@ -565,6 +596,13 @@ def standardize(
     dmpl, dmpl_s = _accounts(by_module, "DMPL"), _scale(by_module, "DMPL")
 
     filed_regime = _filed_regime(dre)
+    cpc41 = dre if per_share_accounts is None else per_share_accounts
+    eps_basic, eps_basic_reason = _filed_per_share(
+        cpc41, "3.99.01", per_share_components
+    )
+    eps_diluted, eps_diluted_reason = _filed_per_share(
+        cpc41, "3.99.02", per_share_components
+    )
 
     # Lines that sit at the same code under every regime.
     base = StandardizedFinancials(
@@ -575,9 +613,13 @@ def standardize(
         total_assets=_mul(_by_code(bpa, "1"), bpa_s),
         equity=_mul(_equity(bpp), bpp_s),
         net_income=_mul(_net_income(dre), dre_s),
-        # Both slices travel together (ADR 0026). For a bank the DRE here is the
-        # parent filing (ADR 0019), so its "total" is the parent bottom line —
-        # the figure the bank itself reports.
+        eps_basic=eps_basic,
+        eps_diluted=eps_diluted,
+        eps_basic_null_reason=eps_basic_reason,
+        eps_diluted_null_reason=eps_diluted_reason,
+        # Both slices travel together (ADR 0026). The chosen DRE is consolidated
+        # whenever the issuer files one, including banks (ADR 0054), so the
+        # controller slice and CPC 41 disclosure reconcile on one lineage.
         equity_total=_mul(_equity_total(bpp), bpp_s),
         net_income_total=_mul(_net_income_total(dre), dre_s),
         revenue=_mul(_by_code(dre, "3.01"), dre_s),
@@ -618,8 +660,8 @@ def _as_bank(
     Everything below is read **by label, scoped to its parent** rather than by code,
     because the two banks do not agree on the codes: the loan-loss provision is
     3.02.05 for BBAS3 and 3.02.04 for BBDC4 (#27). The provision sits *inside* 3.02
-    here — the parent filing's chart of accounts (ADR 0019) deducts it before the
-    3.03 spread — which is why ``gross_profit`` for a bank is net of it, and why the
+    and is deducted before the 3.03 spread, which is why ``gross_profit`` for a
+    bank is net of it, and why the
     calculator adds it back to get the interest margin.
 
     Índice de Basileia (capital adequacy) is deliberately **not** built here (issue
@@ -763,6 +805,7 @@ class MongoFundamentalsReader:
         *,
         sector_resolver: Callable[[str], Sector],
         registrant_resolver: RegistrantResolver = no_registrant,
+        per_share_resolver: PerShareResolver = _no_per_share_components,
     ) -> None:
         self._collection = collection
         # The sector only seeds the ``expected_regime`` fallback (the filed regime,
@@ -772,6 +815,7 @@ class MongoFundamentalsReader:
         # Which registrant's filings to read (ADR 0030) — the same resolution, from
         # the same registry, that the sector one uses.
         self._registrant = registrant_resolver
+        self._per_share = per_share_resolver
 
     async def history(self, ticker: str) -> list[StandardizedFinancials]:
         """ITR quarterly periods (oldest→newest) — the raw material for the TTM."""
@@ -792,14 +836,18 @@ class MongoFundamentalsReader:
         cursor = self._collection.find(mirror_filter(ticker, self._registrant))
         docs: list[Mapping[str, Any]] = await cursor.to_list(None)
         sector = self._sector_resolver(ticker)
+        components = self._per_share(ticker)
 
         by_period: dict[str, dict[str, Any]] = {}
         doc_type: dict[str, str | None] = {}
         best: dict[tuple[str, str], tuple[int, int, int, datetime]] = {}
-        # The parent-only income statements, kept aside: for a bank they are the
-        # ones that carry the result the bank itself reports (see ``_bank_dre``).
-        parent_dre: dict[str, Mapping[str, Any]] = {}
-        parent_best: dict[str, tuple[int, int, int, datetime]] = {}
+        # CPC 41 retrospectively adjusts split-like events in every period shown.
+        # A later DFP's PENULTIMO column can therefore be the authoritative LPA
+        # for the previous exercise even though every other account keeps the
+        # exercise's own filing. Key it by the column's actual period end and
+        # prefer the latest consolidated presentation.
+        per_share_by_period: dict[str, Mapping[str, Any]] = {}
+        per_share_best: dict[str, tuple[int, str, int, int, datetime]] = {}
         # The parent-only DMPL, preferred for EVERY filer: the parent's declared
         # dividends are what the listed shareholders receive, and the parent
         # statement has no minority column for a shifted header to hide (#104).
@@ -818,34 +866,68 @@ class MongoFundamentalsReader:
             ref = payload.get("reference_date")
             if not isinstance(ref, str):
                 continue
+            if module == "DRE":
+                period_end = payload.get("period_end_date")
+                per_share_ref = period_end if isinstance(period_end, str) else ref
+                balance = payload.get("balance_type")
+                version = payload.get("version")
+                per_share_rank = (
+                    _BALANCE_RANK.get(balance if isinstance(balance, str) else "", 0),
+                    ref,
+                    version if isinstance(version, int) else 0,
+                    _span_months(payload),
+                    fetched,
+                )
+                accounts = _accounts_of(payload)
+                basic, _basic_reason = _filed_per_share(accounts, "3.99.01", components)
+                diluted, _diluted_reason = _filed_per_share(
+                    accounts, "3.99.02", components
+                )
+                # An empty comparative is not a retrospective restatement and
+                # must not erase a valid result from the exercise's own DFP.
+                if basic is not None or diluted is not None:
+                    if (
+                        per_share_ref not in per_share_best
+                        or per_share_rank > per_share_best[per_share_ref]
+                    ):
+                        per_share_best[per_share_ref] = per_share_rank
+                        per_share_by_period[per_share_ref] = payload
             if _ordem(payload) != _CURRENT_PERIOD:
                 continue  # the comparative describes the prior period, not this one
             key = (ref, module)
-            rank = _rank(payload, fetched)
+            rank = (
+                _dre_rank(payload, fetched)
+                if module == "DRE"
+                else _rank(payload, fetched)
+            )
             if key not in best or rank > best[key]:
                 best[key] = rank
                 by_period.setdefault(ref, {})[module] = payload
                 tag = payload.get("document_type")
                 if isinstance(tag, str):
                     doc_type[ref] = tag
-            if module == "DRE" and payload.get("balance_type") == "individual":
-                if ref not in parent_best or rank > parent_best[ref]:
-                    parent_best[ref] = rank
-                    parent_dre[ref] = payload
             if module == "DMPL" and payload.get("balance_type") == "individual":
                 if ref not in parent_dmpl_best or rank > parent_dmpl_best[ref]:
                     parent_dmpl_best[ref] = rank
                     parent_dmpl[ref] = payload
 
         for ref, modules in by_period.items():
-            bank_dre = _bank_dre(modules.get("DRE"), parent_dre.get(ref))
-            if bank_dre is not None:
-                modules["DRE"] = bank_dre
             if ref in parent_dmpl:
                 modules["DMPL"] = parent_dmpl[ref]
 
         return [
-            (doc_type.get(ref), standardize(modules, sector, date.fromisoformat(ref)))
+            (
+                doc_type.get(ref),
+                standardize(
+                    modules,
+                    sector,
+                    date.fromisoformat(ref),
+                    per_share_components=components,
+                    per_share_accounts=_accounts_of(
+                        per_share_by_period.get(ref, modules.get("DRE"))
+                    ),
+                ),
+            )
             for ref, modules in sorted(by_period.items())
         ]
 
@@ -888,6 +970,26 @@ def _rank(
     return (
         version if isinstance(version, int) else 0,
         _BALANCE_RANK.get(balance if isinstance(balance, str) else "", 0),
+        _span_months(payload),
+        fetched,
+    )
+
+
+def _dre_rank(
+    payload: Mapping[str, Any], fetched: datetime
+) -> tuple[int, int, int, datetime]:
+    """Prefer a consolidated DRE before comparing versions (ADR 0054).
+
+    CPC 41 requires the consolidated disclosure when both statement scopes
+    exist. An individual-only amendment must therefore not displace an already
+    available consolidated statement; within one scope, the latest amendment
+    and longest accumulated column retain the normal ranking.
+    """
+    version = payload.get("version")
+    balance = payload.get("balance_type")
+    return (
+        _BALANCE_RANK.get(balance if isinstance(balance, str) else "", 0),
+        version if isinstance(version, int) else 0,
         _span_months(payload),
         fetched,
     )

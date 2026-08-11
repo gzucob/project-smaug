@@ -36,7 +36,13 @@ from pathlib import Path
 import httpx
 
 from smaug.portfolio.domain.company import CompanyIdentity, InstrumentKind
-from smaug.portfolio.domain.share_classes import ShareClass, ShareKind
+from smaug.portfolio.domain.share_classes import (
+    PerShareClass,
+    ShareClass,
+    ShareKind,
+    UnitComponent,
+    per_share_class_from_symbol,
+)
 from smaug.portfolio.domain.universe import ListedCompany, listed_companies
 from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.download import Sleeper, download_zip
@@ -75,6 +81,7 @@ class _Security:
     # Underlying shares this ticker's own row bundles, when the row is a unit
     # ("Units ..."); ``None`` for a plain ON/PN class.
     unit_shares: int | None = None
+    unit_components: tuple[UnitComponent, ...] = ()
 
 
 @dataclass
@@ -122,13 +129,6 @@ def _instrument_kind(valor_mobiliario: str) -> InstrumentKind:
     return InstrumentKind.OTHER
 
 
-@dataclass(frozen=True, slots=True)
-class _UnitComponent:
-    quantity: int
-    kind: ShareKind
-    symbol: str | None = None
-
-
 _UNIT_SEPARATOR_RE = re.compile(r"\s*(?:\+|/|\be\b)\s*")
 _SYMBOL_COMPONENT_RE = re.compile(r"(?P<qty>\d+)\s*(?P<symbol>[a-z0-9]{4}\d{1,2})")
 _TEXT_COMPONENT_RE = re.compile(
@@ -147,7 +147,7 @@ def _kind_from_suffix(symbol: str) -> ShareKind | None:
     return None
 
 
-def _unit_composition(composition: str) -> list[_UnitComponent]:
+def _unit_composition(composition: str) -> list[UnitComponent]:
     """Quantity + underlying ON/PN classes named in a unit's ``Composicao_BDR_Unit``.
 
     Some companies file only the unit on the FCA (Klabin lists KLBN11, never
@@ -157,7 +157,7 @@ def _unit_composition(composition: str) -> list[_UnitComponent]:
     worth (#212), which the FRE itself never publishes.
     """
     parts = [part for part in _UNIT_SEPARATOR_RE.split(_fold(composition)) if part]
-    resolved: list[_UnitComponent] = []
+    resolved: list[UnitComponent] = []
     for part in parts:
         symbol_match = _SYMBOL_COMPONENT_RE.fullmatch(part)
         if symbol_match is not None:
@@ -166,7 +166,11 @@ def _unit_composition(composition: str) -> list[_UnitComponent]:
             if kind is None:
                 return []
             resolved.append(
-                _UnitComponent(int(symbol_match.group("qty")), kind, symbol)
+                UnitComponent(
+                    int(symbol_match.group("qty")),
+                    per_share_class_from_symbol(symbol, kind),
+                    symbol,
+                )
             )
             continue
         text_match = _TEXT_COMPONENT_RE.fullmatch(part)
@@ -179,7 +183,16 @@ def _unit_composition(composition: str) -> list[_UnitComponent]:
             if label.startswith("on") or label.startswith("ordinari")
             else ShareKind.PREFERRED
         )
-        resolved.append(_UnitComponent(int(text_match.group("qty")), kind))
+        preferred_label = label.removesuffix("s").upper()
+        per_share_class = (
+            PerShareClass.ORDINARY
+            if kind is ShareKind.COMMON
+            else {
+                "PNA": PerShareClass.PREFERRED_A,
+                "PNB": PerShareClass.PREFERRED_B,
+            }.get(preferred_label, PerShareClass.PREFERRED)
+        )
+        resolved.append(UnitComponent(int(text_match.group("qty")), per_share_class))
     return resolved
 
 
@@ -343,6 +356,7 @@ class CvmCompanyRegistry:
                 listed_since=security.listed_since,
                 share_classes=classes.get(security.cnpj, ()),
                 shares_per_unit=security.unit_shares,
+                unit_components=security.unit_components,
             )
         return index
 
@@ -414,6 +428,7 @@ class CvmCompanyRegistry:
                     trading_ended=trading_ended,
                     listed_since=_iso_date(row.get("Data_Inicio_Listagem")),
                     unit_shares=unit_shares,
+                    unit_components=tuple(composition),
                 )
                 current = securities.get(ticker)
                 if current is None or _prefer(candidate, current):
@@ -428,7 +443,12 @@ class CvmCompanyRegistry:
                     accumulator = classes.setdefault(cnpj, _ClassAccumulator())
                     for component in composition:
                         if component.symbol is not None:
-                            accumulator.add(component.kind, component.symbol)
+                            kind = (
+                                ShareKind.COMMON
+                                if component.per_share_class is PerShareClass.ORDINARY
+                                else ShareKind.PREFERRED
+                            )
+                            accumulator.add(kind, component.symbol)
         return securities, classes
 
 

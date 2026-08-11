@@ -20,7 +20,9 @@ from smaug.portfolio.domain.company import (
     InstrumentKind,
     fundamental_exclusion,
     is_unit,
+    per_share_components,
 )
+from smaug.portfolio.domain.share_classes import PerShareClass, UnitComponent
 from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
 
 _YEAR = 2024
@@ -284,6 +286,10 @@ async def test_share_classes_from_explicit_rows_and_from_a_unit_composition(
     assert _classes(unit) == {("WXYZ3", "common"), ("WXYZ4", "preferred")}
     # "1 WXYZ3 + 4 WXYZ4": one unit bundles 1 + 4 = 5 underlying shares (#212).
     assert unit.shares_per_unit == 5
+    assert unit.unit_components == (
+        UnitComponent(1, PerShareClass.ORDINARY, "WXYZ3"),
+        UnitComponent(4, PerShareClass.PREFERRED, "WXYZ4"),
+    )
     assert a.shares_per_unit is None  # a plain ON row is not a unit
 
 
@@ -333,6 +339,10 @@ async def test_all_current_fca_units_parse_textual_or_symbol_compositions(
         assert is_unit(identity)
         assert identity.instrument_kind is InstrumentKind.UNIT
         assert identity.shares_per_unit == count
+        assert (
+            sum(component.quantity for component in identity.unit_components) == count
+        )
+        assert per_share_components(identity) == identity.unit_components
 
 
 async def test_suffix_11_warrants_are_not_units_or_listed_equities(
@@ -443,9 +453,14 @@ async def test_two_classes_of_the_same_kind_yield_no_classes(tmp_path: Path) -> 
     )
 
     identity = await _registry(tmp_path).resolve("EFGH3")
+    pna = await _registry(tmp_path).resolve("EFGH5")
 
     assert identity is not None
     assert identity.share_classes == ()
+    assert pna is not None
+    assert per_share_components(pna) == (
+        UnitComponent(1, PerShareClass.PREFERRED_A, "EFGH5"),
+    )
 
 
 async def test_companies_group_trading_codes_and_drop_the_archives_non_tickers(

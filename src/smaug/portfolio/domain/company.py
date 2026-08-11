@@ -14,7 +14,13 @@ from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
 
-from smaug.portfolio.domain.share_classes import ShareClass
+from smaug.portfolio.domain.share_classes import (
+    PerShareClass,
+    ShareClass,
+    ShareKind,
+    UnitComponent,
+    per_share_class_from_symbol,
+)
 
 # Ticker -> the registrant that files for it (``CD_CVM``), or ``None`` when the
 # ticker resolves nowhere. The mirror is keyed on the registrant (ADR 0030), so
@@ -79,6 +85,10 @@ class CompanyIdentity:
     # ``instrument_kind`` distinguishes those cases so the latter becomes a
     # named null instead of falling back to the filed underlying total.
     shares_per_unit: int | None = None
+    # The same FCA bundle with its class quantities intact. ``shares_per_unit``
+    # answers the denominator question; these components answer the different
+    # CPC 41 question of how much ON/PN/PNA/PNB result one unit carries.
+    unit_components: tuple[UnitComponent, ...] = field(default_factory=tuple)
 
 
 UnitResolver = Callable[[str], bool]
@@ -92,6 +102,28 @@ def is_unit(identity: CompanyIdentity) -> bool:
 def no_units(_ticker: str) -> bool:
     """The default resolver when no FCA identity map was wired."""
     return False
+
+
+def per_share_components(identity: CompanyIdentity) -> tuple[UnitComponent, ...]:
+    """The CPC 41 class or bundle represented by one resolved security."""
+    if identity.instrument_kind is InstrumentKind.UNIT:
+        return identity.unit_components
+    if identity.instrument_kind is InstrumentKind.COMMON_SHARE:
+        return (UnitComponent(1, PerShareClass.ORDINARY, identity.ticker),)
+    if identity.instrument_kind is InstrumentKind.PREFERRED_SHARE:
+        return (
+            UnitComponent(
+                1,
+                per_share_class_from_symbol(
+                    identity.ticker,
+                    # A preferred identity is positive FCA evidence; the helper
+                    # uses only the suffix to distinguish A/B subclasses.
+                    ShareKind.PREFERRED,
+                ),
+                identity.ticker,
+            ),
+        )
+    return ()
 
 
 def fundamental_exclusion(identity: CompanyIdentity) -> str | None:

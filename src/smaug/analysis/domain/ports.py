@@ -102,8 +102,8 @@ class SharesReader(Protocol):
     """Reads a company's outstanding shares for a given fiscal year.
 
     Outstanding, not issued: the shares the company holds in treasury are netted
-    out of both readings below (ADR 0017), so the cap and the per-share indicators
-    are built on the same denominator.
+    out of both readings below (ADR 0017), so the cap and closing-count measures
+    such as BVPS are built on the same denominator. CPC 41 EPS is separate.
     """
 
     async def outstanding(self, ticker: str, year: int) -> Decimal | None:
@@ -111,7 +111,7 @@ class SharesReader(Protocol):
         ...
 
     def outstanding_null_reason(self, ticker: str, year: int) -> NullReason | None:
-        """A structural reason the per-security denominator is unavailable."""
+        """A structural reason the closing-share denominator is unavailable."""
         ...
 
     async def counts(self, ticker: str, year: int) -> ShareCounts | None:

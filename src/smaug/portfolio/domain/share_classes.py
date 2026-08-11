@@ -18,10 +18,11 @@ summing class by class never mentions the bundle.
 
 The bundle composition itself — how many underlying shares one unit is worth —
 is what ``CompanyIdentity.shares_per_unit`` carries, parsed from the FCA's own
-``Composicao_BDR_Unit`` text (#212). Without it the per-share indicators
-(LPA/VPA) stay null for a unit — dividing earnings by the underlying share
-count would not line up with the per-unit price (#38). Whether a code is a unit
-comes from that resolved identity, never from its numeric suffix (ADR 0053).
+``Composicao_BDR_Unit`` text (#212). It aligns the closing-share denominator of
+VPA with the per-unit price; its class-preserving sibling ``unit_components``
+composes the issuer's filed CPC 41 results into LPA per unit (ADR 0054). Whether
+a code is a unit comes from that resolved identity, never from its numeric
+suffix (ADR 0053).
 """
 
 from __future__ import annotations
@@ -37,9 +38,43 @@ class ShareKind(StrEnum):
     PREFERRED = "preferred"  # PN — ticker ends in 4, 5 or 6
 
 
+class PerShareClass(StrEnum):
+    """The class labels a CVM CPC 41 disclosure assigns results to."""
+
+    ORDINARY = "ON"
+    PREFERRED = "PN"
+    PREFERRED_A = "PNA"
+    PREFERRED_B = "PNB"
+
+
 @dataclass(frozen=True, slots=True)
 class ShareClass:
     """One listed class of a company's equity: the symbol it trades under."""
 
     symbol: str
     kind: ShareKind
+
+
+@dataclass(frozen=True, slots=True)
+class UnitComponent:
+    """One underlying class and quantity declared in an FCA unit composition."""
+
+    quantity: int
+    per_share_class: PerShareClass
+    symbol: str | None = None
+
+
+def per_share_class_from_symbol(symbol: str, kind: ShareKind) -> PerShareClass:
+    """Resolve ON/PN/PNA/PNB for a plain share symbol.
+
+    FCA identifies the instrument as ordinary/preferred; the B3 class number
+    distinguishes the preferred subclasses that CPC 41 reports separately.
+    """
+    if kind is ShareKind.COMMON:
+        return PerShareClass.ORDINARY
+    suffix = symbol.upper().strip()[4:]
+    if suffix == "5":
+        return PerShareClass.PREFERRED_A
+    if suffix == "6":
+        return PerShareClass.PREFERRED_B
+    return PerShareClass.PREFERRED
