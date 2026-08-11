@@ -132,7 +132,11 @@ async def test_two_actions_a_year_apart_compound_only_over_what_precedes_them() 
     every one of them was applied to whole years that were partly quoted after it.
     """
     inner = FakeAsTradedPrices(
-        YearPrices(nominal_avg=Decimal("23.1")),  # (24.2 + 22) / 2, as traded
+        YearPrices(
+            nominal_avg=Decimal("23.1"),
+            closing=Decimal(22),
+            closing_session=date(2016, 6, 10),
+        ),  # (24.2 + 22) / 2, as traded
         sessions=_traded(("2016-01-11", "24.2"), ("2016-06-10", "22")),
     )
     timeline = (
@@ -145,6 +149,10 @@ async def test_two_actions_a_year_apart_compound_only_over_what_precedes_them() 
     # January is behind both bonuses (24.2/1.21), June behind only the 2017 one
     # (22/1.1) — and on the current base the year was flat at 20 throughout.
     assert prices.nominal_avg == Decimal(20)
+    # The close uses its own session factor (1.1), never the mean's weighted
+    # divisor (1.155). Both land at 20 here because the tape is cap-invariant.
+    assert prices.closing == Decimal(20)
+    assert prices.closing_session == date(2016, 6, 10)
 
 
 async def test_both_bases_are_divided_so_the_pair_stays_consistent() -> None:

@@ -38,12 +38,15 @@ class TickerAnalysisRow(Base):
     price: Mapped[Decimal | None] = mapped_column(Numeric)
     price_adjusted: Mapped[Decimal | None] = mapped_column(Numeric)
     price_basis: Mapped[str | None] = mapped_column(String(24))
+    share_count_basis: Mapped[str | None] = mapped_column(String(48))
+    liquidity_basis: Mapped[str | None] = mapped_column(String(48))
+    roic_tax_basis: Mapped[str | None] = mapped_column(String(32))
 
     roe: Mapped[Decimal | None] = mapped_column(Numeric)
     roe_total: Mapped[Decimal | None] = mapped_column(Numeric)
     roa: Mapped[Decimal | None] = mapped_column(Numeric)
     roa_total: Mapped[Decimal | None] = mapped_column(Numeric)
-    roic: Mapped[Decimal | None] = mapped_column(Numeric)
+    roic_statutory: Mapped[Decimal | None] = mapped_column(Numeric)
     net_margin: Mapped[Decimal | None] = mapped_column(Numeric)
     net_margin_total: Mapped[Decimal | None] = mapped_column(Numeric)
     gross_margin: Mapped[Decimal | None] = mapped_column(Numeric)
@@ -55,6 +58,8 @@ class TickerAnalysisRow(Base):
     eps_diluted: Mapped[Decimal | None] = mapped_column(Numeric)
     bvps: Mapped[Decimal | None] = mapped_column(Numeric)
     net_debt: Mapped[Decimal | None] = mapped_column(Numeric)
+    cash_equivalents: Mapped[Decimal | None] = mapped_column(Numeric)
+    current_financial_investments: Mapped[Decimal | None] = mapped_column(Numeric)
     net_debt_to_ebitda: Mapped[Decimal | None] = mapped_column(Numeric)
     net_debt_to_ebit: Mapped[Decimal | None] = mapped_column(Numeric)
     net_debt_to_equity: Mapped[Decimal | None] = mapped_column(Numeric)
@@ -106,6 +111,7 @@ class TickerAnalysisRow(Base):
     equity_total: Mapped[Decimal | None] = mapped_column(Numeric)
     market_cap: Mapped[Decimal | None] = mapped_column(Numeric)
     enterprise_value: Mapped[Decimal | None] = mapped_column(Numeric)
+    non_controlling_interests: Mapped[Decimal | None] = mapped_column(Numeric)
     shares: Mapped[Decimal | None] = mapped_column(Numeric)
     # Cause per null indicator, keyed by column name (#30's NullReason values).
     # NULL on rows computed before the vocabulary existed.

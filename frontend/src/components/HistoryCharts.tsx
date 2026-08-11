@@ -82,7 +82,7 @@ const GROUPS: ChartGroup[] = [
       {
         key: "net_debt",
         label: "Dívida líquida",
-        hint: "Dívida total − caixa e aplicações",
+        hint: "Dívida total − caixa e equivalentes CPC 03",
         kind: "money",
       },
       {

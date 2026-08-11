@@ -4,8 +4,8 @@ Rebuilds a 12-month period from CVM quarters. Two rules the CVM data forces:
 
 * **Flow vs. stock.** Income-statement lines (revenue, net income, EBIT, D&A) are
   *flows*: the TTM value is the **sum** of the four trailing isolated quarters.
-  Balance-sheet lines (equity, assets, cash, debt) are *stocks*: the TTM value is
-  the **latest** quarter, never a sum.
+  Balance-sheet lines (equity, assets, cash equivalents, investments, debt) are
+  *stocks*: the TTM value is the **latest** quarter, never a sum.
 * **The missing Q4.** Companies file three ITRs (Q1–Q3) plus one annual DFP, so
   the isolated Q4 has no statement of its own — it is derived as
   ``annual − (Q1+Q2+Q3 isolated)``.
@@ -233,7 +233,8 @@ def _build_ttm(
         ebit=summed["ebit"],
         ebitda=_add(summed["ebit"], summed["dep_amort"]),
         dep_amort=summed["dep_amort"],
-        cash=stock_source.cash,
+        cash_equivalents=stock_source.cash_equivalents,
+        current_financial_investments=(stock_source.current_financial_investments),
         current_assets=stock_source.current_assets,
         current_liabilities=stock_source.current_liabilities,
         total_debt=stock_source.total_debt,

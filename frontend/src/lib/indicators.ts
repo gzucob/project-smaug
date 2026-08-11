@@ -84,7 +84,7 @@ export function basisOf(key: IndicatorKey): Basis {
 export const INDICATORS: IndicatorSpec[] = [
   { key: "roe", label: "ROE", hint: "Retorno sobre o patrimônio líquido (fatia dos controladores)", group: "Rentabilidade", format: pct },
   { key: "roa", label: "ROA", hint: "Retorno sobre os ativos (lucro dos controladores)", group: "Rentabilidade", format: pct },
-  { key: "roic", label: "ROIC", hint: "Retorno sobre o capital investido (NOPAT / capital investido)", group: "Rentabilidade", format: pct },
+  { key: "roic_statutory", label: "ROIC estatutário", hint: "EBIT consolidado após alíquota legal de 34% / capital investido consolidado", group: "Rentabilidade", format: pct },
   { key: "net_margin", label: "Margem líquida", hint: "Lucro dos controladores / receita", group: "Rentabilidade", format: pct },
   { key: "gross_margin", label: "Margem bruta", hint: "Lucro bruto / receita", group: "Rentabilidade", format: pct },
   { key: "ebit_margin", label: "Margem EBIT", hint: "EBIT (lucro operacional) / receita", group: "Rentabilidade", format: pct },
@@ -104,7 +104,7 @@ export const INDICATORS: IndicatorSpec[] = [
   { key: "ebit_cagr_5y", label: "CAGR EBIT 5a", hint: "Crescimento anual composto do lucro operacional em 5 anos", group: "Crescimento", format: signedPct },
   { key: "net_income_cagr_5y", label: "CAGR lucro 5a", hint: "Crescimento anual composto do lucro líquido em 5 anos", group: "Crescimento", format: signedPct },
 
-  { key: "net_debt", label: "Dívida líquida", hint: "Dívida total − caixa e aplicações", group: "Alavancagem & Liquidez", format: money },
+  { key: "net_debt", label: "Dívida líquida", hint: "Dívida total − caixa e equivalentes classificados no CPC 03", group: "Alavancagem & Liquidez", format: money },
   { key: "net_debt_to_ebitda", label: "Dív. líq./EBITDA", hint: "Anos de EBITDA para quitar a dívida líquida", group: "Alavancagem & Liquidez", format: multiple },
   { key: "net_debt_to_ebit", label: "Dív. líq./EBIT", hint: "Anos de lucro operacional (EBIT) para quitar a dívida líquida", group: "Alavancagem & Liquidez", format: multiple },
   { key: "net_debt_to_equity", label: "Dív. líq./PL", hint: "Dívida líquida / patrimônio líquido — alavancagem líquida de caixa", group: "Alavancagem & Liquidez", format: multiple },

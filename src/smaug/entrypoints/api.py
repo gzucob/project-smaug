@@ -57,7 +57,7 @@ class IndicatorsResponse(BaseModel):
     roe_total: Decimal | None
     roa: Decimal | None
     roa_total: Decimal | None
-    roic: Decimal | None
+    roic_statutory: Decimal | None
     net_margin: Decimal | None
     net_margin_total: Decimal | None
     gross_margin: Decimal | None
@@ -69,6 +69,8 @@ class IndicatorsResponse(BaseModel):
     eps_diluted: Decimal | None
     bvps: Decimal | None
     net_debt: Decimal | None
+    cash_equivalents: Decimal | None
+    current_financial_investments: Decimal | None
     net_debt_to_ebitda: Decimal | None
     net_debt_to_ebit: Decimal | None
     net_debt_to_equity: Decimal | None
@@ -116,6 +118,7 @@ class IndicatorsResponse(BaseModel):
     equity_total: Decimal | None
     market_cap: Decimal | None
     enterprise_value: Decimal | None
+    non_controlling_interests: Decimal | None
     shares: Decimal | None
     null_reasons: dict[str, str]
 
@@ -139,6 +142,9 @@ class AnalysisResponse(BaseModel):
     price: Decimal | None
     price_adjusted: Decimal | None
     price_basis: str | None
+    share_count_basis: str | None
+    liquidity_basis: str | None
+    roic_tax_basis: str | None
     indicators: IndicatorsResponse
 
 
@@ -175,6 +181,9 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
         price=analysis.price,
         price_adjusted=analysis.price_adjusted,
         price_basis=analysis.price_basis,
+        share_count_basis=analysis.share_count_basis,
+        liquidity_basis=analysis.liquidity_basis,
+        roic_tax_basis=analysis.roic_tax_basis,
         indicators=IndicatorsResponse.model_validate(
             analysis.indicators, from_attributes=True
         ),

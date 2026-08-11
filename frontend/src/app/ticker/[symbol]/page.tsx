@@ -62,6 +62,9 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
   const scaleFigures: { label: string; value: string }[] = [
     { label: "Valor de mercado", value: money(scale.market_cap) },
     { label: "Enterprise value", value: money(scale.enterprise_value) },
+    { label: "Caixa e equivalentes", value: money(scale.cash_equivalents) },
+    { label: "Aplicações correntes", value: money(scale.current_financial_investments) },
+    { label: "Não controladores", value: money(scale.non_controlling_interests) },
     { label: "Ações", value: count(scale.shares) },
   ];
 

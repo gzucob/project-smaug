@@ -69,7 +69,7 @@ def test_standardize_nonfinancial_pulls_every_line() -> None:
     assert f.ebit == Decimal("200")
     assert f.dep_amort == Decimal("80")
     assert f.ebitda == Decimal("280")  # ebit + D&A
-    assert f.cash == Decimal("100")
+    assert f.cash_equivalents == Decimal("100")
     assert f.current_assets == Decimal("400")
     assert f.current_liabilities == Decimal("200")
     assert f.total_debt == Decimal("200")  # 50 + 150
@@ -285,7 +285,8 @@ def test_standardize_bank_reads_its_own_chart_of_accounts() -> None:
     assert f.equity == Decimal("800")  # matched by name, code 2.07
     assert f.revenue == Decimal("400")
     assert f.net_income == Decimal("90")
-    assert f.cash == Decimal("300")  # 1.01 whole, not 1.01.01 + 1.01.02
+    assert f.cash_equivalents == Decimal("300")  # bank's CPC 03 total is 1.01
+    assert f.current_financial_investments is None
     assert f.gross_profit == Decimal("140")  # 3.03 — the spread, net of the provision
     assert f.ebit == Decimal("60")  # 3.05 = pre-tax profit (ADR 0015)
     assert f.cfo == Decimal("500")
@@ -302,8 +303,10 @@ def test_standardize_bank_reads_its_own_chart_of_accounts() -> None:
     assert f.total_debt is None
     assert f.current_assets is None
     assert f.current_liabilities is None
-    # D&A is the one line we still skip, and it is recorded as such (ADR 0015).
-    assert f.unmapped_fields == frozenset({"dep_amort", "ebitda"})
+    # D&A and a current-only investments slice cannot be built from this schema.
+    assert f.unmapped_fields == frozenset(
+        {"dep_amort", "ebitda", "current_financial_investments"}
+    )
 
 
 def _investing(*lines: dict[str, Any]) -> dict[str, dict[str, list[dict[str, Any]]]]:
@@ -534,7 +537,8 @@ def test_standardize_insurer_reads_ebit_at_307_and_no_debt_line() -> None:
     assert f.filed_regime is AccountingRegime.INSURANCE
     assert f.ebit == Decimal("300")  # 3.07 — and emphatically not 3.05's -99
     assert f.total_debt is None  # 2.01.04 + 2.02.01 must not be summed here
-    assert f.cash == Decimal("1500")  # 1.01.01 + 1.01.02, as for a corporate
+    assert f.cash_equivalents == Decimal("1200")
+    assert f.current_financial_investments == Decimal("300")
     assert f.current_assets == Decimal("4000")  # the split a bank does not file
     assert f.current_liabilities == Decimal("2000")
     assert f.earned_premium == Decimal("600")
@@ -605,10 +609,11 @@ def test_standardize_nonfinancial_has_no_unmapped_fields() -> None:
     assert f.unmapped_fields == frozenset()
 
 
-def test_standardize_takes_controllers_share_wide_cash_and_dividends() -> None:
+def test_standardize_separates_cpc03_cash_from_current_investments() -> None:
     # A normal company exposes the split as consolidated total + a minority
-    # sub-line; controllers = total - minority. Cash adds 1.01.02, and dividends
-    # come from the DFC financing outflows (minority line excluded).
+    # sub-line; controllers = total - minority. Cash equivalents and broader
+    # current investments stay separate, and dividends come from the DFC
+    # financing outflows (minority line excluded).
     by_module = {
         "BPA": {
             "accounts": [
@@ -649,7 +654,8 @@ def test_standardize_takes_controllers_share_wide_cash_and_dividends() -> None:
     # Both slices travel together (ADR 0026): the totals as filed, minority in.
     assert f.equity_total == Decimal("1000")
     assert f.net_income_total == Decimal("200")
-    assert f.cash == Decimal("500")  # 1.01.01 + 1.01.02
+    assert f.cash_equivalents == Decimal("300")  # CVM 1.01.01 / CPC 03
+    assert f.current_financial_investments == Decimal("200")  # CVM 1.01.02
     assert f.dividends_paid == Decimal("50")  # abs, minority line excluded
     assert f.dfc_period_start == date(2025, 1, 1)
 

@@ -58,6 +58,9 @@ _BALANCE_RANK: dict[str, int] = {"consolidated": 1, "individual": 0}
 # inapplicable under both financial regimes — ADR 0010). Naming it here keeps the
 # null honest if a future indicator does reach for it (#27).
 _FINANCIAL_UNMAPPED_FIELDS = frozenset({"dep_amort", "ebitda"})
+_BANK_UNMAPPED_FIELDS = _FINANCIAL_UNMAPPED_FIELDS | frozenset(
+    {"current_financial_investments"}
+)
 
 # How the DRE's opening line (3.01) reads under each accounting regime,
 # accent-folded. Verified against the real filings in the raw mirror: banks
@@ -681,13 +684,15 @@ def _as_bank(
     return replace(
         base,
         ebit=_mul(_by_code(dre, "3.05"), dre_s),  # pre-tax result — see docstring
-        cash=_mul(_by_code(bpa, "1.01"), bpa_s),  # no 1.01.01/1.01.02 split
+        # A bank files the CPC 03-labelled total directly at 1.01 and has no
+        # current/non-current split from which to isolate broader investments.
+        cash_equivalents=_mul(_by_code(bpa, "1.01"), bpa_s),
         loan_loss_provision=_mul(_child_by_name(dre, "3.02", "provisao"), dre_s),
         fee_income=_mul(_child_by_name(dre, "3.04", "prestacao de servicos"), dre_s),
         personnel_expense=_mul(_child_by_name(dre, "3.04", "pessoal"), dre_s),
         admin_expense=_mul(_child_by_name(dre, "3.04", "administrativas"), dre_s),
         loan_book=_loan_book(bpa, bpa_s),
-        unmapped_fields=_FINANCIAL_UNMAPPED_FIELDS,
+        unmapped_fields=_BANK_UNMAPPED_FIELDS,
     )
 
 
@@ -746,7 +751,8 @@ def _as_insurer(
     return replace(
         base,
         ebit=_mul(_by_code(dre, "3.07"), dre_s),  # before financial result/taxes
-        cash=_mul(_sum(_by_code(bpa, "1.01.01"), _by_code(bpa, "1.01.02")), bpa_s),
+        cash_equivalents=_mul(_by_code(bpa, "1.01.01"), bpa_s),
+        current_financial_investments=_mul(_by_code(bpa, "1.01.02"), bpa_s),
         current_assets=_mul(_by_code(bpa, "1.01"), bpa_s),
         current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),
         earned_premium=_mul(_by_code(dre, "3.01.01"), dre_s),
@@ -772,15 +778,16 @@ def _as_corporate(
     ebitda = (
         _sum(ebit, dep_amort) if ebit is not None and dep_amort is not None else None
     )
-    # Cash for net debt = cash & equivalents (1.01.01) + short-term financial
-    # investments (1.01.02), matching how the platforms measure liquidity.
-    cash = _mul(_sum(_by_code(bpa, "1.01.01"), _by_code(bpa, "1.01.02")), bpa_s)
     return replace(
         base,
         ebit=ebit,
         ebitda=ebitda,
         dep_amort=dep_amort,
-        cash=cash,
+        # CPC 03 eligibility is the line the issuer itself classifies as cash and
+        # cash equivalents. The broader 1.01.02 investments remain visible but do
+        # not silently reduce net debt (ADR 0057).
+        cash_equivalents=_mul(_by_code(bpa, "1.01.01"), bpa_s),
+        current_financial_investments=_mul(_by_code(bpa, "1.01.02"), bpa_s),
         current_assets=_mul(_by_code(bpa, "1.01"), bpa_s),
         current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),
         total_debt=_mul(

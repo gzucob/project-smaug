@@ -116,9 +116,9 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
   },
-  roic: {
-    formula: "EBIT anualizado × (1 − 34%) ÷ (Patrimônio líquido + Dívida líquida)",
-    what: "Retorno sobre todo o capital investido no negócio, próprio e de terceiros, medido antes da estrutura de capital. Comparado ao custo de capital, diz se a empresa cria ou destrói valor.",
+  roic_statutory: {
+    formula: "EBIT consolidado anualizado × (1 − 34%) ÷ (PL consolidado + Dívida líquida)",
+    what: "Proxy padronizada do retorno sobre todo o capital investido no grupo, próprio e de terceiros. O nome estatutário explicita que o imposto é normalizado, não o efetivamente reconhecido pela companhia.",
     strongIn: [
       {
         where: "Máquinas e Equipamentos, Material de Transporte, Químicos",
@@ -140,7 +140,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "O NOPAT usa a alíquota estatutária fixa de 34% (IRPJ 25% + CSLL 9%), não a alíquota efetiva de cada empresa — uma aproximação deliberada, registrada em docs/adr/0002.",
+      "O NOPAT usa a alíquota estatutária fixa de 34% (IRPJ 25% + CSLL 9%), não a alíquota efetiva da empresa. EBIT e patrimônio são consolidados e a dívida líquida desconta apenas caixa e equivalentes CPC 03 (ADR 0057).",
   },
   net_margin: {
     formula: "Lucro líquido ÷ Receita líquida (mesmo período, sem anualizar)",
@@ -479,8 +479,8 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
 
   // -------------------------------------------- alavancagem & liquidez ---
   net_debt: {
-    formula: "Dívida total − Caixa e aplicações financeiras",
-    what: "A dívida que sobraria se a empresa usasse todo o seu caixa para quitá-la. Valor negativo significa caixa líquido.",
+    formula: "Dívida total − Caixa e equivalentes de caixa (CVM 1.01.01)",
+    what: "A dívida que sobraria se a empresa usasse o caixa e os equivalentes que atendem à classificação do CPC 03. Aplicações financeiras correntes mais amplas ficam visíveis em campo separado e não reduzem esta conta.",
     strongIn: [
       {
         where: "Energia Elétrica, Telecomunicações, Construção e Engenharia",
@@ -493,6 +493,8 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "captação é o insumo do negócio, não um passivo a ser quitado — a conta não tem sentido econômico",
       },
     ],
+    caveat:
+      "A linha agregada 1.01.02 não prova conversibilidade imediata, vencimento curto e risco insignificante de valor. Por isso não é promovida a equivalente de caixa (ADR 0057).",
   },
   net_debt_to_ebitda: {
     formula: "Dívida líquida ÷ EBITDA anualizado",
@@ -1166,6 +1168,38 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
   },
+  cash_equivalents: {
+    formula: "Caixa e equivalentes de caixa (CVM 1.01.01)",
+    what: "Disponibilidades que a companhia classificou no balanço na base do CPC 03. É exatamente a liquidez descontada da dívida bruta para formar a dívida líquida.",
+    strongIn: [
+      {
+        where: "Qualquer companhia não financeira",
+        why: "mostra a parcela de liquidez com classificação contábil adequada para liquidação imediata",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Instituições financeiras",
+        why: "caixa é parte da operação e dívida líquida não é uma leitura econômica aplicável",
+      },
+    ],
+  },
+  current_financial_investments: {
+    formula: "Aplicações financeiras correntes (CVM 1.01.02)",
+    what: "Investimentos financeiros no ativo circulante que permanecem separados do caixa. O campo preserva liquidez adicional sem afirmar que todo o saldo satisfaz o CPC 03.",
+    strongIn: [
+      {
+        where: "Companhias com tesouraria relevante",
+        why: "permite enxergar recursos líquidos além do caixa sem reduzir a dívida por uma classificação não demonstrada",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Comparação sem notas explicativas",
+        why: "a linha agregada não informa vencimento, conversibilidade nem risco de cada instrumento",
+      },
+    ],
+  },
   distributions_per_security: {
     formula: "Σ proventos B3 por papel cujas datas ex caem na janela",
     what: "Quanto uma unidade do papel adquiriu em direitos de caixa na janela. A escala 1/1.000 da B3 e as mudanças posteriores da base de ações são normalizadas antes da soma.",
@@ -1239,8 +1273,8 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
   },
   enterprise_value: {
-    formula: "Valor de mercado + dívida líquida",
-    what: "O que custaria comprar a empresa e quitar suas dívidas: o valor de mercado mais a dívida líquida de caixa. É o preço do negócio independente de como ele é financiado.",
+    formula: "Valor de mercado + dívida líquida + participação de não controladores",
+    what: "Valor do grupo operacional no mesmo perímetro consolidado do EBIT e do EBITDA: ações da controladora, dívida líquida de equivalentes CPC 03 e capital dos não controladores.",
     strongIn: [
       {
         where: "Indústria, Energia, Saneamento",
@@ -1255,6 +1289,22 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
     caveat:
       "Nulo para um banco: depósito é funding, não dívida, então não há dívida líquida a somar (ADR 0022).",
+  },
+  non_controlling_interests: {
+    formula: "PL consolidado − PL atribuído aos controladores",
+    what: "Parcela do patrimônio das controladas que pertence a outros acionistas. Entra no enterprise value porque o EBIT e o EBITDA consolidados incluem 100% dessas operações.",
+    strongIn: [
+      {
+        where: "Grupos com controladas não integrais",
+        why: "fecha o perímetro entre o valor da firma e o resultado operacional consolidado",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas sem minoritários relevantes",
+        why: "é zero e não altera o enterprise value",
+      },
+    ],
   },
   shares: {
     formula: "Ações emitidas − ações em tesouraria",

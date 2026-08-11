@@ -36,7 +36,7 @@ export interface Indicators {
   roe_total: Decimalish;
   roa: Decimalish;
   roa_total: Decimalish;
-  roic: Decimalish;
+  roic_statutory: Decimalish;
   net_margin: Decimalish;
   net_margin_total: Decimalish;
   gross_margin: Decimalish;
@@ -48,6 +48,8 @@ export interface Indicators {
   eps_diluted: Decimalish;
   bvps: Decimalish;
   net_debt: Decimalish;
+  cash_equivalents: Decimalish;
+  current_financial_investments: Decimalish;
   net_debt_to_ebitda: Decimalish;
   net_debt_to_ebit: Decimalish;
   net_debt_to_equity: Decimalish;
@@ -100,6 +102,7 @@ export interface Indicators {
   equity_total: Decimalish;
   market_cap: Decimalish;
   enterprise_value: Decimalish;
+  non_controlling_interests: Decimalish;
   shares: Decimalish;
   // Why each null is null (ADR 0008). A key absent from the map is a null with
   // no recorded cause — "unclassified", a reportable status of its own (#47).
@@ -142,6 +145,9 @@ export interface Analysis {
   price: Decimalish;
   price_adjusted: Decimalish; // total-return basis; null on the live view
   price_basis: string | null;
+  share_count_basis: string | null;
+  liquidity_basis: string | null;
+  roic_tax_basis: string | null;
   indicators: Indicators;
 }
 

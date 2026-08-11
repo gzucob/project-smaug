@@ -54,7 +54,7 @@ class PriceProvider(Protocol):
     async def get(self, ticker: str) -> MarketData: ...
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:
-        """Average nominal and dividend-adjusted price over ``year``."""
+        """Closing, nominal-average and dividend-adjusted prices for ``year``."""
         ...
 
 
@@ -86,7 +86,7 @@ class CurrentQuoteProvider(Protocol):
 
 
 class PriceHistoryProvider(Protocol):
-    """Provides a ticker's daily price averaged over a closed fiscal year.
+    """Provides a ticker's closing and average prices for a fiscal year.
 
     Split out from ``PriceProvider`` because the closed-year basis is a different
     question from the live quote: it is an average over a window, and it is the
@@ -95,7 +95,7 @@ class PriceHistoryProvider(Protocol):
     """
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:
-        """Average nominal and dividend-adjusted price over ``year``."""
+        """Closing, nominal-average and dividend-adjusted prices for ``year``."""
         ...
 
 

@@ -135,6 +135,8 @@ async def test_year_prices_carry_the_nominal_average_and_no_adjusted_one(
     assert (
         prices.nominal_avg == (Decimal("9.36") + Decimal("8.61") + Decimal("8.33")) / 3
     )
+    assert prices.closing == Decimal("8.33")
+    assert prices.closing_session == date(2015, 1, 6)
     # The published file carries the traded price and no dividend adjustment;
     # the total-return basis is rebuilt from corporate events, not read here.
     assert prices.adjusted_avg is None

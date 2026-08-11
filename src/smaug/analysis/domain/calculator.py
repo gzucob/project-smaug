@@ -126,21 +126,25 @@ def _negated(value: Decimal | None) -> Decimal | None:
 
 
 def _net_debt(financials: StandardizedFinancials) -> Decimal | None:
-    """Total debt net of cash — for an insurer, simply the cash, negated.
+    """Total debt net of CPC 03 cash equivalents.
 
     The insurance schema files no borrowings line at all (2.01.04 is
     "Capitalização" there, ADR 0015), so what remains of the definition is
-    ``0 − cash``. Suppressing it instead surfaced the same economic fact for
+    ``0 − cash equivalents``. Suppressing it instead surfaced the same economic fact for
     one insurer and hid it for the other: CXSE3 files as a corporate holding
     and showed its net cash while BBSE3 could not (#103). Applying the same
     filed-regime rule makes the economic fact consistent across both filers.
     """
     regime = financials.filed_regime or expected_regime(financials.sector)
     if regime is AccountingRegime.INSURANCE:
-        return None if financials.cash is None else -financials.cash
-    if financials.total_debt is None:
+        return (
+            None
+            if financials.cash_equivalents is None
+            else -financials.cash_equivalents
+        )
+    if financials.total_debt is None or financials.cash_equivalents is None:
         return None
-    return financials.total_debt - (financials.cash or Decimal(0))
+    return financials.total_debt - financials.cash_equivalents
 
 
 # Indicators genuinely meaningless under a given accounting regime: the null is
@@ -151,7 +155,7 @@ def _net_debt(financials: StandardizedFinancials) -> Decimal | None:
 # ADR 0015 (#48) closed the three verdicts ADR 0010 had left to the mapping: a
 # bank's balance sheet has no current/non-current split whatsoever, so its
 # current ratio and P/working-capital are not "not yet mapped" but unbuildable —
-# and its ROIC denominator (equity + net debt) inherits the net-debt verdict
+# and statutory ROIC's denominator (consolidated equity + net debt) inherits it
 # above, since a deposit is funding, not borrowing. Every *other* indicator a
 # financial filer nulls now falls through to the input check.
 #
@@ -172,7 +176,7 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
             "ev_ebitda",
             "ev_ebit",
             "enterprise_value",
-            "roic",
+            "roic_statutory",
             "current_ratio",
             "price_to_working_capital",
         }
@@ -186,7 +190,7 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
             # collapses toward zero for a cash-rich insurer and the ratio
             # explodes — BBSE3's 2025 ROIC came out 1,918%. Same verdict as the
             # bank's: the denominator inherits the net-debt degeneracy.
-            "roic",
+            "roic_statutory",
         }
     )
     | _BANK_ONLY,
@@ -253,7 +257,9 @@ _NEEDS: dict[str, _Needs] = {
     "roe_total": _Needs(accounts=("net_income_total", "equity_total")),
     "roa": _Needs(accounts=("net_income", "total_assets")),
     "roa_total": _Needs(accounts=("net_income_total", "total_assets")),
-    "roic": _Needs(accounts=("ebit", "equity", "total_debt")),
+    "roic_statutory": _Needs(
+        accounts=("ebit", "equity_total", "total_debt", "cash_equivalents")
+    ),
     "net_margin": _Needs(accounts=("net_income", "revenue")),
     "net_margin_total": _Needs(accounts=("net_income_total", "revenue")),
     "gross_margin": _Needs(accounts=("gross_profit", "revenue")),
@@ -264,10 +270,14 @@ _NEEDS: dict[str, _Needs] = {
     "eps_basic": _Needs(accounts=("eps_basic",)),
     "eps_diluted": _Needs(accounts=("eps_diluted",)),
     "bvps": _Needs(accounts=("equity",), shares=True),
-    "net_debt": _Needs(accounts=("total_debt",)),
-    "net_debt_to_ebitda": _Needs(accounts=("total_debt", "ebitda")),
-    "net_debt_to_ebit": _Needs(accounts=("total_debt", "ebit")),
-    "net_debt_to_equity": _Needs(accounts=("total_debt", "equity")),
+    "net_debt": _Needs(accounts=("total_debt", "cash_equivalents")),
+    "cash_equivalents": _Needs(accounts=("cash_equivalents",)),
+    "current_financial_investments": _Needs(
+        accounts=("current_financial_investments",)
+    ),
+    "net_debt_to_ebitda": _Needs(accounts=("total_debt", "cash_equivalents", "ebitda")),
+    "net_debt_to_ebit": _Needs(accounts=("total_debt", "cash_equivalents", "ebit")),
+    "net_debt_to_equity": _Needs(accounts=("total_debt", "cash_equivalents", "equity")),
     "debt_to_equity": _Needs(accounts=("total_debt", "equity")),
     "liabilities_to_assets": _Needs(accounts=("total_assets", "equity_total")),
     "equity_to_assets": _Needs(accounts=("equity", "total_assets")),
@@ -309,8 +319,26 @@ _NEEDS: dict[str, _Needs] = {
     "company_yield_declared_in_period": _Needs(
         accounts=("dividends_declared",), cap=True
     ),
-    "ev_ebitda": _Needs(accounts=("total_debt", "ebitda"), cap=True),
-    "ev_ebit": _Needs(accounts=("total_debt", "ebit"), cap=True),
+    "ev_ebitda": _Needs(
+        accounts=(
+            "total_debt",
+            "cash_equivalents",
+            "equity_total",
+            "equity",
+            "ebitda",
+        ),
+        cap=True,
+    ),
+    "ev_ebit": _Needs(
+        accounts=(
+            "total_debt",
+            "cash_equivalents",
+            "equity_total",
+            "equity",
+            "ebit",
+        ),
+        cap=True,
+    ),
     "fcf": _Needs(accounts=("cfo", "capex")),
     "price_to_fcf": _Needs(accounts=("cfo", "capex"), cap=True),
     "fcf_yield": _Needs(accounts=("cfo", "capex"), cap=True),
@@ -328,20 +356,30 @@ _NEEDS: dict[str, _Needs] = {
     "total_liabilities": _Needs(accounts=("total_assets", "equity_total")),
     "equity": _Needs(accounts=("equity",)),
     "equity_total": _Needs(accounts=("equity_total",)),
-    # Scale figures. ``enterprise_value`` = cap + net debt, so it needs the cap and
-    # the debt line net debt is built from; it is also in the bank inapplicable set,
-    # so a bank's null is named INAPPLICABLE_REGIME before its inputs are checked.
+    "non_controlling_interests": _Needs(accounts=("equity_total", "equity")),
+    # Scale figures. ``enterprise_value`` = cap + net debt + non-controlling
+    # interests, so it needs both equity slices as well as the liquidity bridge.
+    # It is also in the bank inapplicable set, so a bank's null is named
+    # INAPPLICABLE_REGIME before its inputs are checked.
     "market_cap": _Needs(cap=True),
-    "enterprise_value": _Needs(accounts=("total_debt",), cap=True),
+    "enterprise_value": _Needs(
+        accounts=(
+            "total_debt",
+            "cash_equivalents",
+            "equity_total",
+            "equity",
+        ),
+        cap=True,
+    ),
     "shares": _Needs(shares=True),
 }
 
 # The indicators built on ``_net_debt``. Their ``total_debt`` requirement shifts
 # with the definition: an insurance-regime filer's net debt derives from cash
 # alone (#103), so for these — and only these — a null is attributed against
-# ``cash``, never against the borrowings line the schema does not have.
+# ``cash_equivalents``, never against the borrowings line the schema does not have.
 # ``debt_to_equity`` stays out (gross debt genuinely needs the filed line), and
-# ``roic`` needs no entry: it is inapplicable for the insurer outright.
+# ``roic_statutory`` needs no entry: it is inapplicable for the insurer outright.
 _NET_DEBT_DERIVED = frozenset(
     {
         "net_debt",
@@ -394,7 +432,7 @@ def _classify(
             and name in _NET_DEBT_DERIVED
             and regime is AccountingRegime.INSURANCE
         ):
-            account = "cash"  # the insurer's net debt derives from cash (#103)
+            account = "cash_equivalents"  # insurer net debt derives from cash (#103)
         if getattr(f, account) is None:
             if account in f.unmapped_fields:
                 return NullReason.SOURCE_ACCOUNT_UNMAPPED
@@ -516,9 +554,12 @@ def compute(
     annual_ebitda = _annualized(f.ebitda, f)
 
     net_debt = _net_debt(f)
-    enterprise_value = None if net_debt is None or cap is None else cap + net_debt
-    # Invested capital for ROIC: equity + net financial debt (net of cash).
-    invested_capital = _add(f.equity, net_debt)
+    non_controlling_interests = _sub(f.equity_total, f.equity)
+    # A consolidated EBIT/EBITDA belongs to the whole group. Add the part of that
+    # group funded by non-controlling owners to the market-side numerator, and use
+    # consolidated equity in statutory ROIC's invested capital (ADR 0057).
+    enterprise_value = _add(_add(cap, net_debt), non_controlling_interests)
+    invested_capital = _add(f.equity_total, net_debt)
     nopat = None if annual_ebit is None else annual_ebit * (1 - _TAX_RATE)
     # Working capital drives the P/working-capital multiple (Graham's basis).
     working_capital = _sub(f.current_assets, f.current_liabilities)
@@ -553,7 +594,7 @@ def compute(
         roe_total=_div(annual_net_income_total, f.equity_total),
         roa=_div(annual_net_income, f.total_assets),
         roa_total=_div(annual_net_income_total, f.total_assets),
-        roic=_div(nopat, invested_capital),
+        roic_statutory=_div(nopat, invested_capital),
         net_margin=_div(f.net_income, f.revenue),
         net_margin_total=_div(f.net_income_total, f.revenue),
         gross_margin=_div(f.gross_profit, f.revenue),
@@ -565,6 +606,8 @@ def compute(
         eps_diluted=f.eps_diluted,
         bvps=bvps,
         net_debt=net_debt,
+        cash_equivalents=f.cash_equivalents,
+        current_financial_investments=f.current_financial_investments,
         net_debt_to_ebitda=_div(net_debt, annual_ebitda),
         net_debt_to_ebit=_div(net_debt, annual_ebit),
         net_debt_to_equity=_div(net_debt, f.equity),
@@ -618,6 +661,7 @@ def compute(
         equity_total=f.equity_total,
         market_cap=cap,
         enterprise_value=enterprise_value,
+        non_controlling_interests=non_controlling_interests,
         shares=market.shares,
     )
     indicators = _suppressed(indicators, _inapplicable(f))

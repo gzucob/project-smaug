@@ -1,6 +1,6 @@
 # 0018 — A closed year's multiples divide by what the shares traded at, not by the adjusted series
 
-- **Status:** Accepted
+- **Status:** Superseded by [0057](0057-valuation-stocks-share-one-cutoff-and-one-perimeter.md)
 - **Date:** 2026-07-14
 
 ## Context

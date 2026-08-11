@@ -8,15 +8,15 @@ null market multiples instead of losing the accounting indicators.
 Each ticker yields **two perspectives** (see ``analysis-two-views`` design):
 
 * the **live TTM** view — the trailing twelve months priced on the current
-  nominal quote ("how is it valued now"); and
+  B3 close ("how is it valued now"); and
 * one **closed-year** view per ingested annual DFP — that year's fundamentals
-  priced on its nominal average ("how it was priced during that year").
+  priced on B3's last available close in the fiscal year.
 
 Both the share counts and the market cap come from CVM's filed capital
 composition, per fiscal year, so a closed year is priced on the shares that
 existed *that* year. The cap is summed over the company's listed share classes,
 each on its own quote (ADR 0014) — so the two views differ only in *which* price
-each class is summed at: the current quote, or that year's nominal average.
+each class is summed at: the latest current-year close, or the fiscal-year close.
 """
 
 from __future__ import annotations
@@ -121,12 +121,16 @@ def _no_per_share_components(_ticker: str) -> tuple[UnitComponent, ...]:
     return ()
 
 
-# Both views are priced on what the shares actually traded at: the live TTM on the
-# current quote, each closed year on that year's nominal average (ADR 0018). The
-# dividend-adjusted average is kept alongside as the total-return reference, but it
-# is not what a valuation multiple divides by.
-_TTM_BASIS = "ttm_current_nominal"
-_CLOSED_YEAR_BASIS = "nominal_year_avg"
+# Both views are point-in-time valuations (ADR 0057): B3's latest available close
+# for the live view and its last close of the fiscal year for a closed exercise.
+# The dividend-adjusted average stays alongside as a total-return reference, but
+# never reaches valuation arithmetic.
+_TTM_BASIS = "b3_latest_close"
+_CLOSED_YEAR_BASIS = "b3_year_end_close"
+_TTM_SHARE_BASIS = "cvm_latest_filed_outstanding_current_base"
+_CLOSED_YEAR_SHARE_BASIS = "cvm_year_end_outstanding_current_base"
+_LIQUIDITY_BASIS = "cpc03_cash_and_cash_equivalents"
+_ROIC_TAX_BASIS = "br_statutory_34pct"
 
 
 def _utc_now() -> datetime:
@@ -276,7 +280,7 @@ class AnalyzePortfolioUseCase:
         seen_priced = False
         for annual in annuals:
             year = annual.reference_date.year
-            if (await self._year_prices(ticker, year)).nominal_avg is not None:
+            if (await self._year_prices(ticker, year)).closing is not None:
                 seen_priced = True
                 traded.append(annual)
                 continue
@@ -323,7 +327,10 @@ class AnalyzePortfolioUseCase:
             # A live quote has no adjusted counterpart: nothing has been paid out
             # since it, so there is nothing to adjust it by.
             price_adjusted=None,
-            price_basis=_TTM_BASIS if quote.price is not None else None,
+            price_basis=_TTM_BASIS,
+            share_count_basis=_TTM_SHARE_BASIS,
+            liquidity_basis=_LIQUIDITY_BASIS,
+            roic_tax_basis=_ROIC_TAX_BASIS,
             view=VIEW_TTM,
         )
 
@@ -351,7 +358,10 @@ class AnalyzePortfolioUseCase:
             indicators=compute(annual, previous, market, elapsed),
             price=market.price,
             price_adjusted=adjusted_avg,
-            price_basis=_CLOSED_YEAR_BASIS if market.price is not None else None,
+            price_basis=_CLOSED_YEAR_BASIS,
+            share_count_basis=_CLOSED_YEAR_SHARE_BASIS,
+            liquidity_basis=_LIQUIDITY_BASIS,
+            roic_tax_basis=_ROIC_TAX_BASIS,
             view=VIEW_CLOSED_YEAR,
         )
 
@@ -460,9 +470,7 @@ class AnalyzePortfolioUseCase:
         """
         limit = self._clock().year
         for candidate_year in range(year + 1, limit + 1):
-            if (
-                await self._year_prices(symbol, candidate_year)
-            ).nominal_avg is not None:
+            if (await self._year_prices(symbol, candidate_year)).closing is not None:
                 return True
         return False
 
@@ -490,21 +498,15 @@ class AnalyzePortfolioUseCase:
     async def _market_for_year(
         self, ticker: str, year: int
     ) -> tuple[MarketData, Decimal | None]:
-        """Price the closed-year multiples on what the shares traded at that year.
+        """Price a closed exercise at the fiscal cut-off.
 
-        The market cap is built from that year's own facts — each listed class at
-        its own **nominal** average for the year, times the shares outstanding for
-        that class (ADR 0014/0017) — rather than repriced from the live quote
-        (superseding ADR 0001). The nominal average, not the dividend-adjusted one:
-        a valuation multiple asks what the market paid for the company *that year*,
-        and nobody bought PETR4 in 2022 at the R$13.15 the adjusted series now shows
-        (ADR 0018). A closed-year row is therefore reproducible from the database and
-        independent of the current quote: the year's prices come from the exchange's
-        own series (ADR 0041) and the counts from CVM's filed capital for that year
-        (ADR 0004). A
-        missing class price or class count degrades the cap to null; the per-share
-        indicators (which need only the total) are unaffected. Returns the market
-        inputs plus the year's adjusted average, kept as the total-return reference.
+        The cap sums each listed class at B3's last available close in the fiscal
+        year times that class's CVM year-end outstanding count (ADR 0014/0017/0057).
+        This is a point-in-time stock paired with another point-in-time stock: an
+        issuance or buyback no longer gets the closing count multiplied across the
+        whole year's mean price. A missing class price or class count nulls the
+        complete cap. The year's dividend-adjusted average remains a separate
+        total-return reference and never reaches valuation arithmetic.
         """
         counts = await self._shares_reader.counts(ticker, year)
         own = await self._year_prices(ticker, year)
@@ -515,7 +517,7 @@ class AnalyzePortfolioUseCase:
             year_prices = (
                 own if symbol == ticker else await self._year_prices(symbol, year)
             )
-            prices[symbol] = year_prices.nominal_avg
+            prices[symbol] = year_prices.closing
         cap, cap_null_reason = capitalize(classes, counts, prices)
         if cap is None and own.null_reason is not None:
             # The history chain knows *why* there is no price: the symbol is unknown
@@ -541,7 +543,7 @@ class AnalyzePortfolioUseCase:
             ticker, date(year, 1, 1), date(year, 12, 31)
         )
         market = MarketData(
-            price=own.nominal_avg,
+            price=own.closing,
             market_cap=cap,
             shares=await self._shares_reader.outstanding(ticker, year),
             cash_distributions=distributions,

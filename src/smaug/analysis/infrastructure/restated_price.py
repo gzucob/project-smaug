@@ -64,41 +64,42 @@ class RestatedPriceProvider:
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:
         prices = await self._inner.year_prices(ticker, year)
-        if prices.nominal_avg is None and prices.adjusted_avg is None:
+        if (
+            prices.nominal_avg is None
+            and prices.adjusted_avg is None
+            and prices.closing is None
+        ):
             # Nothing to restate, and asking for a timeline would read the mirror
             # for a company whose price is missing anyway.
             return prices
-        factor = await self._factor(ticker, year)
-        if factor == 1:
-            return prices
-        logger.info(
-            "Restating %s %d price onto the current share base (/%s, ADR 0027)",
-            ticker,
-            year,
-            factor,
-        )
-        return YearPrices(
-            nominal_avg=_divided(prices.nominal_avg, factor),
-            adjusted_avg=_divided(prices.adjusted_avg, factor),
-            null_reason=prices.null_reason,
-        )
-
-    async def _factor(self, ticker: str, year: int) -> Decimal:
-        """The one divisor for ``year``'s average, weighted by the sessions in it.
-
-        A year with no action inside it has every session on one base and the
-        weighting collapses to that base's factor — which is what makes this a
-        strict refinement of the yearly factor rather than a different rule.
-        Falls back to the year-end factor when the source publishes an average
-        with no sessions behind it, which only a non-B3 inner could do.
-        """
         timeline = await self._shares.restatement_timeline(ticker)
         if not timeline:
-            return Decimal(1)
+            return prices
         sessions = await self._inner.year_sessions(ticker, year)
-        if not sessions:
-            return factor_at(timeline, date(year, 12, 31))
-        return average_factor(timeline, sessions)
+        average_divisor = (
+            average_factor(timeline, sessions)
+            if sessions
+            else factor_at(timeline, date(year, 12, 31))
+        )
+        closing_date = prices.closing_session or date(year, 12, 31)
+        closing_divisor = factor_at(timeline, closing_date)
+        if average_divisor == 1 and closing_divisor == 1:
+            return prices
+        logger.info(
+            "Restating %s %d price onto the current share base "
+            "(average /%s, close /%s; ADR 0057)",
+            ticker,
+            year,
+            average_divisor,
+            closing_divisor,
+        )
+        return YearPrices(
+            nominal_avg=_divided(prices.nominal_avg, average_divisor),
+            adjusted_avg=_divided(prices.adjusted_avg, average_divisor),
+            closing=_divided(prices.closing, closing_divisor),
+            closing_session=prices.closing_session,
+            null_reason=prices.null_reason,
+        )
 
 
 def _divided(price: Decimal | None, factor: Decimal) -> Decimal | None:
