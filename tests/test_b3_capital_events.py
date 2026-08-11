@@ -67,6 +67,20 @@ class _Transport(httpx.AsyncBaseTransport):
 def _source(
     body: object, *, code: str | None = "1023"
 ) -> tuple[B3CapitalEventSource, httpx.AsyncClient, _Transport]:
+    supplement = {
+        "code": "BBAS",
+        "tradingName": "BCO BRASIL",
+        **({"codeCVM": code} if code is not None else {}),
+    }
+    if isinstance(body, dict) and isinstance(body.get("stockDividends"), list):
+        body = {**supplement, **body}
+    if isinstance(body, list):
+        body = [
+            {**supplement, **item}
+            if isinstance(item, dict) and isinstance(item.get("stockDividends"), list)
+            else item
+            for item in body
+        ]
     transport = _Transport(body)
     http = httpx.AsyncClient(transport=transport)
     codes = {"BBAS3": code} if code else {}
@@ -166,7 +180,7 @@ async def test_invalid_b3_output_is_retained_in_the_validation_report() -> None:
 
     report = reporter.reports[0]
     assert report.status.value == "quarantined"
-    assert report.evidence == {"codeCVM": "1023"}
+    assert report.evidence == {"detail": {"codeCVM": "1023"}}
 
 
 async def test_the_endpoint_answering_with_a_list_is_unwrapped() -> None:
@@ -178,6 +192,56 @@ async def test_the_endpoint_answering_with_a_list_is_unwrapped() -> None:
         results = await source.fetch("BBAS3", CAPITAL_EVENT_B3_MODULE)
 
     assert len(results) == 3
+
+
+async def test_a_former_root_reads_actions_through_the_stable_cvm_registrant() -> None:
+    class _Renamed(httpx.AsyncBaseTransport):
+        def __init__(self) -> None:
+            self.paths: list[str] = []
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            params = json.loads(_decoded(path))
+            self.paths.append(path)
+            if "GetDetail" in path:
+                return httpx.Response(
+                    200,
+                    json={
+                        "issuingCompany": "AXIA",
+                        "tradingName": "AXIA ENERGIA",
+                        "codeCVM": "2437",
+                    },
+                )
+            if params["issuingCompany"] == "ELET":
+                return httpx.Response(200, text="")
+            return httpx.Response(
+                200,
+                json={
+                    "code": "AXIA",
+                    "codeCVM": "2437",
+                    "tradingName": "AXIA ENERGIA",
+                    "stockDividends": BBAS_ROWS,
+                },
+            )
+
+    transport = _Renamed()
+    async with httpx.AsyncClient(transport=transport) as http:
+        source = B3CapitalEventSource(
+            http,
+            ticker_to_code={"ELET3": "2437"},
+            base_url="https://b3.test",
+        )
+        results = await source.fetch("ELET3", CAPITAL_EVENT_B3_MODULE)
+
+    assert len(results) == 3
+    assert [json.loads(_decoded(path)) for path in transport.paths] == [
+        {"issuingCompany": "ELET", "language": "pt-br"},
+        {"codeCVM": "2437", "language": "pt-br"},
+        {"issuingCompany": "AXIA", "language": "pt-br"},
+    ]
+    assert results[0].request["issuing_company"] == "AXIA"
+    assert results[0].payload["issuing_company"] == "AXIA"
+    assert results[0].cvm_code == "2437"
 
 
 def _decoded(path: str) -> str:

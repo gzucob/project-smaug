@@ -13,13 +13,14 @@ import json
 import httpx
 import pytest
 
+from smaug.ingestion.domain.validation import SourceBatchValidation
 from smaug.ingestion.infrastructure.b3_cash_dividends import (
     CASH_DIVIDEND_B3_MODULE,
     B3CashDividendSource,
 )
 from smaug.shared.errors import SourceBatchValidationError, SourceNotFoundError
 
-SUPPLEMENT = {"tradingName": "BRADESCO", "codeCVM": "906"}
+SUPPLEMENT = {"code": "BBDC", "tradingName": "BRADESCO", "codeCVM": "906"}
 ROWS = [
     {
         "typeStock": "ON",
@@ -135,7 +136,10 @@ async def test_a_company_that_has_never_paid_is_an_absence_not_an_empty_list() -
     class _Empty(_Transport):
         async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
             if "GetListedSupplementCompany" in str(request.url):
-                return httpx.Response(200, json=SUPPLEMENT)
+                return httpx.Response(
+                    200,
+                    json={"code": "RDNI", "tradingName": "RNI", "codeCVM": "20451"},
+                )
             return httpx.Response(
                 200, json={"page": {"pageNumber": 1, "totalPages": 0}, "results": []}
             )
@@ -201,3 +205,93 @@ async def test_the_corporate_form_is_respelled_with_dots_and_retried() -> None:
         "AMBEV S/A",
         "AMBEV S.A",
     ]
+    assert results[0].request["trading_name"] == "AMBEV S.A"
+
+
+class _RenamedTransport(_Transport):
+    """Resolve former ELET through CD_CVM to current AXIA before reading cash."""
+
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        super().__init__()
+        self._rows = rows
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        params = _decoded(url)
+        self.asked.append(params)
+        if "GetDetail" in url:
+            return httpx.Response(
+                200,
+                json={
+                    "issuingCompany": "AXIA",
+                    "tradingName": "AXIA ENERGIA",
+                    "codeCVM": "2437",
+                },
+            )
+        if "GetListedSupplementCompany" in url:
+            if params["issuingCompany"] == "ELET":
+                return httpx.Response(200, text="")
+            return httpx.Response(
+                200,
+                json={
+                    "code": "AXIA",
+                    "codeCVM": "2437",
+                    "tradingName": "AXIA ENERGIA",
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "page": {
+                    "pageNumber": 1,
+                    "totalPages": 1 if self._rows else 0,
+                },
+                "results": self._rows,
+            },
+        )
+
+
+async def test_a_former_root_reads_cash_through_the_stable_cvm_registrant() -> None:
+    transport = _RenamedTransport(ROWS)
+    async with httpx.AsyncClient(transport=transport) as http:
+        results = await B3CashDividendSource(
+            http, ticker_to_code={"ELET3": "2437"}
+        ).fetch("ELET3", CASH_DIVIDEND_B3_MODULE)
+
+    assert len(results) == 2
+    assert [call.get("issuingCompany") for call in transport.asked[:3]] == [
+        "ELET",
+        None,
+        "AXIA",
+    ]
+    assert transport.asked[1]["codeCVM"] == "2437"
+    assert transport.asked[3]["tradingName"] == "AXIA ENERGIA"
+    assert results[0].request["issuing_company"] == "AXIA"
+    assert results[0].request["trading_name"] == "AXIA ENERGIA"
+    assert results[0].cvm_code == "2437"
+
+
+async def test_a_registrant_fallback_can_prove_zero_cash_rows() -> None:
+    class _Reporter:
+        def __init__(self) -> None:
+            self.reports: list[SourceBatchValidation] = []
+
+        async def record(self, validation: SourceBatchValidation) -> None:
+            self.reports.append(validation)
+
+    reporter = _Reporter()
+    transport = _RenamedTransport([])
+    async with httpx.AsyncClient(transport=transport) as http:
+        source = B3CashDividendSource(
+            http,
+            ticker_to_code={"ELET3": "2437"},
+            validation_reporter=reporter,
+        )
+        with pytest.raises(SourceNotFoundError):
+            await source.fetch("ELET3", CASH_DIVIDEND_B3_MODULE)
+
+    assert reporter.reports[-1].status.value == "accepted"
+    assert reporter.reports[-1].observations == {
+        "rows": 0,
+        "coverage_established": True,
+    }
