@@ -21,15 +21,18 @@ B3 lists **one** Bradesco bonus (2022) where CVM's file lists its 10% bonus in
 
 Mirrored as filed, in B3's own vocabulary and number format (``7.900,00000000000``
 is pt-BR for 7900) — reading a percentage out of ``factor`` is an interpretation,
-and interpretation is Phase 2's (ADR 0016). The request records ``"source": "b3"``
-even though the run that fetched it is a CVM run: the module name and that key are
-what say where the row came from.
+and interpretation is Phase 2's (ADR 0016). The request and result record
+``source="b3"`` because B3 published the payload; the CVM code below identifies
+the registrant and does not change its provenance (ADR 0055).
+
+A trading root is not permanent identity. When a former root no longer answers,
+the source follows the composition root's CVM registrant code through B3
+``GetDetail`` to the current root, then requires the current supplement to
+confirm that same registrant before admitting any row (ADR 0056).
 """
 
 from __future__ import annotations
 
-import base64
-import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Never
 
@@ -43,11 +46,12 @@ from smaug.ingestion.domain.validation import (
     ValidationFinding,
     ValidationRule,
 )
+from smaug.ingestion.infrastructure.b3_listed_company import (
+    B3CompanyResolutionError,
+    B3ListedCompanyResolver,
+)
 from smaug.ingestion.infrastructure.batch_validation import record_or_quarantine
 from smaug.shared.errors import SourceNotFoundError
-from smaug.shared.logging import get_logger
-
-logger = get_logger(__name__)
 
 B3_LISTED_BASE_URL = (
     "https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall"
@@ -56,16 +60,9 @@ B3_LISTED_BASE_URL = (
 # The exchange's declared corporate actions, keyed on the trading root.
 CAPITAL_EVENT_B3_MODULE = "CAPITAL_EVENT_B3"
 
-# The endpoint refuses a request that does not look like it came from a browser.
-_USER_AGENT = "Mozilla/5.0"
-
-# A B3 trading root is the ticker's first four characters — the class digit is
-# what is left over (``PETR4`` -> ``PETR``, ``B3SA3`` -> ``B3SA``). Not "the
-# letters": a root can carry a digit of its own.
-_ROOT_LENGTH = 4
 _RULES = (
     ValidationRule("response-schema", 1),
-    ValidationRule("coverage-established", 1),
+    ValidationRule("coverage-established", 2),
     ValidationRule("record-count", 1),
 )
 
@@ -84,9 +81,12 @@ class B3CapitalEventSource:
         base_url: str | None = None,
         validation_reporter: BatchValidationReporter | None = None,
     ) -> None:
-        self._http = http_client
-        self._ticker_to_code = dict(ticker_to_code or {})
+        self._ticker_to_code = {
+            ticker.upper().strip(): code
+            for ticker, code in (ticker_to_code or {}).items()
+        }
         self._base_url = (base_url or B3_LISTED_BASE_URL).rstrip("/")
+        self._companies = B3ListedCompanyResolver(http_client, base_url=self._base_url)
         self._validation_reporter = validation_reporter
 
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
@@ -97,14 +97,21 @@ class B3CapitalEventSource:
         as they come: which rows are one event is the reader's judgement, and the
         mirror does not make it (ADR 0016).
         """
-        root = ticker[:_ROOT_LENGTH]
-        body = await self._supplement(root)
-        if body is None:
-            await self._quarantine(
-                root,
-                "coverage-established",
-                "B3 supplement response is absent or not a JSON object",
+        try:
+            company = await self._companies.resolve(
+                ticker,
+                cvm_code=self._ticker_to_code.get(ticker.upper().strip()),
             )
+        except B3CompanyResolutionError as exc:
+            await self._quarantine(
+                ticker[:4].upper(),
+                exc.code,
+                exc.detail,
+                evidence=exc.evidence,
+            )
+        root = company.requested_root
+        issuing_company = company.issuing_company
+        body = company.supplement
         rows = body.get("stockDividends")
         if not isinstance(rows, list):
             await self._quarantine(
@@ -144,7 +151,7 @@ class B3CapitalEventSource:
             )
         await self._record(self._validation(root, rows=len(rows)))
 
-        code = self._code_of(body, ticker)
+        code = company.cvm_code
         return [
             RawFetchResult(
                 module=module,
@@ -152,7 +159,7 @@ class B3CapitalEventSource:
                 request={
                     "source": "b3",
                     "endpoint": "GetListedSupplementCompany",
-                    "issuing_company": root,
+                    "issuing_company": issuing_company,
                     "statement": module,
                     # What tells one filed row from another: the same event is
                     # listed once per ISIN, and one approval date can carry two
@@ -162,7 +169,7 @@ class B3CapitalEventSource:
                     "event_type": _text(row.get("label")),
                 },
                 http_status=200,
-                payload=_to_payload(row, root, code),
+                payload=_to_payload(row, issuing_company, code),
                 cvm_code=code,
             )
             for row in rows
@@ -209,42 +216,6 @@ class B3CapitalEventSource:
         )
         raise AssertionError("quarantined batch returned unexpectedly")
 
-    async def _supplement(self, root: str) -> Mapping[str, Any] | None:
-        payload = _encoded({"issuingCompany": root, "language": "pt-br"})
-        url = f"{self._base_url}/GetListedSupplementCompany/{payload}"
-        try:
-            response = await self._http.get(
-                url, headers={"User-Agent": _USER_AGENT}, timeout=30.0
-            )
-        except httpx.HTTPError as exc:
-            logger.warning("B3 supplement failed for %s: %s", root, exc)
-            return None
-        if response.status_code != httpx.codes.OK or not response.text.strip():
-            # An empty body is how the endpoint says "no such listed company" —
-            # the normal answer for a delisted filer, and not an error.
-            return None
-        try:
-            body = response.json()
-        except ValueError:
-            logger.warning("B3 supplement for %s was not JSON", root)
-            return None
-        if isinstance(body, list):
-            body = body[0] if body else None
-        return body if isinstance(body, dict) else None
-
-    def _code_of(self, body: Mapping[str, Any], ticker: str) -> str | None:
-        """The registrant the mirror is keyed on (ADR 0030).
-
-        B3 answers with its own ``codeCVM``, which is the same registrant CVM
-        names — but the composition root's map is the authority, because it is
-        what every other module was stored under.
-        """
-        curated = self._ticker_to_code.get(ticker)
-        if curated is not None:
-            return curated
-        code = body.get("codeCVM")
-        return str(code) if code is not None and str(code).strip() else None
-
 
 def _to_payload(row: Mapping[str, Any], root: str, code: str | None) -> dict[str, Any]:
     """Mirror the row as B3 publishes it — its vocabulary, its number format."""
@@ -267,8 +238,3 @@ def _to_payload(row: Mapping[str, Any], root: str, code: str | None) -> dict[str
 
 def _text(value: Any) -> str:
     return str(value).strip() if value is not None else ""
-
-
-def _encoded(params: dict[str, object]) -> str:
-    """B3's proxy takes its parameters as base64-encoded JSON in the path."""
-    return base64.b64encode(json.dumps(params).encode()).decode()

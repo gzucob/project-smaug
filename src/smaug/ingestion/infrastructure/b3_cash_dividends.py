@@ -2,17 +2,19 @@
 
 The dividend-adjusted price basis has no published series anywhere: B3's quote
 file carries the price as traded and nothing else (ADR 0032), and the vendor
-that used to supply it is being removed. It is rebuilt from this, which is the
+that used to supply it was removed. It is rebuilt from this, which is the
 one record complete enough to rebuild it from — 900 rows for Bradesco reaching
 back to 1995-12-28, where the same company's *stock* events number one.
 
-Two endpoints are needed and only together:
+Three B3 endpoints form the identity-safe chain:
 
 ``GetListedSupplementCompany`` answers on a trading root (``BBDC``) and returns
 the ``tradingName`` (``BRADESCO``); ``GetListedCashDividends`` takes only that
 name, and is paginated. The supplement carries a ``cashDividends`` list of its
 own, and it is *not* the same thing: 32 recent rows against the paginated
-endpoint's 900.
+endpoint's 900. A former or reused root is resolved through ``GetDetail`` by the
+stable CVM registrant code, then back to the current supplement. Each hop must
+confirm that same code (ADR 0056).
 
 Mirrored as filed, in B3's vocabulary and pt-BR number format (ADR 0016). Two
 fields make that worth insisting on:
@@ -35,13 +37,14 @@ Measured over 371 companies: 50 return nothing on the supplement's name, and
 six of those are this and no other cause (Ambev, Klabin, Cury, Light, IMC,
 Ourofino). The rest have simply never paid.
 
-The retry is a **respelling, not a search**. Truncating a name until something
-answers looks like it works and does not: ``KLABIN`` answers with 18 rows from
-1996-2001 and ``KLABIN S.A.`` with 219, because the short name is a different,
-dead registrant. The response carries no company identity to catch that with —
-its fields are share class, date, value and reference price — so a wrong name
-returns a perfectly valid history of somebody else. Only the two spellings of
-one name are tried, and nothing else (#190).
+The corporate-form retry is a **respelling, not a search**. Truncating a name
+until something answers looks like it works and does not: ``KLABIN`` answers
+with 18 rows from 1996-2001 and ``KLABIN S.A.`` with 219, because the short name
+is a different, dead registrant. The response carries no company identity to
+catch that with — its fields are share class, date, value and reference price —
+so a wrong name returns a perfectly valid history of somebody else. Only the
+two spellings of one registrant-verified name are tried, and nothing else
+(ADR 0056).
 """
 
 from __future__ import annotations
@@ -61,6 +64,10 @@ from smaug.ingestion.domain.validation import (
     ValidationFinding,
     ValidationRule,
 )
+from smaug.ingestion.infrastructure.b3_listed_company import (
+    B3CompanyResolutionError,
+    B3ListedCompanyResolver,
+)
 from smaug.ingestion.infrastructure.batch_validation import record_or_quarantine
 from smaug.shared.errors import SourceNotFoundError
 from smaug.shared.logging import get_logger
@@ -75,8 +82,6 @@ B3_LISTED_BASE_URL = (
 CASH_DIVIDEND_B3_MODULE = "CASH_DIVIDEND_B3"
 
 _USER_AGENT = "Mozilla/5.0"
-_ROOT_LENGTH = 4
-
 # The endpoint returns an empty result set above a few hundred, so the history is
 # walked rather than asked for whole.
 _PAGE_SIZE = 100
@@ -86,7 +91,7 @@ _PAGE_SIZE = 100
 _MAX_PAGES = 60
 _RULES = (
     ValidationRule("response-schema", 1),
-    ValidationRule("coverage-established", 1),
+    ValidationRule("coverage-established", 2),
     ValidationRule("record-count", 1),
 )
 
@@ -106,8 +111,12 @@ class B3CashDividendSource:
         validation_reporter: BatchValidationReporter | None = None,
     ) -> None:
         self._http = http_client
-        self._ticker_to_code = dict(ticker_to_code or {})
+        self._ticker_to_code = {
+            ticker.upper().strip(): code
+            for ticker, code in (ticker_to_code or {}).items()
+        }
         self._base_url = (base_url or B3_LISTED_BASE_URL).rstrip("/")
+        self._companies = B3ListedCompanyResolver(http_client, base_url=self._base_url)
         self._validation_reporter = validation_reporter
 
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
@@ -117,22 +126,21 @@ class B3CashDividendSource:
         and once for PN, at rates that differ. Which rows a ticker reads is the
         analysis context's judgement, not the mirror's.
         """
-        root = ticker[:_ROOT_LENGTH]
-        supplement = await self._supplement(root)
-        if supplement is None:
-            await self._quarantine(
-                root,
-                "coverage-established",
-                "B3 supplement response is absent or not a JSON object",
+        try:
+            company = await self._companies.resolve(
+                ticker,
+                cvm_code=self._ticker_to_code.get(ticker.upper().strip()),
             )
-        trading_name = _text(supplement.get("tradingName"))
-        if not trading_name:
+        except B3CompanyResolutionError as exc:
             await self._quarantine(
-                root,
-                "response-schema",
-                "B3 supplement lacks a tradingName",
-                evidence=supplement,
+                ticker[:4].upper(),
+                exc.code,
+                exc.detail,
+                evidence=exc.evidence,
             )
+        root = company.requested_root
+        issuing_company = company.issuing_company
+        trading_name = company.trading_name
         rows = await self._dividends(root, trading_name)
         respelled = trading_name.replace("/", ".")
         if not rows and respelled != trading_name:
@@ -142,6 +150,8 @@ class B3CashDividendSource:
                 respelled,
             )
             rows = await self._dividends(root, respelled)
+            if rows:
+                trading_name = respelled
         if not rows:
             # A company that has never paid is the normal case for a recent
             # listing, and it is an absence the mirror records rather than an
@@ -168,7 +178,7 @@ class B3CashDividendSource:
             )
         await self._record(self._validation(root, rows=len(rows)))
 
-        code = self._code_of(supplement, ticker)
+        code = company.cvm_code
         return [
             RawFetchResult(
                 module=module,
@@ -176,7 +186,7 @@ class B3CashDividendSource:
                 request={
                     "source": "b3",
                     "endpoint": "GetListedCashDividends",
-                    "issuing_company": root,
+                    "issuing_company": issuing_company,
                     "trading_name": trading_name,
                     "statement": module,
                     # What tells one filed row from another: the same payment is
@@ -188,21 +198,11 @@ class B3CashDividendSource:
                     "value": _text(row.get("valueCash")),
                 },
                 http_status=200,
-                payload=_to_payload(row, root, code),
+                payload=_to_payload(row, issuing_company, code),
                 cvm_code=code,
             )
             for row in rows
         ]
-
-    async def _supplement(self, root: str) -> Mapping[str, Any] | None:
-        body = await self._json(
-            f"{self._base_url}/GetListedSupplementCompany/"
-            + _encoded({"issuingCompany": root, "language": "pt-br"}),
-            root,
-        )
-        if isinstance(body, list):
-            body = body[0] if body else None
-        return body if isinstance(body, dict) else None
 
     async def _dividends(self, root: str, trading_name: str) -> list[Mapping[str, Any]]:
         rows: list[Mapping[str, Any]] = []
@@ -342,14 +342,6 @@ class B3CashDividendSource:
             )
         )
         raise AssertionError("quarantined batch returned unexpectedly")
-
-    def _code_of(self, body: Mapping[str, Any], ticker: str) -> str | None:
-        """The registrant the mirror is keyed on (ADR 0030)."""
-        curated = self._ticker_to_code.get(ticker)
-        if curated is not None:
-            return curated
-        code = body.get("codeCVM")
-        return str(code) if code is not None and str(code).strip() else None
 
 
 def _to_payload(row: Mapping[str, Any], root: str, code: str | None) -> dict[str, Any]:
