@@ -35,7 +35,7 @@ from pathlib import Path
 
 import httpx
 
-from smaug.portfolio.domain.company import CompanyIdentity
+from smaug.portfolio.domain.company import CompanyIdentity, InstrumentKind
 from smaug.portfolio.domain.share_classes import ShareClass, ShareKind
 from smaug.portfolio.domain.universe import ListedCompany, listed_companies
 from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
@@ -68,6 +68,9 @@ class _Security:
     cnpj: str
     trading: bool
     version: int
+    instrument_kind: InstrumentKind
+    instrument_type: str
+    trading_ended: date | None = None
     listed_since: date | None = None
     # Underlying shares this ticker's own row bundles, when the row is a unit
     # ("Units ..."); ``None`` for a plain ON/PN class.
@@ -100,11 +103,38 @@ def _share_kind(valor_mobiliario: str) -> ShareKind | None:
     return None
 
 
-def _is_unit(valor_mobiliario: str) -> bool:
-    return _fold(valor_mobiliario).strip().startswith("units")
+def _instrument_kind(valor_mobiliario: str) -> InstrumentKind:
+    """Classify the FCA's security label without consulting the ticker suffix."""
+    share_kind = _share_kind(valor_mobiliario)
+    if share_kind is ShareKind.COMMON:
+        return InstrumentKind.COMMON_SHARE
+    if share_kind is ShareKind.PREFERRED:
+        return InstrumentKind.PREFERRED_SHARE
+    label = _fold(valor_mobiliario).strip()
+    if label.startswith("units"):
+        return InstrumentKind.UNIT
+    if label.startswith("bonus de subscricao"):
+        return InstrumentKind.SUBSCRIPTION_WARRANT
+    if label.startswith("recibos de subscricao"):
+        return InstrumentKind.SUBSCRIPTION_RECEIPT
+    if label.startswith("bdr") or label.startswith("certificados de deposito"):
+        return InstrumentKind.DEPOSITARY_RECEIPT
+    return InstrumentKind.OTHER
 
 
-_UNIT_COMPONENT_RE = re.compile(r"(\d+)\s*([A-Z]{4}\d{1,2})")
+@dataclass(frozen=True, slots=True)
+class _UnitComponent:
+    quantity: int
+    kind: ShareKind
+    symbol: str | None = None
+
+
+_UNIT_SEPARATOR_RE = re.compile(r"\s*(?:\+|/|\be\b)\s*")
+_SYMBOL_COMPONENT_RE = re.compile(r"(?P<qty>\d+)\s*(?P<symbol>[a-z0-9]{4}\d{1,2})")
+_TEXT_COMPONENT_RE = re.compile(
+    r"(?P<qty>\d+)\s*(?:(?:acao|acoes)\s+)?"
+    r"(?P<label>ons?|pn[a-z]*s?|ordinari[ao]s?|preferencia(?:l|is))"
+)
 
 
 def _kind_from_suffix(symbol: str) -> ShareKind | None:
@@ -117,7 +147,7 @@ def _kind_from_suffix(symbol: str) -> ShareKind | None:
     return None
 
 
-def _unit_composition(composition: str) -> list[tuple[int, str, ShareKind]]:
+def _unit_composition(composition: str) -> list[_UnitComponent]:
     """Quantity + underlying ON/PN classes named in a unit's ``Composicao_BDR_Unit``.
 
     Some companies file only the unit on the FCA (Klabin lists KLBN11, never
@@ -126,11 +156,30 @@ def _unit_composition(composition: str) -> list[tuple[int, str, ShareKind]]:
     suffix: the quantities summed are how many underlying shares one unit is
     worth (#212), which the FRE itself never publishes.
     """
-    resolved: list[tuple[int, str, ShareKind]] = []
-    for qty, symbol in _UNIT_COMPONENT_RE.findall(composition.upper()):
-        kind = _kind_from_suffix(symbol)
-        if kind is not None:
-            resolved.append((int(qty), symbol, kind))
+    parts = [part for part in _UNIT_SEPARATOR_RE.split(_fold(composition)) if part]
+    resolved: list[_UnitComponent] = []
+    for part in parts:
+        symbol_match = _SYMBOL_COMPONENT_RE.fullmatch(part)
+        if symbol_match is not None:
+            symbol = symbol_match.group("symbol").upper()
+            kind = _kind_from_suffix(symbol)
+            if kind is None:
+                return []
+            resolved.append(
+                _UnitComponent(int(symbol_match.group("qty")), kind, symbol)
+            )
+            continue
+        text_match = _TEXT_COMPONENT_RE.fullmatch(part)
+        if text_match is None:
+            # Refuse a partial reading such as "1 PN + 3 subscription receipts".
+            return []
+        label = text_match.group("label")
+        kind = (
+            ShareKind.COMMON
+            if label.startswith("on") or label.startswith("ordinari")
+            else ShareKind.PREFERRED
+        )
+        resolved.append(_UnitComponent(int(text_match.group("qty")), kind))
     return resolved
 
 
@@ -230,7 +279,7 @@ class CvmCompanyRegistry:
             index = await asyncio.to_thread(self._build_index, raw)
             self._index = index
             logger.info(
-                "Loaded CVM FCA %s registry: %d tradable tickers",
+                "Loaded CVM FCA %s registry: %d coded securities",
                 self._year,
                 len(index),
             )
@@ -288,6 +337,9 @@ class CvmCompanyRegistry:
                 denom=company.denom,
                 cvm_sector=company.cvm_sector,
                 situation=company.situation,
+                instrument_kind=security.instrument_kind,
+                instrument_type=security.instrument_type,
+                trading_ended=security.trading_ended,
                 listed_since=security.listed_since,
                 share_classes=classes.get(security.cnpj, ()),
                 shares_per_unit=security.unit_shares,
@@ -328,7 +380,8 @@ class CvmCompanyRegistry:
         accumulator gathers the company's trading ON/PN symbols (units and BDRs
         are skipped by ``_share_kind``) so the cap knows what to price (ADR 0014).
         A unit row also carries its own bundle ratio (``unit_shares``), parsed
-        from the same ``Composicao_BDR_Unit`` text (#212).
+        from explicit component tickers or textual ON/PN quantities in the same
+        ``Composicao_BDR_Unit`` field (ADR 0053).
         """
         securities: dict[str, _Security] = {}
         classes: dict[str, _ClassAccumulator] = {}
@@ -342,18 +395,23 @@ class CvmCompanyRegistry:
                 if not ticker or not cnpj:
                     continue
                 trading = not (row.get("Data_Fim_Negociacao") or "").strip()
-                valor = row.get("Valor_Mobiliario") or ""
+                trading_ended = _iso_date(row.get("Data_Fim_Negociacao"))
+                valor = (row.get("Valor_Mobiliario") or "").strip()
                 kind = _share_kind(valor)
+                instrument_kind = _instrument_kind(valor)
                 composition = (
                     _unit_composition(row.get("Composicao_BDR_Unit") or "")
-                    if kind is None and _is_unit(valor)
+                    if instrument_kind is InstrumentKind.UNIT
                     else ()
                 )
-                unit_shares = sum(qty for qty, _, _ in composition) or None
+                unit_shares = sum(item.quantity for item in composition) or None
                 candidate = _Security(
                     cnpj=cnpj,
                     trading=trading,
                     version=_int(row.get("Versao")),
+                    instrument_kind=instrument_kind,
+                    instrument_type=valor,
+                    trading_ended=trading_ended,
                     listed_since=_iso_date(row.get("Data_Inicio_Listagem")),
                     unit_shares=unit_shares,
                 )
@@ -368,8 +426,9 @@ class CvmCompanyRegistry:
                 elif composition:
                     # A unit-only filer (Klabin) names its classes in the bundle.
                     accumulator = classes.setdefault(cnpj, _ClassAccumulator())
-                    for _qty, symbol, unit_kind in composition:
-                        accumulator.add(unit_kind, symbol)
+                    for component in composition:
+                        if component.symbol is not None:
+                            accumulator.add(component.kind, component.symbol)
         return securities, classes
 
 

@@ -8,9 +8,11 @@ index end to end is the first caller that ever sees them.
 
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
-from smaug.portfolio.domain.company import CompanyIdentity
+from smaug.portfolio.domain.company import CompanyIdentity, InstrumentKind
 from smaug.portfolio.domain.universe import (
     ListedCompany,
     is_trading_code,
@@ -19,7 +21,12 @@ from smaug.portfolio.domain.universe import (
 
 
 def _identity(
-    ticker: str, cd_cvm: str, *, cnpj: str = "00.000.000/0001-00"
+    ticker: str,
+    cd_cvm: str,
+    *,
+    cnpj: str = "00.000.000/0001-00",
+    kind: InstrumentKind = InstrumentKind.COMMON_SHARE,
+    trading_ended: date | None = None,
 ) -> CompanyIdentity:
     return CompanyIdentity(
         ticker=ticker,
@@ -28,6 +35,9 @@ def _identity(
         denom="COMPANHIA TESTE S.A.",
         cvm_sector="Teste",
         situation="Ativo",
+        instrument_kind=kind,
+        instrument_type=kind.value,
+        trading_ended=trading_ended,
     )
 
 
@@ -88,7 +98,10 @@ def test_the_primary_ticker_is_the_ordinary_share() -> None:
     assert on_and_pn[0].ticker == "PETR3"
 
     unit_and_pn = listed_companies(
-        [_identity("SAPR11", "18627"), _identity("SAPR4", "18627")]
+        [
+            _identity("SAPR11", "18627", kind=InstrumentKind.UNIT),
+            _identity("SAPR4", "18627", kind=InstrumentKind.PREFERRED_SHARE),
+        ]
     )
     assert unit_and_pn[0].ticker == "SAPR4"
 
@@ -99,6 +112,24 @@ def test_a_non_ticker_never_becomes_a_company() -> None:
     )
 
     assert [c.cd_cvm for c in companies] == ["5410"]
+
+
+def test_only_current_shares_and_units_enter_the_fundamental_universe() -> None:
+    companies = listed_companies(
+        [
+            _identity("WEGE3", "5410"),
+            _identity("SAPR11", "18627", kind=InstrumentKind.UNIT),
+            _identity("BEEF11", "9991", kind=InstrumentKind.SUBSCRIPTION_WARRANT),
+            _identity(
+                "BMGB11",
+                "9992",
+                kind=InstrumentKind.UNIT,
+                trading_ended=date(2019, 11, 28),
+            ),
+        ]
+    )
+
+    assert {company.ticker for company in companies} == {"WEGE3", "SAPR11"}
 
 
 def test_the_batch_order_does_not_depend_on_the_index_order() -> None:

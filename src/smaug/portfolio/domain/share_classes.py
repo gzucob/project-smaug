@@ -20,8 +20,8 @@ The bundle composition itself — how many underlying shares one unit is worth �
 is what ``CompanyIdentity.shares_per_unit`` carries, parsed from the FCA's own
 ``Composicao_BDR_Unit`` text (#212). Without it the per-share indicators
 (LPA/VPA) stay null for a unit — dividing earnings by the underlying share
-count would not line up with the per-unit price (#38). ``is_unit`` marks those
-tickers by their B3 suffix, a shape test rather than a lookup.
+count would not line up with the per-unit price (#38). Whether a code is a unit
+comes from that resolved identity, never from its numeric suffix (ADR 0053).
 """
 
 from __future__ import annotations
@@ -43,14 +43,3 @@ class ShareClass:
 
     symbol: str
     kind: ShareKind
-
-
-def is_unit(ticker: str) -> bool:
-    """True when ``ticker``'s class suffix (``11``) names a unit, not one class.
-
-    A shape test on the B3 trading code — the same convention
-    ``portfolio.domain.universe`` and ``cvm_registry._kind_from_suffix`` already
-    encode (3/4/5/6 for a plain class, 11 for a unit) — not a per-ticker lookup,
-    so it holds for any unit B3 lists, not just a hand-picked few.
-    """
-    return ticker[4:] == "11"

@@ -1,14 +1,14 @@
-"""Portfolio reference data: the sector fallback and the unit shape test.
+"""Portfolio reference data: the sector fallback and resolved instrument kind.
 
 Per-ticker facts (sector, listed classes, registrant keys, unit composition)
 are resolved from the CVM FCA registry for every ticker, live — see
 ``test_company_registry.py`` — with no curated per-ticker map left anywhere
 under ``src/`` (#212). What remains here is pure and dict-free: the coarse
-CVM-label fallback, and the B3 ticker-suffix shape test for a unit.
+CVM-label fallback and predicates over an FCA-resolved identity.
 """
 
+from smaug.portfolio.domain.company import CompanyIdentity, InstrumentKind, is_unit
 from smaug.portfolio.domain.sectors import Sector, sector_from_cvm
-from smaug.portfolio.domain.share_classes import is_unit
 
 
 def test_sector_from_cvm_folds_the_activity_label_to_the_enum() -> None:
@@ -24,10 +24,20 @@ def test_sector_from_cvm_folds_the_activity_label_to_the_enum() -> None:
     assert sector_from_cvm("") is Sector.INDUSTRY
 
 
-def test_is_unit_reads_the_ticker_suffix() -> None:
-    # A shape test on the B3 trading code, not a lookup — holds for any unit,
-    # not only the ones a fixture happens to name.
-    assert is_unit("SAPR11")
-    assert is_unit("KLBN11")
-    assert not is_unit("WEGE3")
-    assert not is_unit("PETR4")
+def _identity(ticker: str, kind: InstrumentKind) -> CompanyIdentity:
+    return CompanyIdentity(
+        ticker=ticker,
+        cd_cvm="1",
+        cnpj="00.000.000/0001-00",
+        denom="TEST S.A.",
+        cvm_sector="Outros",
+        situation="Ativo",
+        instrument_kind=kind,
+        instrument_type="fixture",
+    )
+
+
+def test_is_unit_reads_the_resolved_instrument_kind() -> None:
+    assert is_unit(_identity("SAPR11", InstrumentKind.UNIT))
+    assert not is_unit(_identity("BEEF11", InstrumentKind.SUBSCRIPTION_WARRANT))
+    assert not is_unit(_identity("WEGE3", InstrumentKind.COMMON_SHARE))

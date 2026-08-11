@@ -25,11 +25,11 @@ class CompanyRegistry(Protocol):
     """Resolve a B3 ticker to its CVM registrant keys, and list the universe."""
 
     async def resolve(self, ticker: str) -> CompanyIdentity | None:
-        """Return the identity for ``ticker``, or ``None`` if it is not listed."""
+        """Return its FCA identity, including a known but ineligible security."""
         ...
 
     async def resolve_all(self, tickers: Iterable[str]) -> dict[str, CompanyIdentity]:
-        """Resolve many tickers at once; unlisted ones are absent from the dict."""
+        """Resolve many codes; codes absent from the FCA are absent from the dict."""
         ...
 
     async def companies(self) -> tuple[ListedCompany, ...]:

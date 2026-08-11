@@ -17,10 +17,10 @@ The live quote is not adjusted. It is today's price, and there is no payment
 after today to put back.
 
 **A unit has no basis here at all.** B3 files a rate per *class* — one for ON,
-another for PN — and none for the bundle, whose payout depends on a composition
-this project does not model (#38). Leaving the column null says that; filling it
-with the traded price would claim the two rulers coincide, which for a payer is
-the one thing certainly false.
+another for PN — and none for the bundle. The FCA count alone is insufficient to
+map each class's cash-event history onto a unit total-return series (#38). Leaving
+the column null says that; filling it with the traded price would claim the two
+rulers coincide, which for a payer is the one thing certainly false.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from decimal import Decimal
 from smaug.analysis.domain.dividends import average_dividend_factor
 from smaug.analysis.domain.financials import MarketData, SessionClose, YearPrices
 from smaug.analysis.domain.ports import CashEventReader, SessionPriceProvider
-from smaug.portfolio.domain.share_classes import is_unit
+from smaug.portfolio.domain.company import UnitResolver, no_units
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -39,9 +39,16 @@ logger = get_logger(__name__)
 class DividendAdjustedPriceProvider:
     """A ``SessionPriceProvider`` that publishes the total-return basis too."""
 
-    def __init__(self, inner: SessionPriceProvider, events: CashEventReader) -> None:
+    def __init__(
+        self,
+        inner: SessionPriceProvider,
+        events: CashEventReader,
+        *,
+        unit_resolver: UnitResolver = no_units,
+    ) -> None:
         self._inner = inner
         self._events = events
+        self._is_unit = unit_resolver
 
     async def get(self, ticker: str) -> MarketData:
         return await self._inner.get(ticker)
@@ -51,7 +58,7 @@ class DividendAdjustedPriceProvider:
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:
         prices = await self._inner.year_prices(ticker, year)
-        if prices.nominal_avg is None or is_unit(ticker):
+        if prices.nominal_avg is None or self._is_unit(ticker):
             return prices
         events = await self._events.cash_events(ticker)
         if not events:

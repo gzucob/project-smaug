@@ -10,11 +10,17 @@ from __future__ import annotations
 import csv
 import io
 import zipfile
+from datetime import date
 from pathlib import Path
 
 import httpx
 
-from smaug.portfolio.domain.company import CompanyIdentity
+from smaug.portfolio.domain.company import (
+    CompanyIdentity,
+    InstrumentKind,
+    fundamental_exclusion,
+    is_unit,
+)
 from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
 
 _YEAR = 2024
@@ -93,6 +99,7 @@ async def test_resolves_a_unit_ticker_joining_securities_and_cadastre(
                 "Codigo_Negociacao": "KLBN11",
                 "Mercado": "Bolsa",
                 "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": "Units",
             }
         ],
     )
@@ -106,6 +113,8 @@ async def test_resolves_a_unit_ticker_joining_securities_and_cadastre(
         denom="KLABIN S.A.",
         cvm_sector="Papel e Celulose",
         situation="Ativo",
+        instrument_kind=InstrumentKind.UNIT,
+        instrument_type="Units",
     )
 
 
@@ -276,6 +285,138 @@ async def test_share_classes_from_explicit_rows_and_from_a_unit_composition(
     # "1 WXYZ3 + 4 WXYZ4": one unit bundles 1 + 4 = 5 underlying shares (#212).
     assert unit.shares_per_unit == 5
     assert a.shares_per_unit is None  # a plain ON row is not a unit
+
+
+async def test_all_current_fca_units_parse_textual_or_symbol_compositions(
+    tmp_path: Path,
+) -> None:
+    cases = (
+        ("ALUP11", "1 ON E 2 PN", 3),
+        ("BRBI11", "2 ações preferenciais e 1 ação ordinária", 3),
+        ("ENGI11", "1 ação ordinária e 4 ações preferenciais", 5),
+        ("IGTI11", "1 ON e 2 PN", 3),
+        ("KLBN11", "1 KLBN3 + 4 KLBN4", 5),
+        ("SANB11", "1 ON + 1 PN", 2),
+        ("SAPR11", "1 ON e 4 PN", 5),
+        ("TAEE11", "1 ON / 2 PN", 3),
+    )
+    cnpjs = {
+        ticker: f"{position:02}.000.000/0001-00"
+        for position, (ticker, _composition, _count) in enumerate(cases, start=1)
+    }
+    _write_fca_zip(
+        tmp_path,
+        geral=[
+            _cadastre_row(cnpjs[ticker], str(position))
+            for position, (ticker, _composition, _count) in enumerate(cases, start=1)
+        ],
+        securities=[
+            {
+                "CNPJ_Companhia": cnpjs[ticker],
+                "Codigo_Negociacao": ticker,
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": "Units",
+                "Composicao_BDR_Unit": composition,
+            }
+            for ticker, composition, _count in cases
+        ],
+    )
+
+    identities = await _registry(tmp_path).resolve_all(
+        ticker for ticker, _composition, _count in cases
+    )
+
+    assert set(identities) == {ticker for ticker, _composition, _count in cases}
+    for ticker, _composition, count in cases:
+        identity = identities[ticker]
+        assert is_unit(identity)
+        assert identity.instrument_kind is InstrumentKind.UNIT
+        assert identity.shares_per_unit == count
+
+
+async def test_suffix_11_warrants_are_not_units_or_listed_equities(
+    tmp_path: Path,
+) -> None:
+    tickers = ("BEEF11", "CALI11", "IFCM11", "VIVR11")
+    cnpjs = {
+        ticker: f"{position + 20:02}.000.000/0001-00"
+        for position, ticker in enumerate(tickers)
+    }
+    _write_fca_zip(
+        tmp_path,
+        geral=[
+            _cadastre_row(cnpjs[ticker], str(position + 20))
+            for position, ticker in enumerate(tickers)
+        ],
+        securities=[
+            {
+                "CNPJ_Companhia": cnpjs[ticker],
+                "Codigo_Negociacao": ticker,
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": "Bônus de Subscrição",
+                "Composicao_BDR_Unit": "04 Ações Ordinárias",
+            }
+            for ticker in tickers
+        ],
+    )
+    registry = _registry(tmp_path)
+
+    identities = await registry.resolve_all(tickers)
+
+    assert await registry.companies() == ()
+    for ticker in tickers:
+        identity = identities[ticker]
+        assert not is_unit(identity)
+        assert identity.instrument_kind is InstrumentKind.SUBSCRIPTION_WARRANT
+        assert fundamental_exclusion(identity) == (
+            "FCA instrument type is 'Bônus de Subscrição'"
+        )
+
+
+async def test_terminated_codes_remain_diagnosable_but_leave_the_universe(
+    tmp_path: Path,
+) -> None:
+    bmgb_cnpj = "31.000.000/0001-00"
+    kepl_cnpj = "32.000.000/0001-00"
+    _write_fca_zip(
+        tmp_path,
+        geral=[
+            _cadastre_row(bmgb_cnpj, "31"),
+            _cadastre_row(kepl_cnpj, "32"),
+        ],
+        securities=[
+            {
+                "CNPJ_Companhia": bmgb_cnpj,
+                "Codigo_Negociacao": "BMGB11",
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "2019-11-28",
+                "Valor_Mobiliario": "Units",
+                "Composicao_BDR_Unit": "1 PN + 3 Recibos de Subscrição",
+            },
+            {
+                "CNPJ_Companhia": kepl_cnpj,
+                "Codigo_Negociacao": "KEPL11",
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "2021-06-15",
+                "Valor_Mobiliario": "Bônus de Subscrição",
+            },
+        ],
+    )
+    registry = _registry(tmp_path)
+
+    bmgb = await registry.resolve("BMGB11")
+    kepl = await registry.resolve("KEPL11")
+
+    assert bmgb is not None
+    assert kepl is not None
+    assert bmgb.trading_ended == date(2019, 11, 28)
+    assert kepl.trading_ended == date(2021, 6, 15)
+    assert bmgb.shares_per_unit is None  # do not accept the readable PN fragment
+    assert fundamental_exclusion(bmgb) == "trading ended on 2019-11-28"
+    assert fundamental_exclusion(kepl) == "trading ended on 2021-06-15"
+    assert await registry.companies() == ()
 
 
 async def test_two_classes_of_the_same_kind_yield_no_classes(tmp_path: Path) -> None:

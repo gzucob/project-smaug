@@ -7,6 +7,7 @@ from typing import Any
 
 from smaug.analysis.domain.capital import BaseChange, RestatementStep, factor_at
 from smaug.analysis.domain.financials import ShareCounts
+from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
 from tests.fakes import fake_unit_composition_resolver
 
@@ -211,6 +212,19 @@ async def test_outstanding_is_the_unit_count_for_a_unit_ticker() -> None:
     )
 
     assert await reader.outstanding("TAEE11", 2025) == Decimal(344_498_907)
+
+
+async def test_outstanding_is_null_when_a_unit_composition_is_unknown() -> None:
+    reader = MongoSharesReader(
+        FakeCollection([_doc("ACME11", 2025, 1_000)]),
+        unit_resolver=lambda ticker: ticker == "ACME11",
+    )
+
+    assert await reader.outstanding("ACME11", 2025) is None
+    assert (
+        reader.outstanding_null_reason("ACME11", 2025)
+        is NullReason.MISSING_UNIT_COMPOSITION
+    )
 
 
 async def test_counts_split_the_filing_by_share_class() -> None:

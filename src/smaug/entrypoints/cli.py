@@ -114,7 +114,12 @@ from smaug.portfolio.application.refresh_taxonomy import (
     RefreshTaxonomyUseCase,
     TaxonomyDrift,
 )
-from smaug.portfolio.domain.company import CompanyIdentity
+from smaug.portfolio.domain.company import (
+    CompanyIdentity,
+    UnitResolver,
+    fundamental_exclusion,
+    is_unit,
+)
 from smaug.portfolio.domain.sectors import Sector, sector_from_cvm
 from smaug.portfolio.domain.securities import (
     RegistrantNamesResolver,
@@ -135,7 +140,7 @@ from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.build import application_commit
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
-from smaug.shared.errors import UnknownTickerError
+from smaug.shared.errors import IneligibleInstrumentError, UnknownTickerError
 from smaug.shared.events import EventBus
 from smaug.shared.local_artifacts import LocalSourceArtifactStore
 from smaug.shared.logging import get_logger
@@ -161,7 +166,7 @@ class YearPass:
 
 
 def _guarded[T](coro: Coroutine[Any, Any, T]) -> T:
-    """Run a use-case coroutine, turning an unknown ticker into a clean exit.
+    """Run a use-case coroutine, turning an invalid ticker into a clean exit.
 
     Keeps a raw registry-resolution failure off the terminal — the CLI reports a
     typo (or a not-yet-listed ticker) as one line, like the ingestion side maps
@@ -169,7 +174,7 @@ def _guarded[T](coro: Coroutine[Any, Any, T]) -> T:
     """
     try:
         return asyncio.run(coro)
-    except UnknownTickerError as exc:
+    except (UnknownTickerError, IneligibleInstrumentError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
@@ -201,9 +206,9 @@ async def _registry_identities(
 
     No hand-picked shortcut: every ticker, including the nine that used to skip
     this call, resolves through a live FCA download/parse. A ticker that
-    resolves nowhere is a user error — a typo, or a company CVM does not list —
-    and raises ``UnknownTickerError``, the same clean exit the old portfolio
-    guard (``require_portfolio_tickers``, removed #151) gave.
+    resolves nowhere is a user error — a typo, or a company CVM does not list.
+    A known security outside current fundamental analysis is rejected separately,
+    naming its FCA type or trading end date (ADR 0053).
     """
     registry = CvmCompanyRegistry(
         http,
@@ -213,8 +218,12 @@ async def _registry_identities(
     )
     identities = await registry.resolve_all(tickers)
     for ticker in tickers:
-        if ticker not in identities:
+        identity = identities.get(ticker)
+        if identity is None:
             raise UnknownTickerError(ticker)
+        exclusion = fundamental_exclusion(identity)
+        if exclusion is not None:
+            raise IneligibleInstrumentError(ticker, exclusion)
     return identities
 
 
@@ -299,6 +308,16 @@ def _unit_composition_resolver(
     def resolve(ticker: str) -> int | None:
         identity = identities.get(ticker)
         return identity.shares_per_unit if identity is not None else None
+
+    return resolve
+
+
+def _unit_resolver(identities: dict[str, CompanyIdentity]) -> UnitResolver:
+    """Whether a ticker's FCA-resolved security type is a unit (ADR 0053)."""
+
+    def resolve(ticker: str) -> bool:
+        identity = identities.get(ticker)
+        return identity is not None and is_unit(identity)
 
     return resolve
 
@@ -1165,6 +1184,7 @@ def _build_price_provider(
     archive: CotahistArchive,
     cash_events: CashEventReader,
     succession: CodeSuccession,
+    unit_resolver: UnitResolver,
 ) -> PriceProvider:
     """Wire the exchange's series into the two bases derived from it.
 
@@ -1195,6 +1215,7 @@ def _build_price_provider(
                 timeline=shares_reader.restatement_timeline,
             ),
             cash_events,
+            unit_resolver=unit_resolver,
         ),
         shares_reader,
     )
@@ -1236,6 +1257,7 @@ async def _run_analyze(
                 names=names,
                 listed_since=_listed_since_resolver(identities),
             )
+            units = _unit_resolver(identities)
             shares_reader = MongoSharesReader(
                 mongo[settings.mongo_db]["raw_ingestions"],
                 registrant_resolver=registrant,
@@ -1244,6 +1266,7 @@ async def _run_analyze(
                 # is the reader that dates it (ADR 0043).
                 base_changes=B3BaseChanges(archive, codes=succession.candidates),
                 unit_composition_resolver=_unit_composition_resolver(identities),
+                unit_resolver=units,
             )
             cash_events = MongoCashEventReader(
                 mongo[settings.mongo_db]["raw_ingestions"],
@@ -1256,7 +1279,11 @@ async def _run_analyze(
                     registrant_resolver=registrant,
                 ),
                 price_provider=_build_price_provider(
-                    shares_reader, archive, cash_events, succession
+                    shares_reader,
+                    archive,
+                    cash_events,
+                    succession,
+                    units,
                 ),
                 repository=SqlAlchemyAnalysisRepository(session_factory),
                 shares_reader=shares_reader,

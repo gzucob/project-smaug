@@ -387,7 +387,7 @@ def _classify(
             return market.cap_null_reason
         return NullReason.MISSING_PRICE
     if needs.shares and market.shares is None:
-        return NullReason.MISSING_SHARE_COUNT
+        return market.shares_null_reason or NullReason.MISSING_SHARE_COUNT
     if needs.prior is not None and (
         previous is None or getattr(previous, needs.prior) is None
     ):

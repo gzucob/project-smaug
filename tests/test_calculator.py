@@ -509,6 +509,19 @@ def test_missing_shares_blames_the_share_count_not_the_price() -> None:
     assert ind.null_reasons["pb"] is NullReason.MISSING_SHARE_COUNT
 
 
+def test_missing_unit_composition_names_the_per_security_denominator() -> None:
+    ind = compute(
+        _nonfinancial(),
+        None,
+        MarketData(shares_null_reason=NullReason.MISSING_UNIT_COMPOSITION),
+    )
+
+    assert ind.eps is None
+    assert ind.bvps is None
+    assert ind.null_reasons["eps"] is NullReason.MISSING_UNIT_COMPOSITION
+    assert ind.null_reasons["bvps"] is NullReason.MISSING_UNIT_COMPOSITION
+
+
 def test_a_sibling_class_without_a_quote_blames_the_price() -> None:
     # A dual-class company whose ON class has no quote cannot be capitalized even
     # though the analyzed ticker's own price and share count are both in hand —

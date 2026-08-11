@@ -1,12 +1,10 @@
 """The listed universe — which companies a whole-exchange run iterates.
 
-Resolving one ticker on demand never had to ask what a ticker *is*: nobody types
-``N/A``. A batch does, because it walks the FCA index end to end, and that index
-carries whatever the filer typed into ``Codigo_Negociacao`` — 41 of the 547 rows
-in the 2024 archive are not trading codes at all, but registration numbers
-(``1545-8``, ``022055``), fragments (``N/A``, ``NAO HA``, ``ADR``) or a bare
-digit. So the shape of a B3 trading code becomes a rule here, and the rows that
-fail it are dropped rather than ingested as companies that do not exist.
+Resolving one ticker on demand still needs to ask what the FCA says it *is*.
+A batch walks the FCA index end to end, where ``Codigo_Negociacao`` contains
+both malformed non-codes and valid-looking codes for warrants and terminated
+securities. The current fundamental universe therefore requires both a B3 code
+shape and an FCA identity that is a still-trading share or unit (ADR 0053).
 
 **The unit of the universe is the company, not the ticker.** A registrant files
 one set of statements; its ON and PN classes are two prices over that one filing
@@ -22,7 +20,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from smaug.portfolio.domain.company import CompanyIdentity
+from smaug.portfolio.domain.company import CompanyIdentity, fundamental_exclusion
 
 # A B3 trading code: a four-character root plus the one- or two-digit class
 # number. The root is alphanumeric because a real one is (``B3SA3`` — the
@@ -76,7 +74,7 @@ def _primary(tickers: tuple[str, ...]) -> str:
 def listed_companies(
     identities: Iterable[CompanyIdentity],
 ) -> tuple[ListedCompany, ...]:
-    """Group resolved identities into the companies a batch run iterates.
+    """Group current equity identities into the companies a batch run iterates.
 
     Ordered by ``cd_cvm`` so a run is reproducible: a partial batch resumed later
     covers the same ground in the same order, whatever order the index was built
@@ -84,7 +82,10 @@ def listed_companies(
     """
     grouped: dict[str, list[CompanyIdentity]] = {}
     for identity in identities:
-        if not is_trading_code(identity.ticker):
+        if (
+            not is_trading_code(identity.ticker)
+            or fundamental_exclusion(identity) is not None
+        ):
             continue
         grouped.setdefault(identity.cd_cvm, []).append(identity)
 

@@ -359,6 +359,9 @@ class AnalyzePortfolioUseCase:
             market_cap=cap,
             shares=await self._shares_reader.outstanding(ticker, year),
             cap_null_reason=cap_null_reason,
+            shares_null_reason=self._shares_reader.outstanding_null_reason(
+                ticker, year
+            ),
         )
 
     async def _sibling_not_yet_traded(
@@ -475,5 +478,8 @@ class AnalyzePortfolioUseCase:
             market_cap=cap,
             shares=await self._shares_reader.outstanding(ticker, year),
             cap_null_reason=cap_null_reason,
+            shares_null_reason=self._shares_reader.outstanding_null_reason(
+                ticker, year
+            ),
         )
         return market, own.adjusted_avg
