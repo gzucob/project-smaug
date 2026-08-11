@@ -31,8 +31,12 @@ class FundamentalsReader(Protocol):
         ...
 
     async def annuals(self, ticker: str) -> list[StandardizedFinancials]:
-        """Closed-year DFPs (oldest→newest): the latest derives the missing Q4, and
-        the prior year is the year-over-year growth base."""
+        """Closed-year DFPs (oldest→newest).
+
+        Each eligible annual derives its missing Q4. Closed-year growth compares
+        adjacent DFPs; TTM growth uses annuals only to reconstruct the prior
+        comparable trailing window.
+        """
         ...
 
 

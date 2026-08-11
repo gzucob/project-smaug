@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import StrEnum
 
@@ -46,7 +46,7 @@ from smaug.analysis.domain.ports import (
     PriceProvider,
     SharesReader,
 )
-from smaug.analysis.domain.ttm import build_ttm
+from smaug.analysis.domain.ttm import build_ttm, build_ttm_as_of
 from smaug.portfolio.domain.share_classes import ShareClass
 from smaug.portfolio.domain.taxonomy import Classification, classify
 from smaug.shared.errors import SourceError, UnknownTickerError
@@ -125,17 +125,19 @@ def _utc_now() -> datetime:
 def _prior_year_annual(
     annuals: list[StandardizedFinancials], year: int
 ) -> StandardizedFinancials | None:
-    """The closed-year DFP one year before ``year`` — the YoY growth base.
-
-    Revenue/net-income growth compare a period against the prior closed year.
-    For the TTM this is a clean year-over-year when the window ends in December;
-    for a closed year it is simply the year before. Returns ``None`` when that
-    year was not ingested, so growth degrades to null.
-    """
+    """The closed-year DFP one year before ``year`` — closed-view YoY base."""
     for annual in annuals:
         if annual.reference_date.year == year - 1:
             return annual
     return None
+
+
+def _prior_year_end(end: date) -> date:
+    """The same fiscal endpoint one year earlier, including leap day."""
+    try:
+        return end.replace(year=end.year - 1)
+    except ValueError:
+        return end.replace(year=end.year - 1, day=28)
 
 
 def _annuals_through(
@@ -282,7 +284,8 @@ class AnalyzePortfolioUseCase:
             logger.info("No TTM window for %s (needs 4 quarters)", ticker)
             return None
         year = current.reference_date.year
-        previous = _prior_year_annual(annuals, year)
+        prior_end = _prior_year_end(current.reference_date)
+        previous = build_ttm_as_of(quarters, annuals, prior_end)
         market = await self._market_now(ticker, year, quote)
         return TickerAnalysis(
             ticker=ticker,
