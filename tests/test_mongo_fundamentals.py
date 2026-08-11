@@ -7,11 +7,13 @@ from typing import Any
 import pytest
 
 from smaug.analysis.domain.financials import AccountingRegime
+from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.infrastructure.mongo_fundamentals import (
     MongoFundamentalsReader,
     standardize,
 )
 from smaug.portfolio.domain.sectors import Sector
+from smaug.portfolio.domain.share_classes import PerShareClass, UnitComponent
 from tests.fakes import fake_sector_resolver
 
 
@@ -139,13 +141,99 @@ def test_standardize_applies_currency_size_to_absolute_reais() -> None:
     assert f.total_assets == Decimal("5000")
 
 
+def test_standardize_reads_cpc41_by_label_without_currency_scaling() -> None:
+    # Real CVM shape: the DRE is in thousands, while 3.99 is already reais per
+    # share. Code position is not class identity — the leaf label is.
+    by_module = {
+        "DRE": {
+            "currency_size": 1000,
+            "accounts": [
+                _acc("3.99.01.01", "ON", "1.5500000000"),
+                _acc("3.99.01.02", "PN", "1.7100000000"),
+                _acc("3.99.02.01", "ON", "1.5000000000"),
+                _acc("3.99.02.02", "PN", "1.6500000000"),
+            ],
+        }
+    }
+
+    ordinary = standardize(
+        by_module,
+        Sector.BANK,
+        date(2024, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+    )
+    preferred = standardize(
+        by_module,
+        Sector.BANK,
+        date(2024, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.PREFERRED),),
+    )
+
+    assert ordinary.eps_basic == Decimal("1.5500000000")
+    assert ordinary.eps_diluted == Decimal("1.5000000000")
+    assert preferred.eps_basic == Decimal("1.7100000000")
+    assert preferred.eps_diluted == Decimal("1.6500000000")
+
+
+def test_standardize_composes_a_unit_from_unequal_class_rights() -> None:
+    # SAPR11-like bundle: 1 ON + 4 PN. The per-unit result is the economic sum,
+    # not group profit divided by a closing count of underlying shares.
+    filing = {
+        "DRE": {
+            "accounts": [
+                _acc("3.99.01.02", "PN", "1.10"),
+                _acc("3.99.01.01", "ON", "1.00"),
+                _acc("3.99.02.02", "PN", "1.05"),
+                _acc("3.99.02.01", "ON", "0.98"),
+            ]
+        }
+    }
+    components = (
+        UnitComponent(1, PerShareClass.ORDINARY),
+        UnitComponent(4, PerShareClass.PREFERRED),
+    )
+
+    result = standardize(
+        filing,
+        Sector.UTILITY,
+        date(2024, 12, 31),
+        per_share_components=components,
+    )
+
+    assert result.eps_basic == Decimal("5.40")
+    assert result.eps_diluted == Decimal("5.18")
+
+
+def test_standardize_rejects_an_ambiguous_or_missing_class_disclosure() -> None:
+    ambiguous = {
+        "DRE": {
+            "accounts": [
+                _acc("3.99.01.01", "ON", "1.00"),
+                _acc("3.99.01.02", "ON", "0.00"),
+            ]
+        }
+    }
+    target = (UnitComponent(1, PerShareClass.ORDINARY),)
+
+    result = standardize(
+        ambiguous,
+        Sector.COMMODITY,
+        date(2024, 12, 31),
+        per_share_components=target,
+    )
+
+    assert result.eps_basic is None
+    assert result.eps_basic_null_reason is NullReason.MISSING_ECONOMIC_RIGHTS
+    assert result.eps_diluted is None
+    assert result.eps_diluted_null_reason is NullReason.MISSING_CPC41_DISCLOSURE
+
+
 def test_standardize_bank_reads_its_own_chart_of_accounts() -> None:
     # The codes and labels below are the real ones in the raw mirror, from the
-    # **parent** filing a bank's income statement now comes from (ADR 0019). Its
-    # chart of accounts is not the consolidated one: the loan-loss provision is
-    # deducted *inside* 3.02 (so 3.03 is already net of it), and the two banks even
-    # disagree on its code — 3.02.05 for BBAS3, 3.02.04 for BBDC4 — which is why
-    # every line here is read by label, scoped to its parent (#27).
+    # bank chart of accounts. The loan-loss provision is deducted *inside* 3.02
+    # (so 3.03 is already net of it), and the two banks even disagree on its code
+    # — 3.02.05 for BBAS3, 3.02.04 for BBDC4 — which is why every line here is
+    # read by label, scoped to its parent (#27).
     #
     # A bank's balance sheet has no current/non-current split and no borrowings
     # line, and its cash sits at 1.01 whole — there is no 1.01.01/1.01.02 to sum.
@@ -950,13 +1038,17 @@ async def test_reader_selects_amendment_consolidated_and_current_period() -> Non
 
 
 def _bank_filing(
-    module: str, balance_type: str, accounts: list[dict[str, Any]]
+    module: str,
+    balance_type: str,
+    accounts: list[dict[str, Any]],
+    *,
+    version: int = 1,
 ) -> dict[str, Any]:
     return {
         "payload": {
             "reference_date": "2024-12-31",
             "document_type": "DFP",
-            "version": 1,
+            "version": version,
             "balance_type": balance_type,
             "ordem_exerc": "ULTIMO",
             "accounts": accounts,
@@ -966,12 +1058,10 @@ def _bank_filing(
     }
 
 
-async def test_a_banks_income_statement_comes_from_the_parent_filing() -> None:
-    # ADR 0019, shaped on BBAS3's real 2024 DFP: a bank files two income statements
-    # that disagree, and only the parent one is the result it reports (35.3 bn). The
-    # consolidated statement closes at 29.2 bn, 26.4 bn of it to the controllers —
-    # a figure nobody publishes. The balance sheet is the other way round, so it must
-    # *stay* consolidated even as the DRE crosses over.
+async def test_a_banks_income_and_cpc41_result_use_the_consolidated_filing() -> None:
+    # ADR 0054, shaped on BBAS3's real 2024 DFP. The parent BACEN result differs,
+    # but consolidated analysis must keep the controller numerator and CPC 41
+    # class result on the same consolidated lineage.
     reader = MongoFundamentalsReader(
         _FakeCollection(
             [
@@ -980,7 +1070,11 @@ async def test_a_banks_income_statement_comes_from_the_parent_filing() -> None:
                     "consolidated",
                     [
                         _acc("3.01", "Receitas de Intermediação Financeira", "273500"),
-                        _acc("3.11", "Lucro ou Prejuízo Líquido Consolidado", "29200"),
+                        _acc(
+                            "3.11",
+                            "Lucro ou Prejuízo Líquido Consolidado do Período",
+                            "29200",
+                        ),
                         _acc(
                             "3.11.01",
                             "Atribuído aos Sócios da Empresa Controladora",
@@ -989,6 +1083,8 @@ async def test_a_banks_income_statement_comes_from_the_parent_filing() -> None:
                         _acc(
                             "3.11.02", "Atribuído aos Sócios não Controladores", "2800"
                         ),
+                        _acc("3.99.01.01", "ON", "4.6200000000"),
+                        _acc("3.99.02.01", "ON", "4.6000000000"),
                     ],
                 ),
                 _bank_filing(
@@ -1007,6 +1103,7 @@ async def test_a_banks_income_statement_comes_from_the_parent_filing() -> None:
                         ),
                         _acc("3.11", "Lucro ou Prejuízo Líquido do Período", "35300"),
                     ],
+                    version=2,
                 ),
                 _bank_filing(
                     "BPA", "consolidated", [_acc("1", "Ativo Total", "2398700")]
@@ -1017,14 +1114,117 @@ async def test_a_banks_income_statement_comes_from_the_parent_filing() -> None:
             ]
         ),
         sector_resolver=fake_sector_resolver,
+        per_share_resolver=lambda _ticker: (UnitComponent(1, PerShareClass.ORDINARY),),
     )
 
     annual = await reader.annual("BBAS3")
 
     assert annual is not None
-    assert annual.net_income == Decimal("35300")  # the parent's bottom line
-    assert annual.revenue == Decimal("278400")  # ...and the parent's revenue with it
-    assert annual.total_assets == Decimal("2398700")  # the balance sheet stays wide
+    assert annual.net_income == Decimal("26400")
+    assert annual.revenue == Decimal("273500")
+    assert annual.eps_basic == Decimal("4.6200000000")
+    assert annual.eps_diluted == Decimal("4.6000000000")
+    assert annual.total_assets == Decimal("2398700")
+
+
+async def test_a_later_comparative_restates_cpc41_after_a_bonus() -> None:
+    # BBAS3-like 2:1 bonus: the 2023 DFP originally filed 10.50 per share; the
+    # 2024 DFP presents 2023 again at 5.25. CPC 41 makes the later comparative
+    # authoritative for LPA only. The 2023 profit remains its own filing.
+    current = _bank_filing(
+        "DRE",
+        "consolidated",
+        [
+            _acc("3.01", "Receitas de Intermediação Financeira", "1000"),
+            _acc(
+                "3.11",
+                "Lucro ou Prejuízo Líquido Consolidado do Período",
+                "600",
+            ),
+            _acc(
+                "3.11.01",
+                "Atribuído aos Sócios da Empresa Controladora",
+                "525",
+            ),
+            _acc("3.11.02", "Atribuído aos Sócios não Controladores", "75"),
+            _acc("3.99.01.01", "ON", "10.50"),
+            _acc("3.99.02.01", "ON", "10.50"),
+        ],
+    )
+    current["payload"].update(
+        {
+            "reference_date": "2023-12-31",
+            "period_end_date": "2023-12-31",
+        }
+    )
+    comparative = _bank_filing(
+        "DRE",
+        "consolidated",
+        [
+            _acc("3.99.01.01", "ON", "5.25"),
+            _acc("3.99.02.01", "ON", "5.25"),
+        ],
+    )
+    comparative["payload"].update(
+        {
+            "reference_date": "2024-12-31",
+            "period_end_date": "2023-12-31",
+            "ordem_exerc": "PENULTIMO",
+        }
+    )
+    reader = MongoFundamentalsReader(
+        _FakeCollection([current, comparative]),
+        sector_resolver=fake_sector_resolver,
+        per_share_resolver=lambda _ticker: (UnitComponent(1, PerShareClass.ORDINARY),),
+    )
+
+    annual = await reader.annual("BBAS3")
+
+    assert annual is not None
+    assert annual.net_income == Decimal("525")
+    assert annual.eps_basic == Decimal("5.25")
+    assert annual.eps_diluted == Decimal("5.25")
+
+
+async def test_an_empty_comparative_does_not_erase_a_filed_cpc41_result() -> None:
+    current = _bank_filing(
+        "DRE",
+        "consolidated",
+        [
+            _acc("3.01", "Receitas de Intermediação Financeira", "1000"),
+            _acc("3.99.01.01", "ON", "4.62"),
+            _acc("3.99.02.01", "ON", "4.62"),
+        ],
+    )
+    current["payload"].update(
+        {"reference_date": "2024-12-31", "period_end_date": "2024-12-31"}
+    )
+    empty_comparative = _bank_filing(
+        "DRE",
+        "consolidated",
+        [
+            _acc("3.99.01", "Lucro Básico por Ação", "0"),
+            _acc("3.99.02", "Lucro Diluído por Ação", "0"),
+        ],
+    )
+    empty_comparative["payload"].update(
+        {
+            "reference_date": "2025-12-31",
+            "period_end_date": "2024-12-31",
+            "ordem_exerc": "PENULTIMO",
+        }
+    )
+    reader = MongoFundamentalsReader(
+        _FakeCollection([current, empty_comparative]),
+        sector_resolver=fake_sector_resolver,
+        per_share_resolver=lambda _ticker: (UnitComponent(1, PerShareClass.ORDINARY),),
+    )
+
+    annual = await reader.annual("BBAS3")
+
+    assert annual is not None
+    assert annual.eps_basic == Decimal("4.62")
+    assert annual.eps_diluted == Decimal("4.62")
 
 
 def _column(ref: str, start: str, value: str) -> dict[str, Any]:

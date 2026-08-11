@@ -19,8 +19,9 @@ Two readings of the same filing, for two different jobs:
 * ``counts`` — the classes, which the market cap sums price by price (ADR 0014).
   Served for every ticker, units included: the cap needs the underlying classes
   precisely because a unit's quote prices a bundle.
-* ``outstanding`` — the total, the denominator of the per-share indicators
-  (LPA/VPA) alone. A unit divides that underlying total by its FCA bundle count;
+* ``outstanding`` — the closing total used by VPA and persisted as scale context.
+  CPC 41 LPA uses the issuer's weighted denominator instead. A unit divides the
+  underlying closing total by its FCA bundle count;
   when the FCA identifies a unit but its composition is unreadable, the result
   is null rather than silently reverting to the underlying-share denominator.
 """
@@ -237,8 +238,9 @@ class MongoSharesReader:
         per_unit = self._unit_composition(ticker)
         if per_unit is not None:
             # A unit bundles ``per_unit`` underlying shares (1 ON + 2 PN), so the
-            # per-*unit* LPA/VPA divide by the number of units — the earnings and
-            # book value that pair with the unit's own quoted price (#38).
+            # per-*unit* VPA divides by the number of units, aligning book value
+            # with the unit's own quoted price (#38). CPC 41 LPA is filed by
+            # economic class and composed separately (ADR 0054).
             return filed.total / per_unit
         if self._is_unit(ticker):
             logger.warning(

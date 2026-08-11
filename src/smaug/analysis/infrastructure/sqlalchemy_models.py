@@ -51,6 +51,8 @@ class TickerAnalysisRow(Base):
     ebitda_margin: Mapped[Decimal | None] = mapped_column(Numeric)
     asset_turnover: Mapped[Decimal | None] = mapped_column(Numeric)
     eps: Mapped[Decimal | None] = mapped_column(Numeric)
+    eps_basic: Mapped[Decimal | None] = mapped_column(Numeric)
+    eps_diluted: Mapped[Decimal | None] = mapped_column(Numeric)
     bvps: Mapped[Decimal | None] = mapped_column(Numeric)
     net_debt: Mapped[Decimal | None] = mapped_column(Numeric)
     net_debt_to_ebitda: Mapped[Decimal | None] = mapped_column(Numeric)

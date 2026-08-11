@@ -91,7 +91,8 @@ export const INDICATORS: IndicatorSpec[] = [
   { key: "ebitda_margin", label: "Margem EBITDA", hint: "EBITDA / receita", group: "Rentabilidade", format: pct },
   { key: "asset_turnover", label: "Giro do ativo", hint: "Receita / ativo total — quantas vezes o ativo gira em vendas no ano", group: "Rentabilidade", format: multiple },
 
-  { key: "eps", label: "LPA", hint: "Lucro por ação (lucro líquido / número de ações)", group: "Por ação", format: price },
+  { key: "eps_basic", label: "LPA básico", hint: "Resultado básico por ação da classe, conforme CPC 41", group: "Por ação", format: price },
+  { key: "eps_diluted", label: "LPA diluído", hint: "Resultado diluído por ação da classe, conforme CPC 41", group: "Por ação", format: price },
   { key: "bvps", label: "VPA", hint: "Valor patrimonial por ação (patrimônio / número de ações)", group: "Por ação", format: price },
 
   { key: "revenue_growth", label: "Cresc. receita", hint: "Variação da receita frente ao ano anterior", group: "Crescimento", format: signedPct },

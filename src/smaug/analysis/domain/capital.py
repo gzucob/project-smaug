@@ -2,8 +2,9 @@
 
 A share the company bought back is issued but **not outstanding** — it draws no
 dividend and carries no claim on earnings. The market cap should not price it, and
-the per-share indicators should not divide by it, so both read the counts through
-here (ADR 0017). The stake is small (0.4%–3% for most of the portfolio) but real,
+closing-count measures such as VPA should not divide by it, so both read the counts
+through here (ADR 0017). CPC 41 LPA uses a weighted denominator from the issuer's
+own disclosure instead. The stake is small (0.4%–3% for most of the portfolio) but real,
 systematically in one direction, and for VALE3 it reaches 6%.
 
 Treasury shares are filed only in the statements' ``composicao_capital`` member,
@@ -679,11 +680,11 @@ def restatement_factors(
     file does not reach (it stops after the 2023 FRE).
 
 
-    The closed-year per-share history is split-adjusted (ADR 0027): a year that
-    predates a split/bonus/grupamento has its counts multiplied forward so the
-    LPA/VPA series is continuous, and so the count pairs with the price series —
-    Yahoo back-adjusts every close for splits, and an as-filed count against an
-    adjusted price undercounted BBAS3's pre-bonus caps by exactly the bonus.
+    The closed-year closing-share history is split-adjusted (ADR 0027): a year
+    that predates a split/bonus/grupamento has its counts multiplied forward so
+    the VPA and capitalization series stay on the same base as B3 prices.
+    CPC 41 LPA carries its own retrospective adjustment in the filed disclosure
+    and does not consume these counts (ADR 0054).
 
     Consecutive filed years whose ratio is *not* clean (a real issuance, a
     buyback cancellation) contribute factor 1: those shares moved between owners,

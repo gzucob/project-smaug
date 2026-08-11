@@ -258,7 +258,9 @@ _NEEDS: dict[str, _Needs] = {
     "ebit_margin": _Needs(accounts=("ebit", "revenue")),
     "ebitda_margin": _Needs(accounts=("ebitda", "revenue")),
     "asset_turnover": _Needs(accounts=("revenue", "total_assets")),
-    "eps": _Needs(accounts=("net_income",), shares=True),
+    "eps": _Needs(accounts=("eps_basic",)),
+    "eps_basic": _Needs(accounts=("eps_basic",)),
+    "eps_diluted": _Needs(accounts=("eps_diluted",)),
     "bvps": _Needs(accounts=("equity",), shares=True),
     "net_debt": _Needs(accounts=("total_debt",)),
     "net_debt_to_ebitda": _Needs(accounts=("total_debt", "ebitda")),
@@ -364,6 +366,10 @@ def _classify(
     """
     if name in inapplicable:
         return NullReason.INAPPLICABLE_REGIME
+    if name in {"eps", "eps_basic"} and f.eps_basic_null_reason is not None:
+        return f.eps_basic_null_reason
+    if name == "eps_diluted" and f.eps_diluted_null_reason is not None:
+        return f.eps_diluted_null_reason
     regime = f.filed_regime or expected_regime(f.sector)
     if needs.series is not None:
         return _classify_cagr(needs.series, f, history)
@@ -507,7 +513,7 @@ def compute(
 
     # The bank's spread, before the cost of default. A bank's 3.03 already deducts
     # the loan-loss provision (it sits inside the intermediation expenses in the
-    # parent chart of accounts, ADR 0019), so adding the provision back — it is filed
+    # bank chart of accounts, so adding the provision back — it is filed
     # negative — recovers the margin the bank earned before writing anything off.
     # That is the *margem financeira bruta* the banks themselves report.
     interest_margin = _sub(f.gross_profit, f.loan_loss_provision)
@@ -531,7 +537,9 @@ def compute(
         ebit_margin=_div(f.ebit, f.revenue),
         ebitda_margin=_div(f.ebitda, f.revenue),
         asset_turnover=_div(annual_revenue, f.total_assets),
-        eps=_div(annual_net_income, market.shares),
+        eps=f.eps_basic,
+        eps_basic=f.eps_basic,
+        eps_diluted=f.eps_diluted,
         bvps=_div(f.equity, market.shares),
         net_debt=net_debt,
         net_debt_to_ebitda=_div(net_debt, annual_ebitda),

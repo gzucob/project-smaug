@@ -44,6 +44,8 @@ export interface Indicators {
   ebitda_margin: Decimalish;
   asset_turnover: Decimalish;
   eps: Decimalish;
+  eps_basic: Decimalish;
+  eps_diluted: Decimalish;
   bvps: Decimalish;
   net_debt: Decimalish;
   net_debt_to_ebitda: Decimalish;
@@ -114,6 +116,10 @@ export type NullReason =
   | "price_symbol_not_found"
   | "not_yet_listed"
   | "missing_share_count"
+  | "missing_unit_composition"
+  | "missing_cpc41_disclosure"
+  | "missing_weighted_average_shares"
+  | "missing_economic_rights"
   | "missing_prior_period"
   | "zero_denominator"
   | "non_positive_endpoint";

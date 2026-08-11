@@ -1,6 +1,6 @@
 # 0019 — A bank's income statement comes from its parent filing, its balance sheet from the consolidated one
 
-- **Status:** Accepted
+- **Status:** Superseded by [0054](0054-cpc-41-results-come-from-the-consolidated-class-disclosure.md)
 - **Date:** 2026-07-14
 
 ## Context

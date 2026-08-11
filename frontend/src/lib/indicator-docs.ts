@@ -275,8 +275,8 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
 
   // ---------------------------------------------------------- por ação ---
   eps: {
-    formula: "Lucro líquido (anualizado) ÷ Número de ações",
-    what: "A fatia do lucro que cabe a cada ação. É o denominador do P/L e a base de comparação da própria empresa ao longo do tempo.",
+    formula: "Alias compatível do LPA básico divulgado conforme CPC 41",
+    what: "A fatia básica do resultado que cabe à classe do papel. Novos consumidores devem usar o campo LPA básico explicitamente.",
     strongIn: [
       {
         where: "Qualquer subsetor, na série histórica da própria empresa",
@@ -293,8 +293,41 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "emissões frequentes diluem o LPA mesmo com o lucro total subindo",
       },
     ],
-    caveat:
-      "Hoje aparece como n/d em todos os tickers: o plano gratuito da brapi devolve o valor de mercado mas não o número de ações, então o denominador falta. Correção em andamento (issue #22).",
+    caveat: "Campo mantido por compatibilidade; usa exatamente o mesmo valor de LPA básico.",
+  },
+  eps_basic: {
+    formula: "Resultado atribuível à classe ÷ média ponderada de ações em circulação",
+    what: "A participação básica de cada ação da classe no resultado consolidado atribuível aos controladores, como divulgada pela companhia segundo o CPC 41.",
+    strongIn: [
+      {
+        where: "Série histórica da própria classe",
+        why: "incorpora emissões, recompras, tesouraria, direitos econômicos e ajustes retrospectivos divulgados pela companhia",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Comparação entre empresas diferentes",
+        why: "a escala depende da quantidade de ações; o indicador é mais informativo em evolução e combinado ao preço",
+      },
+    ],
+    caveat: "O TTM fica n/d quando não existe uma média ponderada reconciliável; nunca usamos a quantidade de fechamento como substituta.",
+  },
+  eps_diluted: {
+    formula: "Resultado ajustado ÷ média ponderada diluída de ações",
+    what: "A participação por ação após considerar apenas instrumentos potenciais com efeito diluidor, como conversíveis, opções e bônus.",
+    strongIn: [
+      {
+        where: "Empresas com opções, conversíveis ou ações contingentes",
+        why: "mostra a participação por ação caso os instrumentos diluidores se materializem",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas sem instrumentos diluidores",
+        why: "será igual ao básico; a igualdade ainda é uma divulgação útil, não ausência de dado",
+      },
+    ],
+    caveat: "Instrumentos antidiluidores são excluídos pela própria regra do CPC 41.",
   },
   bvps: {
     formula: "Patrimônio líquido ÷ Número de ações",
@@ -315,8 +348,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o que gera valor (marca, software, pesquisa) foi despesado, não capitalizado — o VPA subestima enormemente o negócio",
       },
     ],
-    caveat:
-      "Como o LPA, hoje aparece como n/d por falta do número de ações na fonte de preços (issue #22). O P/VP, que não depende dele, segue calculado normalmente.",
+    caveat: "Usa ações em circulação no fechamento; não é uma média ponderada e não deve ser confundido com o denominador do LPA.",
   },
 
   // ------------------------------------------------------- crescimento ---
@@ -1144,11 +1176,11 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
   },
   shares: {
     formula: "Ações emitidas − ações em tesouraria",
-    what: "Quantas ações estão de fato em circulação — o denominador do LPA e do VPA. Exclui as ações que a própria empresa recomprou e mantém em tesouraria.",
+    what: "Quantas ações estão em circulação no fechamento — o denominador do VPA e uma medida da escala acionária. Exclui as ações mantidas em tesouraria; o LPA usa uma média ponderada própria.",
     strongIn: [
       {
         where: "Qualquer subsetor",
-        why: "a base de ações define quanto do lucro e do patrimônio cabe a cada ação",
+        why: "a base de ações define quanto do patrimônio cabe a cada ação e ajuda a ler diluição ao longo do tempo",
       },
     ],
     weakIn: [

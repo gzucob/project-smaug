@@ -24,6 +24,8 @@ def _nonfinancial() -> StandardizedFinancials:
         equity=Decimal(6000),  # controllers'; the group's is 6600 — 600 is minority
         equity_total=Decimal(6600),
         net_income=Decimal(900),  # annualized -> 1200
+        eps_basic=Decimal("1.50"),
+        eps_diluted=Decimal("1.40"),
         revenue=Decimal(3000),  # annualized -> 4000
         gross_profit=Decimal(1500),
         ebit=Decimal(900),  # annualized -> 1200
@@ -59,7 +61,9 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.ebit_margin == Decimal("0.3")  # 900 / 3000 (period ratio)
     assert ind.ebitda_margin == Decimal("0.4")
     assert ind.asset_turnover == Decimal(4000) / Decimal(12000)  # annual rev / assets
-    assert ind.eps == Decimal(2)  # annualized 1200 / 600 shares
+    assert ind.eps == Decimal("1.50")  # filed CPC 41 basic result, not annualized
+    assert ind.eps_basic == Decimal("1.50")
+    assert ind.eps_diluted == Decimal("1.40")
     assert ind.bvps == Decimal(10)  # 6000 / 600 shares
     assert ind.net_debt == Decimal(1500)  # 2000 - 500
     assert ind.net_debt_to_ebitda == Decimal("0.9375")  # 1500 / 1600
@@ -115,8 +119,8 @@ def test_total_slice_variants_pair_slice_with_slice() -> None:
     assert ind.net_margin == Decimal("0.3")  # 900 / 3000, period ratio
     assert ind.net_margin_total == Decimal("0.36")  # 1080 / 3000
     assert ind.net_income_total == Decimal(1080)  # headline: as filed
-    # eps stays on the controllers' slice — the count is their instrument.
-    assert ind.eps == Decimal(2)  # 1200 / 600, never 1440 / 600
+    # CPC 41 is already filed on the controllers' class-specific slice.
+    assert ind.eps == Decimal("1.50")
 
 
 def test_total_slice_null_is_blamed_on_its_own_account() -> None:
@@ -169,6 +173,8 @@ def _mapped_bank() -> StandardizedFinancials:
         total_assets=Decimal(90000),
         equity=Decimal(8000),
         net_income=Decimal(600),  # annualized -> 800
+        eps_basic=Decimal("1.25"),
+        eps_diluted=Decimal("1.20"),
         revenue=Decimal(3000),
         gross_profit=Decimal(1200),  # 3.03 — net interest income
         ebit=Decimal(900),  # 3.05 — pre-tax result
@@ -208,7 +214,7 @@ def test_bank_computes_the_ratios_its_schema_supports() -> None:
 
 def test_bank_computes_its_own_three_ratios() -> None:
     # ADR 0021, shaped on BBAS3's real filing. Its 3.03 spread (1200) is already net
-    # of the loan-loss provision (-600), which the parent chart deducts inside the
+    # of the loan-loss provision (-600), which the bank chart deducts inside the
     # intermediation expenses — so the margin the bank earned *before* writing
     # anything off is 1800, which is the *margem financeira bruta* it reports.
     bank = replace(
@@ -245,7 +251,15 @@ def test_the_bank_ratios_are_inapplicable_to_everyone_else() -> None:
 
 def test_bank_null_reasons_name_each_cause() -> None:
     ind = compute(
-        _mapped_bank(), None, MarketData(market_cap=Decimal(8000))
+        replace(
+            _mapped_bank(),
+            eps_basic=None,
+            eps_diluted=None,
+            eps_basic_null_reason=NullReason.MISSING_CPC41_DISCLOSURE,
+            eps_diluted_null_reason=NullReason.MISSING_CPC41_DISCLOSURE,
+        ),
+        None,
+        MarketData(market_cap=Decimal(8000)),
     )  # no shares
 
     # Cause 1 — genuinely meaningless for a bank: it reports Basileia, not net debt
@@ -270,7 +284,8 @@ def test_bank_null_reasons_name_each_cause() -> None:
     # account whose absence used to be a mapping gap. This is the M1 win, so pin it.
     assert NullReason.SOURCE_ACCOUNT_UNMAPPED not in ind.null_reasons.values()
     # Cause 3 — upstream inputs, each named individually:
-    assert ind.null_reasons["eps"] is NullReason.MISSING_SHARE_COUNT
+    assert ind.null_reasons["eps"] is NullReason.MISSING_CPC41_DISCLOSURE
+    assert ind.null_reasons["eps_diluted"] is NullReason.MISSING_CPC41_DISCLOSURE
     assert ind.null_reasons["revenue_growth"] is NullReason.MISSING_PRIOR_PERIOD
     # The filing simply has no dividend line — absent, not unmapped:
     assert ind.null_reasons["payout"] is NullReason.SOURCE_ACCOUNT_ABSENT
@@ -491,7 +506,7 @@ def test_missing_price_nulls_the_market_multiples_with_a_named_cause() -> None:
     assert ind.pe is None
     assert ind.null_reasons["pe"] is NullReason.MISSING_PRICE
     assert ind.null_reasons["dividend_yield"] is NullReason.MISSING_PRICE
-    assert ind.eps is not None  # per-share needs only the share count
+    assert ind.eps is not None  # filed per-share result is independent of price
 
 
 def test_missing_shares_blames_the_share_count_not_the_price() -> None:
@@ -509,16 +524,22 @@ def test_missing_shares_blames_the_share_count_not_the_price() -> None:
     assert ind.null_reasons["pb"] is NullReason.MISSING_SHARE_COUNT
 
 
-def test_missing_unit_composition_names_the_per_security_denominator() -> None:
+def test_missing_unit_composition_names_each_per_security_input() -> None:
     ind = compute(
-        _nonfinancial(),
+        replace(
+            _nonfinancial(),
+            eps_basic=None,
+            eps_diluted=None,
+            eps_basic_null_reason=NullReason.MISSING_ECONOMIC_RIGHTS,
+            eps_diluted_null_reason=NullReason.MISSING_ECONOMIC_RIGHTS,
+        ),
         None,
         MarketData(shares_null_reason=NullReason.MISSING_UNIT_COMPOSITION),
     )
 
     assert ind.eps is None
     assert ind.bvps is None
-    assert ind.null_reasons["eps"] is NullReason.MISSING_UNIT_COMPOSITION
+    assert ind.null_reasons["eps"] is NullReason.MISSING_ECONOMIC_RIGHTS
     assert ind.null_reasons["bvps"] is NullReason.MISSING_UNIT_COMPOSITION
 
 
@@ -538,7 +559,7 @@ def test_a_sibling_class_without_a_quote_blames_the_price() -> None:
 
     assert ind.pe is None
     assert ind.null_reasons["pe"] is NullReason.MISSING_PRICE
-    assert ind.eps is not None  # the per-share side still has its count
+    assert ind.eps is not None  # the filed per-share side needs no quote
 
 
 def test_zero_denominator_null_is_named() -> None:

@@ -61,6 +61,26 @@ const COPY: Record<NullReason, ReasonCopy> = {
     long: "Faltou a quantidade de ações em circulação (FRE) para este período.",
     intentional: false,
   },
+  missing_unit_composition: {
+    short: "sem composição da unit",
+    long: "A CVM identifica o papel como unit, mas a composição por classe não pôde ser lida integralmente.",
+    intentional: false,
+  },
+  missing_cpc41_disclosure: {
+    short: "sem LPA CPC 41",
+    long: "A DRE consolidada entregue à CVM não traz um resultado por ação básico ou diluído reconciliável para esta classe.",
+    intentional: false,
+  },
+  missing_weighted_average_shares: {
+    short: "sem média ponderada",
+    long: "Não há uma média ponderada de ações e movimentos completa para montar este período sem usar a quantidade de fechamento como aproximação.",
+    intentional: false,
+  },
+  missing_economic_rights: {
+    short: "classe ambígua",
+    long: "A classe econômica ou a composição da unit não reconcilia de forma unívoca com as linhas por ação divulgadas pela companhia.",
+    intentional: false,
+  },
   missing_prior_period: {
     short: "sem período anterior",
     long: "O histórico não cobre a janela que este indicador precisa — falta o período anterior para a variação, ou faltam exercícios fechados para fechar a janela do crescimento composto.",

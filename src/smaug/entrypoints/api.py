@@ -48,11 +48,9 @@ app.add_middleware(
 class IndicatorsResponse(BaseModel):
     """The computed indicators.
 
-    ``null_reasons`` names why each null field is null (#30's vocabulary:
-    inapplicable_regime, source_account_unmapped, source_account_absent,
-    missing_price, missing_share_count, missing_prior_period,
-    unexpected_regime), keyed by the field's name. A null field with no entry
-    is unclassified.
+    ``null_reasons`` names why each null field is null using ``NullReason``'s
+    enumerable vocabulary, keyed by the field's name. A null field with no
+    entry is unclassified.
     """
 
     roe: Decimal | None
@@ -67,6 +65,8 @@ class IndicatorsResponse(BaseModel):
     ebitda_margin: Decimal | None
     asset_turnover: Decimal | None
     eps: Decimal | None
+    eps_basic: Decimal | None
+    eps_diluted: Decimal | None
     bvps: Decimal | None
     net_debt: Decimal | None
     net_debt_to_ebitda: Decimal | None

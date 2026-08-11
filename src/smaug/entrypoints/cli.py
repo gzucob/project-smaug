@@ -119,13 +119,14 @@ from smaug.portfolio.domain.company import (
     UnitResolver,
     fundamental_exclusion,
     is_unit,
+    per_share_components,
 )
 from smaug.portfolio.domain.sectors import Sector, sector_from_cvm
 from smaug.portfolio.domain.securities import (
     RegistrantNamesResolver,
     SiblingCodesResolver,
 )
-from smaug.portfolio.domain.share_classes import ShareClass
+from smaug.portfolio.domain.share_classes import ShareClass, UnitComponent
 from smaug.portfolio.domain.taxonomy import (
     TAXONOMY_SNAPSHOT,
     Classification,
@@ -308,6 +309,18 @@ def _unit_composition_resolver(
     def resolve(ticker: str) -> int | None:
         identity = identities.get(ticker)
         return identity.shares_per_unit if identity is not None else None
+
+    return resolve
+
+
+def _per_share_resolver(
+    identities: dict[str, CompanyIdentity],
+) -> Callable[[str], tuple[UnitComponent, ...]]:
+    """The CPC 41 class or FCA unit bundle represented by each ticker."""
+
+    def resolve(ticker: str) -> tuple[UnitComponent, ...]:
+        identity = identities.get(ticker)
+        return per_share_components(identity) if identity is not None else ()
 
     return resolve
 
@@ -1277,6 +1290,7 @@ async def _run_analyze(
                     mongo[settings.mongo_db]["raw_ingestions"],
                     sector_resolver=_sector_resolver(identities),
                     registrant_resolver=registrant,
+                    per_share_resolver=_per_share_resolver(identities),
                 ),
                 price_provider=_build_price_provider(
                     shares_reader,

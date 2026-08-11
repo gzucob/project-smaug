@@ -29,6 +29,7 @@ from datetime import date
 from decimal import Decimal
 
 from smaug.analysis.domain.financials import StandardizedFinancials
+from smaug.analysis.domain.indicators import NullReason
 
 # Flows summed over the window; EBITDA is recomposed from EBIT+D&A. DRE flows are
 # isolated on the DRE span, DFC flows (D&A, dividends) on the DFC span — the two
@@ -221,6 +222,12 @@ def _build_ttm(
         equity_total=stock_source.equity_total,
         net_income=summed["net_income"],
         net_income_total=summed["net_income_total"],
+        # Per-share results cannot be added or subtracted across quarters: each
+        # filed value has its own weighted denominator and class allocation.
+        # Until a complete movement ledger exists, the TTM result is explicitly
+        # unavailable rather than rebuilt from the closing share count.
+        eps_basic_null_reason=NullReason.MISSING_WEIGHTED_AVERAGE_SHARES,
+        eps_diluted_null_reason=NullReason.MISSING_WEIGHTED_AVERAGE_SHARES,
         revenue=summed["revenue"],
         gross_profit=summed["gross_profit"],
         ebit=summed["ebit"],

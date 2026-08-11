@@ -204,8 +204,8 @@ async def test_outstanding_is_none_before_the_earliest_filing() -> None:
 
 
 async def test_outstanding_is_the_unit_count_for_a_unit_ticker() -> None:
-    # A unit bundles 1 ON + 2 PN, so the divisor for its per-unit LPA/VPA is the
-    # number of units — the filed share count over three (#38).
+    # A unit bundles 1 ON + 2 PN, so the closing count used by per-unit VPA is
+    # the filed underlying-share count divided by three (#38).
     reader = MongoSharesReader(
         FakeCollection([_doc("TAEE11", 2025, 1_033_496_721)]),
         unit_composition_resolver=fake_unit_composition_resolver,

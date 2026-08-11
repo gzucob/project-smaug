@@ -5,6 +5,7 @@ from datetime import date
 from decimal import Decimal
 
 from smaug.analysis.domain.financials import AccountingRegime, StandardizedFinancials
+from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.ttm import _FLOW_FIELDS, build_ttm, build_ttm_as_of
 from smaug.portfolio.domain.sectors import Sector
 
@@ -185,13 +186,19 @@ def test_ttm_carries_every_numeric_account_on_its_declared_basis() -> None:
 
     assert ttm is not None
     for name in numeric:
-        if name == "ebitda":
+        if name in {"eps_basic", "eps_diluted"}:
+            # Per-share results carry weighted denominators and cannot be added
+            # across quarters or treated as closing stocks.
+            expected = None
+        elif name == "ebitda":
             expected = Decimal(800)  # recomposed from the summed EBIT + D&A
         elif name in _FLOW_FIELDS:
             expected = Decimal(400)  # flow: summed over the four quarters
         else:
             expected = Decimal(100)  # stock: the latest quarter, never summed
         assert getattr(ttm, name) == expected, name
+    assert ttm.eps_basic_null_reason is NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
+    assert ttm.eps_diluted_null_reason is NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
 
 
 def test_ttm_carries_the_null_cause_provenance() -> None:
