@@ -460,6 +460,148 @@ def _sum(*values: Decimal | None) -> Decimal | None:
     return total if present else None
 
 
+def _is_comprehensive_debt_name(name: str) -> bool:
+    """Whether a BPP line declares the aggregate borrowing perimeter.
+
+    CVM fixes the usual corporate parents at 2.01.04 and 2.02.01, but also
+    publishes issuer-defined accounts and sector charts. The label, within each
+    maturity section, is the invariant: both borrowings and financing must be
+    named. A child breakdown named only "Debêntures" cannot prove that every
+    other debt instrument was zero.
+    """
+    folded = _fold(name)
+    return "emprest" in folded and "financiamento" in folded
+
+
+def _debt_aggregate(
+    accounts: Accounts, maturity_prefix: str
+) -> Mapping[str, Any] | None:
+    """The shallowest comprehensive debt line in one maturity bucket."""
+    candidates = [
+        account
+        for account in accounts
+        if str(account.get("code", "")).startswith(f"{maturity_prefix}.")
+        and _is_comprehensive_debt_name(str(account.get("name", "")))
+    ]
+    return min(
+        candidates,
+        key=lambda account: str(account.get("code", "")).count("."),
+        default=None,
+    )
+
+
+def _inside(code: str, parent: str) -> bool:
+    return code == parent or code.startswith(f"{parent}.")
+
+
+def _is_ambiguous_financial_liability(name: str) -> bool:
+    """A financial-liability bucket whose economic components are not named."""
+    folded = _fold(name)
+    if "passiv" not in folded or "financeir" not in folded:
+        return False
+    # These labels name non-debt instruments rather than an undecomposed bucket.
+    return "derivativ" not in folded and "opco" not in folded
+
+
+def _is_explicit_debt_line(name: str) -> bool:
+    """A separately filed interest-bearing liability outside the aggregates."""
+    folded = _fold(name)
+    if "provis" in folded or "cancelamento" in folded:
+        return False
+    return any(
+        needle in folded
+        for needle in (
+            "emprest",
+            "financiamento",
+            "debentur",
+            "arrendamento",
+            "subordinad",
+            "instrumento de divida",
+            "instrumentos de divida",
+            "nota promissoria",
+            "notas promissorias",
+            "commercial paper",
+        )
+    )
+
+
+def _total_debt(
+    bpp: Accounts, scale: Decimal
+) -> tuple[Decimal | None, NullReason | None]:
+    """Complete explicit interest-bearing liabilities from the CVM BPP.
+
+    Absence is never zero. Both the current and non-current borrowing aggregates
+    must be filed, even when their published value is zero. Explicit debt-like
+    liabilities outside those aggregates — most often CPC 06 lease liabilities
+    placed under "Outras Obrigações" — are added once at their shallowest named
+    level. A non-zero generic "Passivos financeiros" bucket makes the perimeter
+    unknowable from the structured statement and therefore yields a named null.
+
+    Insurance-contract/reserve, reinsurance, pension and capitalization
+    liabilities do not match these debt labels: they arise from the products the
+    filer issued, not from borrowed financing (ADR 0059).
+    """
+    aggregates = (
+        _debt_aggregate(bpp, "2.01"),
+        _debt_aggregate(bpp, "2.02"),
+    )
+    if any(account is None for account in aggregates):
+        return None, NullReason.INCOMPLETE_DEBT_COVERAGE
+
+    # Mypy cannot narrow tuple members through ``any`` above.
+    current = aggregates[0]
+    non_current = aggregates[1]
+    assert current is not None
+    assert non_current is not None
+    aggregate_codes = {
+        str(current.get("code", "")),
+        str(non_current.get("code", "")),
+    }
+    aggregate_values = (
+        _dec(current.get("quantity")),
+        _dec(non_current.get("quantity")),
+    )
+    if any(value is None for value in aggregate_values):
+        return None, NullReason.INCOMPLETE_DEBT_COVERAGE
+
+    for account in bpp:
+        code = str(account.get("code", ""))
+        if not code.startswith(("2.01.", "2.02.")):
+            continue
+        if any(_inside(code, parent) for parent in aggregate_codes):
+            continue
+        if not _is_ambiguous_financial_liability(str(account.get("name", ""))):
+            continue
+        value = _dec(account.get("quantity"))
+        if value is None or value != 0:
+            return None, NullReason.INCOMPLETE_DEBT_COVERAGE
+
+    extra_total = Decimal(0)
+    selected_codes: list[str] = []
+    for account in sorted(bpp, key=lambda item: str(item.get("code", "")).count(".")):
+        code = str(account.get("code", ""))
+        if not code.startswith(("2.01.", "2.02.")):
+            continue
+        if any(_inside(code, parent) for parent in aggregate_codes):
+            continue
+        if any(_inside(code, parent) for parent in selected_codes):
+            continue
+        if not _is_explicit_debt_line(str(account.get("name", ""))):
+            continue
+        value = _dec(account.get("quantity"))
+        if value is None:
+            return None, NullReason.INCOMPLETE_DEBT_COVERAGE
+        extra_total += value
+        selected_codes.append(code)
+
+    # Narrowed above: both entries are Decimals.
+    current_value = aggregate_values[0]
+    non_current_value = aggregate_values[1]
+    assert current_value is not None
+    assert non_current_value is not None
+    return (current_value + non_current_value + extra_total) * scale, None
+
+
 def _iso_date(raw: Any) -> date | None:
     if not isinstance(raw, str):
         return None
@@ -745,11 +887,12 @@ def _as_insurer(
     """An insurer files a corporate-shaped balance sheet but its own DRE.
 
     So the current/non-current split *is* there (1.01 / 2.01), while EBIT sits at
-    3.07 rather than 3.05 — the insurer DRE carries an extra level. ``total_debt``
-    stays ``None`` on purpose: the insurer schema has no borrowings line at all
-    (2.01.04 is "Capitalização" here, and 2.02.01 is payables and provisions), so
-    there is nothing to read (ADR 0015).
+    3.07 rather than 3.05 — the insurer DRE carries an extra level. Debt is read
+    from explicit labels, never from the corporate fixed codes: 2.01.04 is
+    "Capitalização" in this chart. If both maturity aggregates are not evidenced,
+    the paired cause names incomplete coverage instead of inventing zero.
     """
+    total_debt, debt_reason = _total_debt(bpp, bpp_s)
     return replace(
         base,
         ebit=_mul(_by_code(dre, "3.07"), dre_s),  # before financial result/taxes
@@ -757,6 +900,8 @@ def _as_insurer(
         current_financial_investments=_mul(_by_code(bpa, "1.01.02"), bpa_s),
         current_assets=_mul(_by_code(bpa, "1.01"), bpa_s),
         current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),
+        total_debt=total_debt,
+        debt_coverage_null_reason=debt_reason,
         earned_premium=_mul(_by_code(dre, "3.01.01"), dre_s),
         claims_incurred=_mul(_by_code(dre, "3.02.01"), dre_s),
         unmapped_fields=_FINANCIAL_UNMAPPED_FIELDS,
@@ -777,6 +922,7 @@ def _as_corporate(
     """The standard chart of accounts — and what CXSE3 files, despite its sector."""
     ebit = _mul(_by_code(dre, "3.05"), dre_s)  # before financial result/taxes
     dep_amort = _mul(_dep_amort(dfc), dfc_s)  # cash-flow add-backs, summed
+    total_debt, debt_reason = _total_debt(bpp, bpp_s)
     ebitda = (
         _sum(ebit, dep_amort) if ebit is not None and dep_amort is not None else None
     )
@@ -792,9 +938,8 @@ def _as_corporate(
         current_financial_investments=_mul(_by_code(bpa, "1.01.02"), bpa_s),
         current_assets=_mul(_by_code(bpa, "1.01"), bpa_s),
         current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),
-        total_debt=_mul(
-            _sum(_by_code(bpp, "2.01.04"), _by_code(bpp, "2.02.01")), bpp_s
-        ),
+        total_debt=total_debt,
+        debt_coverage_null_reason=debt_reason,
     )
 
 

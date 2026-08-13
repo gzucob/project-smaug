@@ -94,6 +94,10 @@ class StandardizedFinancials:
     current_assets: Decimal | None = None
     current_liabilities: Decimal | None = None
     total_debt: Decimal | None = None
+    # ``total_debt`` is published only when the CVM BPP establishes a complete
+    # interest-bearing-liability perimeter. This paired cause distinguishes an
+    # evidenced zero from an absent/ambiguous debt disclosure (ADR 0059).
+    debt_coverage_null_reason: NullReason | None = None
     dividends_paid: Decimal | None = None  # dividends + JCP paid to controllers
     # Dividends + JCP the parent DECLARED against equity during the period (DMPL
     # 5.04 rows, positive). The paid figure above is the cash that left in the

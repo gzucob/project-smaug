@@ -220,6 +220,7 @@ def test_ttm_carries_the_null_cause_provenance() -> None:
             _q(e, revenue=Decimal(1000)),
             filed_regime=AccountingRegime.BANK,
             bank_ratio_null_reason=NullReason.MISSING_REGULATORY_DISCLOSURE,
+            debt_coverage_null_reason=NullReason.INCOMPLETE_DEBT_COVERAGE,
             unmapped_fields=frozenset({"cfo", "capex"}),
         )
         for e in _ENDS
@@ -230,6 +231,7 @@ def test_ttm_carries_the_null_cause_provenance() -> None:
     assert ttm is not None
     assert ttm.filed_regime is AccountingRegime.BANK
     assert ttm.bank_ratio_null_reason is NullReason.MISSING_REGULATORY_DISCLOSURE
+    assert ttm.debt_coverage_null_reason is NullReason.INCOMPLETE_DEBT_COVERAGE
     assert ttm.unmapped_fields == frozenset({"cfo", "capex"})
 
 

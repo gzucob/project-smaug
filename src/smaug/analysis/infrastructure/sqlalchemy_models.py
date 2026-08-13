@@ -40,6 +40,7 @@ class TickerAnalysisRow(Base):
     price_basis: Mapped[str | None] = mapped_column(String(24))
     share_count_basis: Mapped[str | None] = mapped_column(String(48))
     liquidity_basis: Mapped[str | None] = mapped_column(String(48))
+    debt_basis: Mapped[str | None] = mapped_column(String(48))
     roic_tax_basis: Mapped[str | None] = mapped_column(String(32))
 
     roe: Mapped[Decimal | None] = mapped_column(Numeric)

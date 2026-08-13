@@ -136,7 +136,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     weakIn: [
       {
         where: "Todo o setor Financeiro",
-        why: "dívida é insumo operacional, não financiamento; separar capital próprio de terceiros não faz sentido — e numa seguradora rica em caixa o capital investido (PL − caixa) beira zero e o índice explode",
+        why: "num banco a captação é insumo operacional; numa seguradora as obrigações de contratos e investimentos são a operação. O denominador corporativo não representa o capital regulatório de nenhum dos dois",
       },
     ],
     caveat:
@@ -489,12 +489,16 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
     weakIn: [
       {
-        where: "Todo o setor Financeiro",
-        why: "captação é o insumo do negócio, não um passivo a ser quitado — a conta não tem sentido econômico",
+        where: "Bancos",
+        why: "captação é o insumo do negócio e o balanço não separa uma dívida corporativa comparável — a conta não tem sentido econômico",
+      },
+      {
+        where: "Seguradoras com cobertura incompleta",
+        why: "reservas técnicas não são dívida e uma conta financeira genérica não prova o total financiado; o Smaug mantém n/d até o perímetro ser explícito",
       },
     ],
     caveat:
-      "A linha agregada 1.01.02 não prova conversibilidade imediata, vencimento curto e risco insignificante de valor. Por isso não é promovida a equivalente de caixa (ADR 0057).",
+      "A linha agregada 1.01.02 não prova conversibilidade imediata, vencimento curto e risco insignificante de valor. A dívida exige os dois vencimentos e inclui passivos de arrendamento ou instrumentos explicitamente identificados fora das contas fixas (ADRs 0057/0059).",
   },
   net_debt_to_ebitda: {
     formula: "Dívida líquida ÷ EBITDA anualizado",
@@ -535,12 +539,12 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
     weakIn: [
       {
-        where: "Todo o setor Financeiro",
-        why: "num banco não há dívida líquida a medir; numa seguradora o valor existe (é o caixa, negativo), mas anos-de-EBIT para 'quitar' um caixa não é uma leitura útil",
+        where: "Bancos e seguradoras sem perímetro completo de dívida",
+        why: "num banco a captação é operacional; numa seguradora a ausência de uma linha de empréstimos não prova dívida zero",
       },
     ],
     caveat:
-      "Para uma seguradora a dívida líquida é o caixa negado (#103): o índice sai negativo e mede folga, não endividamento.",
+      "Só existe quando empréstimos, financiamentos, arrendamentos e instrumentos de dívida estão explicitamente cobertos; reservas técnicas e contratos de seguro ficam fora.",
   },
   net_debt_to_equity: {
     formula: "Dívida líquida ÷ Patrimônio líquido",
@@ -553,8 +557,12 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
     weakIn: [
       {
-        where: "Todo o setor Financeiro",
+        where: "Bancos",
         why: "num banco a alavancagem é o negócio e é regulada por Basileia, não por este índice",
+      },
+      {
+        where: "Seguradoras com divulgação de dívida incompleta",
+        why: "caixa líquido só pode ser afirmado depois que dívida zero ou o total financiado estiverem evidenciados",
       },
       {
         where: "Empresas com PL negativo",
@@ -562,7 +570,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "Para uma seguradora a dívida líquida é o caixa negado (#103): o índice negativo significa caixa líquido, não dívida.",
+      "Um valor negativo significa caixa líquido somente quando dívida zero ou o total da dívida foram comprovados no BPP; ausência nunca vira zero.",
   },
   debt_to_equity: {
     formula: "Dívida total ÷ Patrimônio líquido",
@@ -575,8 +583,12 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
     weakIn: [
       {
-        where: "Todo o setor Financeiro",
+        where: "Bancos",
         why: "a alavancagem é o modelo de negócio e é limitada por regra prudencial, não por prudência do gestor — compare índice de Basileia, não D/PL",
+      },
+      {
+        where: "Seguradoras com passivos financeiros não decompostos",
+        why: "reservas técnicas não entram como dívida, e um bloco genérico não permite separar financiamento de obrigações operacionais",
       },
       {
         where: "Empresas com PL negativo",
@@ -932,7 +944,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       "A régua é a data da declaração na DMPL, não o exercício de origem. O denominador é a capitalização agregada, não o preço de uma classe.",
   },
   ev_ebitda: {
-    formula: "(Valor de mercado + Dívida líquida) ÷ EBITDA anualizado",
+    formula: "(Valor de mercado + Dívida líquida + Participação de não controladores) ÷ EBITDA anualizado",
     what: "Quanto custa a empresa inteira — sócios e credores — por real de geração operacional. É o múltiplo neutro à estrutura de capital.",
     strongIn: [
       {
@@ -946,8 +958,8 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
     weakIn: [
       {
-        where: "Todo o setor Financeiro",
-        why: "dívida líquida não existe conceitualmente, então o valor da firma não é construível",
+        where: "Bancos e seguradoras sem cobertura completa de dívida",
+        why: "num banco a captação é operacional; numa seguradora o EV fica n/d enquanto o total financiado não puder ser separado das reservas e obrigações do produto",
       },
       {
         where: "Subsetores de capex pesado e recorrente",
@@ -957,7 +969,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
   },
 
   ev_ebit: {
-    formula: "(Valor de mercado + Dívida líquida) ÷ EBIT anualizado",
+    formula: "(Valor de mercado + Dívida líquida + Participação de não controladores) ÷ EBIT anualizado",
     what: "Quanto custa a empresa inteira por real de lucro operacional. Como o EV/EBITDA, é neutro à estrutura de capital — mas o EBIT já desconta a depreciação, então pune menos quem precisa reinvestir pouco e expõe quem precisa reinvestir muito.",
     strongIn: [
       {
@@ -971,8 +983,8 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
     weakIn: [
       {
-        where: "Todo o setor Financeiro",
-        why: "num banco não há EBIT nem dívida líquida com significado; numa seguradora o EV existe (#103), mas juros são operacionais e o múltiplo compara mal",
+        where: "Bancos e seguradoras sem cobertura completa de dívida",
+        why: "num banco não há EBIT nem dívida líquida corporativa; numa seguradora o múltiplo só existe depois que o financiamento for explicitamente separado dos passivos do produto",
       },
       {
         where: "Empresas com EBIT próximo de zero",

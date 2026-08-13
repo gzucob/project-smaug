@@ -32,6 +32,10 @@ class NullReason(StrEnum):
       regulator/issuer disclosure outside the CVM structured statements, such as
       average earning assets and a bank's complete efficiency perimeter. No
       closing-balance or partial-account approximation substitutes for it.
+    * ``INCOMPLETE_DEBT_COVERAGE`` — the balance sheet does not establish a
+      complete interest-bearing-liability perimeter. An absent borrowing line is
+      not evidence of zero debt, and an undecomposed generic financial-liability
+      bucket is not silently promoted to debt.
     * ``MISSING_PRICE`` / ``MISSING_SHARE_COUNT`` /
       ``MISSING_UNIT_COMPOSITION`` / ``MISSING_PRIOR_PERIOD`` —
       an upstream input from another source is missing (the quote series, the
@@ -74,6 +78,7 @@ class NullReason(StrEnum):
     MISSING_SHARE_COUNT = "missing_share_count"
     MISSING_UNIT_COMPOSITION = "missing_unit_composition"
     MISSING_REGULATORY_DISCLOSURE = "missing_regulatory_disclosure"
+    INCOMPLETE_DEBT_COVERAGE = "incomplete_debt_coverage"
     MISSING_CPC41_DISCLOSURE = "missing_cpc41_disclosure"
     MISSING_WEIGHTED_AVERAGE_SHARES = "missing_weighted_average_shares"
     MISSING_ECONOMIC_RIGHTS = "missing_economic_rights"

@@ -236,6 +236,7 @@ def _build_ttm(
         current_assets=stock_source.current_assets,
         current_liabilities=stock_source.current_liabilities,
         total_debt=stock_source.total_debt,
+        debt_coverage_null_reason=stock_source.debt_coverage_null_reason,
         dividends_paid=summed["dividends_paid"],
         dividends_declared=summed["dividends_declared"],
         dmpl_period_start=period_start,

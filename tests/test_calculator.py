@@ -380,9 +380,8 @@ def test_insurer_null_reasons_split_by_regime() -> None:
     # ADR 0010: an insurer is the near-mirror of a bank — generic operating
     # margins are degenerate under its filed schema, so they are inapplicable.
     # ADR 0015: unlike a bank, it files a corporate-shaped balance sheet, so its
-    # current ratio computes; but the insurer schema has no borrowings line at all
-    # (2.01.04 is "Capitalização" there), so the leverage family is *absent* at the
-    # source — we looked and there is nothing to read — rather than unmapped.
+    # current ratio computes; but this filing does not establish a complete debt
+    # perimeter. Absence is not evidence of zero (ADR 0059).
     insurer = StandardizedFinancials(
         reference_date=_Q3,
         sector=Sector.INSURER,
@@ -393,6 +392,7 @@ def test_insurer_null_reasons_split_by_regime() -> None:
         ebit=Decimal(3000),  # 3.07 for an insurer, not 3.05
         current_assets=Decimal(6000),
         current_liabilities=Decimal(3000),
+        debt_coverage_null_reason=NullReason.INCOMPLETE_DEBT_COVERAGE,
         filed_regime=AccountingRegime.INSURANCE,  # files as its sector predicts
         unmapped_fields=_FINANCIAL_UNMAPPED,
     )
@@ -402,27 +402,28 @@ def test_insurer_null_reasons_split_by_regime() -> None:
     assert ind.null_reasons["gross_margin"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["ebit_margin"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["ebitda_margin"] is NullReason.INAPPLICABLE_REGIME
-    # Absent at the source. This insurer filed no cash either, so the net-debt
-    # family — which for an INSURANCE filer derives from cash alone (#103) — is
-    # blamed on the cash, while the *gross* debt ratio keeps blaming the
-    # borrowings line the schema does not have:
-    assert ind.null_reasons["net_debt"] is NullReason.SOURCE_ACCOUNT_ABSENT
-    assert ind.null_reasons["net_debt_to_ebitda"] is NullReason.SOURCE_ACCOUNT_ABSENT
-    assert ind.null_reasons["debt_to_equity"] is NullReason.SOURCE_ACCOUNT_ABSENT
-    assert ind.null_reasons["ev_ebitda"] is NullReason.SOURCE_ACCOUNT_ABSENT
-    # ROIC is inapplicable outright (#103): a cash-rich insurer's invested
-    # capital collapses toward zero, so the null precedes any input check.
+    # The same debt-evidence failure propagates through every dependent value;
+    # neither missing cash nor missing EBITDA may disguise the upstream cause.
+    for name in (
+        "net_debt",
+        "net_debt_to_ebitda",
+        "debt_to_equity",
+        "enterprise_value",
+        "ev_ebitda",
+    ):
+        assert ind.null_reasons[name] is NullReason.INCOMPLETE_DEBT_COVERAGE
+    # Statutory corporate ROIC is inapplicable outright to the insurance regime,
+    # so applicability still precedes the incomplete input.
     assert ind.null_reasons["roic_statutory"] is NullReason.INAPPLICABLE_REGIME
     # Its balance sheet *does* carry the current/non-current split a bank lacks:
     assert ind.current_ratio == Decimal(2)  # 6000 / 3000
     assert "current_ratio" not in ind.null_reasons
 
 
-def test_insurer_net_debt_is_the_cash_negated() -> None:
-    # #103: the insurance schema has no borrowings line, so net debt is what
-    # remains of the definition — 0 − cash. BBSE3 must surface the same economic
-    # fact CXSE3 (filing as a corporate holding) already showed. EV and the
-    # net-debt family follow; statutory ROIC remains inapplicable.
+def test_insurer_incomplete_debt_does_not_publish_cash_as_net_debt() -> None:
+    # BBSE3's insurance chart carries cash but no complete borrowing perimeter.
+    # The old formula silently replaced the missing debt with zero and published
+    # ``-cash``; every value built on that invented zero must now remain null.
     insurer = StandardizedFinancials(
         reference_date=date(2024, 12, 31),
         sector=Sector.INSURER,
@@ -433,28 +434,73 @@ def test_insurer_net_debt_is_the_cash_negated() -> None:
         ebit=Decimal(3000),
         cash_equivalents=Decimal(8000),
         equity_total=Decimal(9000),
+        debt_coverage_null_reason=NullReason.INCOMPLETE_DEBT_COVERAGE,
         filed_regime=AccountingRegime.INSURANCE,
         unmapped_fields=_FINANCIAL_UNMAPPED,
     )
     ind = compute(insurer, None, MarketData(market_cap=Decimal(30000)))
 
-    assert ind.net_debt == Decimal(-8000)  # no borrowings minus filed cash
-    assert ind.enterprise_value == Decimal(22000)  # 30000 − 8000
-    assert ind.net_debt_to_equity == Decimal(-8000) / Decimal(9000)
-    assert ind.net_debt_to_ebit == Decimal(-8000) / Decimal(3000)
-    assert ind.ev_ebit == Decimal(22000) / Decimal(3000)
+    for name in (
+        "net_debt",
+        "enterprise_value",
+        "net_debt_to_equity",
+        "net_debt_to_ebit",
+        "ev_ebit",
+        "debt_to_equity",
+    ):
+        assert getattr(ind, name) is None
+        assert ind.null_reasons[name] is NullReason.INCOMPLETE_DEBT_COVERAGE
     assert ind.equity_to_assets == Decimal("0.18")  # 9000 / 50000
-    # ROIC does NOT follow: invested capital (equity + net debt = 9000 − 8000)
-    # collapses toward zero for a cash-rich insurer and the ratio explodes
-    # (BBSE3 2025 came out 1,918%) — inapplicable, same verdict as the bank's.
     assert ind.roic_statutory is None
     assert ind.null_reasons["roic_statutory"] is NullReason.INAPPLICABLE_REGIME
-    # The gross-debt ratio stays null — there is no borrowings line to read:
-    assert ind.debt_to_equity is None
-    assert ind.null_reasons["debt_to_equity"] is NullReason.SOURCE_ACCOUNT_ABSENT
-    # EBITDA-based members of the family stay unmapped for this regime:
-    assert ind.net_debt_to_ebitda is None
-    assert ind.null_reasons["net_debt_to_ebitda"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+
+
+def test_insurer_evidenced_zero_debt_can_publish_net_cash() -> None:
+    insurer = StandardizedFinancials(
+        reference_date=date(2024, 12, 31),
+        sector=Sector.INSURER,
+        total_assets=Decimal(50000),
+        equity=Decimal(9000),
+        equity_total=Decimal(9000),
+        ebit=Decimal(3000),
+        cash_equivalents=Decimal(8000),
+        total_debt=Decimal(0),  # both BPP maturity aggregates explicitly filed zero
+        filed_regime=AccountingRegime.INSURANCE,
+        unmapped_fields=_FINANCIAL_UNMAPPED,
+    )
+
+    ind = compute(insurer, None, MarketData(market_cap=Decimal(30000)))
+
+    assert ind.net_debt == Decimal(-8000)
+    assert ind.enterprise_value == Decimal(22000)
+    assert ind.net_debt_to_equity == Decimal(-8000) / Decimal(9000)
+    assert ind.net_debt_to_ebit == Decimal(-8000) / Decimal(3000)
+    assert ind.debt_to_equity == 0
+    assert ind.ev_ebit == Decimal(22000) / Decimal(3000)
+    # EBITDA itself remains deliberately unmapped for this filing regime.
+    assert ind.null_reasons["net_debt_to_ebitda"] is (
+        NullReason.SOURCE_ACCOUNT_UNMAPPED
+    )
+
+
+def test_insurer_explicit_debt_uses_the_same_formula_as_a_corporate_filer() -> None:
+    insurer = StandardizedFinancials(
+        reference_date=date(2024, 12, 31),
+        sector=Sector.INSURER,
+        equity=Decimal(9000),
+        equity_total=Decimal(9000),
+        ebit=Decimal(3000),
+        cash_equivalents=Decimal(8000),
+        total_debt=Decimal(10000),
+        filed_regime=AccountingRegime.INSURANCE,
+    )
+
+    ind = compute(insurer, None, MarketData(market_cap=Decimal(30000)))
+
+    assert ind.net_debt == Decimal(2000)
+    assert ind.enterprise_value == Decimal(32000)
+    assert ind.debt_to_equity == Decimal(10000) / Decimal(9000)
+    assert ind.ev_ebit == Decimal(32000) / Decimal(3000)
 
 
 def test_declared_dividend_basis_computes_alongside_the_paid_one() -> None:
@@ -515,10 +561,9 @@ def test_post_closing_agm_is_not_mislabelled_as_exercise_payout() -> None:
     assert not hasattr(ind, "payout_declared")
 
 
-def test_insurer_net_debt_family_blames_the_market_input_not_the_debt_line() -> None:
-    # The attribution shift of #103: with net debt derived from cash, an
-    # insurer's null ev_ebit must name what actually broke (the missing cap) —
-    # not the borrowings line its schema never had.
+def test_incomplete_debt_coverage_precedes_a_missing_market_input() -> None:
+    # EV is suppressed before market arithmetic when its debt perimeter is not
+    # established. A missing cap must not hide the more fundamental basis gap.
     insurer = StandardizedFinancials(
         reference_date=date(2024, 12, 31),
         sector=Sector.INSURER,
@@ -526,14 +571,15 @@ def test_insurer_net_debt_family_blames_the_market_input_not_the_debt_line() -> 
         equity_total=Decimal(9000),
         ebit=Decimal(3000),
         cash_equivalents=Decimal(8000),
+        debt_coverage_null_reason=NullReason.INCOMPLETE_DEBT_COVERAGE,
         filed_regime=AccountingRegime.INSURANCE,
         unmapped_fields=_FINANCIAL_UNMAPPED,
     )
     ind = compute(insurer, None, MarketData())  # no cap
 
     assert ind.ev_ebit is None
-    assert ind.null_reasons["ev_ebit"] is NullReason.MISSING_PRICE
-    assert ind.null_reasons["enterprise_value"] is NullReason.MISSING_PRICE
+    assert ind.null_reasons["ev_ebit"] is NullReason.INCOMPLETE_DEBT_COVERAGE
+    assert ind.null_reasons["enterprise_value"] is (NullReason.INCOMPLETE_DEBT_COVERAGE)
 
 
 def test_applicability_follows_the_filed_regime_not_the_sector() -> None:

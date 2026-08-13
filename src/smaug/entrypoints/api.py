@@ -144,6 +144,7 @@ class AnalysisResponse(BaseModel):
     price_basis: str | None
     share_count_basis: str | None
     liquidity_basis: str | None
+    debt_basis: str | None
     roic_tax_basis: str | None
     indicators: IndicatorsResponse
 
@@ -183,6 +184,7 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
         price_basis=analysis.price_basis,
         share_count_basis=analysis.share_count_basis,
         liquidity_basis=analysis.liquidity_basis,
+        debt_basis=analysis.debt_basis,
         roic_tax_basis=analysis.roic_tax_basis,
         indicators=IndicatorsResponse.model_validate(
             analysis.indicators, from_attributes=True

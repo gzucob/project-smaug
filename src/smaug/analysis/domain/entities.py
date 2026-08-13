@@ -57,5 +57,6 @@ class TickerAnalysis:
     # happened to be available.
     share_count_basis: str | None = None
     liquidity_basis: str | None = None
+    debt_basis: str | None = None
     roic_tax_basis: str | None = None
     view: AnalysisView = VIEW_TTM  # which perspective this row represents

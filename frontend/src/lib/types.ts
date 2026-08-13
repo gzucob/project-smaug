@@ -125,6 +125,7 @@ export type NullReason =
   | "missing_share_count"
   | "missing_unit_composition"
   | "missing_regulatory_disclosure"
+  | "incomplete_debt_coverage"
   | "missing_cpc41_disclosure"
   | "missing_weighted_average_shares"
   | "missing_economic_rights"
@@ -148,6 +149,7 @@ export interface Analysis {
   price_basis: string | null;
   share_count_basis: string | null;
   liquidity_basis: string | null;
+  debt_basis: string | null;
   roic_tax_basis: string | null;
   indicators: Indicators;
 }

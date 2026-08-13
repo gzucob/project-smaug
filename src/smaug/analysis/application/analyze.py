@@ -130,6 +130,7 @@ _CLOSED_YEAR_BASIS = "b3_year_end_close"
 _TTM_SHARE_BASIS = "cvm_latest_filed_outstanding_current_base"
 _CLOSED_YEAR_SHARE_BASIS = "cvm_year_end_outstanding_current_base"
 _LIQUIDITY_BASIS = "cpc03_cash_and_cash_equivalents"
+_DEBT_BASIS = "cvm_bpp_explicit_interest_bearing"
 _ROIC_TAX_BASIS = "br_statutory_34pct"
 
 
@@ -330,6 +331,7 @@ class AnalyzePortfolioUseCase:
             price_basis=_TTM_BASIS,
             share_count_basis=_TTM_SHARE_BASIS,
             liquidity_basis=_LIQUIDITY_BASIS,
+            debt_basis=_DEBT_BASIS,
             roic_tax_basis=_ROIC_TAX_BASIS,
             view=VIEW_TTM,
         )
@@ -361,6 +363,7 @@ class AnalyzePortfolioUseCase:
             price_basis=_CLOSED_YEAR_BASIS,
             share_count_basis=_CLOSED_YEAR_SHARE_BASIS,
             liquidity_basis=_LIQUIDITY_BASIS,
+            debt_basis=_DEBT_BASIS,
             roic_tax_basis=_ROIC_TAX_BASIS,
             view=VIEW_CLOSED_YEAR,
         )
