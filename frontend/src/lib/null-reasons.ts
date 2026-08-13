@@ -71,6 +71,11 @@ const COPY: Record<NullReason, ReasonCopy> = {
     long: "A fórmula exige uma divulgação pública regulatória ou gerencial com estoques médios e perímetro completo. A demonstração estruturada da CVM não traz esses insumos, e o Smaug não substitui por saldos de fechamento ou subtotais.",
     intentional: false,
   },
+  incomplete_debt_coverage: {
+    short: "dívida incompleta",
+    long: "O balanço entregue à CVM não comprova todo o perímetro de empréstimos, financiamentos, arrendamentos e instrumentos de dívida. Ausência ou uma conta financeira genérica não é tratada como dívida zero.",
+    intentional: false,
+  },
   missing_cpc41_disclosure: {
     short: "sem LPA CPC 41",
     long: "A DRE consolidada entregue à CVM não traz um resultado por ação básico ou diluído reconciliável para esta classe.",

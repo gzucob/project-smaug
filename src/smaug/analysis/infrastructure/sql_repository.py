@@ -36,6 +36,7 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         price_basis=analysis.price_basis,
         share_count_basis=analysis.share_count_basis,
         liquidity_basis=analysis.liquidity_basis,
+        debt_basis=analysis.debt_basis,
         roic_tax_basis=analysis.roic_tax_basis,
         roe=i.roe,
         roe_total=i.roe_total,
@@ -121,6 +122,7 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
         price_basis=row.price_basis,
         share_count_basis=row.share_count_basis,
         liquidity_basis=row.liquidity_basis,
+        debt_basis=row.debt_basis,
         roic_tax_basis=row.roic_tax_basis,
         view=cast(AnalysisView, row.view),
         indicators=Indicators(

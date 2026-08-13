@@ -27,6 +27,7 @@ def _analysis() -> TickerAnalysis:
         price_basis="b3_latest_close",
         share_count_basis="cvm_latest_filed_outstanding_current_base",
         liquidity_basis="cpc03_cash_and_cash_equivalents",
+        debt_basis="cvm_bpp_explicit_interest_bearing",
         roic_tax_basis="br_statutory_34pct",
         indicators=Indicators(
             roe=Decimal("0.2"),
@@ -56,6 +57,7 @@ def test_null_reasons_round_trip_through_the_row() -> None:
     assert entity.price_basis == "b3_latest_close"
     assert entity.share_count_basis == "cvm_latest_filed_outstanding_current_base"
     assert entity.liquidity_basis == "cpc03_cash_and_cash_equivalents"
+    assert entity.debt_basis == "cvm_bpp_explicit_interest_bearing"
     assert entity.roic_tax_basis == "br_statutory_34pct"
 
 

@@ -207,6 +207,7 @@ async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
     assert saved.price_basis == "b3_latest_close"
     assert saved.share_count_basis == "cvm_latest_filed_outstanding_current_base"
     assert saved.liquidity_basis == "cpc03_cash_and_cash_equivalents"
+    assert saved.debt_basis == "cvm_bpp_explicit_interest_bearing"
     assert saved.roic_tax_basis == "br_statutory_34pct"
     # Both classes quote at 10 here → cap = 10 × (800 + 400) = 12000.
     assert saved.indicators.company_pe == Decimal(10)  # 12000 / 1200

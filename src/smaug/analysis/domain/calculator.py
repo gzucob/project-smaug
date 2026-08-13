@@ -117,22 +117,7 @@ def _annualized(
 
 
 def _net_debt(financials: StandardizedFinancials) -> Decimal | None:
-    """Total debt net of CPC 03 cash equivalents.
-
-    The insurance schema files no borrowings line at all (2.01.04 is
-    "Capitalização" there, ADR 0015), so what remains of the definition is
-    ``0 − cash equivalents``. Suppressing it instead surfaced the same economic fact for
-    one insurer and hid it for the other: CXSE3 files as a corporate holding
-    and showed its net cash while BBSE3 could not (#103). Applying the same
-    filed-regime rule makes the economic fact consistent across both filers.
-    """
-    regime = financials.filed_regime or expected_regime(financials.sector)
-    if regime is AccountingRegime.INSURANCE:
-        return (
-            None
-            if financials.cash_equivalents is None
-            else -financials.cash_equivalents
-        )
+    """Complete evidenced debt net of CPC 03 cash equivalents (ADR 0059)."""
     if financials.total_debt is None or financials.cash_equivalents is None:
         return None
     return financials.total_debt - financials.cash_equivalents
@@ -183,10 +168,9 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
             "gross_margin",
             "ebit_margin",
             "ebitda_margin",
-            # With net debt = −cash (#103), invested capital (equity + net debt)
-            # collapses toward zero for a cash-rich insurer and the ratio
-            # explodes — BBSE3's 2025 ROIC came out 1,918%. Same verdict as the
-            # bank's: the denominator inherits the net-debt degeneracy.
+            # A generic statutory ROIC remains a category error for an insurer:
+            # underwriting and investment liabilities are the operation, not a
+            # corporate invested-capital bridge (ADR 0010/0059).
             "roic_statutory",
         }
     )
@@ -367,24 +351,6 @@ _NEEDS: dict[str, _Needs] = {
     "shares": _Needs(shares=True),
 }
 
-# The indicators built on ``_net_debt``. Their ``total_debt`` requirement shifts
-# with the definition: an insurance-regime filer's net debt derives from cash
-# alone (#103), so for these — and only these — a null is attributed against
-# ``cash_equivalents``, never against the borrowings line the schema does not have.
-# ``debt_to_equity`` stays out (gross debt genuinely needs the filed line), and
-# ``roic_statutory`` needs no entry: it is inapplicable for the insurer outright.
-_NET_DEBT_DERIVED = frozenset(
-    {
-        "net_debt",
-        "net_debt_to_ebitda",
-        "net_debt_to_ebit",
-        "net_debt_to_equity",
-        "ev_ebitda",
-        "ev_ebit",
-        "enterprise_value",
-    }
-)
-
 
 def _classify(
     name: str,
@@ -422,17 +388,12 @@ def _classify(
         return f.eps_basic_null_reason
     if name == "pe_diluted" and f.eps_diluted_null_reason is not None:
         return f.eps_diluted_null_reason
-    regime = f.filed_regime or expected_regime(f.sector)
     if needs.series is not None:
         return _classify_cagr(needs.series, f, history)
     for account in needs.accounts:
-        if (
-            account == "total_debt"
-            and name in _NET_DEBT_DERIVED
-            and regime is AccountingRegime.INSURANCE
-        ):
-            account = "cash_equivalents"  # insurer net debt derives from cash (#103)
         if getattr(f, account) is None:
+            if account == "total_debt" and f.debt_coverage_null_reason is not None:
+                return f.debt_coverage_null_reason
             if account in f.unmapped_fields:
                 return NullReason.SOURCE_ACCOUNT_UNMAPPED
             return NullReason.SOURCE_ACCOUNT_ABSENT

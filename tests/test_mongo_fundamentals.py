@@ -35,6 +35,8 @@ def test_standardize_nonfinancial_pulls_every_line() -> None:
                 _acc("2.01", "Passivo Circulante", "200"),
                 _acc("2.01.04", "Empréstimos e Financiamentos", "50"),
                 _acc("2.02.01", "Empréstimos e Financiamentos", "150"),
+                # CPC 06 liability disclosed outside the fixed debt parents.
+                _acc("2.02.02.02.07", "Passivo de Arrendamento", "25"),
                 _acc("2.03", "Patrimônio Líquido Consolidado", "600"),
             ]
         },
@@ -72,7 +74,8 @@ def test_standardize_nonfinancial_pulls_every_line() -> None:
     assert f.cash_equivalents == Decimal("100")
     assert f.current_assets == Decimal("400")
     assert f.current_liabilities == Decimal("200")
-    assert f.total_debt == Decimal("200")  # 50 + 150
+    assert f.total_debt == Decimal("225")  # 50 + 150 + explicit lease liability
+    assert f.debt_coverage_null_reason is None
     assert f.cfo == Decimal("500")  # operating cash flow (6.01)
     assert f.capex == Decimal("190")  # 150 + 40 PP&E/intangible outflows only
 
@@ -539,12 +542,93 @@ def test_standardize_insurer_reads_ebit_at_307_and_no_debt_line() -> None:
     assert f.filed_regime is AccountingRegime.INSURANCE
     assert f.ebit == Decimal("300")  # 3.07 — and emphatically not 3.05's -99
     assert f.total_debt is None  # 2.01.04 + 2.02.01 must not be summed here
+    assert f.debt_coverage_null_reason is NullReason.INCOMPLETE_DEBT_COVERAGE
     assert f.cash_equivalents == Decimal("1200")
     assert f.current_financial_investments == Decimal("300")
     assert f.current_assets == Decimal("4000")  # the split a bank does not file
     assert f.current_liabilities == Decimal("2000")
     assert f.earned_premium == Decimal("600")
     assert f.claims_incurred == Decimal("-250")
+
+
+def test_standardize_insurer_maps_complete_explicit_debt_perimeter() -> None:
+    by_module = {
+        "BPP": {
+            "accounts": [
+                _acc("2.01", "Passivo Circulante", "500"),
+                _acc("2.01.08", "Empréstimos e Financiamentos", "100"),
+                _acc("2.01.02.01", "Passivos de Contratos de Seguros", "9000"),
+                _acc("2.02", "Passivo Não Circulante", "600"),
+                _acc("2.02.09", "Empréstimos e Financiamentos", "200"),
+                _acc("2.02.10", "Passivo de Arrendamento", "25"),
+                _acc("2.02.11", "Obrigações Subordinadas", "75"),
+                _acc("2.02.12", "Capitalização", "7000"),
+                # A debt word inside the equity section is not a liability.
+                _acc("2.03.02.07", "Debêntures Convertidas em Ações", "5000"),
+            ]
+        },
+        "DRE": {
+            "accounts": [_acc("3.01", "Receitas das Atividades Seguradoras", "600")]
+        },
+    }
+
+    f = standardize(by_module, Sector.INSURER, date(2024, 12, 31))
+
+    # Insurance-contract and capitalization liabilities are product obligations,
+    # not financing debt. Explicit leases and subordinated funding are debt.
+    assert f.total_debt == Decimal("400")
+    assert f.debt_coverage_null_reason is None
+
+
+def test_standardize_insurer_accepts_zero_only_when_both_maturities_file_zero() -> None:
+    by_module = {
+        "BPP": {
+            "accounts": [
+                _acc("2.01.08", "Empréstimos e Financiamentos", "0"),
+                _acc("2.01.02.01", "Passivos de Contratos de Seguros", "9000"),
+                _acc("2.02.09", "Empréstimos e Financiamentos", "0"),
+                _acc("2.02.12", "Capitalização", "7000"),
+            ]
+        },
+        "DRE": {
+            "accounts": [_acc("3.01", "Receitas das Atividades Seguradoras", "600")]
+        },
+    }
+
+    f = standardize(by_module, Sector.INSURER, date(2024, 12, 31))
+
+    assert f.total_debt == 0
+    assert f.debt_coverage_null_reason is None
+
+
+def test_standardize_pssa3_generic_financial_liabilities_are_incomplete_debt() -> None:
+    # PSSA3's real shape: it files the corporate DRE and zero fixed borrowing
+    # parents, but a material generic "Passivos financeiros" balance and a lease
+    # liability sit under Outras Obrigações. The generic balance is not proof of
+    # either debt or non-debt, so zero cannot be published.
+    by_module = {
+        "BPP": {
+            "accounts": [
+                _acc("2.01.04", "Empréstimos e Financiamentos", "0"),
+                _acc("2.01.05.02.06", "Passivos financeiros", "15630"),
+                _acc("2.01.05.02.09", "Passivo de Arrendamento", "20"),
+                _acc("2.02.01", "Empréstimos e Financiamentos", "0"),
+                _acc("2.02.02.02.04", "Passivos financeiros", "5600"),
+                _acc("2.02.02.02.07", "Passivo de Arrendamento", "110"),
+            ]
+        },
+        "DRE": {
+            "accounts": [
+                _acc("3.01", "Receita de Venda de Bens e/ou Serviços", "40000")
+            ]
+        },
+    }
+
+    f = standardize(by_module, Sector.INSURER, date(2025, 12, 31))
+
+    assert f.filed_regime is AccountingRegime.CORPORATE
+    assert f.total_debt is None
+    assert f.debt_coverage_null_reason is NullReason.INCOMPLETE_DEBT_COVERAGE
 
 
 def test_standardize_detects_the_filed_regime_from_the_dre_opening_line() -> None:
@@ -603,6 +687,8 @@ def test_standardize_maps_the_insurer_that_files_as_a_holding_corporately() -> N
     assert f.ebit == Decimal("250")  # 3.05, the corporate EBIT
     assert f.current_assets == Decimal("800")
     assert f.current_liabilities == Decimal("400")
+    assert f.total_debt is None
+    assert f.debt_coverage_null_reason is NullReason.INCOMPLETE_DEBT_COVERAGE
     assert f.unmapped_fields == frozenset()
 
 
