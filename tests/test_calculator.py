@@ -316,6 +316,67 @@ def test_the_bank_ratios_are_inapplicable_to_everyone_else() -> None:
         assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
 
 
+def _irbr3_2022() -> StandardizedFinancials:
+    """IRB's official CVM DFP 2022 underwriting inputs (R$ thousand)."""
+    return StandardizedFinancials(
+        reference_date=date(2022, 12, 31),
+        sector=Sector.INSURER,
+        filed_regime=AccountingRegime.INSURANCE,
+        earned_premium=Decimal(7_021_200),
+        claims_incurred=Decimal(-6_911_514),
+        acquisition_costs=Decimal(-255_606),
+        insurance_admin_expenses=Decimal(-421_237),
+    )
+
+
+def test_irbr3_underwriting_ratios_reconcile_to_the_2022_cvm_filing() -> None:
+    ind = compute(_irbr3_2022(), None, MarketData())
+
+    assert ind.loss_ratio == Decimal(6_911_514) / Decimal(7_021_200)
+    assert ind.combined_ratio == (
+        Decimal(6_911_514) + Decimal(255_606) + Decimal(421_237)
+    ) / Decimal(7_021_200)
+    assert ind.loss_ratio.quantize(Decimal("0.001")) == Decimal("0.984")
+    assert ind.combined_ratio.quantize(Decimal("0.001")) == Decimal("1.081")
+
+
+def test_insurer_ratios_name_missing_components_and_zero_premium() -> None:
+    missing = compute(
+        replace(_irbr3_2022(), acquisition_costs=None), None, MarketData()
+    )
+    zero_premium = compute(
+        replace(_irbr3_2022(), earned_premium=Decimal(0)), None, MarketData()
+    )
+
+    assert missing.loss_ratio is not None
+    assert missing.combined_ratio is None
+    assert missing.null_reasons["combined_ratio"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    assert zero_premium.loss_ratio is None
+    assert zero_premium.combined_ratio is None
+    assert zero_premium.null_reasons["loss_ratio"] is NullReason.ZERO_DENOMINATOR
+    assert zero_premium.null_reasons["combined_ratio"] is NullReason.ZERO_DENOMINATOR
+
+
+def test_insurer_expense_reversal_reduces_the_combined_ratio() -> None:
+    reversal = compute(
+        replace(_irbr3_2022(), insurance_admin_expenses=Decimal(421_237)),
+        None,
+        MarketData(),
+    )
+
+    assert reversal.combined_ratio == (
+        Decimal(6_911_514) + Decimal(255_606) - Decimal(421_237)
+    ) / Decimal(7_021_200)
+
+
+def test_insurer_ratios_are_inapplicable_to_other_filing_regimes() -> None:
+    for financials in (_nonfinancial(), _mapped_bank()):
+        ind = compute(financials, None, MarketData())
+        for name in ("loss_ratio", "combined_ratio"):
+            assert getattr(ind, name) is None
+            assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
+
+
 def test_bank_null_reasons_name_each_cause() -> None:
     ind = compute(
         replace(

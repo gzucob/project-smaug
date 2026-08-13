@@ -547,8 +547,44 @@ def test_standardize_insurer_reads_ebit_at_307_and_no_debt_line() -> None:
     assert f.current_financial_investments == Decimal("300")
     assert f.current_assets == Decimal("4000")  # the split a bank does not file
     assert f.current_liabilities == Decimal("2000")
-    assert f.earned_premium == Decimal("600")
-    assert f.claims_incurred == Decimal("-250")
+    # IFRS 17's current chart exposes only broad service/reinsurance aggregates.
+    # They are not aliases for the components required by the underwriting ratios.
+    assert f.earned_premium is None
+    assert f.claims_incurred is None
+    assert f.acquisition_costs is None
+    assert f.insurance_admin_expenses is None
+
+
+def test_standardize_irbr3_2022_underwriting_components() -> None:
+    # Official CVM DFP 2022, IRB Brasil Resseguros (CD_CVM 024180), consolidated
+    # current exercise. The pre-IFRS-17 chart separates the exact inputs used by
+    # the loss and combined ratios; both insurance and reinsurance branches are
+    # supported, and expenses remain negative as filed.
+    by_module = {
+        "DRE": {
+            "currency_size": 1000,
+            "accounts": [
+                _acc("3.01", "Receitas das Atividades Seguradoras", "7047042"),
+                _acc("3.01.02.01", "Prêmios de Resseguros Ganhos", "7021200"),
+                _acc("3.02.02.01", "Sinistros Retidos de Resseguros", "-6911514"),
+                _acc(
+                    "3.02.02.02",
+                    "Despesas de Comercialização de Resseguros",
+                    "-255606",
+                ),
+                _acc("3.04", "Despesas Administrativas", "-421237"),
+                _acc("3.07", "Resultado Antes do Resultado Financeiro", "100"),
+                _acc("3.13", "Lucro/Prejuízo Consolidado do Período", "50"),
+            ],
+        }
+    }
+
+    f = standardize(by_module, Sector.INSURER, date(2022, 12, 31))
+
+    assert f.earned_premium == Decimal("7021200000")
+    assert f.claims_incurred == Decimal("-6911514000")
+    assert f.acquisition_costs == Decimal("-255606000")
+    assert f.insurance_admin_expenses == Decimal("-421237000")
 
 
 def test_standardize_insurer_maps_complete_explicit_debt_perimeter() -> None:

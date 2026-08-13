@@ -133,10 +133,15 @@ class StandardizedFinancials:
     credit_loss_expense_annualized: Decimal | None = None
     average_credit_portfolio: Decimal | None = None
     bank_ratio_null_reason: NullReason | None = None
-    # Insurance-regime lines (ADR 0015), same sign convention. Zero for a filer
-    # that holds insurers rather than underwriting itself (BBSE3).
-    earned_premium: Decimal | None = None  # DRE 3.01.01 "Receitas com Seguros"
-    claims_incurred: Decimal | None = None  # DRE 3.02.01 (negative)
+    # Insurance-regime underwriting lines (ADR 0061), same sign convention:
+    # expenses are negative. The pre-IFRS-17 CVM chart separates all four; the
+    # current chart does not, so its aggregates are never substituted for these
+    # components. Zero remains a value for a holding that files the line but does
+    # not underwrite itself; an absent component remains ``None``.
+    earned_premium: Decimal | None = None
+    claims_incurred: Decimal | None = None
+    acquisition_costs: Decimal | None = None
+    insurance_admin_expenses: Decimal | None = None
     # Null-cause provenance (#30). ``filed_regime`` is what the mapper detected
     # in the statements themselves (None = undetected); ``unmapped_fields`` names
     # the fields above that the mapper deliberately never read for this filer, so

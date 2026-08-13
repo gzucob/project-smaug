@@ -139,6 +139,7 @@ def _net_debt(financials: StandardizedFinancials) -> Decimal | None:
 # that *is* the business, and a company that sells goods has no spread, no loan book
 # and no payroll-against-spread to report. They are inapplicable to everyone else.
 _BANK_ONLY = frozenset({"net_interest_margin", "efficiency_ratio", "cost_of_risk"})
+_INSURER_ONLY = frozenset({"loss_ratio", "combined_ratio"})
 
 _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
     AccountingRegime.BANK: frozenset(
@@ -162,7 +163,8 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
             "current_ratio",
             "price_to_working_capital",
         }
-    ),
+    )
+    | _INSURER_ONLY,
     AccountingRegime.INSURANCE: frozenset(
         {
             "gross_margin",
@@ -175,7 +177,7 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
         }
     )
     | _BANK_ONLY,
-    AccountingRegime.CORPORATE: _BANK_ONLY,
+    AccountingRegime.CORPORATE: _BANK_ONLY | _INSURER_ONLY,
 }
 
 
@@ -288,6 +290,15 @@ _NEEDS: dict[str, _Needs] = {
     ),
     "cost_of_risk": _Needs(
         accounts=("credit_loss_expense_annualized", "average_credit_portfolio")
+    ),
+    "loss_ratio": _Needs(accounts=("claims_incurred", "earned_premium")),
+    "combined_ratio": _Needs(
+        accounts=(
+            "claims_incurred",
+            "acquisition_costs",
+            "insurance_admin_expenses",
+            "earned_premium",
+        )
     ),
     "dividend_yield": _Needs(price=True, cash_distributions=True),
     "payout_cash_paid_in_period": _Needs(accounts=("dividends_paid", "net_income")),
@@ -528,6 +539,12 @@ def compute(
     # flows so a bare year-to-date period is comparable to a full year.
     annual_fcf = _annualized(_sub(f.cfo, f.capex), f)
     bvps = _div(f.equity, market.shares)
+    claims_cost = None if f.claims_incurred is None else -f.claims_incurred
+    acquisition_cost = None if f.acquisition_costs is None else -f.acquisition_costs
+    admin_cost = (
+        None if f.insurance_admin_expenses is None else -f.insurance_admin_expenses
+    )
+    combined_costs = _add(_add(claims_cost, acquisition_cost), admin_cost)
 
     prev_revenue = previous.revenue if previous is not None else None
     prev_net_income = previous.net_income if previous is not None else None
@@ -592,6 +609,8 @@ def compute(
         ),
         efficiency_ratio=_div(f.bank_efficiency_expenses, f.bank_efficiency_income),
         cost_of_risk=_div(f.credit_loss_expense_annualized, f.average_credit_portfolio),
+        loss_ratio=_div(claims_cost, f.earned_premium),
+        combined_ratio=_div(combined_costs, f.earned_premium),
         dividend_yield=_div(market.cash_distributions, market.price),
         payout_cash_paid_in_period=_div(f.dividends_paid, f.net_income),
         payout_declared_in_period=_div(f.dividends_declared, f.net_income),

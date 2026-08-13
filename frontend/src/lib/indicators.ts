@@ -24,7 +24,8 @@ export type IndicatorGroup =
   | "Alavancagem & Liquidez"
   | "Múltiplos de mercado"
   | "Fluxo de caixa"
-  | "Banco";
+  | "Banco"
+  | "Seguradora";
 
 export interface IndicatorSpec {
   key: IndicatorKey;
@@ -137,6 +138,9 @@ export const INDICATORS: IndicatorSpec[] = [
   { key: "net_interest_margin", label: "Margem financeira", hint: "Resultado de juros anualizado / ativos rentáveis médios, no mesmo perímetro", group: "Banco", format: pct },
   { key: "efficiency_ratio", label: "Índice de eficiência", hint: "Despesas operacionais completas / receitas operacionais completas — quanto menor, melhor", group: "Banco", format: pct },
   { key: "cost_of_risk", label: "Custo do risco", hint: "Despesa anualizada de perdas de crédito / carteira média de crédito", group: "Banco", format: pct },
+  // Only an underwriting insurer fills these; other regimes report them as inapplicable (ADR 0061).
+  { key: "loss_ratio", label: "Índice de sinistralidade", hint: "Sinistros incorridos / prêmios ganhos, no mesmo período", group: "Seguradora", format: pct },
+  { key: "combined_ratio", label: "Índice combinado", hint: "Sinistros + custos de aquisição + despesas administrativas / prêmios ganhos", group: "Seguradora", format: pct },
 ];
 
 export const INDICATOR_GROUPS: IndicatorGroup[] = [
@@ -147,6 +151,7 @@ export const INDICATOR_GROUPS: IndicatorGroup[] = [
   "Múltiplos de mercado",
   "Fluxo de caixa",
   "Banco",
+  "Seguradora",
 ];
 
 /**
@@ -165,6 +170,7 @@ const GROUP_COLOR_VARS: Record<IndicatorGroup, string> = {
   "Múltiplos de mercado": "--color-pastel-lilac",
   "Fluxo de caixa": "--color-pastel-aqua",
   Banco: "--color-pastel-sage",
+  Seguradora: "--color-pastel-peach",
 };
 
 export function groupColor(group: IndicatorGroup): string {

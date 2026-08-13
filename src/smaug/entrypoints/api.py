@@ -106,6 +106,8 @@ class IndicatorsResponse(BaseModel):
     net_interest_margin: Decimal | None
     efficiency_ratio: Decimal | None
     cost_of_risk: Decimal | None
+    loss_ratio: Decimal | None
+    combined_ratio: Decimal | None
     revenue: Decimal | None
     net_income: Decimal | None
     net_income_total: Decimal | None

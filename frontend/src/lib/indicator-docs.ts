@@ -1392,6 +1392,46 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     caveat:
       "Carteira líquida ou saldo de fechamento não substituem a carteira média e ampliada/prudencial definida na fonte. Sem o par completo e no mesmo perímetro, o indicador fica n/d.",
   },
+
+  // --------------------------------------------------------- seguradora ---
+  // Só o regime contábil de seguros preenche estes dois (ADR 0061).
+  loss_ratio: {
+    formula: "− Sinistros incorridos ÷ Prêmios ganhos",
+    what: "Quanto do prêmio ganho no período foi consumido por sinistros. Quanto menor, maior a parcela que sobra para aquisição, administração e resultado técnico.",
+    strongIn: [
+      {
+        where: "Seguradoras e resseguradoras que subscrevem risco",
+        why: "mede diretamente a disciplina de subscrição e a severidade dos sinistros no mesmo período",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Holdings de seguros",
+        why: "uma holding pode ser classificada no setor sem emitir apólices ou assumir risco no próprio balanço",
+      },
+    ],
+    caveat:
+      "A DRE estruturada pós-IFRS 17 da CVM não separa sinistros e custos de aquisição nos agregados atuais. O Smaug não chama o agregado de sinistros: sem a linha separada, o índice fica n/d com causa explícita.",
+  },
+  combined_ratio: {
+    formula:
+      "− (Sinistros + custos de aquisição + despesas administrativas) ÷ Prêmios ganhos",
+    what: "Quanto toda a operação técnica definida pela fórmula consome dos prêmios ganhos. Abaixo de 100% indica resultado técnico positivo antes do resultado financeiro; acima de 100%, a subscrição não se paga sozinha.",
+    strongIn: [
+      {
+        where: "Seguradoras e resseguradoras que subscrevem risco",
+        why: "reúne sinistros e a estrutura necessária para adquirir e administrar os contratos em uma medida operacional",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Comparações entre metodologias diferentes",
+        why: "companhias podem divulgar índices gerenciais com ajustes e perímetros próprios; compare apenas fórmulas equivalentes",
+      },
+    ],
+    caveat:
+      "Os quatro componentes precisam pertencer ao mesmo período e perímetro consolidado. O Smaug usa apenas as linhas separadas da CVM; agregados IFRS 17 e valores de plataformas externas não substituem componentes ausentes.",
+  },
 };
 
 export function indicatorDoc(key: IndicatorKey): IndicatorDoc {
