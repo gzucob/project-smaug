@@ -5,6 +5,7 @@ from decimal import Decimal
 from smaug.analysis.domain.financials import ShareCounts
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.market_cap import capitalize
+from smaug.portfolio.domain.share_classes import ShareClass, ShareKind
 from tests.fakes import fake_classes_resolver
 
 
@@ -31,6 +32,46 @@ def test_a_dual_class_company_pays_each_class_its_own_price() -> None:
 
     assert cap == Decimal(13_600)  # 12 × 800 + 10 × 400
     assert reason is None
+
+
+def test_pna_and_pnb_each_use_their_own_filed_count_and_price() -> None:
+    # Banrisul's exact FRE 2025 counts provide a primary-source reconciliation for
+    # the three-term invariant; prices are deliberately distinct so any reuse of
+    # the aggregate preferred count fails loudly.
+    classes = (
+        ShareClass("BRSR3", ShareKind.COMMON),
+        ShareClass("BRSR5", ShareKind.PREFERRED),
+        ShareClass("BRSR6", ShareKind.PREFERRED),
+    )
+    counts = ShareCounts(
+        common=Decimal(205_064_841),
+        preferred=Decimal(203_909_636),
+        total=Decimal(408_974_477),
+        preferred_a=Decimal(1_373_091),
+        preferred_b=Decimal(202_536_545),
+    )
+
+    cap, reason = capitalize(
+        classes,
+        counts,
+        {"BRSR3": Decimal(10), "BRSR5": Decimal(12), "BRSR6": Decimal(14)},
+    )
+
+    assert cap == (
+        Decimal(205_064_841) * 10 + Decimal(1_373_091) * 12 + Decimal(202_536_545) * 14
+    )
+    assert reason is None
+
+
+def test_pna_without_a_class_specific_count_nulls_the_whole_cap() -> None:
+    cap, reason = capitalize(
+        (ShareClass("BRSR5", ShareKind.PREFERRED),),
+        ShareCounts(preferred=Decimal(203_909_636), total=Decimal(408_974_477)),
+        {"BRSR5": Decimal(12)},
+    )
+
+    assert cap is None
+    assert reason is NullReason.MISSING_SHARE_COUNT
 
 
 def test_a_unit_is_capitalized_without_its_bundle_composition() -> None:

@@ -429,9 +429,7 @@ async def test_terminated_codes_remain_diagnosable_but_leave_the_universe(
     assert await registry.companies() == ()
 
 
-async def test_two_classes_of_the_same_kind_yield_no_classes(tmp_path: Path) -> None:
-    # Per-kind filed counts cannot price two PN classes without double-counting, so
-    # an ambiguous company gets no classes (the cap stays a named null), not a guess.
+async def test_pn_pna_and_pnb_are_distinct_listed_classes(tmp_path: Path) -> None:
     cnpj = "30.000.000/0001-00"
     _write_fca_zip(
         tmp_path,
@@ -448,6 +446,7 @@ async def test_two_classes_of_the_same_kind_yield_no_classes(tmp_path: Path) -> 
                 ("EFGH3", "Ações Ordinárias"),
                 ("EFGH4", "Ações Preferenciais"),
                 ("EFGH5", "Ações Preferenciais Classe A"),
+                ("EFGH6", "Ações Preferenciais Classe B"),
             )
         ],
     )
@@ -456,7 +455,18 @@ async def test_two_classes_of_the_same_kind_yield_no_classes(tmp_path: Path) -> 
     pna = await _registry(tmp_path).resolve("EFGH5")
 
     assert identity is not None
-    assert identity.share_classes == ()
+    assert _classes(identity) == {
+        ("EFGH3", "common"),
+        ("EFGH4", "preferred"),
+        ("EFGH5", "preferred"),
+        ("EFGH6", "preferred"),
+    }
+    assert {item.symbol: item.per_share_class for item in identity.share_classes} == {
+        "EFGH3": PerShareClass.ORDINARY,
+        "EFGH4": PerShareClass.PREFERRED,
+        "EFGH5": PerShareClass.PREFERRED_A,
+        "EFGH6": PerShareClass.PREFERRED_B,
+    }
     assert pna is not None
     assert per_share_components(pna) == (
         UnitComponent(1, PerShareClass.PREFERRED_A, "EFGH5"),

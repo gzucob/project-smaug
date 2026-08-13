@@ -16,7 +16,7 @@ from enum import StrEnum
 
 from smaug.analysis.domain.indicators import NullReason
 from smaug.portfolio.domain.sectors import Sector
-from smaug.portfolio.domain.share_classes import ShareKind
+from smaug.portfolio.domain.share_classes import PerShareClass
 
 
 class AccountingRegime(StrEnum):
@@ -183,10 +183,36 @@ class ShareCounts:
     common: Decimal | None = None
     preferred: Decimal | None = None
     total: Decimal | None = None
+    # FRE's class ledger splits the aggregate preferred count into named
+    # subclasses. ``preferred_other`` preserves every named class outside A/B so
+    # generic PN is derived only from the unclassified remainder (#72).
+    preferred_a: Decimal | None = None
+    preferred_b: Decimal | None = None
+    preferred_other: Decimal | None = None
 
-    def of(self, kind: ShareKind) -> Decimal | None:
-        """The count filed for one share class."""
-        return self.common if kind is ShareKind.COMMON else self.preferred
+    def of(self, per_share_class: PerShareClass) -> Decimal | None:
+        """The filed count that belongs to one listed ON/PN/PNA/PNB class."""
+        if per_share_class is PerShareClass.ORDINARY:
+            return self.common
+        if per_share_class is PerShareClass.PREFERRED_A:
+            return self.preferred_a
+        if per_share_class is PerShareClass.PREFERRED_B:
+            return self.preferred_b
+        if self.preferred is None:
+            return None
+        subclasses = tuple(
+            count
+            for count in (
+                self.preferred_a,
+                self.preferred_b,
+                self.preferred_other,
+            )
+            if count is not None
+        )
+        if not subclasses:
+            return self.preferred
+        plain = self.preferred - sum(subclasses, Decimal(0))
+        return plain if plain > 0 else None
 
 
 @dataclass(frozen=True)

@@ -18,6 +18,7 @@ from smaug.shared.errors import SourceNotFoundError
 
 _PETRO = "33.000.167/0001-01"
 _VALE = "33.592.510/0001-54"
+_BANRISUL = "92.702.067/0001-96"
 
 _COLUMNS = (
     "CNPJ_Companhia",
@@ -33,6 +34,17 @@ _COLUMNS = (
     "Quantidade_Acoes_Ordinarias",
     "Quantidade_Acoes_Preferenciais",
     "Quantidade_Total_Acoes",
+)
+
+_CLASS_COLUMNS = (
+    "CNPJ_Companhia",
+    "Data_Referencia",
+    "Versao",
+    "ID_Documento",
+    "Nome_Companhia",
+    "ID_Capital_Social",
+    "Tipo_Classe_Acao_Preferencial",
+    "Quantidade_Acoes",
 )
 
 
@@ -64,7 +76,13 @@ def _row(
     }
 
 
-def _write_zip(path: Path, rows: list[dict[str, str]], year: int = 2025) -> None:
+def _write_zip(
+    path: Path,
+    rows: list[dict[str, str]],
+    year: int = 2025,
+    *,
+    class_rows: list[dict[str, str]] | None = None,
+) -> None:
     buffer = io.StringIO()
     writer = csv.DictWriter(
         buffer, fieldnames=list(_COLUMNS), delimiter=";", lineterminator="\n"
@@ -72,17 +90,30 @@ def _write_zip(path: Path, rows: list[dict[str, str]], year: int = 2025) -> None
     writer.writeheader()
     for row in rows:
         writer.writerow(row)
+    class_buffer = io.StringIO()
+    class_writer = csv.DictWriter(
+        class_buffer,
+        fieldnames=list(_CLASS_COLUMNS),
+        delimiter=";",
+        lineterminator="\n",
+    )
+    class_writer.writeheader()
+    class_writer.writerows(class_rows or [])
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(
             f"fre_cia_aberta_capital_social_{year}.csv",
             buffer.getvalue().encode("latin-1"),
+        )
+        archive.writestr(
+            f"fre_cia_aberta_capital_social_classe_acao_{year}.csv",
+            class_buffer.getvalue().encode("latin-1"),
         )
 
 
 def _source(cache_dir: Path, **kwargs: object) -> CvmCapitalSource:
     return CvmCapitalSource(
         httpx.AsyncClient(),
-        {"PETR4": _PETRO, "VALE3": _VALE},
+        {"PETR4": _PETRO, "VALE3": _VALE, "BRSR5": _BANRISUL},
         year=2025,
         cache_dir=str(cache_dir),
         **kwargs,  # type: ignore[arg-type]
@@ -115,6 +146,46 @@ async def test_fetch_mirrors_the_paid_in_share_counts(tmp_path: Path) -> None:
     assert payload["total_shares"] == 12888732761
     assert payload["reference_date"] == "2025-12-31"
     assert results[0].request["cnpj"] == _PETRO
+
+
+async def test_fetch_joins_the_filed_pna_and_pnb_counts_by_capital_id(
+    tmp_path: Path,
+) -> None:
+    # CVM FRE 2025 v21, ID 351151: Banrisul files these exact PNA/PNB counts
+    # under the capital-by-class member, separate from the aggregate PN count.
+    main = _row(
+        _BANRISUL,
+        version="21",
+        common="205064841",
+        preferred="203909636",
+        total="408974477",
+        approved="2026-04-28",
+        capital_id="351151",
+    )
+    classes = [
+        {
+            "CNPJ_Companhia": _BANRISUL,
+            "Data_Referencia": "2025-12-31",
+            "Versao": "21",
+            "ID_Documento": "157542",
+            "Nome_Companhia": "BANCO DO ESTADO DO RIO GRANDE DO SUL SA",
+            "ID_Capital_Social": "351151",
+            "Tipo_Classe_Acao_Preferencial": label,
+            "Quantidade_Acoes": shares,
+        }
+        for label, shares in (
+            ("Preferencial Classe A", "1373091"),
+            ("Preferencial Classe B", "202536545"),
+        )
+    ]
+    _write_zip(tmp_path / "fre_cia_aberta_2025.zip", [main], class_rows=classes)
+
+    results = await _source(tmp_path).fetch("BRSR5", CAPITAL_MODULE)
+
+    assert results[0].payload["share_class_counts"] == [
+        {"share_class": "Preferencial Classe A", "shares": 1373091},
+        {"share_class": "Preferencial Classe B", "shares": 202536545},
+    ]
 
 
 async def test_fetch_mirrors_every_filed_version_and_picks_none(tmp_path: Path) -> None:

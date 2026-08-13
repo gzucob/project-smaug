@@ -59,6 +59,26 @@ def test_treasury_is_subtracted_from_a_units_filer_class_by_class() -> None:
     )
 
 
+def test_aggregate_preferred_treasury_does_not_guess_a_pna_pnb_allocation() -> None:
+    issued = ShareCounts(
+        common=Decimal(205_064_841),
+        preferred=Decimal(203_909_636),
+        total=Decimal(408_974_477),
+        preferred_a=Decimal(1_373_091),
+        preferred_b=Decimal(202_536_545),
+    )
+
+    counts = outstanding_counts(
+        issued,
+        _filed(408_974_477, preferred=100),
+    )
+
+    assert counts is not None
+    assert counts.preferred == Decimal(203_909_536)
+    assert counts.preferred_a is None
+    assert counts.preferred_b is None
+
+
 def test_treasury_of_a_thousands_filer_is_scaled_before_subtracting() -> None:
     # VALE3 2025: 270,228 filed in thousands is 270.2 M shares — 6% of the company,
     # not 0.006%. Subtracting it unscaled would be indistinguishable from doing

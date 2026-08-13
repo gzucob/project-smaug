@@ -17,15 +17,15 @@ def test_the_configured_modules_are_the_cvm_ones() -> None:
 def test_every_configured_parser_has_a_stable_name_and_version() -> None:
     identities = _parser_identities(Settings().cvm_modules)
 
-    assert {identity.name for identity in identities} == {
-        "cvm.statements.csv",
-        "cvm.capital.csv",
-        "cvm.treasury.csv",
-        "cvm.capital-events.csv",
-        "b3.capital-events.json",
-        "b3.cash-dividends.json",
+    assert {identity.name: identity.version for identity in identities} == {
+        "cvm.statements.csv": 1,
+        # Version 2 joins FRE's capital-by-class child rows for PNA/PNB (#72).
+        "cvm.capital.csv": 2,
+        "cvm.treasury.csv": 1,
+        "cvm.capital-events.csv": 1,
+        "b3.capital-events.json": 1,
+        "b3.cash-dividends.json": 1,
     }
-    assert all(identity.version == 1 for identity in identities)
 
 
 async def test_build_data_source_routes_each_module_to_its_own_archive() -> None:
