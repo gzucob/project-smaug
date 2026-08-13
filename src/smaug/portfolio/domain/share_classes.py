@@ -27,7 +27,7 @@ suffix (ADR 0053).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 
@@ -53,6 +53,17 @@ class ShareClass:
 
     symbol: str
     kind: ShareKind
+    # FCA's capital total groups every preferred subclass under ``preferred``.
+    # The B3 class number preserves the finer PNA/PNB identity needed to pair a
+    # quote with the matching row from FRE's class ledger (#72).
+    per_share_class: PerShareClass = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "per_share_class",
+            per_share_class_from_symbol(self.symbol, self.kind),
+        )
 
 
 @dataclass(frozen=True, slots=True)

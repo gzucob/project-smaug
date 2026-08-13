@@ -46,6 +46,7 @@ def _doc(
     fetched_at: datetime | None = None,
     version: int = 1,
     approved: str | None = "2023-04-27",
+    share_class_counts: Sequence[dict[str, object]] = (),
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "reference_date": f"{year}-12-31",
@@ -54,6 +55,7 @@ def _doc(
         "common_shares": total if common is None else common,
         "preferred_shares": preferred,
         "total_shares": total,
+        "share_class_counts": list(share_class_counts),
     }
     # ``approved=None`` is a document mirrored before #86, when the approval date
     # was not stored at all — the append-only mirror still holds those.
@@ -237,6 +239,35 @@ async def test_counts_split_the_filing_by_share_class() -> None:
         preferred=Decimal(5_602),
         total=Decimal(13_044),
     )
+
+
+async def test_counts_preserve_the_fre_preferred_subclasses() -> None:
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc(
+                    "BRSR5",
+                    2025,
+                    408_974_477,
+                    common=205_064_841,
+                    preferred=203_909_636,
+                    share_class_counts=(
+                        {"share_class": "Preferencial Classe A", "shares": 1_373_091},
+                        {
+                            "share_class": "Preferencial Classe B",
+                            "shares": 202_536_545,
+                        },
+                    ),
+                )
+            ]
+        )
+    )
+
+    counts = await reader.counts("BRSR5", 2025)
+
+    assert counts is not None
+    assert counts.preferred_a == Decimal(1_373_091)
+    assert counts.preferred_b == Decimal(202_536_545)
 
 
 async def test_counts_are_served_for_a_unit_ticker() -> None:

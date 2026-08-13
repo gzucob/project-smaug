@@ -111,7 +111,7 @@ class CvmCapitalSource:
     """Fetch the capital composition for one ticker from CVM's yearly FRE file."""
 
     source = "cvm"
-    parser_identity = ParserIdentity("cvm.capital.csv", 1)
+    parser_identity = ParserIdentity("cvm.capital.csv", 2)
 
     def __init__(
         self,
@@ -161,6 +161,10 @@ class CvmCapitalSource:
     @property
     def _member_name(self) -> str:
         return f"fre_cia_aberta_capital_social_{self._year}.csv"
+
+    @property
+    def _class_member_name(self) -> str:
+        return f"fre_cia_aberta_capital_social_classe_acao_{self._year}.csv"
 
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
         """Return every paid-in capital row ``ticker`` filed — one per amendment,
@@ -220,33 +224,54 @@ class CvmCapitalSource:
             raw = await self._archive_path()
             if not self._validated:
                 validation = await asyncio.to_thread(
-                    _member_validation,
+                    validate_csv_archive,
                     raw,
                     source="cvm",
                     batch=self._zip_name,
                     parser=self.parser_identity,
                     artifact=self._artifact,
-                    year=self._year,
-                    member=self._member_name,
-                    columns=frozenset(
-                        {
+                    expected_year=self._year,
+                    members=(
+                        CsvMemberSpec(
+                            self._member_name,
+                            frozenset(
+                                {
+                                    "CNPJ_Companhia",
+                                    "Nome_Companhia",
+                                    "Data_Referencia",
+                                    "Versao",
+                                    "ID_Capital_Social",
+                                    "Tipo_Capital",
+                                    "Data_Autorizacao_Aprovacao",
+                                    "Valor_Capital",
+                                    "Prazo_Integralizacao",
+                                    "Quantidade_Acoes_Ordinarias",
+                                    "Quantidade_Acoes_Preferenciais",
+                                    "Quantidade_Total_Acoes",
+                                }
+                            ),
                             "CNPJ_Companhia",
-                            "Nome_Companhia",
                             "Data_Referencia",
-                            "Versao",
-                            "ID_Capital_Social",
-                            "Tipo_Capital",
-                            "Data_Autorizacao_Aprovacao",
-                            "Valor_Capital",
-                            "Prazo_Integralizacao",
-                            "Quantidade_Acoes_Ordinarias",
-                            "Quantidade_Acoes_Preferenciais",
-                            "Quantidade_Total_Acoes",
-                        }
+                        ),
+                        CsvMemberSpec(
+                            self._class_member_name,
+                            frozenset(
+                                {
+                                    "CNPJ_Companhia",
+                                    "Nome_Companhia",
+                                    "Data_Referencia",
+                                    "Versao",
+                                    "ID_Capital_Social",
+                                    "Tipo_Classe_Acao_Preferencial",
+                                    "Quantidade_Acoes",
+                                }
+                            ),
+                            "CNPJ_Companhia",
+                            "Data_Referencia",
+                        ),
                     ),
-                    registrant_column="CNPJ_Companhia",
-                    period_column="Data_Referencia",
                     require_member=True,
+                    require_all_members=True,
                 )
                 await record_or_quarantine(self._validation_reporter, validation)
                 self._validated = True
@@ -317,6 +342,22 @@ class CvmCapitalSource:
         wanted = set(self._ticker_to_cnpj.values())
         index: dict[str, list[dict[str, Any]]] = {}
         with zipfile.ZipFile(archive) as archive_file:
+            class_counts: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+            with archive_file.open(self._class_member_name) as member:
+                reader = csv.DictReader(
+                    io.TextIOWrapper(member, encoding=_ENCODING),
+                    delimiter=_DELIMITER,
+                )
+                for row in reader:
+                    if row["CNPJ_Companhia"] not in wanted:
+                        continue
+                    key = _capital_key(row)
+                    class_counts.setdefault(key, []).append(
+                        {
+                            "share_class": row["Tipo_Classe_Acao_Preferencial"],
+                            "shares": _int(row["Quantidade_Acoes"]),
+                        }
+                    )
             with archive_file.open(self._member_name) as member:
                 reader = csv.DictReader(
                     io.TextIOWrapper(member, encoding=_ENCODING),
@@ -326,11 +367,25 @@ class CvmCapitalSource:
                     cnpj = row["CNPJ_Companhia"]
                     if cnpj not in wanted or row["Tipo_Capital"] != _PAID_IN_CAPITAL:
                         continue
-                    index.setdefault(cnpj, []).append(_to_payload(row))
+                    index.setdefault(cnpj, []).append(
+                        _to_payload(row, class_counts.get(_capital_key(row), []))
+                    )
         return index
 
 
-def _to_payload(row: Mapping[str, str]) -> dict[str, Any]:
+def _capital_key(row: Mapping[str, str]) -> tuple[str, str, str, str]:
+    """The parent key shared by FRE's capital and capital-by-class members."""
+    return (
+        row["CNPJ_Companhia"],
+        row["Data_Referencia"],
+        row["Versao"],
+        row["ID_Capital_Social"],
+    )
+
+
+def _to_payload(
+    row: Mapping[str, str], class_counts: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
     """Mirror the filed row — share counts as filed, no derivation.
 
     ``approval_date`` is what tells one paid-in row from another within the same
@@ -350,6 +405,9 @@ def _to_payload(row: Mapping[str, str]) -> dict[str, Any]:
         "common_shares": _int(row["Quantidade_Acoes_Ordinarias"]),
         "preferred_shares": _int(row["Quantidade_Acoes_Preferenciais"]),
         "total_shares": _int(row["Quantidade_Total_Acoes"]),
+        # Child rows are mirrored with their filed labels. Interpreting which
+        # labels price PNA/PNB belongs to the analysis reader, not ingestion.
+        "share_class_counts": [dict(item) for item in class_counts],
     }
 
 

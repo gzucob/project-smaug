@@ -89,10 +89,16 @@ def outstanding_counts(
     # the filed |16,318k| shares is R$13.75/share, the 2022 market price; and a
     # movement reading is arithmetically impossible for Q1-2024, whose opening
     # balance was zero. So the count is read as its absolute value.
+    preferred_a, preferred_b, preferred_other = _net_preferred_subclasses(
+        issued, composition.treasury_preferred, scale
+    )
     net = ShareCounts(
         common=_net(issued.common, composition.treasury_common, scale),
         preferred=_net(issued.preferred, composition.treasury_preferred, scale),
         total=_net(issued.total, composition.treasury_total, scale),
+        preferred_a=preferred_a,
+        preferred_b=preferred_b,
+        preferred_other=preferred_other,
     )
     # A company cannot hold every share it issued. A class that nets to nothing means
     # the two filings are not describing the same shares — the composition may predate
@@ -100,7 +106,14 @@ def outstanding_counts(
     # class by class.
     if any(
         count is not None and count <= 0
-        for count in (net.common, net.preferred, net.total)
+        for count in (
+            net.common,
+            net.preferred,
+            net.total,
+            net.preferred_a,
+            net.preferred_b,
+            net.preferred_other,
+        )
     ):
         return None
     return net
@@ -117,6 +130,39 @@ def _net(
     if issued is None:
         return None
     return issued if treasury is None else issued - abs(treasury) * scale
+
+
+def _net_preferred_subclasses(
+    issued: ShareCounts, treasury: Decimal | None, scale: Decimal
+) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+    """Net PNA/PNB only when aggregate treasury can be assigned without guessing.
+
+    The DFP composition files one treasury balance for every preferred class.
+    A zero balance leaves every FRE subclass count intact. A non-zero balance can
+    be assigned only when the company has exactly one preferred economic class;
+    otherwise every subclass becomes unavailable so market cap stays a named null.
+    """
+    subclasses = (
+        issued.preferred_a,
+        issued.preferred_b,
+        issued.preferred_other,
+    )
+    if treasury is None or treasury == 0:
+        return subclasses
+    present = [
+        (index, count) for index, count in enumerate(subclasses) if count is not None
+    ]
+    if (
+        len(present) != 1
+        or issued.preferred is None
+        or issued.preferred != present[0][1]
+    ):
+        return None, None, None
+    index, count = present[0]
+    net = _net(count, treasury, scale)
+    resolved: list[Decimal | None] = [None, None, None]
+    resolved[index] = net
+    return resolved[0], resolved[1], resolved[2]
 
 
 # A corporate action on the whole share base (split, grupamento, bonificação)

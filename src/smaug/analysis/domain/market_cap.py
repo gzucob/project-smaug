@@ -35,7 +35,7 @@ def capitalize(
 ) -> tuple[Decimal | None, NullReason | None]:
     """Capitalize a company from its listed ``classes``, prices and filed counts.
 
-    ``classes`` are the company's ON/PN classes (curated or FCA-resolved);
+    ``classes`` are the company's ON/PN/PNA/PNB classes (FCA-resolved);
     ``prices`` is keyed by class symbol (``PETR3``, ``PETR4``). Returns the cap
     and ``None``, or ``None`` and the reason it could not be built.
     """
@@ -48,7 +48,7 @@ def capitalize(
 
     cap = Decimal(0)
     for share_class in classes:
-        count = counts.of(share_class.kind)
+        count = counts.of(share_class.per_share_class)
         if count is None:
             return None, NullReason.MISSING_SHARE_COUNT
         price = prices.get(share_class.symbol)

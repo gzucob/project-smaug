@@ -28,7 +28,7 @@ Two readings of the same filing, for two different jobs:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
@@ -142,6 +142,36 @@ def _sum(*counts: Decimal | None) -> Decimal | None:
     return sum(present, Decimal(0)) if present else None
 
 
+def _preferred_subclass_counts(
+    payload: Mapping[str, Any], aggregate: Decimal | None
+) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+    """PNA, PNB and every other named preferred class from FRE's class ledger."""
+    raw = payload.get("share_class_counts")
+    if (
+        aggregate is None
+        or not isinstance(raw, Sequence)
+        or isinstance(raw, (str, bytes))
+    ):
+        return None, None, None
+    counts: dict[str, Decimal] = {}
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        label = _upper(item.get("share_class"))
+        if not label.startswith("PREFERENCIAL CLASSE "):
+            continue
+        count = _positive(item.get("shares"))
+        if count is None or label in counts:
+            return None, None, None
+        counts[label] = count
+    if not counts or sum(counts.values(), Decimal(0)) > aggregate:
+        return None, None, None
+    preferred_a = counts.pop("PREFERENCIAL CLASSE A", None)
+    preferred_b = counts.pop("PREFERENCIAL CLASSE B", None)
+    preferred_other = sum(counts.values(), Decimal(0)) or None
+    return preferred_a, preferred_b, preferred_other
+
+
 def _rank(payload: Mapping[str, Any]) -> tuple[int, str]:
     """How one filed capital row beats another: newest amendment, newest approval.
 
@@ -199,6 +229,9 @@ def _scaled(counts: ShareCounts, factor: Decimal) -> ShareCounts:
         common=apply(counts.common),
         preferred=apply(counts.preferred),
         total=apply(counts.total),
+        preferred_a=apply(counts.preferred_a),
+        preferred_b=apply(counts.preferred_b),
+        preferred_other=apply(counts.preferred_other),
     )
 
 
@@ -496,8 +529,18 @@ class MongoSharesReader:
             total = _positive(payload.get("total_shares")) or _sum(common, preferred)
             if total is None:
                 continue
+            preferred_a, preferred_b, preferred_other = _preferred_subclass_counts(
+                payload, preferred
+            )
             best[year] = rank
-            by_year[year] = ShareCounts(common=common, preferred=preferred, total=total)
+            by_year[year] = ShareCounts(
+                common=common,
+                preferred=preferred,
+                total=total,
+                preferred_a=preferred_a,
+                preferred_b=preferred_b,
+                preferred_other=preferred_other,
+            )
         return by_year
 
     async def _compositions(self, ticker: str) -> dict[int, CapitalComposition]:

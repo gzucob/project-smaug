@@ -51,6 +51,7 @@ def validate_csv_archive(
     expected_year: int,
     members: Sequence[CsvMemberSpec],
     require_member: bool = True,
+    require_all_members: bool = False,
 ) -> SourceBatchValidation:
     """Validate ZIP integrity and the schema/coverage facts readers rely on."""
     findings: list[ValidationFinding] = []
@@ -70,7 +71,14 @@ def validate_csv_archive(
             names = set(archive.namelist())
             available = tuple(spec for spec in members if spec.name in names)
             member_count = len(available)
-            if require_member and not available:
+            missing = tuple(spec.name for spec in members if spec.name not in names)
+            if require_all_members and missing:
+                findings.append(
+                    ValidationFinding(
+                        "required-members", f"missing {', '.join(missing)}"
+                    )
+                )
+            elif require_member and not available:
                 findings.append(
                     ValidationFinding(
                         "required-members", "no supported CSV member found"

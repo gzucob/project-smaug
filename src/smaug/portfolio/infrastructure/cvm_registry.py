@@ -86,13 +86,13 @@ class _Security:
 
 @dataclass
 class _ClassAccumulator:
-    """The ON/PN trading symbols a company lists, gathered per kind."""
+    """The ON/PN/PNA/PNB trading symbols a company lists, gathered per class."""
 
-    common: set[str] = field(default_factory=set)
-    preferred: set[str] = field(default_factory=set)
+    symbols: dict[PerShareClass, set[str]] = field(default_factory=dict)
 
     def add(self, kind: ShareKind, symbol: str) -> None:
-        (self.common if kind is ShareKind.COMMON else self.preferred).add(symbol)
+        per_share_class = per_share_class_from_symbol(symbol, kind)
+        self.symbols.setdefault(per_share_class, set()).add(symbol)
 
 
 def _fold(text: str) -> str:
@@ -199,20 +199,23 @@ def _unit_composition(composition: str) -> list[UnitComponent]:
 def _resolve_classes(
     accumulator: _ClassAccumulator,
 ) -> tuple[ShareClass, ...]:
-    """The company's ON/PN classes, ordered ON→PN.
+    """The company's ON/PN/PNA/PNB classes, ordered by economic class.
 
-    Only when there is at most one class per kind: the market cap sums each class
-    at its own price times the **per-kind** filed count (ADR 0014), so a second
-    class of the same kind would multiply that whole count twice. Rather than a
-    wrong cap, an ambiguous company yields no classes (the cap stays a named null).
+    Only when there is at most one symbol per economic class. Two codes for the
+    same class cannot both multiply its filed count; rather than a wrong cap, an
+    ambiguous company yields no classes (the cap stays a named null).
     """
-    if len(accumulator.common) > 1 or len(accumulator.preferred) > 1:
+    if any(len(symbols) > 1 for symbols in accumulator.symbols.values()):
         return ()
     classes: list[ShareClass] = []
-    for symbol in accumulator.common:
-        classes.append(ShareClass(symbol=symbol, kind=ShareKind.COMMON))
-    for symbol in accumulator.preferred:
-        classes.append(ShareClass(symbol=symbol, kind=ShareKind.PREFERRED))
+    for per_share_class in PerShareClass:
+        kind = (
+            ShareKind.COMMON
+            if per_share_class is PerShareClass.ORDINARY
+            else ShareKind.PREFERRED
+        )
+        for symbol in sorted(accumulator.symbols.get(per_share_class, ())):
+            classes.append(ShareClass(symbol=symbol, kind=kind))
     return tuple(classes)
 
 
