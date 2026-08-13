@@ -88,6 +88,9 @@ export interface Indicators {
   net_interest_margin: Decimalish;
   efficiency_ratio: Decimalish;
   cost_of_risk: Decimalish;
+  // Insurance-only underwriting ratios (ADR 0061).
+  loss_ratio: Decimalish;
+  combined_ratio: Decimalish;
   revenue: Decimalish;
   net_income: Decimalish;
   net_income_total: Decimalish;

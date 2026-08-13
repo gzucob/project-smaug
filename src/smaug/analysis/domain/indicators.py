@@ -188,6 +188,10 @@ class Indicators:
     net_interest_margin: Decimal | None = None  # interest result / avg earning assets
     efficiency_ratio: Decimal | None = None  # full expenses / full operating income
     cost_of_risk: Decimal | None = None  # credit loss / avg credit portfolio
+    # Insurance-only underwriting ratios (ADR 0061). Expense inputs are filed as
+    # negative values and sign-reversed once by the calculator.
+    loss_ratio: Decimal | None = None  # claims / earned premium
+    combined_ratio: Decimal | None = None  # claims + acquisition + admin / premium
     # Headline financials (absolute reais, the period's own figure — not
     # annualized). Persisted alongside the ratios so the front-end can chart the
     # per-year evolution of revenue / earnings / dividends, which the ratios alone

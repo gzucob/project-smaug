@@ -50,6 +50,8 @@ _DRE_FLOW_FIELDS = (
     "admin_expense",
     "earned_premium",
     "claims_incurred",
+    "acquisition_costs",
+    "insurance_admin_expenses",
 )
 _DFC_FLOW_FIELDS = ("dep_amort", "dividends_paid", "cfo", "capex")
 # The DMPL is year-to-date like the DFC, on its own span (#104).
@@ -249,6 +251,8 @@ def _build_ttm(
         loan_book=stock_source.loan_book,  # a balance, like the other stocks
         earned_premium=summed["earned_premium"],
         claims_incurred=summed["claims_incurred"],
+        acquisition_costs=summed["acquisition_costs"],
+        insurance_admin_expenses=summed["insurance_admin_expenses"],
         # Null-cause provenance (#30) travels with the window: same filer, same
         # regime and same deliberately-skipped fields as its quarters.
         filed_regime=latest.filed_regime,

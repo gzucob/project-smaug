@@ -158,6 +158,8 @@ def test_ttm_sums_the_insurer_dre_lines() -> None:
             _q(e),
             earned_premium=Decimal(900),
             claims_incurred=Decimal(-400),
+            acquisition_costs=Decimal(-80),
+            insurance_admin_expenses=Decimal(-50),
         )
         for e in _ENDS
     ]
@@ -167,6 +169,8 @@ def test_ttm_sums_the_insurer_dre_lines() -> None:
     assert ttm is not None
     assert ttm.earned_premium == Decimal(3600)
     assert ttm.claims_incurred == Decimal(-1600)  # negative as filed
+    assert ttm.acquisition_costs == Decimal(-320)
+    assert ttm.insurance_admin_expenses == Decimal(-200)
 
 
 def test_ttm_carries_every_numeric_account_on_its_declared_basis() -> None:

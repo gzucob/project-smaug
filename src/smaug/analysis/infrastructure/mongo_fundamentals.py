@@ -893,6 +893,23 @@ def _as_insurer(
     the paired cause names incomplete coverage instead of inventing zero.
     """
     total_debt, debt_reason = _total_debt(bpp, bpp_s)
+    # Through 2022 the structured insurer DRE separates earned premiums, claims
+    # and acquisition costs under the insurance and reinsurance branches. IFRS 17
+    # replaced those leaves with broader service/reinsurance aggregates in 2023.
+    # Those aggregates do not preserve the components required by the loss and
+    # combined ratios, so absence of the legacy leaves stays a named null (ADR 0061).
+    earned_premium = _sum(
+        _by_code(dre, "3.01.01.01"),
+        _by_code(dre, "3.01.02.01"),
+    )
+    claims_incurred = _sum(
+        _by_code(dre, "3.02.01.01"),
+        _by_code(dre, "3.02.02.01"),
+    )
+    acquisition_costs = _sum(
+        _by_code(dre, "3.02.01.02"),
+        _by_code(dre, "3.02.02.02"),
+    )
     return replace(
         base,
         ebit=_mul(_by_code(dre, "3.07"), dre_s),  # before financial result/taxes
@@ -902,8 +919,10 @@ def _as_insurer(
         current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),
         total_debt=total_debt,
         debt_coverage_null_reason=debt_reason,
-        earned_premium=_mul(_by_code(dre, "3.01.01"), dre_s),
-        claims_incurred=_mul(_by_code(dre, "3.02.01"), dre_s),
+        earned_premium=_mul(earned_premium, dre_s),
+        claims_incurred=_mul(claims_incurred, dre_s),
+        acquisition_costs=_mul(acquisition_costs, dre_s),
+        insurance_admin_expenses=_mul(_by_code(dre, "3.04"), dre_s),
         unmapped_fields=_FINANCIAL_UNMAPPED_FIELDS,
     )
 

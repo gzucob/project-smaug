@@ -96,6 +96,8 @@ class TickerAnalysisRow(Base):
     net_interest_margin: Mapped[Decimal | None] = mapped_column(Numeric)
     efficiency_ratio: Mapped[Decimal | None] = mapped_column(Numeric)
     cost_of_risk: Mapped[Decimal | None] = mapped_column(Numeric)
+    loss_ratio: Mapped[Decimal | None] = mapped_column(Numeric)
+    combined_ratio: Mapped[Decimal | None] = mapped_column(Numeric)
     revenue: Mapped[Decimal | None] = mapped_column(Numeric)
     net_income: Mapped[Decimal | None] = mapped_column(Numeric)
     net_income_total: Mapped[Decimal | None] = mapped_column(Numeric)
