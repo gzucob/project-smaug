@@ -178,6 +178,87 @@ def test_standardize_reads_cpc41_by_label_without_currency_scaling() -> None:
     assert preferred.eps_diluted == Decimal("1.6500000000")
 
 
+def test_standardize_reconciles_equal_class_cpc41_results_for_ttm() -> None:
+    filing = {
+        "DRE": {
+            "accounts": [
+                _acc("3.01", "Receita de Venda de Bens e/ou Serviços", "900"),
+                _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "120"),
+                _acc("3.99.01.01", "ON", "1.00"),
+                _acc("3.99.01.02", "PN", "1.00"),
+                _acc("3.99.02.01", "ON", "1.00"),
+                _acc("3.99.02.02", "PN", "1.00"),
+            ]
+        }
+    }
+
+    result = standardize(
+        filing,
+        Sector.UTILITY,
+        date(2024, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        per_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED),
+    )
+
+    assert result.net_income == Decimal(120)
+    assert result.eps_basic == Decimal("1.00")
+    assert result.cpc41 is not None
+    assert result.cpc41.basic_base_eps == Decimal("1.00")
+    assert result.cpc41.diluted_base_eps == Decimal("1.00")
+    assert result.cpc41.security_multiplier == Decimal(1)
+
+
+def test_standardize_refuses_ttm_reconciliation_for_unequal_class_rights() -> None:
+    filing = {
+        "DRE": {
+            "accounts": [
+                _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "120"),
+                _acc("3.99.01.01", "ON", "1.00"),
+                _acc("3.99.01.02", "PN", "1.20"),
+                _acc("3.99.02.01", "ON", "1.00"),
+                _acc("3.99.02.02", "PN", "1.20"),
+            ]
+        }
+    }
+
+    result = standardize(
+        filing,
+        Sector.UTILITY,
+        date(2024, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        per_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED),
+    )
+
+    assert result.eps_basic == Decimal("1.00")
+    assert result.cpc41 is None
+
+
+def test_standardize_nulls_diluted_with_unobservable_potential_shares() -> None:
+    filing = {
+        "DRE": {
+            "accounts": [
+                _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "120"),
+                _acc("3.99.01.01", "ON", "1.00"),
+                _acc("3.99.01.02", "PN", "1.00"),
+                _acc("3.99.02.01", "ON", "0.90"),
+                _acc("3.99.02.02", "PN", "0.90"),
+            ]
+        }
+    }
+
+    result = standardize(
+        filing,
+        Sector.UTILITY,
+        date(2024, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        per_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED),
+    )
+
+    assert result.cpc41 is not None
+    assert result.cpc41.basic_base_eps == Decimal("1.00")
+    assert result.cpc41.diluted_base_eps is None
+
+
 def test_standardize_composes_a_unit_from_unequal_class_rights() -> None:
     # SAPR11-like bundle: 1 ON + 4 PN. The per-unit result is the economic sum,
     # not group profit divided by a closing count of underlying shares.
@@ -1245,6 +1326,7 @@ async def test_a_banks_income_and_cpc41_result_use_the_consolidated_filing() -> 
         ),
         sector_resolver=fake_sector_resolver,
         per_share_resolver=lambda _ticker: (UnitComponent(1, PerShareClass.ORDINARY),),
+        per_share_classes_resolver=lambda _ticker: (PerShareClass.ORDINARY,),
     )
 
     annual = await reader.annual("BBAS3")
@@ -1254,6 +1336,9 @@ async def test_a_banks_income_and_cpc41_result_use_the_consolidated_filing() -> 
     assert annual.revenue == Decimal("273500")
     assert annual.eps_basic == Decimal("4.6200000000")
     assert annual.eps_diluted == Decimal("4.6000000000")
+    assert annual.cpc41 is not None
+    assert annual.cpc41.basic_base_eps == Decimal("4.6200000000")
+    assert annual.cpc41.diluted_base_eps is None
     assert annual.total_assets == Decimal("2398700")
 
 

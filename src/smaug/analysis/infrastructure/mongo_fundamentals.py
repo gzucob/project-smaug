@@ -30,6 +30,7 @@ from typing import Any, Protocol
 
 from smaug.analysis.domain.financials import (
     AccountingRegime,
+    Cpc41Disclosure,
     StandardizedFinancials,
     expected_regime,
 )
@@ -100,6 +101,7 @@ _NET_INCOME_TOTAL_NAMES = (
 
 Accounts = Sequence[Mapping[str, Any]]
 PerShareResolver = Callable[[str], tuple[UnitComponent, ...]]
+PerShareClassesResolver = Callable[[str], tuple[PerShareClass, ...]]
 
 
 class RawCollection(Protocol):
@@ -109,6 +111,10 @@ class RawCollection(Protocol):
 
 
 def _no_per_share_components(_ticker: str) -> tuple[UnitComponent, ...]:
+    return ()
+
+
+def _no_per_share_classes(_ticker: str) -> tuple[PerShareClass, ...]:
     return ()
 
 
@@ -697,6 +703,29 @@ def _filed_per_share(
     if not components:
         return None, NullReason.MISSING_ECONOMIC_RIGHTS
 
+    values, reason = _filed_per_share_values(dre, prefix)
+    if values is None:
+        return None, reason
+
+    total = Decimal(0)
+    for component in components:
+        value = values.get(component.per_share_class)
+        if value is None:
+            return None, NullReason.MISSING_ECONOMIC_RIGHTS
+        total += Decimal(component.quantity) * value
+    return total, None
+
+
+def _filed_per_share_values(
+    dre: Accounts, prefix: str
+) -> tuple[dict[PerShareClass, Decimal] | None, NullReason | None]:
+    """Read one uncomposed CPC 41 result by its class labels.
+
+    The caller that composes a security may need only one class. The weighted
+    denominator proof, however, needs the complete issuer disclosure, so this
+    helper exposes every unambiguous class leaf before the target security is
+    selected.
+    """
     values: dict[PerShareClass, set[Decimal]] = {}
     expected_level = prefix.count(".") + 1
     for account in dre:
@@ -711,13 +740,65 @@ def _filed_per_share(
     if not values:
         return None, NullReason.MISSING_CPC41_DISCLOSURE
 
-    total = Decimal(0)
-    for component in components:
-        candidates = values.get(component.per_share_class, set())
+    result: dict[PerShareClass, Decimal] = {}
+    for per_share_class, candidates in values.items():
         if len(candidates) != 1:
             return None, NullReason.MISSING_ECONOMIC_RIGHTS
-        total += Decimal(component.quantity) * next(iter(candidates))
-    return total, None
+        result[per_share_class] = next(iter(candidates))
+    return result, None
+
+
+def _reconciled_cpc41(
+    dre: Accounts,
+    components: Sequence[UnitComponent],
+    company_classes: Sequence[PerShareClass],
+) -> Cpc41Disclosure | None:
+    """Prove that a filed class result can support strict TTM assembly.
+
+    When every listed economic class reports the same basic result, the
+    controller-attributable profit divided by that result is the issuer's
+    aggregate weighted denominator. This is a reconciliation of the issuer's
+    own CPC 41 disclosure, not a reconstruction from closing capital snapshots;
+    it therefore does not invent a movement date or treat outstanding shares as
+    a weighted average. A unit still carries the sum of its declared class
+    quantities.
+
+    Diluted EPS is eligible only when its complete class disclosure is identical
+    to basic EPS. Otherwise potential-share terms are present but unavailable in
+    the structured mirror, so a diluted TTM result must remain null.
+    """
+    if not components or not company_classes:
+        return None
+
+    classes = tuple(dict.fromkeys(company_classes))
+    basic_values, _basic_reason = _filed_per_share_values(dre, "3.99.01")
+    if basic_values is None or set(basic_values) != set(classes):
+        return None
+    basic_bases = {basic_values[per_share_class] for per_share_class in classes}
+    if len(basic_bases) != 1:
+        return None
+
+    multiplier = sum(
+        (Decimal(component.quantity) for component in components), Decimal(0)
+    )
+    if multiplier <= 0:
+        return None
+
+    basic_base = next(iter(basic_bases))
+    diluted_base: Decimal | None = None
+    diluted_values, _diluted_reason = _filed_per_share_values(dre, "3.99.02")
+    if diluted_values is not None and set(diluted_values) == set(classes):
+        diluted_bases = {diluted_values[per_share_class] for per_share_class in classes}
+        if len(diluted_bases) == 1:
+            candidate = next(iter(diluted_bases))
+            if candidate == basic_base:
+                diluted_base = candidate
+
+    return Cpc41Disclosure(
+        basic_base_eps=basic_base,
+        diluted_base_eps=diluted_base,
+        security_multiplier=multiplier,
+    )
 
 
 def standardize(
@@ -727,6 +808,7 @@ def standardize(
     *,
     per_share_components: Sequence[UnitComponent] = (),
     per_share_accounts: Accounts | None = None,
+    per_share_classes: Sequence[PerShareClass] = (),
 ) -> StandardizedFinancials:
     """Build one period's ``StandardizedFinancials`` from its CVM statements.
 
@@ -741,12 +823,15 @@ def standardize(
     dmpl, dmpl_s = _accounts(by_module, "DMPL"), _scale(by_module, "DMPL")
 
     filed_regime = _filed_regime(dre)
-    cpc41 = dre if per_share_accounts is None else per_share_accounts
+    cpc41_accounts = dre if per_share_accounts is None else per_share_accounts
     eps_basic, eps_basic_reason = _filed_per_share(
-        cpc41, "3.99.01", per_share_components
+        cpc41_accounts, "3.99.01", per_share_components
     )
     eps_diluted, eps_diluted_reason = _filed_per_share(
-        cpc41, "3.99.02", per_share_components
+        cpc41_accounts, "3.99.02", per_share_components
+    )
+    cpc41_disclosure = _reconciled_cpc41(
+        cpc41_accounts, per_share_components, per_share_classes
     )
 
     # Lines that sit at the same code under every regime.
@@ -765,6 +850,7 @@ def standardize(
         # Both slices travel together (ADR 0026). The chosen DRE is consolidated
         # whenever the issuer files one, including banks (ADR 0054), so the
         # controller slice and CPC 41 disclosure reconcile on one lineage.
+        cpc41=cpc41_disclosure,
         equity_total=_mul(_equity_total(bpp), bpp_s),
         net_income_total=_mul(_net_income_total(dre), dre_s),
         revenue=_mul(_by_code(dre, "3.01"), dre_s),
@@ -979,6 +1065,7 @@ class MongoFundamentalsReader:
         sector_resolver: Callable[[str], Sector],
         registrant_resolver: RegistrantResolver = no_registrant,
         per_share_resolver: PerShareResolver = _no_per_share_components,
+        per_share_classes_resolver: PerShareClassesResolver = _no_per_share_classes,
     ) -> None:
         self._collection = collection
         # The sector only seeds the ``expected_regime`` fallback (the filed regime,
@@ -989,6 +1076,7 @@ class MongoFundamentalsReader:
         # the same registry, that the sector one uses.
         self._registrant = registrant_resolver
         self._per_share = per_share_resolver
+        self._per_share_classes = per_share_classes_resolver
 
     async def history(self, ticker: str) -> list[StandardizedFinancials]:
         """ITR quarterly periods (oldest→newest) — the raw material for the TTM."""
@@ -1010,6 +1098,7 @@ class MongoFundamentalsReader:
         docs: list[Mapping[str, Any]] = await cursor.to_list(None)
         sector = self._sector_resolver(ticker)
         components = self._per_share(ticker)
+        company_classes = self._per_share_classes(ticker)
 
         by_period: dict[str, dict[str, Any]] = {}
         doc_type: dict[str, str | None] = {}
@@ -1099,6 +1188,7 @@ class MongoFundamentalsReader:
                     per_share_accounts=_accounts_of(
                         per_share_by_period.get(ref, modules.get("DRE"))
                     ),
+                    per_share_classes=company_classes,
                 ),
             )
             for ref, modules in sorted(by_period.items())

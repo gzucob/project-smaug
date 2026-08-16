@@ -82,6 +82,16 @@ export function basisOf(key: IndicatorKey): Basis {
   return CONTROLLERS_SIBLING[key] ? "total" : "controllers";
 }
 
+/** The alternate market-convention value used when a strict field is null. */
+const MARKET_FALLBACK: Partial<Record<IndicatorKey, IndicatorKey>> = {
+  eps_basic: "eps_basic_market",
+  pe_basic: "pe_basic_market",
+};
+
+export function marketFallbackOf(key: IndicatorKey): IndicatorKey | undefined {
+  return MARKET_FALLBACK[key];
+}
+
 export const INDICATORS: IndicatorSpec[] = [
   { key: "roe", label: "ROE", hint: "Retorno sobre o patrimônio líquido (fatia dos controladores)", group: "Rentabilidade", format: pct },
   { key: "roa", label: "ROA", hint: "Retorno sobre os ativos (lucro dos controladores)", group: "Rentabilidade", format: pct },

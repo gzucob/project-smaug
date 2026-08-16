@@ -19,7 +19,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from smaug.analysis.domain.entities import TickerAnalysis
+from smaug.analysis.domain.entities import VIEW_TTM, TickerAnalysis
+from smaug.analysis.domain.indicators import INDICATOR_CONTRACT, IndicatorTier
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
 from smaug.portfolio.application.manage_portfolio import ManagePortfolioUseCase
 from smaug.portfolio.domain.entities import PortfolioTicker
@@ -67,6 +68,7 @@ class IndicatorsResponse(BaseModel):
     eps: Decimal | None
     eps_basic: Decimal | None
     eps_diluted: Decimal | None
+    eps_basic_market: Decimal | None
     bvps: Decimal | None
     net_debt: Decimal | None
     cash_equivalents: Decimal | None
@@ -89,6 +91,7 @@ class IndicatorsResponse(BaseModel):
     pb: Decimal | None
     company_pe: Decimal | None
     company_pb: Decimal | None
+    pe_basic_market: Decimal | None
     psr: Decimal | None
     price_to_assets: Decimal | None
     price_to_ebit: Decimal | None
@@ -125,6 +128,19 @@ class IndicatorsResponse(BaseModel):
     null_reasons: dict[str, str]
 
 
+class IndicatorContractResponse(BaseModel):
+    """Formula and provenance metadata for one market-facing indicator."""
+
+    tier: IndicatorTier
+    basis: str
+    numerator: str
+    denominator: str
+    reference_period: str
+    price_basis: str
+    share_basis: str
+    provenance: list[str]
+
+
 class ClassificationResponse(BaseModel):
     """The B3 economic taxonomy: setor → subsetor → segmento (ADR 0024)."""
 
@@ -134,7 +150,7 @@ class ClassificationResponse(BaseModel):
 
 
 class AnalysisResponse(BaseModel):
-    """One ticker's analysis for a single view: provenance + indicators."""
+    """One ticker's analysis for a single view: provenance + indicator contract."""
 
     ticker: str
     view: str
@@ -149,6 +165,7 @@ class AnalysisResponse(BaseModel):
     debt_basis: str | None
     roic_tax_basis: str | None
     indicators: IndicatorsResponse
+    indicator_contract: dict[str, IndicatorContractResponse]
 
 
 class TickerViewsResponse(BaseModel):
@@ -168,6 +185,30 @@ class PortfolioTickerResponse(BaseModel):
 
 def _to_portfolio_response(entry: PortfolioTicker) -> PortfolioTickerResponse:
     return PortfolioTickerResponse(ticker=entry.ticker, added_at=entry.added_at)
+
+
+def _to_indicator_contract(
+    analysis: TickerAnalysis,
+) -> dict[str, IndicatorContractResponse]:
+    """Resolve static formula metadata against the row's view."""
+    period = "last_twelve_months" if analysis.view == VIEW_TTM else "closed_fiscal_year"
+    return {
+        key: IndicatorContractResponse(
+            tier=contract.tier,
+            basis=contract.basis,
+            numerator=contract.numerator,
+            denominator=contract.denominator,
+            reference_period=(
+                period
+                if contract.reference_period == "view_period"
+                else contract.reference_period
+            ),
+            price_basis=contract.price_basis,
+            share_basis=contract.share_basis,
+            provenance=list(contract.provenance),
+        )
+        for key, contract in INDICATOR_CONTRACT.items()
+    }
 
 
 def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
@@ -191,6 +232,7 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
         indicators=IndicatorsResponse.model_validate(
             analysis.indicators, from_attributes=True
         ),
+        indicator_contract=_to_indicator_contract(analysis),
     )
 
 

@@ -47,6 +47,28 @@ def expected_regime(sector: Sector) -> AccountingRegime:
     return _REGIME_BY_SECTOR.get(sector, AccountingRegime.CORPORATE)
 
 
+@dataclass(frozen=True, slots=True)
+class Cpc41Disclosure:
+    """A class-reconciled CPC 41 result that can support TTM assembly.
+
+    ``basic_base_eps`` and ``diluted_base_eps`` are the issuer's per-underlying
+    class results after proving that every listed economic class carries the same
+    value. ``security_multiplier`` composes that base result into the analyzed
+    security (for example, the number of underlying classes in a unit). This is
+    deliberately not a closing share count: the TTM builder can recover the
+    issuer's weighted denominator algebraically from the filed attributable
+    profit and this reconciled result without inventing an event date.
+
+    Diluted EPS is only eligible when it has the same base as basic EPS. A
+    different diluted result carries potential-share terms that are not present in
+    the structured mirror and therefore cannot be reconstructed strictly.
+    """
+
+    basic_base_eps: Decimal | None = None
+    diluted_base_eps: Decimal | None = None
+    security_multiplier: Decimal | None = None
+
+
 @dataclass(frozen=True)
 class StandardizedFinancials:
     """One period's normalized accounts for a ticker."""
@@ -73,6 +95,9 @@ class StandardizedFinancials:
     eps_diluted: Decimal | None = None
     eps_basic_null_reason: NullReason | None = None
     eps_diluted_null_reason: NullReason | None = None
+    # Only present when the filed class leaves reconcile to one base result and
+    # can therefore support strict TTM weighted-denominator assembly.
+    cpc41: Cpc41Disclosure | None = None
     # The consolidated totals the controllers' figures above are sliced from —
     # minority interest included (DRE 3.11, BPP 2.03 as filed). Carried alongside
     # because both slices are published numbers answering different questions

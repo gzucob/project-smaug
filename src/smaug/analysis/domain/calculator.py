@@ -252,6 +252,7 @@ _NEEDS: dict[str, _Needs] = {
     "eps": _Needs(accounts=("eps_basic",)),
     "eps_basic": _Needs(accounts=("eps_basic",)),
     "eps_diluted": _Needs(accounts=("eps_diluted",)),
+    "eps_basic_market": _Needs(accounts=("net_income",), shares=True),
     "bvps": _Needs(accounts=("equity",), shares=True),
     "net_debt": _Needs(accounts=("total_debt", "cash_equivalents")),
     "cash_equivalents": _Needs(accounts=("cash_equivalents",)),
@@ -276,6 +277,7 @@ _NEEDS: dict[str, _Needs] = {
     "pb": _Needs(accounts=("equity",), price=True, shares=True),
     "company_pe": _Needs(accounts=("net_income",), cap=True),
     "company_pb": _Needs(accounts=("equity",), cap=True),
+    "pe_basic_market": _Needs(accounts=("net_income",), price=True, shares=True),
     "psr": _Needs(accounts=("revenue",), cap=True),
     "price_to_assets": _Needs(accounts=("total_assets",), cap=True),
     "price_to_ebit": _Needs(accounts=("ebit",), cap=True),
@@ -539,6 +541,7 @@ def compute(
     # flows so a bare year-to-date period is comparable to a full year.
     annual_fcf = _annualized(_sub(f.cfo, f.capex), f)
     bvps = _div(f.equity, market.shares)
+    market_eps_basic = _div(annual_net_income, market.shares)
     claims_cost = None if f.claims_incurred is None else -f.claims_incurred
     acquisition_cost = None if f.acquisition_costs is None else -f.acquisition_costs
     admin_cost = (
@@ -573,6 +576,7 @@ def compute(
         eps=f.eps_basic,
         eps_basic=f.eps_basic,
         eps_diluted=f.eps_diluted,
+        eps_basic_market=market_eps_basic,
         bvps=bvps,
         net_debt=net_debt,
         cash_equivalents=f.cash_equivalents,
@@ -600,6 +604,7 @@ def compute(
         pb=_div(market.price, bvps),
         company_pe=_div(cap, annual_net_income),
         company_pb=_div(cap, f.equity),
+        pe_basic_market=_div(market.price, market_eps_basic),
         psr=_div(cap, annual_revenue),
         price_to_assets=_div(cap, f.total_assets),
         price_to_ebit=_div(cap, annual_ebit),

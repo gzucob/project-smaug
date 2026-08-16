@@ -4,7 +4,11 @@ from dataclasses import fields, replace
 from datetime import date
 from decimal import Decimal
 
-from smaug.analysis.domain.financials import AccountingRegime, StandardizedFinancials
+from smaug.analysis.domain.financials import (
+    AccountingRegime,
+    Cpc41Disclosure,
+    StandardizedFinancials,
+)
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.ttm import _FLOW_FIELDS, build_ttm, build_ttm_as_of
 from smaug.portfolio.domain.sectors import Sector
@@ -22,6 +26,7 @@ def _q(
     cfo: Decimal | None = None,
     capex: Decimal | None = None,
     dfc_period_start: date | None = None,
+    cpc41: Cpc41Disclosure | None = None,
 ) -> StandardizedFinancials:
     return StandardizedFinancials(
         reference_date=end,
@@ -35,6 +40,7 @@ def _q(
         dividends_paid=dividends_paid,
         cfo=cfo,
         capex=capex,
+        cpc41=cpc41,
     )
 
 
@@ -44,6 +50,155 @@ _ENDS = (
     date(2025, 12, 31),
     date(2026, 3, 31),
 )
+
+
+def _cpc41(
+    basic: str,
+    *,
+    multiplier: int = 1,
+    diluted: str | None = None,
+) -> Cpc41Disclosure:
+    return Cpc41Disclosure(
+        basic_base_eps=Decimal(basic),
+        diluted_base_eps=None if diluted is None else Decimal(diluted),
+        security_multiplier=Decimal(multiplier),
+    )
+
+
+def test_ttm_reconstructs_a_strict_share_day_weighted_basic_and_diluted_eps() -> None:
+    quarters = [
+        _q(
+            date(2025, 6, 30),
+            period_start=date(2025, 4, 1),
+            net_income=Decimal(100),
+            cpc41=_cpc41("2", diluted="2"),  # 50 weighted shares for 91 days
+        ),
+        _q(
+            date(2025, 9, 30),
+            period_start=date(2025, 7, 1),
+            net_income=Decimal(100),
+            cpc41=_cpc41("1.25", diluted="1.25"),  # 80 shares for 92 days
+        ),
+        _q(
+            date(2025, 12, 31),
+            period_start=date(2025, 10, 1),
+            net_income=Decimal(100),
+            cpc41=_cpc41("1", diluted="1"),  # 100 shares for 92 days
+        ),
+        _q(
+            date(2026, 3, 31),
+            period_start=date(2026, 1, 1),
+            net_income=Decimal(100),
+            cpc41=_cpc41("2.5", diluted="2.5"),  # 40 shares for 90 days
+        ),
+    ]
+
+    ttm = build_ttm(quarters, None)
+
+    assert ttm is not None
+    expected = Decimal(400) / (
+        (Decimal(50) * 91 + Decimal(80) * 92 + Decimal(100) * 92 + Decimal(40) * 90)
+        / Decimal(365)
+    )
+    assert ttm.eps_basic == expected
+    assert ttm.eps_diluted == expected
+    assert ttm.eps_basic_null_reason is None
+    assert ttm.eps_diluted_null_reason is None
+
+
+def test_ttm_derives_ytd_q4_only_from_a_complete_weighted_prefix() -> None:
+    jan = date(2025, 1, 1)
+    quarters = [
+        _q(
+            date(2025, 3, 31),
+            period_start=jan,
+            net_income=Decimal(100),
+            cpc41=_cpc41("1", diluted="1"),  # 100 shares YTD
+        ),
+        _q(
+            date(2025, 6, 30),
+            period_start=jan,
+            net_income=Decimal(240),
+            cpc41=_cpc41("2", diluted="2"),  # 120 shares YTD
+        ),
+        _q(
+            date(2025, 9, 30),
+            period_start=jan,
+            net_income=Decimal(330),
+            cpc41=_cpc41("3", diluted="3"),  # 110 shares YTD
+        ),
+    ]
+    annual = _q(
+        date(2025, 12, 31),
+        period_start=jan,
+        net_income=Decimal(420),
+        cpc41=_cpc41("4", diluted="4"),  # 105 shares for the full year
+    )
+
+    ttm = build_ttm(quarters, annual)
+
+    assert ttm is not None
+    assert ttm.net_income == Decimal(420)
+    assert ttm.eps_basic == Decimal(4)
+    assert ttm.eps_diluted == Decimal(4)
+
+
+def test_ttm_keeps_basic_and_nulls_diluted_when_potential_shares_are_unavailable() -> (
+    None
+):
+    quarters = [
+        _q(
+            end,
+            period_start=start,
+            net_income=Decimal(100),
+            cpc41=_cpc41("2", multiplier=5),
+        )
+        for end, start in zip(
+            _ENDS,
+            (
+                date(2025, 4, 1),
+                date(2025, 7, 1),
+                date(2025, 10, 1),
+                date(2026, 1, 1),
+            ),
+            strict=True,
+        )
+    ]
+
+    ttm = build_ttm(quarters, None)
+
+    assert ttm is not None
+    assert ttm.eps_basic == Decimal(40)
+    assert ttm.eps_diluted is None
+    assert ttm.eps_basic_null_reason is None
+    assert ttm.eps_diluted_null_reason is NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
+
+
+def test_ttm_does_not_infer_a_weighted_denominator_from_a_missing_period() -> None:
+    quarters = [
+        _q(
+            end,
+            period_start=start,
+            net_income=Decimal(100),
+            cpc41=None if end == date(2025, 9, 30) else _cpc41("2"),
+        )
+        for end, start in zip(
+            _ENDS,
+            (
+                date(2025, 4, 1),
+                date(2025, 7, 1),
+                date(2025, 10, 1),
+                date(2026, 1, 1),
+            ),
+            strict=True,
+        )
+    ]
+
+    ttm = build_ttm(quarters, None)
+
+    assert ttm is not None
+    assert ttm.eps_basic is None
+    assert ttm.eps_basic_null_reason is NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
 
 
 def test_ttm_isolates_the_declared_dividends_on_the_dmpl_span() -> None:
