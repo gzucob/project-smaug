@@ -87,6 +87,8 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.net_income_growth == Decimal("0.2")
     assert ind.pe_basic == Decimal(8)  # paper price 12 / filed basic EPS 1.50
     assert ind.pe_diluted == Decimal(12) / Decimal("1.40")
+    assert ind.eps_basic_market == Decimal(2)  # 1200 / 600 closing shares
+    assert ind.pe_basic_market == Decimal(6)  # 12 / estimated EPS 2
     assert ind.pb == Decimal("1.2")  # paper price 12 / closing BVPS 10
     assert ind.company_pe == Decimal(10)  # company cap 12000 / annual profit 1200
     assert ind.company_pb == Decimal(2)  # company cap 12000 / equity 6000
@@ -730,6 +732,35 @@ def test_missing_price_nulls_the_market_multiples_with_a_named_cause() -> None:
     assert ind.null_reasons["pb"] is NullReason.MISSING_PRICE
     assert ind.null_reasons["dividend_yield"] is NullReason.MISSING_PRICE
     assert ind.eps is not None  # filed per-share result is independent of price
+
+
+def test_market_convention_multiples_survive_a_missing_cpc41_share_input() -> None:
+    # The strict P/E needs the issuer's CPC 41 weighted-average/class-rights
+    # result. Company P/E and both closing-equity P/B variants have independent
+    # denominators and must remain available when those filed results are absent.
+    financials = replace(
+        _nonfinancial(),
+        eps_basic=None,
+        eps_basic_null_reason=NullReason.MISSING_WEIGHTED_AVERAGE_SHARES,
+    )
+
+    ind = compute(
+        financials,
+        None,
+        MarketData(
+            price=Decimal(12),
+            market_cap=Decimal(12000),
+            shares=Decimal(600),
+        ),
+    )
+
+    assert ind.pe_basic is None
+    assert ind.null_reasons["pe_basic"] is NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
+    assert ind.eps_basic_market == Decimal(2)
+    assert ind.pe_basic_market == Decimal(6)
+    assert ind.company_pe == Decimal(10)
+    assert ind.pb == Decimal("1.2")
+    assert ind.company_pb == Decimal(2)
 
 
 def test_missing_shares_blames_the_share_count_not_the_price() -> None:

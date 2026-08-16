@@ -25,8 +25,11 @@ so DFC-sourced flows (D&A and dividends) are isolated on the DFC's own span
 
 from __future__ import annotations
 
-from datetime import date
+import calendar
+from dataclasses import dataclass
+from datetime import date, timedelta
 from decimal import Decimal
+from itertools import pairwise
 
 from smaug.analysis.domain.financials import StandardizedFinancials
 from smaug.analysis.domain.indicators import NullReason
@@ -59,8 +62,34 @@ _DMPL_FLOW_FIELDS = ("dividends_declared",)
 _FLOW_FIELDS = _DRE_FLOW_FIELDS + _DFC_FLOW_FIELDS + _DMPL_FLOW_FIELDS
 _TTM_QUARTERS = 4
 _ISOLATED_SPAN_MONTHS = 3
+_ONE_DAY = timedelta(days=1)
 
 Flows = dict[str, Decimal | None]
+
+
+@dataclass(frozen=True, slots=True)
+class _WeightedPeriod:
+    """One isolated period's numerator and weighted denominator in share-days."""
+
+    profit: Decimal
+    share_days: Decimal
+    days: int
+    start: date
+    end: date
+    multiplier: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class _WeightedRunning:
+    """The validated cumulative denominator lineage for one fiscal year."""
+
+    profit: Decimal
+    share_days: Decimal
+    days: int
+    end: date | None
+    multiplier: Decimal | None
+    valid: bool
+    count: int
 
 
 def _months(start: date | None, end: date) -> int | None:
@@ -75,6 +104,258 @@ def _sub(a: Decimal | None, b: Decimal | None) -> Decimal | None:
 
 def _add(a: Decimal | None, b: Decimal | None) -> Decimal | None:
     return None if a is None or b is None else a + b
+
+
+def _period_days(period: StandardizedFinancials) -> int | None:
+    """The inclusive day span that the issuer's filed EPS covers."""
+    start = period.period_start
+    if start is None or start > period.reference_date:
+        return None
+    days = (period.reference_date - start).days + 1
+    return days if days > 0 else None
+
+
+def _weighted_period(
+    period: StandardizedFinancials, *, diluted: bool
+) -> _WeightedPeriod | None:
+    """Recover a filed period's weighted denominator without using closing shares.
+
+    ``net_income / CPC41 EPS`` is an aggregate weighted share count only after
+    the mapper has proved that every economic class has the same result. The
+    domain object carries that proof in ``cpc41``; a missing or zero result is
+    therefore a strict null rather than an estimate.
+    """
+    disclosure = period.cpc41
+    if disclosure is None or disclosure.security_multiplier is None:
+        return None
+    base_eps = disclosure.diluted_base_eps if diluted else disclosure.basic_base_eps
+    days = _period_days(period)
+    start = period.period_start
+    if (
+        base_eps is None
+        or base_eps == 0
+        or days is None
+        or start is None
+        or period.net_income is None
+        or disclosure.security_multiplier <= 0
+    ):
+        return None
+
+    average_shares = period.net_income / base_eps
+    if average_shares <= 0:
+        return None
+    return _WeightedPeriod(
+        profit=period.net_income,
+        share_days=average_shares * days,
+        days=days,
+        start=start,
+        end=period.reference_date,
+        multiplier=disclosure.security_multiplier,
+    )
+
+
+def _previous_quarter_end(value: date) -> date | None:
+    """The prior calendar-quarter endpoint for a semiannual/9-month filing."""
+    if value.month not in (3, 6, 9, 12):
+        return None
+    quarter = (value.month - 1) // 3
+    previous_year = value.year if quarter else value.year - 1
+    previous_month = quarter * 3 or 12
+    return date(
+        previous_year,
+        previous_month,
+        calendar.monthrange(previous_year, previous_month)[1],
+    )
+
+
+def _valid_ytd_prefix(running: _WeightedRunning, current: date) -> bool:
+    """Whether the already-read quarters form the complete prefix before YTD."""
+    if running.end is None or running.count == 0:
+        return False
+    if running.end != _previous_quarter_end(current):
+        return False
+    year_start = date(current.year, 1, 1)
+    return running.days == (running.end - year_start).days + 1
+
+
+def _weighted_difference(
+    current: _WeightedPeriod,
+    running: _WeightedRunning,
+    *,
+    start: date,
+) -> _WeightedPeriod | None:
+    """Isolate a YTD denominator from the preceding cumulative disclosure."""
+    if running.multiplier != current.multiplier:
+        return None
+    days = current.days - running.days
+    share_days = current.share_days - running.share_days
+    if days <= 0 or share_days <= 0:
+        return None
+    return _WeightedPeriod(
+        profit=current.profit - running.profit,
+        share_days=share_days,
+        days=days,
+        start=start,
+        end=current.end,
+        multiplier=current.multiplier,
+    )
+
+
+def _isolate_weighted_year(
+    periods: list[StandardizedFinancials], *, diluted: bool
+) -> tuple[dict[date, _WeightedPeriod | None], _WeightedRunning]:
+    """Isolate a year's weighted denominators on the same basis as its flows."""
+    isolated: dict[date, _WeightedPeriod | None] = {}
+    running = _WeightedRunning(Decimal(0), Decimal(0), 0, None, None, True, 0)
+
+    for period in periods:
+        measured = _weighted_period(period, diluted=diluted)
+        span = _months(period.period_start, period.reference_date)
+        is_ytd = span is not None and span > _ISOLATED_SPAN_MONTHS
+        next_count = running.count + 1
+
+        if measured is None or not running.valid:
+            isolated[period.reference_date] = None
+            running = _WeightedRunning(
+                measured.profit if measured is not None else running.profit,
+                measured.share_days if measured is not None else running.share_days,
+                measured.days if measured is not None else running.days,
+                period.reference_date,
+                measured.multiplier if measured is not None else running.multiplier,
+                False,
+                next_count,
+            )
+            continue
+
+        if is_ytd:
+            # CVM's accumulated ITR columns must start on 1 January and follow
+            # the immediately preceding quarter. Otherwise subtraction would
+            # silently turn a missing or partial prefix into a quarter.
+            valid_prefix = (
+                period.period_start == date(period.reference_date.year, 1, 1)
+                and period.reference_date.month in (6, 9)
+                and _valid_ytd_prefix(running, period.reference_date)
+            )
+            start = (
+                running.end + _ONE_DAY if running.end is not None else measured.start
+            )
+            candidate = (
+                _weighted_difference(measured, running, start=start)
+                if valid_prefix
+                else None
+            )
+            isolated[period.reference_date] = candidate
+            running = _WeightedRunning(
+                measured.profit,
+                measured.share_days,
+                measured.days,
+                period.reference_date,
+                measured.multiplier,
+                candidate is not None,
+                next_count,
+            )
+            continue
+
+        same_multiplier = (
+            running.count == 0 or running.multiplier == measured.multiplier
+        )
+        candidate = measured if same_multiplier else None
+        isolated[period.reference_date] = candidate
+        if candidate is None:
+            running = _WeightedRunning(
+                running.profit,
+                running.share_days,
+                running.days,
+                period.reference_date,
+                running.multiplier,
+                False,
+                next_count,
+            )
+        else:
+            running = _WeightedRunning(
+                running.profit + measured.profit,
+                running.share_days + measured.share_days,
+                running.days + measured.days,
+                period.reference_date,
+                measured.multiplier,
+                True,
+                next_count,
+            )
+
+    return isolated, running
+
+
+def _weighted_isolated(
+    quarters: list[StandardizedFinancials],
+    annual: StandardizedFinancials | None,
+    *,
+    diluted: bool,
+) -> dict[date, _WeightedPeriod | None]:
+    """Build isolated weighted periods, including a provable annual Q4."""
+    by_year: dict[int, list[StandardizedFinancials]] = {}
+    for quarter in quarters:
+        by_year.setdefault(quarter.reference_date.year, []).append(quarter)
+
+    isolated: dict[date, _WeightedPeriod | None] = {}
+    cumulative: dict[int, _WeightedRunning] = {}
+    for year, periods in by_year.items():
+        year_isolated, running = _isolate_weighted_year(
+            sorted(periods, key=lambda p: p.reference_date), diluted=diluted
+        )
+        isolated.update(year_isolated)
+        cumulative[year] = running
+
+    if annual is not None:
+        annual_running = cumulative.get(annual.reference_date.year)
+        measured = _weighted_period(annual, diluted=diluted)
+        year_start = date(annual.reference_date.year, 1, 1)
+        complete_prefix = (
+            annual_running is not None
+            and annual_running.valid
+            and annual_running.count == 3
+            and annual_running.end == date(annual.reference_date.year, 9, 30)
+            and annual_running.days == (annual_running.end - year_start).days + 1
+        )
+        if (
+            complete_prefix
+            and measured is not None
+            and annual_running is not None
+            and annual_running.multiplier == measured.multiplier
+        ):
+            q4 = _weighted_difference(
+                measured,
+                annual_running,
+                start=date(annual.reference_date.year, 10, 1),
+            )
+            isolated[annual.reference_date] = q4
+        else:
+            isolated[annual.reference_date] = None
+    return isolated
+
+
+def _ttm_weighted_eps(
+    periods: dict[date, _WeightedPeriod | None],
+    refs: list[date],
+) -> Decimal | None:
+    """Calculate TTM EPS from the four isolated, share-day-weighted periods."""
+    selected = [periods.get(ref) for ref in refs]
+    if any(period is None for period in selected):
+        return None
+    complete = [period for period in selected if period is not None]
+    if len({period.multiplier for period in complete}) != 1:
+        return None
+
+    ordered = sorted(complete, key=lambda period: period.start)
+    for previous, current in pairwise(ordered):
+        if current.start != previous.end + _ONE_DAY:
+            return None
+    total_days = sum((period.days for period in complete), 0)
+    share_days = sum((period.share_days for period in complete), Decimal(0))
+    if total_days <= 0 or share_days <= 0:
+        return None
+    profit = sum((period.profit for period in complete), Decimal(0))
+    base_eps = profit / (share_days / Decimal(total_days))
+    return base_eps * complete[0].multiplier
 
 
 def _isolate_year(
@@ -194,6 +475,11 @@ def _build_ttm(
     ):
         return None
 
+    weighted_basic = _weighted_isolated(quarters, annual, diluted=False)
+    weighted_diluted = _weighted_isolated(quarters, annual, diluted=True)
+    eps_basic = _ttm_weighted_eps(weighted_basic, refs)
+    eps_diluted = _ttm_weighted_eps(weighted_diluted, refs)
+
     summed: Flows = {}
     for name in _FLOW_FIELDS:
         values = [isolated[ref][name] for ref in refs]
@@ -222,12 +508,21 @@ def _build_ttm(
         equity_total=stock_source.equity_total,
         net_income=summed["net_income"],
         net_income_total=summed["net_income_total"],
-        # Per-share results cannot be added or subtracted across quarters: each
-        # filed value has its own weighted denominator and class allocation.
-        # Until a complete movement ledger exists, the TTM result is explicitly
-        # unavailable rather than rebuilt from the closing share count.
-        eps_basic_null_reason=NullReason.MISSING_WEIGHTED_AVERAGE_SHARES,
-        eps_diluted_null_reason=NullReason.MISSING_WEIGHTED_AVERAGE_SHARES,
+        # The weighted denominator is recovered only from a class-reconciled
+        # CPC 41 disclosure for every period. A missing proof remains a named
+        # null; closing shares are never substituted.
+        eps_basic=eps_basic,
+        eps_diluted=eps_diluted,
+        eps_basic_null_reason=(
+            None
+            if eps_basic is not None
+            else NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
+        ),
+        eps_diluted_null_reason=(
+            None
+            if eps_diluted is not None
+            else NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
+        ),
         revenue=summed["revenue"],
         gross_profit=summed["gross_profit"],
         ebit=summed["ebit"],

@@ -89,6 +89,241 @@ class NullReason(StrEnum):
     NON_POSITIVE_ENDPOINT = "non_positive_endpoint"
 
 
+class IndicatorTier(StrEnum):
+    """How much interpretation is involved in an indicator's published value."""
+
+    STRICT = "strict"
+    MARKET_CONVENTION = "market_convention"
+
+
+@dataclass(frozen=True)
+class IndicatorContract:
+    """Machine-readable basis metadata for market-facing indicators.
+
+    The contract is static because it describes the formula, while the analysis
+    row carries the view-specific price and share bases referenced by it. Keeping
+    the two separate lets a client explain a value without inferring its meaning
+    from a display label.
+    """
+
+    tier: IndicatorTier
+    basis: str
+    numerator: str
+    denominator: str
+    reference_period: str
+    price_basis: str
+    share_basis: str
+    provenance: tuple[str, ...]
+
+
+# The market-facing family needs a basis beyond a bare number. In particular,
+# ``company_pe``/``company_pb`` are useful market conventions, while the
+# per-security P/E fields retain the strict CPC 41 contract. The codes are stable
+# API vocabulary; the front-end localizes them for readers.
+INDICATOR_CONTRACT: dict[str, IndicatorContract] = {
+    "pe_basic": IndicatorContract(
+        tier=IndicatorTier.STRICT,
+        basis="security_cpc41",
+        numerator="security_price",
+        denominator="cpc41_basic_eps",
+        reference_period="view_period",
+        price_basis="analysis.price_basis",
+        share_basis="cpc41_weighted_average_class_rights",
+        provenance=("cvm", "b3"),
+    ),
+    "eps_basic_market": IndicatorContract(
+        tier=IndicatorTier.MARKET_CONVENTION,
+        basis="security_market_convention",
+        numerator="annualized_attributable_net_income",
+        denominator="closing_outstanding_shares",
+        reference_period="view_period",
+        price_basis="not_applicable",
+        share_basis="analysis.share_count_basis",
+        provenance=("cvm",),
+    ),
+    "pe_basic_market": IndicatorContract(
+        tier=IndicatorTier.MARKET_CONVENTION,
+        basis="security_market_convention",
+        numerator="security_price",
+        denominator="market_convention_basic_eps",
+        reference_period="view_period",
+        price_basis="analysis.price_basis",
+        share_basis="analysis.share_count_basis",
+        provenance=("cvm", "b3"),
+    ),
+    "pe_diluted": IndicatorContract(
+        tier=IndicatorTier.STRICT,
+        basis="security_cpc41",
+        numerator="security_price",
+        denominator="cpc41_diluted_eps",
+        reference_period="view_period",
+        price_basis="analysis.price_basis",
+        share_basis="cpc41_weighted_average_class_rights",
+        provenance=("cvm", "b3"),
+    ),
+    "pb": IndicatorContract(
+        tier=IndicatorTier.STRICT,
+        basis="security_closing",
+        numerator="security_price",
+        denominator="closing_attributable_bvps",
+        reference_period="reference_date_closing",
+        price_basis="analysis.price_basis",
+        share_basis="analysis.share_count_basis",
+        provenance=("cvm", "b3"),
+    ),
+    "company_pe": IndicatorContract(
+        tier=IndicatorTier.MARKET_CONVENTION,
+        basis="company_market_convention",
+        numerator="market_capitalization",
+        denominator="attributable_net_income",
+        reference_period="view_period",
+        price_basis="analysis.price_basis",
+        share_basis="listed_classes_outstanding",
+        provenance=("cvm", "b3"),
+    ),
+    "company_pb": IndicatorContract(
+        tier=IndicatorTier.MARKET_CONVENTION,
+        basis="company_market_convention",
+        numerator="market_capitalization",
+        denominator="current_attributable_equity",
+        reference_period="reference_date_closing",
+        price_basis="analysis.price_basis",
+        share_basis="listed_classes_outstanding",
+        provenance=("cvm", "b3"),
+    ),
+    "psr": IndicatorContract(
+        tier=IndicatorTier.MARKET_CONVENTION,
+        basis="company_market_convention",
+        numerator="market_capitalization",
+        denominator="attributable_revenue",
+        reference_period="view_period",
+        price_basis="analysis.price_basis",
+        share_basis="listed_classes_outstanding",
+        provenance=("cvm", "b3"),
+    ),
+    "price_to_assets": IndicatorContract(
+        tier=IndicatorTier.MARKET_CONVENTION,
+        basis="company_market_convention",
+        numerator="market_capitalization",
+        denominator="total_assets",
+        reference_period="reference_date_closing",
+        price_basis="analysis.price_basis",
+        share_basis="listed_classes_outstanding",
+        provenance=("cvm", "b3"),
+    ),
+    "price_to_ebit": IndicatorContract(
+        tier=IndicatorTier.MARKET_CONVENTION,
+        basis="company_market_convention",
+        numerator="market_capitalization",
+        denominator="ebit",
+        reference_period="view_period",
+        price_basis="analysis.price_basis",
+        share_basis="listed_classes_outstanding",
+        provenance=("cvm", "b3"),
+    ),
+    "price_to_working_capital": IndicatorContract(
+        tier=IndicatorTier.MARKET_CONVENTION,
+        basis="company_market_convention",
+        numerator="market_capitalization",
+        denominator="working_capital",
+        reference_period="reference_date_closing",
+        price_basis="analysis.price_basis",
+        share_basis="listed_classes_outstanding",
+        provenance=("cvm", "b3"),
+    ),
+    "dividend_yield": IndicatorContract(
+        tier=IndicatorTier.STRICT,
+        basis="security_b3_cash_rights",
+        numerator="b3_cash_rights_per_security",
+        denominator="security_price",
+        reference_period="cash_rights_window",
+        price_basis="analysis.price_basis",
+        share_basis="b3_cash_rights_per_security",
+        provenance=("b3",),
+    ),
+    "payout_cash_paid_in_period": IndicatorContract(
+        tier=IndicatorTier.STRICT,
+        basis="company_cvm_period_cash",
+        numerator="cvm_dividends_paid",
+        denominator="attributable_net_income",
+        reference_period="view_period",
+        price_basis="not_applicable",
+        share_basis="not_applicable",
+        provenance=("cvm",),
+    ),
+    "payout_declared_in_period": IndicatorContract(
+        tier=IndicatorTier.STRICT,
+        basis="company_cvm_period_declared",
+        numerator="cvm_dividends_declared",
+        denominator="attributable_net_income",
+        reference_period="view_period",
+        price_basis="not_applicable",
+        share_basis="not_applicable",
+        provenance=("cvm",),
+    ),
+    "company_cash_yield_paid_in_period": IndicatorContract(
+        tier=IndicatorTier.MARKET_CONVENTION,
+        basis="company_market_convention",
+        numerator="cvm_dividends_paid",
+        denominator="market_capitalization",
+        reference_period="view_period",
+        price_basis="analysis.price_basis",
+        share_basis="listed_classes_outstanding",
+        provenance=("cvm", "b3"),
+    ),
+    "company_yield_declared_in_period": IndicatorContract(
+        tier=IndicatorTier.MARKET_CONVENTION,
+        basis="company_market_convention",
+        numerator="cvm_dividends_declared",
+        denominator="market_capitalization",
+        reference_period="view_period",
+        price_basis="analysis.price_basis",
+        share_basis="listed_classes_outstanding",
+        provenance=("cvm", "b3"),
+    ),
+    "ev_ebitda": IndicatorContract(
+        tier=IndicatorTier.MARKET_CONVENTION,
+        basis="company_enterprise_value",
+        numerator="market_capitalization_plus_net_debt_plus_nci",
+        denominator="ebitda",
+        reference_period="view_period",
+        price_basis="analysis.price_basis",
+        share_basis="listed_classes_outstanding",
+        provenance=("cvm", "b3"),
+    ),
+    "ev_ebit": IndicatorContract(
+        tier=IndicatorTier.MARKET_CONVENTION,
+        basis="company_enterprise_value",
+        numerator="market_capitalization_plus_net_debt_plus_nci",
+        denominator="ebit",
+        reference_period="view_period",
+        price_basis="analysis.price_basis",
+        share_basis="listed_classes_outstanding",
+        provenance=("cvm", "b3"),
+    ),
+    "price_to_fcf": IndicatorContract(
+        tier=IndicatorTier.MARKET_CONVENTION,
+        basis="company_market_convention",
+        numerator="market_capitalization",
+        denominator="free_cash_flow",
+        reference_period="view_period",
+        price_basis="analysis.price_basis",
+        share_basis="listed_classes_outstanding",
+        provenance=("cvm", "b3"),
+    ),
+    "fcf_yield": IndicatorContract(
+        tier=IndicatorTier.MARKET_CONVENTION,
+        basis="company_market_convention",
+        numerator="free_cash_flow",
+        denominator="market_capitalization",
+        reference_period="view_period",
+        price_basis="analysis.price_basis",
+        share_basis="listed_classes_outstanding",
+        provenance=("cvm", "b3"),
+    ),
+}
+
+
 @dataclass(frozen=True)
 class Indicators:
     """Fundamental + market indicators for one ticker at one point in time."""
@@ -120,6 +355,10 @@ class Indicators:
     eps: Decimal | None = None
     eps_basic: Decimal | None = None
     eps_diluted: Decimal | None = None
+    # Market convention fallback: attributable earnings divided by closing
+    # outstanding shares. It remains separate from the CPC 41 fields; callers
+    # choose it only when the strict result is unavailable.
+    eps_basic_market: Decimal | None = None
     bvps: Decimal | None = None  # VPA — book value per share
     # Leverage / liquidity
     net_debt: Decimal | None = None
@@ -162,6 +401,8 @@ class Indicators:
     # classes share these because both numerator and denominator cover the firm.
     company_pe: Decimal | None = None
     company_pb: Decimal | None = None
+    # Per-security market-convention multiple, paired with ``eps_basic_market``.
+    pe_basic_market: Decimal | None = None
     psr: Decimal | None = None  # P/Receita — price / sales
     price_to_assets: Decimal | None = None
     price_to_ebit: Decimal | None = None

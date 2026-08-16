@@ -46,6 +46,7 @@ export interface Indicators {
   eps: Decimalish;
   eps_basic: Decimalish;
   eps_diluted: Decimalish;
+  eps_basic_market: Decimalish;
   bvps: Decimalish;
   net_debt: Decimalish;
   cash_equivalents: Decimalish;
@@ -70,6 +71,7 @@ export interface Indicators {
   pb: Decimalish;
   company_pe: Decimalish;
   company_pb: Decimalish;
+  pe_basic_market: Decimalish;
   psr: Decimalish;
   price_to_assets: Decimalish;
   price_to_ebit: Decimalish;
@@ -110,6 +112,22 @@ export interface Indicators {
   // Why each null is null (ADR 0008). A key absent from the map is a null with
   // no recorded cause — "unclassified", a reportable status of its own (#47).
   null_reasons: Partial<Record<string, NullReason>>;
+}
+
+export type IndicatorTier = "strict" | "market_convention";
+
+/** Formula metadata published by the API for market-facing indicators. */
+export interface IndicatorContract {
+  tier: IndicatorTier;
+  basis: string;
+  numerator: string;
+  denominator: string;
+  reference_period: string;
+  /** Points to the view-level price basis carried by `Analysis`. */
+  price_basis: string;
+  /** States whether the metric uses CPC 41 or closing/outstanding shares. */
+  share_basis: string;
+  provenance: string[];
 }
 
 /**
@@ -155,6 +173,8 @@ export interface Analysis {
   debt_basis: string | null;
   roic_tax_basis: string | null;
   indicators: Indicators;
+  /** Present for market-facing indicators; older API versions may omit it. */
+  indicator_contract?: Partial<Record<IndicatorKey, IndicatorContract>>;
 }
 
 export interface TickerViews {

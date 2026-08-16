@@ -126,7 +126,11 @@ from smaug.portfolio.domain.securities import (
     RegistrantNamesResolver,
     SiblingCodesResolver,
 )
-from smaug.portfolio.domain.share_classes import ShareClass, UnitComponent
+from smaug.portfolio.domain.share_classes import (
+    PerShareClass,
+    ShareClass,
+    UnitComponent,
+)
 from smaug.portfolio.domain.taxonomy import (
     TAXONOMY_SNAPSHOT,
     Classification,
@@ -321,6 +325,22 @@ def _per_share_resolver(
     def resolve(ticker: str) -> tuple[UnitComponent, ...]:
         identity = identities.get(ticker)
         return per_share_components(identity) if identity is not None else ()
+
+    return resolve
+
+
+def _per_share_classes_resolver(
+    identities: dict[str, CompanyIdentity],
+) -> Callable[[str], tuple[PerShareClass, ...]]:
+    """All listed economic classes whose CPC 41 leaves must reconcile."""
+
+    def resolve(ticker: str) -> tuple[PerShareClass, ...]:
+        identity = identities.get(ticker)
+        return (
+            tuple(share_class.per_share_class for share_class in identity.share_classes)
+            if identity is not None
+            else ()
+        )
 
     return resolve
 
@@ -1309,6 +1329,7 @@ async def _run_analyze(
                     sector_resolver=_sector_resolver(identities),
                     registrant_resolver=registrant,
                     per_share_resolver=_per_share_resolver(identities),
+                    per_share_classes_resolver=_per_share_classes_resolver(identities),
                 ),
                 price_provider=_build_price_provider(
                     shares_reader,

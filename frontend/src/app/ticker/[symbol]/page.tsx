@@ -3,6 +3,7 @@ import { HistoryCharts } from "@/components/HistoryCharts";
 import { HistoryStrip } from "@/components/HistoryStrip";
 import { ClassificationBadge } from "@/components/ClassificationBadge";
 import { FavoriteButton } from "@/components/FavoriteButton";
+import { ValuationSummary } from "@/components/ValuationSummary";
 import { ViewPanel } from "@/components/ViewPanel";
 import { VaultOffline } from "@/components/VaultOffline";
 import { fetchPortfolioList, fetchTicker } from "@/lib/api";
@@ -104,6 +105,8 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
           </div>
         ))}
       </div>
+
+      <ValuationSummary analysis={reference} />
 
       {/* --------------------------------------------------- indicators --- */}
       {/* One grid, not two. The page used to stack the twelve-month window and

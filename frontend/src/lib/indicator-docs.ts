@@ -312,6 +312,27 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
     caveat: "O TTM fica n/d quando não existe uma média ponderada reconciliável; nunca usamos a quantidade de fechamento como substituta.",
   },
+  eps_basic_market: {
+    formula: "Lucro atribuível anualizado ÷ ações em circulação no fechamento",
+    what: "Estimativa de LPA por convenção de mercado, usada como fallback quando o LPA CPC 41 não pode ser reconciliado no período.",
+    strongIn: [
+      {
+        where: "Leitura rápida de uma companhia com divulgação CPC 41 incompleta para o TTM",
+        why: "mantém o indicador disponível usando apenas o lucro e a quantidade de ações de fechamento publicados",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Empresas com direitos econômicos diferentes entre classes",
+        why: "o lucro total é distribuído sobre as ações de fechamento sem provar a atribuição CPC 41 de cada classe",
+      },
+      {
+        where: "Empresas com muitas emissões ou recompras durante o período",
+        why: "a quantidade de fechamento não representa a média ponderada ao longo dos meses",
+      },
+    ],
+    caveat: "Não é LPA CPC 41. O valor é identificado como estimativa e usa a base de ações de fechamento da CVM; nunca substitui o campo estrito quando este existe.",
+  },
   eps_diluted: {
     formula: "Resultado ajustado ÷ média ponderada diluída de ações",
     what: "A participação por ação após considerar apenas instrumentos potenciais com efeito diluidor, como conversíveis, opções e bônus.",
@@ -678,6 +699,27 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
   },
+  pe_basic_market: {
+    formula: "Preço do papel ÷ LPA básico estimado por ações de fechamento",
+    what: "P/L do papel em convenção de mercado, usado somente como fallback quando o P/L CPC 41 não pode ser calculado.",
+    strongIn: [
+      {
+        where: "Comparação operacional entre papéis de uma empresa",
+        why: "preserva o preço de cada ticker mesmo quando o denominador CPC 41 do TTM está incompleto",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Classes ON e PN com direitos econômicos diferentes",
+        why: "o denominador reparte o lucro atribuível sobre a base de fechamento e não prova o resultado específico da classe",
+      },
+      {
+        where: "Períodos com forte mudança na quantidade de ações",
+        why: "a base de fechamento pode divergir materialmente da média ponderada CPC 41",
+      },
+    ],
+    caveat: "O aviso 'fora do CPC 41' acompanha o valor. A estimativa usa somente CVM/B3 e não substitui o P/L básico estrito, que continua separado.",
+  },
   pe_diluted: {
     formula: "Preço do papel ÷ LPA diluído CPC 41 da classe",
     what: "O P/L após incorporar instrumentos potenciais com efeito diluidor no resultado por ação divulgado pela companhia.",
@@ -720,8 +762,8 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     caveat: "O VPA aloca o patrimônio dos controladores igualmente por ação subjacente em circulação; uma unit soma as quantidades do pacote FCA.",
   },
   company_pe: {
-    formula: "Valor de mercado da companhia ÷ Lucro dos controladores anualizado",
-    what: "O múltiplo agregado da companhia inteira. É igual entre classes irmãs e fica separado do P/L por papel.",
+    formula: "Capitalização de mercado ÷ lucro atribuível aos controladores do período",
+    what: "A convenção de mercado para a companhia inteira: na visão TTM usa o lucro atribuível dos últimos 12 meses; no histórico, o exercício fechado. É igual entre classes irmãs e fica separado do P/L por papel.",
     strongIn: [
       {
         where: "Comparações da companhia como um todo",
@@ -734,10 +776,11 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "não distingue o preço nem os direitos de cada papel",
       },
     ],
+    caveat: "O numerador soma os preços B3 de todas as classes listadas sobre suas ações em circulação; o denominador é o lucro atribuível aos controladores. É uma convenção de mercado, não um P/L CPC 41 por classe.",
   },
   company_pb: {
-    formula: "Valor de mercado da companhia ÷ Patrimônio dos controladores",
-    what: "O P/VP agregado da empresa, preservado sob nome explícito para não ser confundido com preço por VPA do papel.",
+    formula: "Capitalização de mercado ÷ patrimônio atual atribuível aos controladores",
+    what: "A convenção de mercado para o P/VP agregado da companhia, preservada sob nome explícito para não ser confundida com preço por VPA do papel.",
     strongIn: [
       {
         where: "Análise do valor total dos controladores",
@@ -750,6 +793,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "é deliberadamente igual para todas elas",
       },
     ],
+    caveat: "O patrimônio é o saldo de fechamento da data de referência; o numerador é a capitalização agregada das classes listadas. O resultado não substitui o P/VP estrito do papel.",
   },
   psr: {
     formula: "Valor de mercado ÷ Receita líquida anualizada",
