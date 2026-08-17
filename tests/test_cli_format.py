@@ -16,6 +16,13 @@ from smaug.analysis.application.doctor import (
 )
 from smaug.analysis.application.drift import AccountDrift, DriftReport, TickerDrift
 from smaug.analysis.domain.entities import VIEW_CLOSED_YEAR, TickerAnalysis
+from smaug.analysis.domain.financials import (
+    AccountingRegime,
+    DebtBlocker,
+    DebtCoverageEvidence,
+    DebtEvidenceSnapshot,
+    RegimeSource,
+)
 from smaug.analysis.domain.indicators import Indicators, NullReason
 from smaug.entrypoints.cli import (
     _format_collection_log,
@@ -312,6 +319,45 @@ def test_doctor_summary_says_so_when_every_null_is_named() -> None:
     )
 
     assert "every null carries a named cause." in format_doctor_summary(report)
+
+
+def test_doctor_reconciles_debt_decisions_with_dependent_indicator_cells() -> None:
+    evidence = DebtCoverageEvidence(
+        regime=AccountingRegime.CORPORATE,
+        regime_source=RegimeSource.FILED,
+        primary_blocker=DebtBlocker.INCOMPLETE_DEBT_COVERAGE,
+        secondary_blockers=(DebtBlocker.MISSING_NON_CURRENT_AGGREGATE,),
+    )
+    report = DoctorReport(
+        tickers=(
+            TickerCoverage(
+                ticker="AAAA3",
+                sector=Sector.INDUSTRY,
+                exercises=(
+                    ExerciseCoverage(
+                        view=VIEW_CLOSED_YEAR,
+                        reference_date=date(2024, 12, 31),
+                        indicators=(
+                            IndicatorCoverage(
+                                "net_debt",
+                                False,
+                                NullReason.INCOMPLETE_DEBT_COVERAGE,
+                            ),
+                        ),
+                        debt_evidence=evidence,
+                        debt_evidence_snapshot=DebtEvidenceSnapshot.HISTORICAL,
+                    ),
+                ),
+            ),
+        )
+    )
+
+    out = format_doctor_summary(report)
+
+    assert "persisted decisions=1 incomplete=1" in out
+    assert "dependent indicator cells with incomplete_debt_coverage=1" in out
+    assert "legacy snapshots=0 unclassified blockers=0" in out
+    assert "one debt decision per persisted row" in out
 
 
 def test_analysis_run_summary_names_a_failure_and_counts_the_rest() -> None:

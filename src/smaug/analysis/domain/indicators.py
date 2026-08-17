@@ -14,6 +14,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from decimal import Decimal
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from smaug.analysis.domain.financials import (
+        BankRegulatoryProvenance,
+        SourceAccountEvidence,
+    )
 
 
 class NullReason(StrEnum):
@@ -32,18 +39,25 @@ class NullReason(StrEnum):
       regulator/issuer disclosure outside the CVM structured statements, such as
       average earning assets and a bank's complete efficiency perimeter. No
       closing-balance or partial-account approximation substitutes for it.
+    * ``PARTIAL_REGULATORY_DISCLOSURE`` / ``INCOMPATIBLE_REGULATORY_DISCLOSURE``
+      — a bank disclosure provides only one side of a required pair, or its
+      source metadata cannot prove the same period/perimeter/basis.
     * ``INCOMPLETE_DEBT_COVERAGE`` — the balance sheet does not establish a
       complete interest-bearing-liability perimeter. An absent borrowing line is
       not evidence of zero debt, and an undecomposed generic financial-liability
       bucket is not silently promoted to debt.
-    * ``MISSING_PRICE`` / ``MISSING_SHARE_COUNT`` /
+    * ``MISSING_PRICE`` / ``PRICE_SYMBOL_NOT_FOUND`` /
+      ``PRICE_SOURCE_UNAVAILABLE`` / ``PRICE_SOURCE_MALFORMED`` /
+      ``PRICE_SOURCE_TIMEOUT`` / ``MISSING_SHARE_COUNT`` /
       ``MISSING_UNIT_COMPOSITION`` / ``MISSING_PRIOR_PERIOD`` —
       an upstream input from another source is missing (the quote series, the
       FRE share count, the prior year's ingestion), split so a report can say
       *which*. ``MISSING_PRICE`` is the *transient* price miss (no session for
       that year); ``PRICE_SYMBOL_NOT_FOUND`` is its non-transient sibling — the
       series does not carry the code at all (a delisting, or a rename #193), so
-      the null is structural, not a passing outage (#64).
+      the null is structural, not a passing outage (#64). The three
+      ``PRICE_SOURCE_*`` causes distinguish an unavailable archive, malformed
+      content, and a timeout.
       ``NOT_YET_LISTED`` is the third, at the other end of the timeline: the
       period *precedes the instrument's first trade*, so no source will ever fill
       it — CXSE3 listed in 2021 and the SAPR11 unit did not exist before 2017,
@@ -74,10 +88,15 @@ class NullReason(StrEnum):
     SOURCE_ACCOUNT_ABSENT = "source_account_absent"
     MISSING_PRICE = "missing_price"
     PRICE_SYMBOL_NOT_FOUND = "price_symbol_not_found"
+    PRICE_SOURCE_UNAVAILABLE = "price_source_unavailable"
+    PRICE_SOURCE_MALFORMED = "price_source_malformed"
+    PRICE_SOURCE_TIMEOUT = "price_source_timeout"
     NOT_YET_LISTED = "not_yet_listed"
     MISSING_SHARE_COUNT = "missing_share_count"
     MISSING_UNIT_COMPOSITION = "missing_unit_composition"
     MISSING_REGULATORY_DISCLOSURE = "missing_regulatory_disclosure"
+    PARTIAL_REGULATORY_DISCLOSURE = "partial_regulatory_disclosure"
+    INCOMPATIBLE_REGULATORY_DISCLOSURE = "incompatible_regulatory_disclosure"
     INCOMPLETE_DEBT_COVERAGE = "incomplete_debt_coverage"
     MISSING_CPC41_DISCLOSURE = "missing_cpc41_disclosure"
     MISSING_WEIGHTED_AVERAGE_SHARES = "missing_weighted_average_shares"
@@ -466,6 +485,10 @@ class Indicators:
     enterprise_value: Decimal | None = None
     non_controlling_interests: Decimal | None = None
     shares: Decimal | None = None
+    # Raw-account lineage is output metadata, not an indicator cell. It is
+    # intentionally excluded from ``indicator_names`` below.
+    source_account_evidence: tuple[SourceAccountEvidence, ...] = ()
+    bank_regulatory_provenance: BankRegulatoryProvenance | None = None
     # Why each null field is null, keyed by the field's name. Only null fields
     # appear; a null field with no entry is unclassified (see ``NullReason``).
     null_reasons: Mapping[str, NullReason] = field(default_factory=dict)
@@ -478,4 +501,13 @@ def indicator_names() -> tuple[str, ...]:
     the coverage report (#47) enumerates exactly these, and ``null_reasons`` (the
     attribution map, not an indicator) is excluded.
     """
-    return tuple(f.name for f in fields(Indicators) if f.name != "null_reasons")
+    return tuple(
+        f.name
+        for f in fields(Indicators)
+        if f.name
+        not in {
+            "null_reasons",
+            "source_account_evidence",
+            "bank_regulatory_provenance",
+        }
+    )

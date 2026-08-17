@@ -25,12 +25,14 @@ from smaug.analysis.application.analyze import (
     AnalyzePortfolioUseCase,
 )
 from smaug.analysis.application.doctor import (
+    DebtCoverageSummary,
     DoctorReport,
     DoctorUseCase,
     ExerciseCoverage,
 )
 from smaug.analysis.application.drift import AccountDriftUseCase, DriftReport
 from smaug.analysis.domain.entities import TickerAnalysis
+from smaug.analysis.domain.financials import IssuerIdentity
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.ports import (
     CashEventReader,
@@ -256,6 +258,24 @@ def _registrant_resolver(
     def resolve(ticker: str) -> str | None:
         identity = identities.get(ticker)
         return identity.cd_cvm if identity is not None else None
+
+    return resolve
+
+
+def _issuer_resolver(
+    identities: dict[str, CompanyIdentity],
+) -> Callable[[str], IssuerIdentity | None]:
+    """Resolve the complete issuer identity used by persisted debt evidence."""
+
+    def resolve(ticker: str) -> IssuerIdentity | None:
+        identity = identities.get(ticker)
+        if identity is None:
+            return None
+        return IssuerIdentity(
+            cd_cvm=identity.cd_cvm,
+            cnpj=identity.cnpj,
+            issuer_name=identity.denom,
+        )
 
     return resolve
 
@@ -1328,6 +1348,7 @@ async def _run_analyze(
                     mongo[settings.mongo_db]["raw_ingestions"],
                     sector_resolver=_sector_resolver(identities),
                     registrant_resolver=registrant,
+                    issuer_resolver=_issuer_resolver(identities),
                     per_share_resolver=_per_share_resolver(identities),
                     per_share_classes_resolver=_per_share_classes_resolver(identities),
                 ),
@@ -1441,6 +1462,7 @@ async def _run_doctor(
                 mongo[settings.mongo_db]["raw_ingestions"],
                 sector_resolver=resolver,
                 registrant_resolver=_registrant_resolver(identities),
+                issuer_resolver=_issuer_resolver(identities),
             )
         ).execute(tickers)
     finally:
@@ -1458,7 +1480,7 @@ async def _run_doctor(
     # vocabularied yet, and at exchange scale that is the only finding a nine-
     # ticker fidelity fixture cannot see. The threshold is zero, not a share —
     # today's mirror already clears it (316,008 cells, 0 unclassified).
-    return 1 if report.unclassified else 0
+    return 1 if report.unclassified or report.debt_coverage.unclassified_blockers else 0
 
 
 @app.command()
@@ -1977,7 +1999,26 @@ def format_doctor(report: DoctorReport) -> str:
     if unclassified:
         who = ", ".join(sorted(tickers_with_unclassified))
         lines.append(f"    !! {unclassified} unclassified nulls across: {who}")
+    lines.extend(_format_debt_coverage(report.debt_coverage))
     return "\n".join(lines)
+
+
+def _format_debt_coverage(summary: DebtCoverageSummary) -> list[str]:
+    """Render the one-row debt decision count beside dependent cell counts."""
+    views = ",".join(summary.views)
+    return [
+        "",
+        "--- debt coverage evidence ---",
+        f"    universe={summary.universe}; views={views}",
+        f"    persisted decisions={summary.persisted_decisions} "
+        f"incomplete={summary.incomplete_decisions} "
+        f"inapplicable={summary.inapplicable_decisions}",
+        f"    dependent indicator cells with incomplete_debt_coverage="
+        f"{summary.incomplete_indicator_cells}",
+        f"    legacy snapshots={summary.legacy_snapshots} "
+        f"unclassified blockers={summary.unclassified_blockers}",
+        f"    period={summary.period_definition}; cell={summary.cell_definition}",
+    ]
 
 
 def format_doctor_summary(report: DoctorReport) -> str:
@@ -2032,6 +2073,7 @@ def format_doctor_summary(report: DoctorReport) -> str:
         lines.append(f"    !! {unclassified} unclassified nulls across: {who}")
     else:
         lines.append("    every null carries a named cause.")
+    lines.extend(_format_debt_coverage(report.debt_coverage))
     return "\n".join(lines)
 
 

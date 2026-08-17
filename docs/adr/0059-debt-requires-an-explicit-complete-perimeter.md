@@ -1,6 +1,6 @@
 # 0059 — Debt requires an explicit complete perimeter
 
-- **Status:** Accepted
+- **Status:** Superseded by [0063](0063-debt-instrument-perimeter-matrix.md)
 - **Date:** 2026-08-11
 
 ## Context

@@ -75,6 +75,11 @@ class CompanyIdentity:
     # start of trading in the *current* listing segment, not the instrument's
     # debut, which is why this column and not that one.
     listed_since: date | None = None
+    # Same-priority FCA rows for one ticker must not silently choose whichever
+    # CNPJ happened to appear first in the CSV. The registry keeps the selected
+    # identity for diagnosis, but this field makes the ambiguity explicit so
+    # callers can exclude it from analysis and the listed universe.
+    ambiguous_cnpjs: tuple[str, ...] = field(default_factory=tuple)
     # The company's listed ON/PN classes (from the FCA securities member), whose
     # prices summed capitalize it (ADR 0014). Empty when the FCA lists no plain
     # ON/PN equity (e.g. a BDR- or unit-only line); the cap then stays null.
@@ -128,6 +133,9 @@ def per_share_components(identity: CompanyIdentity) -> tuple[UnitComponent, ...]
 
 def fundamental_exclusion(identity: CompanyIdentity) -> str | None:
     """Why an FCA security cannot enter fundamental analysis, if anything."""
+    if identity.ambiguous_cnpjs:
+        candidates = ", ".join(identity.ambiguous_cnpjs)
+        return f"ambiguous ticker-to-CNPJ mapping ({candidates})"
     if identity.trading_ended is not None:
         return f"trading ended on {identity.trading_ended.isoformat()}"
     if identity.instrument_kind not in _FUNDAMENTAL_INSTRUMENTS:

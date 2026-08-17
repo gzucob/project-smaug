@@ -26,6 +26,7 @@ from smaug.analysis.infrastructure.b3_prices import (
     B3QuoteProvider,
     CotahistArchive,
 )
+from smaug.shared.errors import SourceMalformedError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "cotahist_sample.txt"
 
@@ -377,7 +378,7 @@ async def test_an_archive_without_a_text_member_fails_loudly(tmp_path: Path) -> 
     (tmp_path / "COTAHIST_A2015.ZIP").write_bytes(buffer.getvalue())
 
     archive, http = _archive(tmp_path)
-    with pytest.raises(ValueError, match="no .TXT member"):
+    with pytest.raises(SourceMalformedError, match="malformed B3 quote archive"):
         async with http:
             await archive.year(2015)
 

@@ -1,5 +1,6 @@
 """The read API publishes the basis behind strict and convention metrics."""
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -8,6 +9,18 @@ from smaug.analysis.domain.entities import (
     VIEW_TTM,
     AnalysisView,
     TickerAnalysis,
+)
+from smaug.analysis.domain.financials import (
+    AccountingRegime,
+    DebtBlocker,
+    DebtCoverageEvidence,
+    DebtEvidenceSnapshot,
+    DebtIdentityStatus,
+    DebtInstrument,
+    DebtLineClassification,
+    DebtLineEvidence,
+    DebtLineRole,
+    RegimeSource,
 )
 from smaug.analysis.domain.indicators import (
     INDICATOR_CONTRACT,
@@ -31,6 +44,39 @@ def _analysis(view: AnalysisView) -> TickerAnalysis:
         price=Decimal("38"),
         price_basis="b3_latest_close",
         share_count_basis="cvm_latest_filed_outstanding_current_base",
+        filed_regime=AccountingRegime.CORPORATE,
+        regime_source=RegimeSource.FILED,
+        issuer_name="Petroleo Teste S.A.",
+        cd_cvm="9512",
+        cnpj="95.123.456/0001-78",
+        debt_evidence_snapshot=DebtEvidenceSnapshot.CURRENT,
+        debt_evidence=DebtCoverageEvidence(
+            regime=AccountingRegime.CORPORATE,
+            regime_source=RegimeSource.FILED,
+            identity_status=DebtIdentityStatus.RESOLVED,
+            used_lines=(
+                DebtLineEvidence(
+                    "2.01.04",
+                    "Empréstimos e Financiamentos",
+                    Decimal("100"),
+                    DebtLineRole.CURRENT_AGGREGATE,
+                    instrument=DebtInstrument.LOANS_FINANCING,
+                ),
+            ),
+            excluded_lines=(
+                DebtLineEvidence(
+                    "2.02.02.02.07",
+                    "Passivo de Arrendamento",
+                    Decimal("25"),
+                    DebtLineRole.EXCLUDED_LIABILITY,
+                    DebtBlocker.INCOMPLETE_DEBT_COVERAGE,
+                    DebtInstrument.LEASES,
+                ),
+            ),
+            included_instruments=("2.01.04",),
+            primary_blocker=DebtBlocker.INCOMPLETE_DEBT_COVERAGE,
+            secondary_blockers=(DebtBlocker.MISSING_NON_CURRENT_AGGREGATE,),
+        ),
         indicators=Indicators(
             pe_basic=Decimal("6"),
             pb=Decimal("1.4"),
@@ -87,3 +133,47 @@ def test_api_contract_names_closed_year_period_without_changing_formula() -> Non
 
 def test_contract_only_names_persisted_indicator_fields() -> None:
     assert set(INDICATOR_CONTRACT) <= set(indicator_names())
+
+
+def test_api_response_exposes_filed_regime_provenance() -> None:
+    response = _to_response(_analysis(VIEW_TTM))
+
+    assert response.filed_regime is AccountingRegime.CORPORATE
+    assert response.regime_source is RegimeSource.FILED
+
+
+def test_api_response_exposes_raw_bpp_debt_evidence() -> None:
+    response = _to_response(_analysis(VIEW_TTM))
+
+    assert response.issuer == "Petroleo Teste S.A."
+    assert response.cd_cvm == "9512"
+    assert response.cnpj == "95.123.456/0001-78"
+    assert response.debt_evidence_snapshot is DebtEvidenceSnapshot.CURRENT
+    assert response.debt_evidence is not None
+    assert response.debt_evidence.used_lines[0].code == "2.01.04"
+    assert response.debt_evidence.used_lines[0].instrument is (
+        DebtInstrument.LOANS_FINANCING
+    )
+    assert response.debt_evidence.used_lines[0].classification is (
+        DebtLineClassification.INCLUDED
+    )
+    assert response.debt_evidence.excluded_lines[0].code == "2.02.02.02.07"
+    assert response.debt_evidence.excluded_lines[0].instrument is DebtInstrument.LEASES
+    assert response.debt_evidence.excluded_lines[0].classification is (
+        DebtLineClassification.EXCLUDED
+    )
+    assert response.debt_evidence.primary_blocker is (
+        DebtBlocker.INCOMPLETE_DEBT_COVERAGE
+    )
+    assert response.debt_evidence.secondary_blockers == [
+        DebtBlocker.MISSING_NON_CURRENT_AGGREGATE
+    ]
+
+
+def test_api_marks_rows_without_debt_evidence_as_legacy() -> None:
+    response = _to_response(
+        replace(_analysis(VIEW_TTM), debt_evidence=None, debt_evidence_snapshot=None)
+    )
+
+    assert response.debt_evidence is None
+    assert response.debt_evidence_snapshot is DebtEvidenceSnapshot.LEGACY

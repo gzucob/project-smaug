@@ -75,6 +75,19 @@ def _sub(a: Decimal | None, b: Decimal | None) -> Decimal | None:
 _CAGR_YEARS = 5
 
 
+def _has_consecutive_closed_years(
+    history: Sequence[StandardizedFinancials],
+) -> bool:
+    """Whether the six-year CAGR window contains one closed exercise per year."""
+    if len(history) < _CAGR_YEARS + 1:
+        return False
+    window = history[-(_CAGR_YEARS + 1) :]
+    return all(
+        current.reference_date.year == previous.reference_date.year + 1
+        for previous, current in zip(window, window[1:], strict=False)
+    )
+
+
 def _cagr(series: Sequence[Decimal | None]) -> Decimal | None:
     """Compounded annual rate between the endpoints of a closed-year series.
 
@@ -139,7 +152,33 @@ def _net_debt(financials: StandardizedFinancials) -> Decimal | None:
 # that *is* the business, and a company that sells goods has no spread, no loan book
 # and no payroll-against-spread to report. They are inapplicable to everyone else.
 _BANK_ONLY = frozenset({"net_interest_margin", "efficiency_ratio", "cost_of_risk"})
+_BANK_RATIO_INPUTS: dict[str, tuple[str, str]] = {
+    "net_interest_margin": (
+        "bank_interest_result_annualized",
+        "average_earning_assets",
+    ),
+    "efficiency_ratio": ("bank_efficiency_expenses", "bank_efficiency_income"),
+    "cost_of_risk": (
+        "credit_loss_expense_annualized",
+        "average_credit_portfolio",
+    ),
+}
 _INSURER_ONLY = frozenset({"loss_ratio", "combined_ratio"})
+
+
+def _bank_ratio_blocker(name: str, f: StandardizedFinancials) -> NullReason | None:
+    """Validate the paired provenance contract before a bank ratio is built."""
+    pair = _BANK_RATIO_INPUTS[name]
+    provenance = f.bank_regulatory_provenance
+    if provenance is None:
+        return f.bank_ratio_null_reason or NullReason.MISSING_REGULATORY_DISCLOSURE
+    reason = provenance.reason_for(pair)
+    if reason is not None:
+        return reason
+    if any(getattr(f, field) is None for field in pair):
+        return NullReason.PARTIAL_REGULATORY_DISCLOSURE
+    return None
+
 
 _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
     AccountingRegime.BANK: frozenset(
@@ -387,12 +426,10 @@ def _classify(
     """
     if name in inapplicable:
         return NullReason.INAPPLICABLE_REGIME
-    if (
-        name in _BANK_ONLY
-        and f.bank_ratio_null_reason is not None
-        and any(getattr(f, account) is None for account in needs.accounts)
-    ):
-        return f.bank_ratio_null_reason
+    if name in _BANK_ONLY:
+        blocker = _bank_ratio_blocker(name, f)
+        if blocker is not None:
+            return blocker
     if name in {"eps", "eps_basic"} and f.eps_basic_null_reason is not None:
         return f.eps_basic_null_reason
     if name == "eps_diluted" and f.eps_diluted_null_reason is not None:
@@ -419,7 +456,7 @@ def _classify(
             return market.cap_null_reason
         return NullReason.MISSING_PRICE
     if needs.price and market.price is None:
-        return NullReason.MISSING_PRICE
+        return market.price_null_reason or NullReason.MISSING_PRICE
     if needs.shares and market.shares is None:
         return market.shares_null_reason or NullReason.MISSING_SHARE_COUNT
     if needs.cash_distributions and market.cash_distributions is None:
@@ -447,7 +484,7 @@ def _classify_cagr(
     which is the one case where every input is present and the rate still cannot
     be formed.
     """
-    if len(history) < _CAGR_YEARS + 1:
+    if not _has_consecutive_closed_years(history):
         return NullReason.MISSING_PRIOR_PERIOD
     endpoints = (
         getattr(history[-(_CAGR_YEARS + 1)], account),
@@ -556,6 +593,12 @@ def compute(
         """One account across the closed exercises, oldest → newest."""
         return [getattr(annual, account) for annual in history]
 
+    def cagr(account: str) -> Decimal | None:
+        """Calculate a CAGR only over six consecutive closed exercises."""
+        if not _has_consecutive_closed_years(history):
+            return None
+        return _cagr(series(account))
+
     # Bank ratios only consume explicitly paired, already annualized
     # regulatory/issuer inputs
     # (ADR 0058). The CVM-only mapper leaves them null: closing total assets, a
@@ -595,10 +638,10 @@ def compute(
         current_ratio=_div(f.current_assets, f.current_liabilities),
         revenue_growth=_growth(f.revenue, prev_revenue),
         net_income_growth=_growth(f.net_income, prev_net_income),
-        revenue_cagr_5y=_cagr(series("revenue")),
-        ebitda_cagr_5y=_cagr(series("ebitda")),
-        ebit_cagr_5y=_cagr(series("ebit")),
-        net_income_cagr_5y=_cagr(series("net_income")),
+        revenue_cagr_5y=cagr("revenue"),
+        ebitda_cagr_5y=cagr("ebitda"),
+        ebit_cagr_5y=cagr("ebit"),
+        net_income_cagr_5y=cagr("net_income"),
         pe_basic=_div(market.price, f.eps_basic),
         pe_diluted=_div(market.price, f.eps_diluted),
         pb=_div(market.price, bvps),
@@ -609,11 +652,21 @@ def compute(
         price_to_assets=_div(cap, f.total_assets),
         price_to_ebit=_div(cap, annual_ebit),
         price_to_working_capital=_div(cap, working_capital),
-        net_interest_margin=_div(
-            f.bank_interest_result_annualized, f.average_earning_assets
+        net_interest_margin=(
+            _div(f.bank_interest_result_annualized, f.average_earning_assets)
+            if _bank_ratio_blocker("net_interest_margin", f) is None
+            else None
         ),
-        efficiency_ratio=_div(f.bank_efficiency_expenses, f.bank_efficiency_income),
-        cost_of_risk=_div(f.credit_loss_expense_annualized, f.average_credit_portfolio),
+        efficiency_ratio=(
+            _div(f.bank_efficiency_expenses, f.bank_efficiency_income)
+            if _bank_ratio_blocker("efficiency_ratio", f) is None
+            else None
+        ),
+        cost_of_risk=(
+            _div(f.credit_loss_expense_annualized, f.average_credit_portfolio)
+            if _bank_ratio_blocker("cost_of_risk", f) is None
+            else None
+        ),
         loss_ratio=_div(claims_cost, f.earned_premium),
         combined_ratio=_div(combined_costs, f.earned_premium),
         dividend_yield=_div(market.cash_distributions, market.price),
@@ -645,4 +698,6 @@ def compute(
     return replace(
         indicators,
         null_reasons=_null_reasons(indicators, f, previous, market, history),
+        source_account_evidence=f.source_account_evidence,
+        bank_regulatory_provenance=f.bank_regulatory_provenance,
     )

@@ -7,6 +7,7 @@ from decimal import Decimal
 from smaug.analysis.domain.calculator import compute
 from smaug.analysis.domain.financials import (
     AccountingRegime,
+    BankRegulatoryProvenance,
     MarketData,
     StandardizedFinancials,
 )
@@ -176,6 +177,27 @@ _FINANCIAL_UNMAPPED = frozenset({"dep_amort", "ebitda"})
 _BANK_UNMAPPED = _FINANCIAL_UNMAPPED | frozenset({"current_financial_investments"})
 
 
+def _bank_regulatory_provenance() -> BankRegulatoryProvenance:
+    return BankRegulatoryProvenance(
+        source="issuer_public_performance_analysis",
+        period_start=date(2024, 1, 1),
+        period_end=date(2024, 12, 31),
+        perimeter="consolidated",
+        averaging_method="arithmetic_mean_month_end",
+        basis="issuer_defined_annualized_disclosure",
+        available_inputs=frozenset(
+            {
+                "bank_interest_result_annualized",
+                "average_earning_assets",
+                "bank_efficiency_expenses",
+                "bank_efficiency_income",
+                "credit_loss_expense_annualized",
+                "average_credit_portfolio",
+            }
+        ),
+    )
+
+
 def _mapped_bank() -> StandardizedFinancials:
     """A bank as the CVM mapper actually builds it (ADR 0058).
 
@@ -259,6 +281,7 @@ def test_bbas3_ratios_reconcile_to_the_2024_issuer_disclosure() -> None:
         credit_loss_expense_annualized=Decimal(41_422),
         average_credit_portfolio=Decimal(1_020_119),
         bank_ratio_null_reason=None,
+        bank_regulatory_provenance=_bank_regulatory_provenance(),
     )
 
     ind = compute(bank, None, MarketData(market_cap=Decimal(8000)))
@@ -297,6 +320,7 @@ def test_bbdc4_ratios_reconcile_to_the_4t24_issuer_disclosure() -> None:
         credit_loss_expense_annualized=Decimal(29_840),
         average_credit_portfolio=average_credit_portfolio,
         bank_ratio_null_reason=None,
+        bank_regulatory_provenance=_bank_regulatory_provenance(),
     )
 
     ind = compute(bank, None, MarketData(market_cap=Decimal(8000)))
@@ -880,6 +904,17 @@ def test_cagr_is_null_until_the_window_closes() -> None:
     # Five exercises span four years of variation, not five. Shortening the window
     # in silence would make the number mean something other than its name (#144).
     history = _rising_history([Decimal(1000)] * 5)
+    ind = compute(history[-1], history[-2], MarketData(), history)
+
+    assert ind.revenue_cagr_5y is None
+    assert ind.null_reasons["revenue_cagr_5y"] is NullReason.MISSING_PRIOR_PERIOD
+
+
+def test_cagr_rejects_a_discontinuous_closed_year_window() -> None:
+    history = [
+        _closed_year(year, revenue=Decimal(1000), net_income=Decimal(1000))
+        for year in (2019, 2020, 2022, 2023, 2024, 2025)
+    ]
     ind = compute(history[-1], history[-2], MarketData(), history)
 
     assert ind.revenue_cagr_5y is None

@@ -6,7 +6,16 @@ from typing import Any
 
 import pytest
 
-from smaug.analysis.domain.financials import AccountingRegime
+from smaug.analysis.domain.financials import (
+    AccountingRegime,
+    DebtBlocker,
+    DebtIdentityStatus,
+    DebtInstrument,
+    DebtLineClassification,
+    DebtLineRole,
+    IssuerIdentity,
+    RegimeSource,
+)
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.infrastructure.mongo_fundamentals import (
     MongoFundamentalsReader,
@@ -76,8 +85,129 @@ def test_standardize_nonfinancial_pulls_every_line() -> None:
     assert f.current_liabilities == Decimal("200")
     assert f.total_debt == Decimal("225")  # 50 + 150 + explicit lease liability
     assert f.debt_coverage_null_reason is None
+    assert f.debt_evidence is not None
+    assert f.debt_evidence.identity_status is DebtIdentityStatus.UNKNOWN
+    assert [line.code for line in f.debt_evidence.used_lines] == [
+        "2.01.04",
+        "2.02.01",
+        "2.02.02.02.07",
+    ]
+    assert f.debt_evidence.used_lines[-1].role is DebtLineRole.INCLUDED_INSTRUMENT
+    assert f.debt_evidence.included_instruments == (
+        "2.01.04",
+        "2.02.01",
+        "2.02.02.02.07",
+    )
+    assert f.debt_evidence.primary_blocker is None
+    assert f.debt_evidence.secondary_blockers == ()
     assert f.cfo == Decimal("500")  # operating cash flow (6.01)
     assert f.capex == Decimal("190")  # 150 + 40 PP&E/intangible outflows only
+
+
+def test_standardize_builds_a_named_bpp_perimeter_without_double_counting_details() -> (
+    None
+):
+    # The BPP hierarchy is the primary evidence. Parent aggregates are selected
+    # once, their child details are recorded as excluded, and named instruments
+    # outside those parents are classified independently.
+    by_module = {
+        "BPP": {
+            "accounts": [
+                _acc("2.01.04", "Empréstimos e Financiamentos", "100"),
+                _acc("2.01.04.01", "Empréstimos bancários", "100"),
+                _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+                _acc("2.02.03", "Debêntures", "40"),
+                _acc("2.02.03.01", "Debêntures - Série A", "40"),
+                _acc("2.02.04", "Passivo de Arrendamento", "10"),
+                _acc("2.02.05", "Mútuos", "20"),
+                _acc("2.02.06", "Securitização de Recebíveis", "30"),
+                _acc("2.02.07", "Financiamento de aquisição via CCI", "50"),
+                _acc("2.02.08", "Passivos financeiros", "0"),
+                _acc("2.02.09", "Passivos de Contratos de Seguros", "70"),
+                _acc("2.02.10", "Provisões Técnicas de Seguros", "80"),
+                _acc("2.02.11", "Obrigações com planos de previdência", "90"),
+                _acc("2.02.12", "Capitalização", "100"),
+                _acc("2.02.13", "Derivativos", "110"),
+            ]
+        },
+        "DRE": {
+            "accounts": [_acc("3.01", "Receita de Venda de Bens e/ou Serviços", "100")]
+        },
+    }
+
+    f = standardize(by_module, Sector.INDUSTRY, date(2025, 12, 31))
+
+    assert f.total_debt == Decimal("450")
+    assert f.debt_evidence is not None
+    evidence = f.debt_evidence
+    assert evidence.regime is AccountingRegime.CORPORATE
+    lines = {
+        line.code: line for line in (*evidence.used_lines, *evidence.excluded_lines)
+    }
+    assert lines["2.02.03"].instrument is DebtInstrument.DEBENTURES_SUBORDINATED
+    assert lines["2.02.04"].instrument is DebtInstrument.LEASES
+    assert lines["2.02.05"].instrument is DebtInstrument.MUTUOS
+    assert lines["2.02.06"].instrument is DebtInstrument.SECURITIZATION_RECEIVABLES
+    assert lines["2.02.07"].instrument is DebtInstrument.ACQUISITION_DEBT_CCI
+    assert lines["2.02.08"].classification is DebtLineClassification.AMBIGUOUS
+    assert lines["2.02.08"].reason is DebtBlocker.AMBIGUOUS_FINANCIAL_LIABILITY
+    for code in ("2.02.09", "2.02.10", "2.02.11", "2.02.12", "2.02.13"):
+        assert lines[code].classification is DebtLineClassification.EXCLUDED
+        assert lines[code].reason is DebtBlocker.NON_DEBT_LIABILITY
+    for code in ("2.01.04.01", "2.02.03.01"):
+        assert lines[code].classification is DebtLineClassification.EXCLUDED
+        assert lines[code].reason is DebtBlocker.CHILD_DETAIL_DOUBLE_COUNT
+    assert evidence.included_instruments == (
+        "2.01.04",
+        "2.02.01",
+        "2.02.03",
+        "2.02.04",
+        "2.02.05",
+        "2.02.06",
+        "2.02.07",
+    )
+
+
+@pytest.mark.parametrize(
+    ("ticker", "instrument_name", "instrument", "amount"),
+    [
+        ("WEG3", "Debêntures", DebtInstrument.DEBENTURES_SUBORDINATED, "30"),
+        ("VALE3", "Mútuos", DebtInstrument.MUTUOS, "40"),
+        (
+            "PETR4",
+            "Securitização de Recebíveis",
+            DebtInstrument.SECURITIZATION_RECEIVABLES,
+            "50",
+        ),
+    ],
+)
+def test_explicit_perimeter_samples_use_primary_bpp_evidence(
+    ticker: str,
+    instrument_name: str,
+    instrument: DebtInstrument,
+    amount: str,
+) -> None:
+    by_module = {
+        "BPP": {
+            "accounts": [
+                _acc("2.01.04", "Empréstimos e Financiamentos", "100"),
+                _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+                _acc("2.02.03", instrument_name, amount),
+            ]
+        },
+        "DRE": {
+            "accounts": [_acc("3.01", "Receita de Venda de Bens e/ou Serviços", "100")]
+        },
+    }
+
+    f = standardize(by_module, Sector.INDUSTRY, date(2025, 12, 31))
+
+    assert f.total_debt == Decimal("300") + Decimal(amount)
+    assert f.debt_evidence is not None
+    selected = {line.code: line for line in f.debt_evidence.used_lines}
+    assert selected["2.02.03"].instrument is instrument
+    assert selected["2.02.03"].classification is DebtLineClassification.INCLUDED
+    assert ticker in ("WEG3", "VALE3", "PETR4")
 
 
 def test_standardize_sums_the_plural_and_split_dep_amort_lines() -> None:
@@ -668,7 +798,7 @@ def test_standardize_irbr3_2022_underwriting_components() -> None:
     assert f.insurance_admin_expenses == Decimal("-421237000")
 
 
-def test_standardize_insurer_maps_complete_explicit_debt_perimeter() -> None:
+def test_standardize_irbr3_maps_complete_explicit_debt_perimeter() -> None:
     by_module = {
         "BPP": {
             "accounts": [
@@ -695,6 +825,12 @@ def test_standardize_insurer_maps_complete_explicit_debt_perimeter() -> None:
     # not financing debt. Explicit leases and subordinated funding are debt.
     assert f.total_debt == Decimal("400")
     assert f.debt_coverage_null_reason is None
+    assert f.debt_evidence is not None
+    assert {line.instrument for line in f.debt_evidence.used_lines} == {
+        DebtInstrument.LOANS_FINANCING,
+        DebtInstrument.LEASES,
+        DebtInstrument.DEBENTURES_SUBORDINATED,
+    }
 
 
 def test_standardize_insurer_accepts_zero_only_when_both_maturities_file_zero() -> None:
@@ -716,6 +852,37 @@ def test_standardize_insurer_accepts_zero_only_when_both_maturities_file_zero() 
 
     assert f.total_debt == 0
     assert f.debt_coverage_null_reason is None
+
+
+def test_standardize_bbse3_holding_excludes_insurance_product_liabilities() -> None:
+    # BBSE3 is an insurer by activity but its holding filing opens with the
+    # corporate revenue line. Product, reserve and capitalization liabilities are
+    # not financing debt even when both debt aggregates are explicitly zero.
+    by_module = {
+        "BPP": {
+            "accounts": [
+                _acc("2.01.04", "Empréstimos e Financiamentos", "0"),
+                _acc("2.02.01", "Empréstimos e Financiamentos", "0"),
+                _acc("2.02.02", "Passivos de Contratos de Seguros", "900"),
+                _acc("2.02.03", "Provisões Técnicas", "800"),
+                _acc("2.02.04", "Capitalização", "700"),
+            ]
+        },
+        "DRE": {
+            "accounts": [_acc("3.01", "Receita de Venda de Bens e/ou Serviços", "100")]
+        },
+    }
+
+    f = standardize(by_module, Sector.INSURER, date(2025, 12, 31))
+
+    assert f.filed_regime is AccountingRegime.CORPORATE
+    assert f.total_debt == 0
+    assert f.debt_evidence is not None
+    assert {line.instrument for line in f.debt_evidence.excluded_lines} == {
+        DebtInstrument.INSURANCE_CONTRACT,
+        DebtInstrument.TECHNICAL_RESERVE,
+        DebtInstrument.CAPITALIZATION,
+    }
 
 
 def test_standardize_pssa3_generic_financial_liabilities_are_incomplete_debt() -> None:
@@ -746,6 +913,70 @@ def test_standardize_pssa3_generic_financial_liabilities_are_incomplete_debt() -
     assert f.filed_regime is AccountingRegime.CORPORATE
     assert f.total_debt is None
     assert f.debt_coverage_null_reason is NullReason.INCOMPLETE_DEBT_COVERAGE
+    assert f.debt_evidence is not None
+    assert f.debt_evidence.primary_blocker is DebtBlocker.INCOMPLETE_DEBT_COVERAGE
+    assert f.debt_evidence.secondary_blockers == (
+        DebtBlocker.AMBIGUOUS_FINANCIAL_LIABILITY,
+        DebtBlocker.AMBIGUOUS_FINANCIAL_LIABILITY,
+    )
+    assert [line.code for line in f.debt_evidence.excluded_lines] == [
+        "2.01.05.02.06",
+        "2.02.02.02.04",
+    ]
+    assert [line.code for line in f.debt_evidence.used_lines] == [
+        "2.01.04",
+        "2.02.01",
+        "2.01.05.02.09",
+        "2.02.02.02.07",
+    ]
+
+
+def test_standardize_names_missing_debt_aggregate_as_a_secondary_blocker() -> None:
+    f = standardize(
+        {
+            "BPP": {
+                "accounts": [
+                    _acc("2.01.04", "Empréstimos e Financiamentos", "10"),
+                ]
+            },
+            "DRE": {
+                "accounts": [
+                    _acc("3.01", "Receita de Venda de Bens e/ou Serviços", "100")
+                ]
+            },
+        },
+        Sector.COMMODITY,
+        date(2025, 12, 31),
+    )
+
+    assert f.debt_coverage_null_reason is NullReason.INCOMPLETE_DEBT_COVERAGE
+    assert f.debt_evidence is not None
+    assert f.debt_evidence.primary_blocker is DebtBlocker.INCOMPLETE_DEBT_COVERAGE
+    assert f.debt_evidence.secondary_blockers == (
+        DebtBlocker.MISSING_NON_CURRENT_AGGREGATE,
+    )
+    assert [line.code for line in f.debt_evidence.used_lines] == ["2.01.04"]
+    assert f.debt_evidence.included_instruments == ("2.01.04",)
+
+
+def test_standardize_marks_bank_debt_decision_inapplicable() -> None:
+    f = standardize(
+        {
+            "DRE": {
+                "accounts": [
+                    _acc("3.01", "Receitas de Intermediação Financeira", "100")
+                ]
+            }
+        },
+        Sector.BANK,
+        date(2025, 12, 31),
+    )
+
+    assert f.total_debt is None
+    assert f.debt_coverage_null_reason is None
+    assert f.debt_evidence is not None
+    assert f.debt_evidence.primary_blocker is DebtBlocker.INAPPLICABLE_REGIME
+    assert f.debt_evidence.secondary_blockers == ()
 
 
 def test_standardize_detects_the_filed_regime_from_the_dre_opening_line() -> None:
@@ -764,13 +995,16 @@ def test_standardize_detects_the_filed_regime_from_the_dre_opening_line() -> Non
         by_module = {"DRE": {"accounts": [_acc("3.01", label, "100")]}}
         f = standardize(by_module, Sector.COMMODITY, date(2024, 12, 31))
         assert f.filed_regime is regime
+        assert f.regime_source is RegimeSource.FILED
 
     # No DRE, or an unknown opening line -> undetected, never guessed.
-    assert standardize({}, Sector.COMMODITY, date(2024, 12, 31)).filed_regime is None
+    fallback = standardize({}, Sector.COMMODITY, date(2024, 12, 31))
+    assert fallback.filed_regime is None
+    assert fallback.regime_source is RegimeSource.SECTOR_FALLBACK
     unknown = {"DRE": {"accounts": [_acc("3.01", "Alguma Outra Coisa", "1")]}}
-    assert (
-        standardize(unknown, Sector.COMMODITY, date(2024, 12, 31)).filed_regime is None
-    )
+    unknown_fallback = standardize(unknown, Sector.COMMODITY, date(2024, 12, 31))
+    assert unknown_fallback.filed_regime is None
+    assert unknown_fallback.regime_source is RegimeSource.SECTOR_FALLBACK
 
 
 def test_standardize_maps_the_insurer_that_files_as_a_holding_corporately() -> None:
@@ -1194,6 +1428,43 @@ async def test_history_returns_quarters_and_annual_returns_the_dfp() -> None:
     assert annual is not None
     assert annual.reference_date == date(2024, 12, 31)
     assert annual.revenue == Decimal("400")
+
+
+async def test_reader_marks_resolved_debt_identity() -> None:
+    reader = MongoFundamentalsReader(
+        _FakeCollection(
+            [
+                _doc(
+                    "BPP",
+                    "2024-12-31",
+                    [
+                        _acc("2.01.04", "Empréstimos e Financiamentos", "10"),
+                        _acc("2.02.01", "Empréstimos e Financiamentos", "20"),
+                    ],
+                    document_type="DFP",
+                ),
+                _doc(
+                    "DRE",
+                    "2024-12-31",
+                    [_acc("3.01", "Receita de Venda de Bens e/ou Serviços", "100")],
+                    document_type="DFP",
+                ),
+            ]
+        ),
+        sector_resolver=fake_sector_resolver,
+        issuer_resolver=lambda _ticker: IssuerIdentity(
+            cd_cvm="1234", cnpj="12.345.678/0001-90", issuer_name="ACME S.A."
+        ),
+    )
+
+    annual = await reader.annual("PETR4")
+
+    assert annual is not None
+    assert annual.cd_cvm == "1234"
+    assert annual.cnpj == "12.345.678/0001-90"
+    assert annual.issuer_name == "ACME S.A."
+    assert annual.debt_evidence is not None
+    assert annual.debt_evidence.identity_status is DebtIdentityStatus.RESOLVED
 
 
 def _filed(

@@ -26,10 +26,12 @@ so DFC-sourced flows (D&A and dividends) are isolated on the DFC's own span
 from __future__ import annotations
 
 import calendar
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 from itertools import pairwise
+from typing import cast
 
 from smaug.analysis.domain.financials import StandardizedFinancials
 from smaug.analysis.domain.indicators import NullReason
@@ -165,6 +167,15 @@ def _previous_quarter_end(value: date) -> date | None:
         previous_year,
         previous_month,
         calendar.monthrange(previous_year, previous_month)[1],
+    )
+
+
+def _quarters_are_contiguous(refs: list[date]) -> bool:
+    """Whether the selected reference dates form consecutive calendar quarters."""
+    ordered = sorted(refs)
+    return all(
+        _previous_quarter_end(current) == previous
+        for previous, current in pairwise(ordered)
     )
 
 
@@ -358,6 +369,65 @@ def _ttm_weighted_eps(
     return base_eps * complete[0].multiplier
 
 
+_SPECIFIC_CPC41_REASONS = (
+    NullReason.MISSING_ECONOMIC_RIGHTS,
+    NullReason.MISSING_UNIT_COMPOSITION,
+    NullReason.MISSING_CPC41_DISCLOSURE,
+    NullReason.MISSING_WEIGHTED_AVERAGE_SHARES,
+)
+
+
+def _cpc41_period_reason(
+    period: StandardizedFinancials, *, diluted: bool
+) -> NullReason:
+    """Retain the most specific CPC 41 blocker already known for one period."""
+    explicit = (
+        period.eps_diluted_null_reason if diluted else period.eps_basic_null_reason
+    )
+    if explicit in _SPECIFIC_CPC41_REASONS:
+        assert explicit is not None
+        return explicit
+    disclosure = period.cpc41
+    if disclosure is None:
+        return NullReason.MISSING_CPC41_DISCLOSURE
+    base_eps = disclosure.diluted_base_eps if diluted else disclosure.basic_base_eps
+    if base_eps is None or disclosure.security_multiplier is None:
+        return NullReason.MISSING_CPC41_DISCLOSURE
+    return NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
+
+
+def _cpc41_ttm_null_reason(
+    periods: Sequence[StandardizedFinancials],
+    weighted: dict[date, _WeightedPeriod | None],
+    refs: list[date],
+    *,
+    diluted: bool,
+) -> NullReason:
+    """Name the root CPC 41 blocker instead of flattening it at the TTM edge."""
+    by_date = {period.reference_date: period for period in periods}
+    selected = [weighted.get(ref) for ref in refs]
+    period_reasons = [
+        _cpc41_period_reason(period, diluted=diluted)
+        for ref in refs
+        if (period := by_date.get(ref)) is not None
+    ]
+    for reason in _SPECIFIC_CPC41_REASONS[:-1]:
+        if reason in period_reasons:
+            return reason
+    for ref, candidate in zip(refs, selected, strict=True):
+        if candidate is None:
+            period = by_date.get(ref)
+            return (
+                _cpc41_period_reason(period, diluted=diluted)
+                if period is not None
+                else NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
+            )
+    complete = [candidate for candidate in selected if candidate is not None]
+    if len({candidate.multiplier for candidate in complete}) != 1:
+        return NullReason.MISSING_UNIT_COMPOSITION
+    return NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
+
+
 def _isolate_year(
     periods: list[StandardizedFinancials],
 ) -> tuple[dict[date, Flows], Flows]:
@@ -470,6 +540,8 @@ def _build_ttm(
     refs = sorted(isolated, reverse=True)[:_TTM_QUARTERS]
     if len(refs) < _TTM_QUARTERS:
         return None
+    if not _quarters_are_contiguous(refs):
+        return None
     if required_end is not None and (
         refs[0] != required_end or refs[-1] <= _year_before(required_end)
     ):
@@ -479,6 +551,17 @@ def _build_ttm(
     weighted_diluted = _weighted_isolated(quarters, annual, diluted=True)
     eps_basic = _ttm_weighted_eps(weighted_basic, refs)
     eps_diluted = _ttm_weighted_eps(weighted_diluted, refs)
+    cpc41_periods = [*quarters, *(() if annual is None else (annual,))]
+    eps_basic_reason = (
+        None
+        if eps_basic is not None
+        else _cpc41_ttm_null_reason(cpc41_periods, weighted_basic, refs, diluted=False)
+    )
+    eps_diluted_reason = (
+        None
+        if eps_diluted is not None
+        else _cpc41_ttm_null_reason(cpc41_periods, weighted_diluted, refs, diluted=True)
+    )
 
     summed: Flows = {}
     for name in _FLOW_FIELDS:
@@ -495,6 +578,14 @@ def _build_ttm(
         if annual is not None and annual.reference_date > latest.reference_date
         else latest
     )
+    bank_provenance = latest.bank_regulatory_provenance
+
+    def bank_input(name: str) -> Decimal | None:
+        """Transport only inputs covered by the persisted source contract."""
+        if bank_provenance is None or name not in bank_provenance.available_inputs:
+            return None
+        return cast(Decimal | None, getattr(latest, name))
+
     end = stock_source.reference_date
     start_index = end.year * 12 + (end.month - 1) - 11
     period_start = date(start_index // 12, start_index % 12 + 1, 1)
@@ -513,16 +604,8 @@ def _build_ttm(
         # null; closing shares are never substituted.
         eps_basic=eps_basic,
         eps_diluted=eps_diluted,
-        eps_basic_null_reason=(
-            None
-            if eps_basic is not None
-            else NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
-        ),
-        eps_diluted_null_reason=(
-            None
-            if eps_diluted is not None
-            else NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
-        ),
+        eps_basic_null_reason=eps_basic_reason,
+        eps_diluted_null_reason=eps_diluted_reason,
         revenue=summed["revenue"],
         gross_profit=summed["gross_profit"],
         ebit=summed["ebit"],
@@ -534,6 +617,10 @@ def _build_ttm(
         current_liabilities=stock_source.current_liabilities,
         total_debt=stock_source.total_debt,
         debt_coverage_null_reason=stock_source.debt_coverage_null_reason,
+        debt_evidence=stock_source.debt_evidence,
+        issuer_name=stock_source.issuer_name,
+        cd_cvm=stock_source.cd_cvm,
+        cnpj=stock_source.cnpj,
         dividends_paid=summed["dividends_paid"],
         dividends_declared=summed["dividends_declared"],
         dmpl_period_start=period_start,
@@ -550,10 +637,18 @@ def _build_ttm(
         insurance_admin_expenses=summed["insurance_admin_expenses"],
         # Null-cause provenance (#30) travels with the window: same filer, same
         # regime and same deliberately-skipped fields as its quarters.
-        filed_regime=latest.filed_regime,
+        filed_regime=stock_source.filed_regime,
         # Regulatory average/perimeter inputs cannot be reconstructed from four
         # CVM quarters. Their named cause survives until an explicit source
         # provides a complete TTM pair (ADR 0058).
         bank_ratio_null_reason=latest.bank_ratio_null_reason,
+        bank_interest_result_annualized=bank_input("bank_interest_result_annualized"),
+        average_earning_assets=bank_input("average_earning_assets"),
+        bank_efficiency_expenses=bank_input("bank_efficiency_expenses"),
+        bank_efficiency_income=bank_input("bank_efficiency_income"),
+        credit_loss_expense_annualized=bank_input("credit_loss_expense_annualized"),
+        average_credit_portfolio=bank_input("average_credit_portfolio"),
+        bank_regulatory_provenance=bank_provenance,
         unmapped_fields=latest.unmapped_fields,
+        source_account_evidence=latest.source_account_evidence,
     )

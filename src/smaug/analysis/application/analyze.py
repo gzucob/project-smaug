@@ -35,6 +35,7 @@ from smaug.analysis.domain.entities import (
     TickerAnalysis,
 )
 from smaug.analysis.domain.financials import (
+    DebtEvidenceSnapshot,
     MarketData,
     StandardizedFinancials,
     YearPrices,
@@ -55,7 +56,13 @@ from smaug.portfolio.domain.share_classes import (
     UnitComponent,
 )
 from smaug.portfolio.domain.taxonomy import Classification, classify
-from smaug.shared.errors import SourceError, UnknownTickerError
+from smaug.shared.errors import (
+    CvmDownloadError,
+    SourceError,
+    SourceMalformedError,
+    SourceTimeoutError,
+    UnknownTickerError,
+)
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -95,6 +102,17 @@ class AnalysisRun:
     @property
     def failed(self) -> tuple[TickerOutcome, ...]:
         return tuple(o for o in self.outcomes if o.status is AnalysisStatus.ERROR)
+
+
+def _price_null_reason(error: SourceError) -> NullReason:
+    """Map a B3 acquisition failure to a stable indicator null cause."""
+    if isinstance(error, SourceTimeoutError):
+        return NullReason.PRICE_SOURCE_TIMEOUT
+    if isinstance(error, SourceMalformedError):
+        return NullReason.PRICE_SOURCE_MALFORMED
+    if isinstance(error, CvmDownloadError):
+        return NullReason.PRICE_SOURCE_UNAVAILABLE
+    return NullReason.PRICE_SOURCE_UNAVAILABLE
 
 
 # How a ticker's B3 ``Classification`` is resolved for the stored analysis.
@@ -334,6 +352,13 @@ class AnalyzePortfolioUseCase:
             debt_basis=_DEBT_BASIS,
             roic_tax_basis=_ROIC_TAX_BASIS,
             view=VIEW_TTM,
+            filed_regime=current.filed_regime,
+            regime_source=current.regime_source,
+            issuer_name=current.issuer_name,
+            cd_cvm=current.cd_cvm,
+            cnpj=current.cnpj,
+            debt_evidence=current.debt_evidence,
+            debt_evidence_snapshot=DebtEvidenceSnapshot.CURRENT,
         )
 
     async def _closed_year_analysis(
@@ -366,6 +391,13 @@ class AnalyzePortfolioUseCase:
             debt_basis=_DEBT_BASIS,
             roic_tax_basis=_ROIC_TAX_BASIS,
             view=VIEW_CLOSED_YEAR,
+            filed_regime=annual.filed_regime,
+            regime_source=annual.regime_source,
+            issuer_name=annual.issuer_name,
+            cd_cvm=annual.cd_cvm,
+            cnpj=annual.cnpj,
+            debt_evidence=annual.debt_evidence,
+            debt_evidence_snapshot=DebtEvidenceSnapshot.HISTORICAL,
         )
 
     async def _market_now(
@@ -387,15 +419,20 @@ class AnalyzePortfolioUseCase:
         """
         counts = await self._shares_reader.counts(ticker, year)
         classes = self._classes_resolver(ticker)
-        prices = {
-            share_class.symbol: (
-                quote.price
+        prices: dict[str, Decimal | None] = {}
+        price_reasons: dict[str, NullReason] = {}
+        for share_class in classes:
+            class_quote = (
+                quote
                 if share_class.symbol == ticker
-                else (await self._current_quote(share_class.symbol)).price
+                else await self._current_quote(share_class.symbol)
             )
-            for share_class in classes
-        }
-        cap, cap_null_reason = capitalize(classes, counts, prices)
+            prices[share_class.symbol] = class_quote.price
+            if class_quote.price is None and class_quote.price_null_reason is not None:
+                price_reasons[share_class.symbol] = class_quote.price_null_reason
+        cap, cap_null_reason = capitalize(
+            classes, counts, prices, price_null_reasons=price_reasons
+        )
         distributions, distributions_reason = await self._cash_distributions(
             ticker, distribution_start, distribution_end
         )
@@ -404,11 +441,13 @@ class AnalyzePortfolioUseCase:
             market_cap=cap,
             shares=await self._shares_reader.outstanding(ticker, year),
             cash_distributions=distributions,
+            price_null_reason=quote.price_null_reason,
             cap_null_reason=cap_null_reason,
             shares_null_reason=self._shares_reader.outstanding_null_reason(
                 ticker, year
             ),
             cash_distributions_null_reason=distributions_reason,
+            class_price_null_reasons=price_reasons,
         )
 
     async def _cash_distributions(
@@ -484,7 +523,7 @@ class AnalyzePortfolioUseCase:
             logger.warning(
                 "No price for %s (%s); market multiples will be null", ticker, exc
             )
-            return MarketData()
+            return MarketData(price_null_reason=_price_null_reason(exc))
 
     async def _year_prices(self, symbol: str, year: int) -> YearPrices:
         try:
@@ -496,7 +535,7 @@ class AnalyzePortfolioUseCase:
                 symbol,
                 exc,
             )
-            return YearPrices()
+            return YearPrices(null_reason=_price_null_reason(exc))
 
     async def _market_for_year(
         self, ticker: str, year: int
@@ -514,6 +553,7 @@ class AnalyzePortfolioUseCase:
         counts = await self._shares_reader.counts(ticker, year)
         own = await self._year_prices(ticker, year)
         prices: dict[str, Decimal | None] = {}
+        price_reasons: dict[str, NullReason] = {}
         classes = self._classes_resolver(ticker)
         for share_class in classes:
             symbol = share_class.symbol
@@ -521,7 +561,11 @@ class AnalyzePortfolioUseCase:
                 own if symbol == ticker else await self._year_prices(symbol, year)
             )
             prices[symbol] = year_prices.closing
-        cap, cap_null_reason = capitalize(classes, counts, prices)
+            if year_prices.closing is None and year_prices.null_reason is not None:
+                price_reasons[symbol] = year_prices.null_reason
+        cap, cap_null_reason = capitalize(
+            classes, counts, prices, price_null_reasons=price_reasons
+        )
         if cap is None and own.null_reason is not None:
             # The history chain knows *why* there is no price: the symbol is unknown
             # everywhere (delisted/renamed). Prefer that structural cause over the
@@ -550,10 +594,12 @@ class AnalyzePortfolioUseCase:
             market_cap=cap,
             shares=await self._shares_reader.outstanding(ticker, year),
             cash_distributions=distributions,
+            price_null_reason=own.null_reason,
             cap_null_reason=cap_null_reason,
             shares_null_reason=self._shares_reader.outstanding_null_reason(
                 ticker, year
             ),
             cash_distributions_null_reason=distributions_reason,
+            class_price_null_reasons=price_reasons,
         )
         return market, own.adjusted_avg

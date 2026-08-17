@@ -20,6 +20,11 @@ from dataclasses import dataclass
 from datetime import date
 
 from smaug.analysis.domain.entities import AnalysisView, TickerAnalysis
+from smaug.analysis.domain.financials import (
+    DebtBlocker,
+    DebtCoverageEvidence,
+    DebtEvidenceSnapshot,
+)
 from smaug.analysis.domain.indicators import (
     Indicators,
     NullReason,
@@ -64,6 +69,8 @@ class ExerciseCoverage:
     view: AnalysisView
     reference_date: date
     indicators: tuple[IndicatorCoverage, ...]
+    debt_evidence: DebtCoverageEvidence | None = None
+    debt_evidence_snapshot: DebtEvidenceSnapshot | None = None
 
     @property
     def values(self) -> int:
@@ -78,6 +85,22 @@ class ExerciseCoverage:
     @property
     def unclassified(self) -> int:
         return sum(1 for c in self.indicators if c.is_unclassified)
+
+
+@dataclass(frozen=True)
+class DebtCoverageSummary:
+    """Reconciled counts for one debt decision versus its dependent cells."""
+
+    universe: str
+    views: tuple[AnalysisView, ...]
+    period_definition: str
+    cell_definition: str
+    persisted_decisions: int
+    incomplete_decisions: int
+    inapplicable_decisions: int
+    incomplete_indicator_cells: int
+    legacy_snapshots: int
+    unclassified_blockers: int
 
 
 @dataclass(frozen=True)
@@ -110,6 +133,47 @@ class DoctorReport:
         """
         return sum(e.unclassified for t in self.tickers for e in t.exercises)
 
+    @property
+    def debt_coverage(self) -> DebtCoverageSummary:
+        """Count one raw-BPP decision separately from dependent indicator cells."""
+        exercises = [e for t in self.tickers for e in t.exercises]
+        evidence = [e.debt_evidence for e in exercises]
+        return DebtCoverageSummary(
+            universe="requested tickers with persisted analysis rows",
+            views=("ttm_live", "closed_year"),
+            period_definition=(
+                "reference_date of each persisted TTM or closed-year row"
+            ),
+            cell_definition=(
+                "one debt decision per persisted row; dependent indicator cells "
+                "are counted separately"
+            ),
+            persisted_decisions=sum(item is not None for item in evidence),
+            incomplete_decisions=sum(
+                item is not None
+                and item.primary_blocker is DebtBlocker.INCOMPLETE_DEBT_COVERAGE
+                for item in evidence
+            ),
+            inapplicable_decisions=sum(
+                item is not None
+                and item.primary_blocker is DebtBlocker.INAPPLICABLE_REGIME
+                for item in evidence
+            ),
+            incomplete_indicator_cells=sum(
+                cell.reason is NullReason.INCOMPLETE_DEBT_COVERAGE
+                for exercise in exercises
+                for cell in exercise.indicators
+            ),
+            legacy_snapshots=sum(
+                item is None
+                or exercise.debt_evidence_snapshot is DebtEvidenceSnapshot.LEGACY
+                for exercise, item in zip(exercises, evidence, strict=False)
+            ),
+            unclassified_blockers=sum(
+                item.unclassified_blockers for item in evidence if item is not None
+            ),
+        )
+
 
 def _coverage_of(indicators: Indicators) -> tuple[IndicatorCoverage, ...]:
     """Classify every indicator cell as value / named-null / unclassified."""
@@ -126,6 +190,8 @@ def _exercise_of(analysis: TickerAnalysis) -> ExerciseCoverage:
         view=analysis.view,
         reference_date=analysis.reference_date,
         indicators=_coverage_of(analysis.indicators),
+        debt_evidence=analysis.debt_evidence,
+        debt_evidence_snapshot=analysis.debt_evidence_snapshot,
     )
 
 

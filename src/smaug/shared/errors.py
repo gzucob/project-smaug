@@ -70,6 +70,10 @@ class SourceTimeoutError(SourceError):
     """
 
 
+class SourceMalformedError(SourceError, ValueError):
+    """The source returned content that does not match its published shape."""
+
+
 class SourceForbiddenError(SourceError):
     """The source refuses this call outright (HTTP 403). Skip it, keep going."""
 

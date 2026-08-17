@@ -7,6 +7,12 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
+from smaug.analysis.domain.financials import (
+    AccountingRegime,
+    DebtCoverageEvidence,
+    DebtEvidenceSnapshot,
+    RegimeSource,
+)
 from smaug.analysis.domain.indicators import Indicators
 from smaug.portfolio.domain.taxonomy import Classification
 
@@ -60,3 +66,14 @@ class TickerAnalysis:
     debt_basis: str | None = None
     roic_tax_basis: str | None = None
     view: AnalysisView = VIEW_TTM  # which perspective this row represents
+    # Filing-derived regime provenance. ``None`` on legacy rows predating the
+    # provenance migration; newly analyzed rows always carry both values.
+    filed_regime: AccountingRegime | None = None
+    regime_source: RegimeSource | None = None
+    # Debt evidence identity and raw-BPP decision. New analysis rows carry this
+    # even when the identity is explicitly unknown; pre-migration rows do not.
+    issuer_name: str | None = None
+    cd_cvm: str | None = None
+    cnpj: str | None = None
+    debt_evidence: DebtCoverageEvidence | None = None
+    debt_evidence_snapshot: DebtEvidenceSnapshot | None = None
