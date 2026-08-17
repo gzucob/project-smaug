@@ -20,7 +20,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from smaug.analysis.domain.entities import VIEW_TTM, TickerAnalysis
-from smaug.analysis.domain.indicators import INDICATOR_CONTRACT, IndicatorTier
+from smaug.analysis.domain.financials import (
+    AccountingRegime,
+    DebtBlocker,
+    DebtEvidenceSnapshot,
+    DebtIdentityStatus,
+    DebtInstrument,
+    DebtLineClassification,
+    DebtLineEvidence,
+    DebtLineRole,
+    RegimeSource,
+    SourceAccountStatus,
+)
+from smaug.analysis.domain.indicators import (
+    INDICATOR_CONTRACT,
+    IndicatorTier,
+    NullReason,
+)
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
 from smaug.portfolio.application.manage_portfolio import ManagePortfolioUseCase
 from smaug.portfolio.domain.entities import PortfolioTicker
@@ -44,6 +60,20 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
+
+
+class BankRegulatoryProvenanceResponse(BaseModel):
+    """Source contract behind bank-specific regulatory ratios."""
+
+    source: str | None
+    period_start: date | None
+    period_end: date | None
+    perimeter: str | None
+    averaging_method: str | None
+    basis: str | None
+    available_inputs: list[str]
+    missing_inputs: list[str]
+    incompatible_inputs: list[str]
 
 
 class IndicatorsResponse(BaseModel):
@@ -126,6 +156,8 @@ class IndicatorsResponse(BaseModel):
     non_controlling_interests: Decimal | None
     shares: Decimal | None
     null_reasons: dict[str, str]
+    source_account_evidence: list[SourceAccountEvidenceResponse]
+    bank_regulatory_provenance: BankRegulatoryProvenanceResponse | None
 
 
 class IndicatorContractResponse(BaseModel):
@@ -149,6 +181,54 @@ class ClassificationResponse(BaseModel):
     segmento: str | None
 
 
+class SourceAccountRefResponse(BaseModel):
+    """One raw account retained in source-account provenance."""
+
+    code: str
+    name: str
+    value: Decimal | None
+
+
+class SourceAccountEvidenceResponse(BaseModel):
+    """Mapping/absence evidence for one calculator input."""
+
+    field: str
+    statement: str
+    status: SourceAccountStatus
+    expected: list[str]
+    found: list[SourceAccountRefResponse]
+    parent_code: str | None
+    formula: str | None
+    dependencies: list[str]
+    blocker: NullReason | None
+    consumer_indicators: list[str]
+
+
+class DebtLineResponse(BaseModel):
+    """A selected or relevant excluded line from the filing's BPP."""
+
+    code: str
+    name: str
+    value: Decimal | None
+    role: DebtLineRole
+    reason: DebtBlocker | None
+    instrument: DebtInstrument
+    classification: DebtLineClassification
+
+
+class DebtEvidenceResponse(BaseModel):
+    """Raw-BPP evidence behind one persisted debt decision."""
+
+    regime: AccountingRegime
+    regime_source: RegimeSource
+    identity_status: DebtIdentityStatus
+    used_lines: list[DebtLineResponse]
+    excluded_lines: list[DebtLineResponse]
+    included_instruments: list[str]
+    primary_blocker: DebtBlocker | None
+    secondary_blockers: list[DebtBlocker]
+
+
 class AnalysisResponse(BaseModel):
     """One ticker's analysis for a single view: provenance + indicator contract."""
 
@@ -157,12 +237,19 @@ class AnalysisResponse(BaseModel):
     classification: ClassificationResponse
     reference_date: date
     computed_at: datetime
+    filed_regime: AccountingRegime | None
+    regime_source: RegimeSource | None
+    issuer: str | None
+    cd_cvm: str | None
+    cnpj: str | None
     price: Decimal | None
     price_adjusted: Decimal | None
     price_basis: str | None
     share_count_basis: str | None
     liquidity_basis: str | None
     debt_basis: str | None
+    debt_evidence_snapshot: DebtEvidenceSnapshot | None
+    debt_evidence: DebtEvidenceResponse | None
     roic_tax_basis: str | None
     indicators: IndicatorsResponse
     indicator_contract: dict[str, IndicatorContractResponse]
@@ -212,6 +299,86 @@ def _to_indicator_contract(
 
 
 def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
+    evidence = analysis.debt_evidence
+
+    def line_to_response(line: DebtLineEvidence) -> DebtLineResponse:
+        return DebtLineResponse(
+            code=line.code,
+            name=line.name,
+            value=line.value,
+            role=line.role,
+            reason=line.reason,
+            instrument=line.instrument,
+            classification=line.classification,
+        )
+
+    evidence_response = (
+        None
+        if evidence is None
+        else DebtEvidenceResponse(
+            regime=evidence.regime,
+            regime_source=evidence.regime_source,
+            identity_status=evidence.identity_status,
+            used_lines=[line_to_response(line) for line in evidence.used_lines],
+            excluded_lines=[line_to_response(line) for line in evidence.excluded_lines],
+            included_instruments=list(evidence.included_instruments),
+            primary_blocker=evidence.primary_blocker,
+            secondary_blockers=list(evidence.secondary_blockers),
+        )
+    )
+    indicator_response = IndicatorsResponse.model_validate(
+        analysis.indicators, from_attributes=True
+    ).model_copy(
+        update={
+            "source_account_evidence": [
+                SourceAccountEvidenceResponse(
+                    field=item.field,
+                    statement=item.statement,
+                    status=item.status,
+                    expected=list(item.expected),
+                    found=[
+                        SourceAccountRefResponse(
+                            code=ref.code,
+                            name=ref.name,
+                            value=ref.value,
+                        )
+                        for ref in item.found
+                    ],
+                    parent_code=item.parent_code,
+                    formula=item.formula,
+                    dependencies=list(item.dependencies),
+                    blocker=item.blocker,
+                    consumer_indicators=list(item.consumer_indicators),
+                )
+                for item in analysis.indicators.source_account_evidence
+            ],
+            "bank_regulatory_provenance": (
+                None
+                if analysis.indicators.bank_regulatory_provenance is None
+                else BankRegulatoryProvenanceResponse(
+                    source=analysis.indicators.bank_regulatory_provenance.source,
+                    period_start=(
+                        analysis.indicators.bank_regulatory_provenance.period_start
+                    ),
+                    period_end=analysis.indicators.bank_regulatory_provenance.period_end,
+                    perimeter=analysis.indicators.bank_regulatory_provenance.perimeter,
+                    averaging_method=(
+                        analysis.indicators.bank_regulatory_provenance.averaging_method
+                    ),
+                    basis=analysis.indicators.bank_regulatory_provenance.basis,
+                    available_inputs=sorted(
+                        analysis.indicators.bank_regulatory_provenance.available_inputs
+                    ),
+                    missing_inputs=sorted(
+                        analysis.indicators.bank_regulatory_provenance.missing_inputs
+                    ),
+                    incompatible_inputs=sorted(
+                        analysis.indicators.bank_regulatory_provenance.incompatible_inputs
+                    ),
+                )
+            ),
+        }
+    )
     return AnalysisResponse(
         ticker=analysis.ticker,
         view=analysis.view,
@@ -222,16 +389,22 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
         ),
         reference_date=analysis.reference_date,
         computed_at=analysis.computed_at,
+        filed_regime=analysis.filed_regime,
+        regime_source=analysis.regime_source,
+        issuer=analysis.issuer_name,
+        cd_cvm=analysis.cd_cvm,
+        cnpj=analysis.cnpj,
         price=analysis.price,
         price_adjusted=analysis.price_adjusted,
         price_basis=analysis.price_basis,
         share_count_basis=analysis.share_count_basis,
         liquidity_basis=analysis.liquidity_basis,
         debt_basis=analysis.debt_basis,
+        debt_evidence_snapshot=analysis.debt_evidence_snapshot
+        or (DebtEvidenceSnapshot.LEGACY if evidence is None else None),
+        debt_evidence=evidence_response,
         roic_tax_basis=analysis.roic_tax_basis,
-        indicators=IndicatorsResponse.model_validate(
-            analysis.indicators, from_attributes=True
-        ),
+        indicators=indicator_response,
         indicator_contract=_to_indicator_contract(analysis),
     )
 

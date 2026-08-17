@@ -9,7 +9,8 @@ optional: what a bank files differs from a utility, and a missing input yields a
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
@@ -32,6 +33,236 @@ class AccountingRegime(StrEnum):
     BANK = "bank"
     INSURANCE = "insurance"
     CORPORATE = "corporate"
+
+
+class RegimeSource(StrEnum):
+    """Where the effective accounting regime came from."""
+
+    FILED = "filed"
+    SECTOR_FALLBACK = "sector_fallback"
+
+
+class DebtBlocker(StrEnum):
+    """Named statuses emitted while proving the debt perimeter."""
+
+    INAPPLICABLE_REGIME = "inapplicable_regime"
+    INCOMPLETE_DEBT_COVERAGE = "incomplete_debt_coverage"
+    MISSING_CURRENT_AGGREGATE = "missing_current_aggregate"
+    MISSING_NON_CURRENT_AGGREGATE = "missing_non_current_aggregate"
+    MISSING_AGGREGATE_VALUE = "missing_aggregate_value"
+    AMBIGUOUS_FINANCIAL_LIABILITY = "ambiguous_financial_liability"
+    UNREADABLE_EXPLICIT_INSTRUMENT = "unreadable_explicit_instrument"
+    NON_DEBT_LIABILITY = "non_debt_liability"
+    CHILD_DETAIL_DOUBLE_COUNT = "child_detail_double_count"
+    UNKNOWN = "unknown"
+
+
+class DebtLineRole(StrEnum):
+    """How a BPP line participated in the debt decision."""
+
+    CURRENT_AGGREGATE = "current_aggregate"
+    NON_CURRENT_AGGREGATE = "non_current_aggregate"
+    INCLUDED_INSTRUMENT = "included_instrument"
+    EXCLUDED_LIABILITY = "excluded_liability"
+
+
+class DebtLineClassification(StrEnum):
+    """Economic disposition of one BPP line in the perimeter matrix."""
+
+    INCLUDED = "included"
+    EXCLUDED = "excluded"
+    AMBIGUOUS = "ambiguous"
+
+
+class DebtInstrument(StrEnum):
+    """Instrument family identified from a BPP liability label."""
+
+    LOANS_FINANCING = "loans_financing"
+    DEBENTURES_SUBORDINATED = "debentures_subordinated"
+    LEASES = "leases"
+    MUTUOS = "mutuos"
+    SECURITIZATION_RECEIVABLES = "securitization_receivables"
+    ACQUISITION_DEBT_CCI = "acquisition_debt_cci"
+    GENERIC_FINANCIAL_LIABILITY = "generic_financial_liability"
+    INSURANCE_CONTRACT = "insurance_contract"
+    REINSURANCE = "reinsurance"
+    TECHNICAL_RESERVE = "technical_reserve"
+    PENSION = "pension"
+    CAPITALIZATION = "capitalization"
+    DERIVATIVE = "derivative"
+    OTHER = "other"
+
+
+class DebtIdentityStatus(StrEnum):
+    """Whether the persisted debt evidence has a complete issuer identity."""
+
+    RESOLVED = "resolved"
+    UNKNOWN = "unknown"
+    LEGACY = "legacy"
+
+
+class DebtEvidenceSnapshot(StrEnum):
+    """Which persisted perspective produced the debt evidence."""
+
+    CURRENT = "current"
+    HISTORICAL = "historical"
+    LEGACY = "legacy"
+
+
+class SourceAccountStatus(StrEnum):
+    """How a standardized input relates to the filed source account."""
+
+    MAPPED = "mapped"
+    ABSENT = "absent"
+    UNMAPPED = "unmapped"
+    PRESENT_UNREADABLE = "present_unreadable"
+    DERIVED = "derived"
+
+
+@dataclass(frozen=True, slots=True)
+class SourceAccountRef:
+    """A raw statement account retained as source evidence."""
+
+    code: str
+    name: str
+    value: Decimal | None
+
+
+@dataclass(frozen=True, slots=True)
+class SourceAccountEvidence:
+    """Evidence for one mapped, missing, skipped, or derived input.
+
+    ``expected`` is deliberately textual rather than a CVM-code-only contract:
+    some filings require a label scoped under a parent, while others have a
+    stable code. ``found`` keeps the actual raw account(s), including a value
+    that could not be parsed. Derived entries name their formula and roots so a
+    null FCF/EBITDA can be traced back without treating a missing account as
+    zero.
+    """
+
+    field: str
+    statement: str
+    status: SourceAccountStatus
+    expected: tuple[str, ...] = ()
+    found: tuple[SourceAccountRef, ...] = ()
+    parent_code: str | None = None
+    formula: str | None = None
+    dependencies: tuple[str, ...] = ()
+    blocker: NullReason | None = None
+    consumer_indicators: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class BankRegulatoryProvenance:
+    """Contract metadata for a bank ratio's paired regulatory inputs.
+
+    One provenance object covers inputs from one disclosure, period, perimeter,
+    averaging method, and basis. A ratio is eligible only when both of its
+    named inputs are in ``available_inputs`` and every metadata field is
+    present. Missing and partial pairs remain distinguishable from an absent
+    provider and from an incompatible scope.
+    """
+
+    source: str | None = None
+    period_start: date | None = None
+    period_end: date | None = None
+    perimeter: str | None = None
+    averaging_method: str | None = None
+    basis: str | None = None
+    available_inputs: frozenset[str] = frozenset()
+    missing_inputs: frozenset[str] = frozenset()
+    incompatible_inputs: frozenset[str] = frozenset()
+
+    @property
+    def metadata_complete(self) -> bool:
+        """Whether the source contract proves the disclosure's identity."""
+        return all(
+            value is not None and value != ""
+            for value in (
+                self.source,
+                self.period_start,
+                self.period_end,
+                self.perimeter,
+                self.averaging_method,
+                self.basis,
+            )
+        )
+
+    def reason_for(self, inputs: tuple[str, str]) -> NullReason | None:
+        """Return the blocker for one numerator/denominator pair."""
+        if not self.metadata_complete or any(
+            item in self.incompatible_inputs for item in inputs
+        ):
+            return NullReason.INCOMPATIBLE_REGULATORY_DISCLOSURE
+        present = sum(item in self.available_inputs for item in inputs)
+        if present == len(inputs):
+            return None
+        if present:
+            return NullReason.PARTIAL_REGULATORY_DISCLOSURE
+        return NullReason.MISSING_REGULATORY_DISCLOSURE
+
+
+@dataclass(frozen=True, slots=True)
+class DebtLineEvidence:
+    """One selected or relevant excluded line from the raw BPP."""
+
+    code: str
+    name: str
+    value: Decimal | None
+    role: DebtLineRole
+    reason: DebtBlocker | None = None
+    instrument: DebtInstrument = DebtInstrument.OTHER
+
+    @property
+    def classification(self) -> DebtLineClassification:
+        """The matrix disposition derived from the role and named blocker."""
+        if self.reason is DebtBlocker.AMBIGUOUS_FINANCIAL_LIABILITY:
+            return DebtLineClassification.AMBIGUOUS
+        if self.role is DebtLineRole.EXCLUDED_LIABILITY:
+            return DebtLineClassification.EXCLUDED
+        return DebtLineClassification.INCLUDED
+
+
+@dataclass(frozen=True, slots=True)
+class DebtCoverageEvidence:
+    """Auditable evidence for one debt-perimeter decision.
+
+    The evidence is deliberately separate from ``total_debt``. A null total is
+    not enough to explain whether the BPP omitted an aggregate, contained an
+    ambiguous liability, or was simply inapplicable to a bank schema.
+    """
+
+    regime: AccountingRegime
+    regime_source: RegimeSource
+    identity_status: DebtIdentityStatus = DebtIdentityStatus.UNKNOWN
+    used_lines: tuple[DebtLineEvidence, ...] = ()
+    excluded_lines: tuple[DebtLineEvidence, ...] = ()
+    included_instruments: tuple[str, ...] = ()
+    primary_blocker: DebtBlocker | None = None
+    secondary_blockers: tuple[DebtBlocker, ...] = ()
+
+    @property
+    def unclassified_blockers(self) -> int:
+        """Count malformed blocker values that should never be recomputed."""
+        blockers = (
+            (() if self.primary_blocker is None else (self.primary_blocker,))
+            + self.secondary_blockers
+            + tuple(
+                line.reason
+                for line in (*self.used_lines, *self.excluded_lines)
+                if line.reason is not None
+            )
+        )
+        return sum(blocker is DebtBlocker.UNKNOWN for blocker in blockers)
+
+
+@dataclass(frozen=True, slots=True)
+class IssuerIdentity:
+    """Identity carried with a standardized filing when the registry resolves it."""
+
+    cd_cvm: str | None = None
+    cnpj: str | None = None
+    issuer_name: str | None = None
 
 
 # What each sector predicts the filer's regime to be. A mismatch with the
@@ -75,6 +306,9 @@ class StandardizedFinancials:
 
     reference_date: date  # end of the period (DRE/DFC span, or balance instant)
     sector: Sector
+    issuer_name: str | None = None
+    cd_cvm: str | None = None
+    cnpj: str | None = None
     period_start: date | None = None  # start of the DRE flow period, when known
     # Start of the DFC flow period. Tracked separately because the CVM cash-flow
     # statement is filed year-to-date even when the DRE comes as isolated
@@ -123,6 +357,7 @@ class StandardizedFinancials:
     # interest-bearing-liability perimeter. This paired cause distinguishes an
     # evidenced zero from an absent/ambiguous debt disclosure (ADR 0059).
     debt_coverage_null_reason: NullReason | None = None
+    debt_evidence: DebtCoverageEvidence | None = None
     dividends_paid: Decimal | None = None  # dividends + JCP paid to controllers
     # Dividends + JCP the parent DECLARED against equity during the period (DMPL
     # 5.04 rows, positive). The paid figure above is the cash that left in the
@@ -158,6 +393,7 @@ class StandardizedFinancials:
     credit_loss_expense_annualized: Decimal | None = None
     average_credit_portfolio: Decimal | None = None
     bank_ratio_null_reason: NullReason | None = None
+    bank_regulatory_provenance: BankRegulatoryProvenance | None = None
     # Insurance-regime underwriting lines (ADR 0061), same sign convention:
     # expenses are negative. The pre-IFRS-17 CVM chart separates all four; the
     # current chart does not, so its aggregates are never substituted for these
@@ -174,6 +410,20 @@ class StandardizedFinancials:
     # line".
     filed_regime: AccountingRegime | None = None
     unmapped_fields: frozenset[str] = frozenset()
+    # Raw-account provenance for the inputs above. This is carried into the
+    # computed row separately from ``null_reasons``: a named null says what
+    # blocked an indicator, while these entries show which filed account was
+    # expected, found, skipped, or used as a derived root.
+    source_account_evidence: tuple[SourceAccountEvidence, ...] = ()
+
+    @property
+    def regime_source(self) -> RegimeSource:
+        """Whether the effective regime was detected in the filing or inferred."""
+        return (
+            RegimeSource.FILED
+            if self.filed_regime is not None
+            else RegimeSource.SECTOR_FALLBACK
+        )
 
 
 @dataclass(frozen=True)
@@ -197,9 +447,16 @@ class MarketData:
     # B3 cash rights whose ex dates fall inside this view's explicit window,
     # summed per analyzed security on the same restated share base as ``price``.
     cash_distributions: Decimal | None = None
+    # The reason the analyzed security's own quote is absent. This is distinct
+    # from the cap reason because a sibling class can be the missing input.
+    price_null_reason: NullReason | None = None
     cap_null_reason: NullReason | None = None
     shares_null_reason: NullReason | None = None
     cash_distributions_null_reason: NullReason | None = None
+    # Per-class B3 causes retained while the company cap is assembled. The
+    # calculator receives the selected cap cause, while this map keeps the
+    # class-level evidence available to diagnostics and tests.
+    class_price_null_reasons: Mapping[str, NullReason] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

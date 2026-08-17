@@ -227,6 +227,38 @@ async def test_delisted_listing_loses_to_a_still_trading_one(tmp_path: Path) -> 
     assert identity.cnpj == _KLABIN_CNPJ  # the still-trading listing won
 
 
+def test_same_priority_ticker_to_cnpj_collision_is_explicit(
+    tmp_path: Path,
+) -> None:
+    first = "12.000.000/0001-00"
+    second = "13.000.000/0001-00"
+    _write_fca_zip(
+        tmp_path,
+        geral=[_cadastre_row(first, "120"), _cadastre_row(second, "130")],
+        securities=[
+            {
+                "CNPJ_Companhia": cnpj,
+                "Versao": "1",
+                "Codigo_Negociacao": "ABCD3",
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": "Ações Ordinárias",
+            }
+            for cnpj in (first, second)
+        ],
+    )
+
+    identity = _registry(tmp_path)._build_index(
+        tmp_path / f"fca_cia_aberta_{_YEAR}.zip"
+    )["ABCD3"]
+
+    assert identity is not None
+    assert identity.ambiguous_cnpjs == tuple(sorted((first, second)))
+    assert fundamental_exclusion(identity) == (
+        f"ambiguous ticker-to-CNPJ mapping ({first}, {second})"
+    )
+
+
 def _cadastre_row(cnpj: str, code: str) -> dict[str, str]:
     return {
         "CNPJ_Companhia": cnpj,

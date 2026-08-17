@@ -7,6 +7,11 @@ from decimal import Decimal
 from smaug.analysis.domain.financials import (
     AccountingRegime,
     Cpc41Disclosure,
+    DebtCoverageEvidence,
+    DebtIdentityStatus,
+    DebtLineEvidence,
+    DebtLineRole,
+    RegimeSource,
     StandardizedFinancials,
 )
 from smaug.analysis.domain.indicators import NullReason
@@ -171,7 +176,7 @@ def test_ttm_keeps_basic_and_nulls_diluted_when_potential_shares_are_unavailable
     assert ttm.eps_basic == Decimal(40)
     assert ttm.eps_diluted is None
     assert ttm.eps_basic_null_reason is None
-    assert ttm.eps_diluted_null_reason is NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
+    assert ttm.eps_diluted_null_reason is NullReason.MISSING_CPC41_DISCLOSURE
 
 
 def test_ttm_does_not_infer_a_weighted_denominator_from_a_missing_period() -> None:
@@ -198,7 +203,7 @@ def test_ttm_does_not_infer_a_weighted_denominator_from_a_missing_period() -> No
 
     assert ttm is not None
     assert ttm.eps_basic is None
-    assert ttm.eps_basic_null_reason is NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
+    assert ttm.eps_basic_null_reason is NullReason.MISSING_CPC41_DISCLOSURE
 
 
 def test_ttm_isolates_the_declared_dividends_on_the_dmpl_span() -> None:
@@ -367,8 +372,42 @@ def test_ttm_carries_every_numeric_account_on_its_declared_basis() -> None:
         else:
             expected = Decimal(100)  # stock: the latest quarter, never summed
         assert getattr(ttm, name) == expected, name
-    assert ttm.eps_basic_null_reason is NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
-    assert ttm.eps_diluted_null_reason is NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
+    assert ttm.eps_basic_null_reason is NullReason.MISSING_CPC41_DISCLOSURE
+
+
+def test_ttm_preserves_specific_cpc41_blocker_from_a_missing_period() -> None:
+    quarters = [
+        _q(
+            end,
+            period_start=start,
+            net_income=Decimal(100),
+            cpc41=None if end == date(2025, 9, 30) else _cpc41("2"),
+        )
+        for end, start in zip(
+            _ENDS,
+            (
+                date(2025, 4, 1),
+                date(2025, 7, 1),
+                date(2025, 10, 1),
+                date(2026, 1, 1),
+            ),
+            strict=True,
+        )
+    ]
+    missing = next(
+        index for index, period in enumerate(quarters) if period.cpc41 is None
+    )
+    quarters[missing] = replace(
+        quarters[missing],
+        eps_basic_null_reason=NullReason.MISSING_ECONOMIC_RIGHTS,
+        eps_diluted_null_reason=NullReason.MISSING_UNIT_COMPOSITION,
+    )
+
+    ttm = build_ttm(quarters, None)
+
+    assert ttm is not None
+    assert ttm.eps_basic_null_reason is NullReason.MISSING_ECONOMIC_RIGHTS
+    assert ttm.eps_diluted_null_reason is NullReason.MISSING_UNIT_COMPOSITION
 
 
 def test_ttm_carries_the_null_cause_provenance() -> None:
@@ -392,6 +431,41 @@ def test_ttm_carries_the_null_cause_provenance() -> None:
     assert ttm.bank_ratio_null_reason is NullReason.MISSING_REGULATORY_DISCLOSURE
     assert ttm.debt_coverage_null_reason is NullReason.INCOMPLETE_DEBT_COVERAGE
     assert ttm.unmapped_fields == frozenset({"cfo", "capex"})
+
+
+def test_ttm_carries_raw_bpp_debt_evidence_and_issuer_identity() -> None:
+    evidence = DebtCoverageEvidence(
+        regime=AccountingRegime.CORPORATE,
+        regime_source=RegimeSource.FILED,
+        identity_status=DebtIdentityStatus.RESOLVED,
+        used_lines=(
+            DebtLineEvidence(
+                "2.01.04",
+                "Empréstimos e Financiamentos",
+                Decimal("100"),
+                DebtLineRole.CURRENT_AGGREGATE,
+            ),
+        ),
+        included_instruments=("2.01.04",),
+    )
+    quarters = [
+        replace(
+            _q(e, revenue=Decimal(1000)),
+            issuer_name="ACME S.A.",
+            cd_cvm="1234",
+            cnpj="12.345.678/0001-90",
+            debt_evidence=evidence,
+        )
+        for e in _ENDS
+    ]
+
+    ttm = build_ttm(quarters, None)
+
+    assert ttm is not None
+    assert ttm.issuer_name == "ACME S.A."
+    assert ttm.cd_cvm == "1234"
+    assert ttm.cnpj == "12.345.678/0001-90"
+    assert ttm.debt_evidence == evidence
 
 
 def test_ttm_normalizes_ytd_quarters_and_derives_q4_from_annual() -> None:
@@ -466,6 +540,21 @@ def test_ttm_as_of_does_not_reach_past_a_missing_quarter() -> None:
     ]
 
     assert build_ttm_as_of(quarters, [], date(2025, 3, 31)) is None
+
+
+def test_ttm_rejects_a_discontinuous_four_quarter_window() -> None:
+    quarters = [
+        _q(end, revenue=Decimal(100))
+        for end in (
+            date(2024, 6, 30),
+            date(2024, 9, 30),
+            # Q4/2024 is absent; four rows must not be treated as a TTM.
+            date(2025, 3, 31),
+            date(2025, 6, 30),
+        )
+    ]
+
+    assert build_ttm(quarters, None) is None
 
 
 def test_ttm_isolates_dfc_flows_on_their_own_year_to_date_span() -> None:

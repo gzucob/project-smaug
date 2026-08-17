@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import date, datetime
-from typing import NamedTuple, cast
+from decimal import Decimal, InvalidOperation
+from typing import Any, NamedTuple, cast
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -16,9 +17,304 @@ from smaug.analysis.domain.entities import (
     PruneResult,
     TickerAnalysis,
 )
+from smaug.analysis.domain.financials import (
+    AccountingRegime,
+    BankRegulatoryProvenance,
+    DebtBlocker,
+    DebtCoverageEvidence,
+    DebtEvidenceSnapshot,
+    DebtIdentityStatus,
+    DebtInstrument,
+    DebtLineEvidence,
+    DebtLineRole,
+    RegimeSource,
+    SourceAccountEvidence,
+    SourceAccountRef,
+    SourceAccountStatus,
+)
 from smaug.analysis.domain.indicators import Indicators, NullReason
 from smaug.analysis.infrastructure.sqlalchemy_models import TickerAnalysisRow
 from smaug.portfolio.domain.taxonomy import Classification
+
+
+def _debt_evidence_to_json(
+    evidence: DebtCoverageEvidence | None,
+) -> dict[str, Any] | None:
+    if evidence is None:
+        return None
+
+    def line_to_json(line: DebtLineEvidence) -> dict[str, Any]:
+        return {
+            "code": line.code,
+            "name": line.name,
+            "value": None if line.value is None else str(line.value),
+            "role": line.role.value,
+            "reason": None if line.reason is None else line.reason.value,
+            "instrument": line.instrument.value,
+            "classification": line.classification.value,
+        }
+
+    return {
+        "regime": evidence.regime.value,
+        "regime_source": evidence.regime_source.value,
+        "identity_status": evidence.identity_status.value,
+        "used_lines": [line_to_json(line) for line in evidence.used_lines],
+        "excluded_lines": [line_to_json(line) for line in evidence.excluded_lines],
+        "included_instruments": list(evidence.included_instruments),
+        "primary_blocker": (
+            None if evidence.primary_blocker is None else evidence.primary_blocker.value
+        ),
+        "secondary_blockers": [
+            blocker.value for blocker in evidence.secondary_blockers
+        ],
+    }
+
+
+def _debt_evidence_from_json(value: object) -> DebtCoverageEvidence | None:
+    if not isinstance(value, Mapping):
+        return None
+    try:
+        regime = AccountingRegime(str(value["regime"]))
+        regime_source = RegimeSource(str(value["regime_source"]))
+    except (KeyError, ValueError, TypeError):
+        return None
+
+    def blocker(raw: object) -> DebtBlocker:
+        try:
+            return DebtBlocker(str(raw))
+        except (ValueError, TypeError):
+            return DebtBlocker.UNKNOWN
+
+    def instrument(raw: object) -> DebtInstrument:
+        try:
+            return DebtInstrument(str(raw))
+        except (ValueError, TypeError):
+            return DebtInstrument.OTHER
+
+    def line(raw: object) -> DebtLineEvidence | None:
+        if not isinstance(raw, Mapping):
+            return None
+        try:
+            raw_value = raw.get("value")
+            parsed_value = None if raw_value is None else Decimal(str(raw_value))
+            return DebtLineEvidence(
+                code=str(raw.get("code", "")),
+                name=str(raw.get("name", "")),
+                value=parsed_value,
+                role=DebtLineRole(str(raw.get("role", ""))),
+                reason=(
+                    None if raw.get("reason") is None else blocker(raw.get("reason"))
+                ),
+                instrument=instrument(raw.get("instrument")),
+            )
+        except (InvalidOperation, ValueError, TypeError):
+            return None
+
+    used_lines = tuple(
+        parsed
+        for raw in value.get("used_lines", [])
+        if (parsed := line(raw)) is not None
+    )
+    excluded_lines = tuple(
+        parsed
+        for raw in value.get("excluded_lines", [])
+        if (parsed := line(raw)) is not None
+    )
+    instruments = value.get("included_instruments", [])
+    included_instruments = (
+        tuple(str(item) for item in instruments)
+        if isinstance(instruments, (list, tuple))
+        else ()
+    )
+    raw_secondary = value.get("secondary_blockers", [])
+    secondary_blockers = (
+        tuple(blocker(item) for item in raw_secondary)
+        if isinstance(raw_secondary, (list, tuple))
+        else ()
+    )
+    raw_identity = value.get("identity_status")
+    try:
+        identity_status = (
+            DebtIdentityStatus(str(raw_identity))
+            if raw_identity is not None
+            else DebtIdentityStatus.UNKNOWN
+        )
+    except (ValueError, TypeError):
+        identity_status = DebtIdentityStatus.UNKNOWN
+    raw_primary = value.get("primary_blocker")
+    return DebtCoverageEvidence(
+        regime=regime,
+        regime_source=regime_source,
+        identity_status=identity_status,
+        used_lines=used_lines,
+        excluded_lines=excluded_lines,
+        included_instruments=included_instruments,
+        primary_blocker=None if raw_primary is None else blocker(raw_primary),
+        secondary_blockers=secondary_blockers,
+    )
+
+
+def _source_account_evidence_to_json(
+    evidence: tuple[SourceAccountEvidence, ...],
+) -> list[dict[str, Any]]:
+    """Serialize source lineage without losing Decimal precision."""
+    return [
+        {
+            "field": item.field,
+            "statement": item.statement,
+            "status": item.status.value,
+            "expected": list(item.expected),
+            "found": [
+                {
+                    "code": ref.code,
+                    "name": ref.name,
+                    "value": None if ref.value is None else str(ref.value),
+                }
+                for ref in item.found
+            ],
+            "parent_code": item.parent_code,
+            "formula": item.formula,
+            "dependencies": list(item.dependencies),
+            "blocker": None if item.blocker is None else item.blocker.value,
+            "consumer_indicators": list(item.consumer_indicators),
+        }
+        for item in evidence
+    ]
+
+
+def _source_account_evidence_from_json(
+    value: object,
+) -> tuple[SourceAccountEvidence, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+
+    def ref(raw: object) -> SourceAccountRef | None:
+        if not isinstance(raw, Mapping):
+            return None
+        raw_value = raw.get("value")
+        try:
+            return SourceAccountRef(
+                code=str(raw.get("code", "")),
+                name=str(raw.get("name", "")),
+                value=None if raw_value is None else Decimal(str(raw_value)),
+            )
+        except (InvalidOperation, ValueError, TypeError):
+            return None
+
+    parsed: list[SourceAccountEvidence] = []
+    for raw in value:
+        if not isinstance(raw, Mapping):
+            continue
+        try:
+            raw_status = raw.get("status")
+            status = SourceAccountStatus(str(raw_status))
+            raw_blocker = raw.get("blocker")
+            blocker = None if raw_blocker is None else NullReason(str(raw_blocker))
+        except (ValueError, TypeError):
+            continue
+        raw_expected = raw.get("expected", [])
+        raw_dependencies = raw.get("dependencies", [])
+        raw_consumers = raw.get("consumer_indicators", [])
+        parsed.append(
+            SourceAccountEvidence(
+                field=str(raw.get("field", "")),
+                statement=str(raw.get("statement", "")),
+                status=status,
+                expected=(
+                    tuple(str(item) for item in raw_expected)
+                    if isinstance(raw_expected, (list, tuple))
+                    else ()
+                ),
+                found=tuple(
+                    parsed_ref
+                    for item in raw.get("found", [])
+                    if (parsed_ref := ref(item)) is not None
+                ),
+                parent_code=(
+                    None
+                    if raw.get("parent_code") is None
+                    else str(raw.get("parent_code"))
+                ),
+                formula=None if raw.get("formula") is None else str(raw.get("formula")),
+                dependencies=(
+                    tuple(str(item) for item in raw_dependencies)
+                    if isinstance(raw_dependencies, (list, tuple))
+                    else ()
+                ),
+                blocker=blocker,
+                consumer_indicators=(
+                    tuple(str(item) for item in raw_consumers)
+                    if isinstance(raw_consumers, (list, tuple))
+                    else ()
+                ),
+            )
+        )
+    return tuple(parsed)
+
+
+def _bank_regulatory_provenance_to_json(
+    provenance: BankRegulatoryProvenance | None,
+) -> dict[str, Any] | None:
+    if provenance is None:
+        return None
+    return {
+        "source": provenance.source,
+        "period_start": (
+            None
+            if provenance.period_start is None
+            else provenance.period_start.isoformat()
+        ),
+        "period_end": (
+            None if provenance.period_end is None else provenance.period_end.isoformat()
+        ),
+        "perimeter": provenance.perimeter,
+        "averaging_method": provenance.averaging_method,
+        "basis": provenance.basis,
+        "available_inputs": sorted(provenance.available_inputs),
+        "missing_inputs": sorted(provenance.missing_inputs),
+        "incompatible_inputs": sorted(provenance.incompatible_inputs),
+    }
+
+
+def _bank_regulatory_provenance_from_json(
+    value: object,
+) -> BankRegulatoryProvenance | None:
+    if not isinstance(value, Mapping):
+        return None
+
+    def parse_date(raw: object) -> date | None:
+        if raw is None:
+            return None
+        try:
+            return date.fromisoformat(str(raw))
+        except ValueError:
+            return None
+
+    def parse_set(key: str) -> frozenset[str]:
+        raw = value.get(key, [])
+        return (
+            frozenset(str(item) for item in raw)
+            if isinstance(raw, (list, tuple, set, frozenset))
+            else frozenset()
+        )
+
+    return BankRegulatoryProvenance(
+        source=None if value.get("source") is None else str(value.get("source")),
+        period_start=parse_date(value.get("period_start")),
+        period_end=parse_date(value.get("period_end")),
+        perimeter=(
+            None if value.get("perimeter") is None else str(value.get("perimeter"))
+        ),
+        averaging_method=(
+            None
+            if value.get("averaging_method") is None
+            else str(value.get("averaging_method"))
+        ),
+        basis=None if value.get("basis") is None else str(value.get("basis")),
+        available_inputs=parse_set("available_inputs"),
+        missing_inputs=parse_set("missing_inputs"),
+        incompatible_inputs=parse_set("incompatible_inputs"),
+    )
 
 
 def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
@@ -29,6 +325,21 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         setor=analysis.classification.setor,
         subsetor=analysis.classification.subsetor,
         segmento=analysis.classification.segmento,
+        filed_regime=(
+            analysis.filed_regime.value if analysis.filed_regime is not None else None
+        ),
+        regime_source=(
+            analysis.regime_source.value if analysis.regime_source is not None else None
+        ),
+        issuer_name=analysis.issuer_name,
+        issuer_cd_cvm=analysis.cd_cvm,
+        issuer_cnpj=analysis.cnpj,
+        debt_evidence_snapshot=(
+            analysis.debt_evidence_snapshot.value
+            if analysis.debt_evidence_snapshot is not None
+            else None
+        ),
+        debt_evidence=_debt_evidence_to_json(analysis.debt_evidence),
         reference_date=analysis.reference_date,
         computed_at=analysis.computed_at,
         price=analysis.price,
@@ -112,6 +423,12 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         non_controlling_interests=i.non_controlling_interests,
         shares=i.shares,
         null_reasons={k: v.value for k, v in i.null_reasons.items()},
+        source_account_evidence=_source_account_evidence_to_json(
+            i.source_account_evidence
+        ),
+        bank_regulatory_provenance=_bank_regulatory_provenance_to_json(
+            i.bank_regulatory_provenance
+        ),
     )
 
 
@@ -121,6 +438,21 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
         classification=Classification(row.setor, row.subsetor, row.segmento),
         reference_date=row.reference_date,
         computed_at=row.computed_at,
+        filed_regime=(
+            AccountingRegime(row.filed_regime) if row.filed_regime is not None else None
+        ),
+        regime_source=(
+            RegimeSource(row.regime_source) if row.regime_source is not None else None
+        ),
+        issuer_name=row.issuer_name,
+        cd_cvm=row.issuer_cd_cvm,
+        cnpj=row.issuer_cnpj,
+        debt_evidence=_debt_evidence_from_json(row.debt_evidence),
+        debt_evidence_snapshot=(
+            DebtEvidenceSnapshot(row.debt_evidence_snapshot)
+            if row.debt_evidence_snapshot is not None
+            else None
+        ),
         price=row.price,
         price_adjusted=row.price_adjusted,
         price_basis=row.price_basis,
@@ -205,6 +537,12 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
             enterprise_value=row.enterprise_value,
             non_controlling_interests=row.non_controlling_interests,
             shares=row.shares,
+            source_account_evidence=_source_account_evidence_from_json(
+                row.source_account_evidence
+            ),
+            bank_regulatory_provenance=_bank_regulatory_provenance_from_json(
+                row.bank_regulatory_provenance
+            ),
             # Pre-vocabulary rows carry NULL: degrade to "unclassified" ({}).
             null_reasons={
                 k: NullReason(v) for k, v in (row.null_reasons or {}).items()

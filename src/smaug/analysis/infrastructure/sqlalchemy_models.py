@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import JSON, Date, DateTime, Numeric, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -33,6 +34,13 @@ class TickerAnalysisRow(Base):
     setor: Mapped[str] = mapped_column(String(64), index=True)
     subsetor: Mapped[str | None] = mapped_column(String(64))
     segmento: Mapped[str | None] = mapped_column(String(64))
+    filed_regime: Mapped[str | None] = mapped_column(String(16))
+    regime_source: Mapped[str | None] = mapped_column(String(24))
+    issuer_name: Mapped[str | None] = mapped_column(String(256))
+    issuer_cd_cvm: Mapped[str | None] = mapped_column(String(16))
+    issuer_cnpj: Mapped[str | None] = mapped_column(String(32))
+    debt_evidence_snapshot: Mapped[str | None] = mapped_column(String(16))
+    debt_evidence: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     reference_date: Mapped[date] = mapped_column(Date)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     price: Mapped[Decimal | None] = mapped_column(Numeric)
@@ -121,3 +129,8 @@ class TickerAnalysisRow(Base):
     # Cause per null indicator, keyed by column name (#30's NullReason values).
     # NULL on rows computed before the vocabulary existed.
     null_reasons: Mapped[dict[str, str] | None] = mapped_column(JSON)
+    # Raw-account provenance for the calculation roots (#260). Legacy rows keep
+    # NULL until ``smaug analyze`` recomputes them.
+    source_account_evidence: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
+    # Contract metadata for any published bank-regulatory ratio (#261).
+    bank_regulatory_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON)

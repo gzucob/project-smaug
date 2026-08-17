@@ -29,7 +29,7 @@ import re
 import unicodedata
 import zipfile
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 
@@ -82,6 +82,9 @@ class _Security:
     # ("Units ..."); ``None`` for a plain ON/PN class.
     unit_shares: int | None = None
     unit_components: tuple[UnitComponent, ...] = ()
+    # Distinct CNPJs seen at the same trading/version priority. Keep the chosen
+    # row for diagnostics, but never let the CSV order decide the analysis key.
+    ambiguous_cnpjs: tuple[str, ...] = ()
 
 
 @dataclass
@@ -357,6 +360,7 @@ class CvmCompanyRegistry:
                 instrument_type=security.instrument_type,
                 trading_ended=security.trading_ended,
                 listed_since=security.listed_since,
+                ambiguous_cnpjs=security.ambiguous_cnpjs,
                 share_classes=classes.get(security.cnpj, ()),
                 shares_per_unit=security.unit_shares,
                 unit_components=security.unit_components,
@@ -436,6 +440,22 @@ class CvmCompanyRegistry:
                 current = securities.get(ticker)
                 if current is None or _prefer(candidate, current):
                     securities[ticker] = candidate
+                elif (
+                    _same_priority(candidate, current)
+                    and candidate.cnpj != current.cnpj
+                ):
+                    securities[ticker] = replace(
+                        current,
+                        ambiguous_cnpjs=tuple(
+                            sorted(
+                                {
+                                    current.cnpj,
+                                    candidate.cnpj,
+                                    *current.ambiguous_cnpjs,
+                                }
+                            )
+                        ),
+                    )
 
                 if not trading:
                     continue
@@ -476,3 +496,8 @@ def _prefer(candidate: _Security, current: _Security) -> bool:
     if candidate.trading != current.trading:
         return candidate.trading
     return candidate.version > current.version
+
+
+def _same_priority(candidate: _Security, current: _Security) -> bool:
+    """Whether two FCA rows are tied before their CNPJ is considered."""
+    return candidate.trading == current.trading and candidate.version == current.version

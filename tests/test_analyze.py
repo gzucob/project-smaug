@@ -24,7 +24,11 @@ from smaug.portfolio.domain.share_classes import (
     ShareKind,
     UnitComponent,
 )
-from smaug.shared.errors import SourceForbiddenError, SourceTimeoutError
+from smaug.shared.errors import (
+    SourceForbiddenError,
+    SourceMalformedError,
+    SourceTimeoutError,
+)
 from tests.fakes import fake_classes_resolver
 
 # Four consecutive quarter-ends: the TTM window Jul/2025–Mar/2026.
@@ -245,9 +249,7 @@ async def test_analyze_sums_the_ttm_cap_over_the_listed_share_classes() -> None:
     assert saved.price == Decimal(10)  # the analyzed ticker's own quote, unchanged
     assert saved.indicators.company_pb == Decimal(2)
     assert saved.indicators.eps is None
-    assert saved.indicators.null_reasons["eps"] is (
-        NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
-    )
+    assert saved.indicators.null_reasons["eps"] is (NullReason.MISSING_CPC41_DISCLOSURE)
 
 
 async def test_analyze_capitalizes_a_unit_from_its_underlying_classes() -> None:
@@ -285,9 +287,7 @@ async def test_analyze_capitalizes_a_unit_from_its_underlying_classes() -> None:
     assert saved.indicators.company_pe == Decimal(11)
     assert saved.indicators.company_pb == Decimal(2)  # 11000 / 5500
     assert saved.indicators.eps is None
-    assert saved.indicators.null_reasons["eps"] is (
-        NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
-    )
+    assert saved.indicators.null_reasons["eps"] is (NullReason.MISSING_CPC41_DISCLOSURE)
 
 
 async def test_sibling_classes_keep_company_scope_but_get_own_multiples() -> None:
@@ -803,9 +803,7 @@ async def test_analyze_keeps_cpc41_eps_separate_from_closing_share_counts() -> N
 
     ttm = views[("ttm_live", date(2026, 3, 31))]
     assert ttm.indicators.eps is None
-    assert ttm.indicators.null_reasons["eps"] is (
-        NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
-    )
+    assert ttm.indicators.null_reasons["eps"] is (NullReason.MISSING_CPC41_DISCLOSURE)
     assert ttm.indicators.bvps == Decimal(20)  # 6000 / 300
 
     y2024 = views[("closed_year", date(2024, 12, 31))]
@@ -844,7 +842,7 @@ async def test_analyze_refuses_the_quotes_own_cap_and_share_count() -> None:
     ind = repo.saved[0].indicators
     assert ind.eps is None
     assert ind.company_pe is None  # the quote's own 12000 is not borrowed
-    assert ind.null_reasons["eps"] is NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
+    assert ind.null_reasons["eps"] is NullReason.MISSING_CPC41_DISCLOSURE
     assert ind.null_reasons["company_pe"] is NullReason.MISSING_SHARE_COUNT
 
 
@@ -870,16 +868,16 @@ async def test_analyze_keeps_bvps_when_price_is_missing() -> None:
 
     saved = repo.saved[0]
     assert saved.indicators.eps is None
-    assert saved.indicators.null_reasons["eps"] is (
-        NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
-    )
+    assert saved.indicators.null_reasons["eps"] is (NullReason.MISSING_CPC41_DISCLOSURE)
     assert saved.indicators.bvps == Decimal(20)  # 8000 / 400
     assert saved.indicators.pe_basic is None  # still no price and no TTM CPC 41 EPS
     assert saved.indicators.null_reasons["pe_basic"] is (
-        NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
+        NullReason.MISSING_CPC41_DISCLOSURE
     )
     assert saved.indicators.company_pe is None
-    assert saved.indicators.null_reasons["company_pe"] is NullReason.MISSING_PRICE
+    assert saved.indicators.null_reasons["company_pe"] is (
+        NullReason.PRICE_SOURCE_UNAVAILABLE
+    )
 
 
 async def test_analyze_degrades_when_price_unavailable() -> None:
@@ -918,7 +916,7 @@ async def test_analyze_degrades_when_price_times_out() -> None:
         ),
         FakePrice(error=SourceTimeoutError("read timed out")),
         FakeRepo(),
-        FakeShares(),
+        FakeShares({2026: _counts(common=400)}),
         classes_resolver=fake_classes_resolver,
     )
 
@@ -927,7 +925,64 @@ async def test_analyze_degrades_when_price_times_out() -> None:
     assert len(out) == 1
     assert out[0].indicators.roe == Decimal("0.1")  # fundamentals survive
     assert out[0].indicators.company_pe is None  # timeout -> no market multiple
+    assert out[0].indicators.null_reasons["company_pe"] is (
+        NullReason.PRICE_SOURCE_TIMEOUT
+    )
     assert out[0].price is None
+
+
+async def test_analyze_names_a_malformed_price_source() -> None:
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader(
+            {
+                "BBAS3": _quarters(
+                    Sector.BANK, net_income=Decimal(200), equity=Decimal(8000)
+                )
+            }
+        ),
+        FakePrice(error=SourceMalformedError("invalid COTAHIST")),
+        FakeRepo(),
+        FakeShares({2026: _counts(common=400)}),
+        classes_resolver=fake_classes_resolver,
+    )
+
+    out = (await use_case.execute(["BBAS3"])).analyses
+
+    assert out[0].indicators.null_reasons["company_pe"] is (
+        NullReason.PRICE_SOURCE_MALFORMED
+    )
+
+
+async def test_analyze_keeps_a_sibling_symbol_not_found_reason_on_the_cap() -> None:
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader(
+            {
+                "PETR4": _quarters(
+                    Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(6800)
+                )
+            }
+        ),
+        FakePrice(
+            by_symbol={
+                "PETR3": MarketData(
+                    price_null_reason=NullReason.PRICE_SYMBOL_NOT_FOUND
+                ),
+                "PETR4": MarketData(price=Decimal(10)),
+            }
+        ),
+        repo,
+        FakeShares({2026: _counts(common=800, preferred=400)}),
+        classes_resolver=fake_classes_resolver,
+    )
+
+    await use_case.execute(["PETR4"])
+
+    saved = repo.saved[0]
+    assert saved.indicators.company_pe is None
+    assert saved.indicators.null_reasons["company_pe"] is (
+        NullReason.PRICE_SYMBOL_NOT_FOUND
+    )
 
 
 async def test_a_year_before_the_tickers_first_trade_gets_no_row() -> None:

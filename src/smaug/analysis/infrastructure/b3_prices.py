@@ -60,8 +60,14 @@ import httpx
 
 from smaug.analysis.domain.capital import BaseChange
 from smaug.analysis.domain.financials import MarketData, SessionClose, YearPrices
+from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.succession import crosses
 from smaug.shared.download import Sleeper, download_zip
+from smaug.shared.errors import (
+    CvmDownloadError,
+    SourceMalformedError,
+    SourceTimeoutError,
+)
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -319,11 +325,13 @@ def _reduce(archive_path: Path) -> dict[str, YearQuotes]:
             for line in stream:
                 if line[_TIPREG] != _QUOTE_RECORD or line[_TPMERC] != _SPOT_MARKET:
                     continue
+                if len(line.rstrip("\r\n")) < 245:
+                    raise ValueError("short COTAHIST spot-market record")
                 cents = _cents(line[_PREULT])
                 factor = _quote_factor(line[_FATCOT])
                 session = _session_date(line[_DATA])
                 if cents is None or factor is None or session is None:
-                    continue
+                    raise ValueError("invalid COTAHIST spot-market record")
                 ordinal = session.toordinal()
                 code = line[_CODNEG].strip()
                 rights = line[_DISMES].strip()
@@ -453,9 +461,24 @@ class CotahistArchive:
         ):
             url = f"{self._base_url}/{self._zip_name(year)}"
             logger.info("Downloading B3 quote series %d from %s", year, url)
-            await download_zip(self._http, url, archive, sleep=self._sleep)
+            try:
+                await download_zip(self._http, url, archive, sleep=self._sleep)
+            except CvmDownloadError as exc:
+                # ``download_zip`` retains the transport exception as its cause;
+                # keep a timeout distinct from an unavailable archive for the
+                # persisted indicator null reason.
+                if isinstance(exc.__cause__, httpx.TimeoutException):
+                    raise SourceTimeoutError(
+                        f"timed out downloading B3 {self._zip_name(year)}"
+                    ) from exc
+                raise
 
-        reduction = await asyncio.to_thread(_reduce, archive)
+        try:
+            reduction = await asyncio.to_thread(_reduce, archive)
+        except (IndexError, UnicodeError, ValueError, zipfile.BadZipFile) as exc:
+            raise SourceMalformedError(
+                f"malformed B3 quote archive {archive.name}"
+            ) from exc
         await asyncio.to_thread(
             lambda: reduction_path.write_text(_dump(reduction, today), encoding="utf-8")
         )
@@ -543,7 +566,7 @@ class B3QuoteProvider:
                 self._today().year,
                 ticker,
             )
-            return MarketData()
+            return MarketData(price_null_reason=NullReason.MISSING_PRICE)
         return MarketData(price=quotes.last_close)
 
 

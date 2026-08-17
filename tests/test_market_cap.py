@@ -99,6 +99,18 @@ def test_a_class_without_a_price_nulls_the_whole_cap() -> None:
     assert reason is NullReason.MISSING_PRICE
 
 
+def test_a_class_price_reason_survives_into_the_cap() -> None:
+    cap, reason = capitalize(
+        fake_classes_resolver("PETR4"),
+        ShareCounts(common=Decimal(800), preferred=Decimal(400), total=Decimal(1200)),
+        {"PETR3": None, "PETR4": Decimal(10)},
+        price_null_reasons={"PETR3": NullReason.PRICE_SYMBOL_NOT_FOUND},
+    )
+
+    assert cap is None
+    assert reason is NullReason.PRICE_SYMBOL_NOT_FOUND
+
+
 def test_a_class_without_a_filed_count_nulls_the_whole_cap() -> None:
     cap, reason = capitalize(
         fake_classes_resolver("PETR4"),
