@@ -42,6 +42,10 @@ For front-end changes, also follow the gate in `frontend/AGENTS.md`.
 
 - Write commit messages in English, imperative mood and conventional style:
   `feat:`, `fix:`, `chore:`, `docs:`, `refactor:` or `test:`.
+- Pull request titles must use Conventional Commits in English, optionally
+  with a scope, such as `feat(analysis): ...` or `fix(ingestion): ...`.
+  The `[NAMESPACE-NN]` prefix is reserved for issue titles and must not be
+  used in pull request titles. Append `(#NN)` when a title closes one issue.
 - One commit is one logical unit of work.
 - On the branch's first push, open the pull request, as a draft if work is
   still in progress:

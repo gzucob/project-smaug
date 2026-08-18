@@ -142,12 +142,14 @@ from smaug.portfolio.domain.universe import ListedCompany
 from smaug.portfolio.infrastructure.b3_taxonomy import B3TaxonomySource
 from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
 from smaug.portfolio.infrastructure.cvm_securities import CvmSecurityHistory
-from smaug.portfolio.infrastructure.sql_repository import SqlAlchemyPortfolioRepository
 from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.build import application_commit
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
-from smaug.shared.errors import IneligibleInstrumentError, UnknownTickerError
+from smaug.shared.errors import (
+    IneligibleInstrumentError,
+    UnknownTickerError,
+)
 from smaug.shared.events import EventBus
 from smaug.shared.local_artifacts import LocalSourceArtifactStore
 from smaug.shared.logging import get_logger
@@ -186,21 +188,14 @@ def _guarded[T](coro: Coroutine[Any, Any, T]) -> T:
         raise typer.Exit(code=2) from exc
 
 
-async def _default_tickers(settings: Settings) -> tuple[str, ...]:
-    """The user's stored portfolio (#151) — used when neither ``--ticker`` nor
-    ``--all`` is given.
-
-    Reads Postgres directly with its own short-lived engine rather than reusing
-    one a command happens to build later for another reason: ``ingest``/
-    ``report`` never touch Postgres otherwise, and the ticker set has to be
-    known before any of a command's own setup runs.
-    """
-    engine = create_engine(settings)
-    try:
-        repository = SqlAlchemyPortfolioRepository(create_session_factory(engine))
-        return tuple(p.ticker for p in await repository.list())
-    finally:
-        await engine.dispose()
+def _resolve_scope(
+    ticker: list[str] | None, all_listed: bool
+) -> tuple[tuple[str, ...], bool]:
+    """Resolve CLI scope, using the complete universe when no filter is given."""
+    if all_listed and ticker:
+        raise typer.BadParameter("--all and --ticker are mutually exclusive")
+    tickers = tuple(ticker) if ticker else ()
+    return tickers, all_listed or not tickers
 
 
 async def _registry_identities(
@@ -394,7 +389,10 @@ async def _cvm_key_maps(
 @app.command()
 def ingest(
     ticker: list[str] | None = typer.Option(
-        None, "--ticker", "-t", help="Ticker to collect (repeatable). Default: all."
+        None,
+        "--ticker",
+        "-t",
+        help="Ticker to collect (repeatable). Default: every listed company.",
     ),
     all_listed: bool = typer.Option(
         False, "--all", "-a", help="Every listed company, from the CVM FCA registry."
@@ -428,23 +426,14 @@ def ingest(
 ) -> None:
     """Collect the configured modules for the active source and store the mirror.
 
-    Three scopes: the stored portfolio (default, #151), an explicit ``--ticker``
-    list, or ``--all`` — every company the CVM registry lists, which is what M2
-    means by running at exchange scale. A run over 368 companies and eleven years
-    is one command, because each year's archive is read once and served to every
-    company in it (``--from-year``/``--to-year``).
+    Two scopes: an explicit ``--ticker`` list, or every company the CVM registry
+    lists (the default, also available as ``--all``). A run over 368 companies
+    and eleven years is one command, because each year's archive is read once and
+    served to every company in it (``--from-year``/``--to-year``).
     """
-    if all_listed and ticker:
-        raise typer.BadParameter("--all and --ticker are mutually exclusive")
     years = _years_to_sweep(year, from_year, to_year)
-    tickers = tuple(ticker) if ticker else ()
-    ticker_scope = (
-        TickerScope.ALL
-        if all_listed
-        else TickerScope.EXPLICIT
-        if tickers
-        else TickerScope.PORTFOLIO
-    )
+    tickers, whole_exchange = _resolve_scope(ticker, all_listed)
+    ticker_scope = TickerScope.ALL if whole_exchange else TickerScope.EXPLICIT
     try:
         # _guarded turns an unknown ticker into a clean exit, like analyze (#13).
         exit_code = _guarded(
@@ -452,7 +441,7 @@ def ingest(
                 tickers,
                 document=document,
                 years=years,
-                whole_exchange=all_listed,
+                whole_exchange=whole_exchange,
                 force=force,
                 verbose=verbose,
                 concurrency=concurrency,
@@ -561,12 +550,20 @@ async def _run_ingestion_resume(run_id: str, retry_permanent: bool) -> int:
 @app.command()
 def report(
     ticker: list[str] | None = typer.Option(
-        None, "--ticker", "-t", help="Ticker to report (repeatable). Default: all."
+        None,
+        "--ticker",
+        "-t",
+        help="Ticker to report (repeatable). Required unless --all is used.",
+    ),
+    all_listed: bool = typer.Option(
+        False, "--all", "-a", help="Every traded code the CVM registry lists."
     ),
 ) -> None:
-    """Print the completeness report read from the raw mirror."""
-    tickers = tuple(ticker) if ticker else ()
-    _guarded(_run_report(tickers))
+    """Print completeness for an explicit ticker subset or the whole universe."""
+    if not ticker and not all_listed:
+        raise typer.BadParameter("provide --ticker or --all")
+    tickers, whole_exchange = _resolve_scope(ticker, all_listed)
+    _guarded(_run_report(tickers, whole_exchange=whole_exchange))
 
 
 def _build_data_source(
@@ -715,9 +712,6 @@ async def _run_ingest(
             await lifecycle_sink(outcome)
 
         selected_tickers = tickers
-        if not selected_tickers and not whole_exchange:
-            selected_tickers = await _default_tickers(settings)
-            await run_service.resolve_tickers(run_id, selected_tickers)
 
         async def exclusion_sink(count: int) -> None:
             await run_service.exclude_calls(run_id, count)
@@ -1165,14 +1159,17 @@ def _by_owed_modules(
     return [(owed, tuple(tickers)) for owed, tickers in groups.items()]
 
 
-async def _run_report(tickers: tuple[str, ...]) -> None:
+async def _run_report(
+    tickers: tuple[str, ...], *, whole_exchange: bool = False
+) -> None:
     settings = get_settings()
-    if not tickers:
-        tickers = await _default_tickers(settings)
     client = await init_database(settings)
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
-            identities = await _registry_identities(settings, http, tickers)
+            if whole_exchange:
+                tickers, identities = await _universe_tickers(settings, http)
+            else:
+                identities = await _registry_identities(settings, http, tickers)
         use_case = CompletenessReportUseCase(
             repository=BeanieRawIngestionRepository(),
             modules=settings.cvm_modules,
@@ -1189,7 +1186,10 @@ async def _run_report(tickers: tuple[str, ...]) -> None:
 @app.command()
 def analyze(
     ticker: list[str] | None = typer.Option(
-        None, "--ticker", "-t", help="Ticker to analyze (repeatable). Default: all."
+        None,
+        "--ticker",
+        "-t",
+        help="Ticker to analyze (repeatable). Default: every traded code.",
     ),
     all_listed: bool = typer.Option(
         False, "--all", "-a", help="Every traded code the CVM registry lists."
@@ -1204,12 +1204,12 @@ def analyze(
     classes share one filing but not one price, so ELET3 and ELET6 are two
     different answers to "what is this worth". It runs sequentially — measured at
     about six seconds a code, with no sign of the price sources rate-limiting.
+    With no flags, the command analyzes the complete traded-code universe, the
+    same scope selected explicitly by ``--all``.
     """
-    if all_listed and ticker:
-        raise typer.BadParameter("--all and --ticker are mutually exclusive")
-    tickers = tuple(ticker) if ticker else ()
+    tickers, whole_exchange = _resolve_scope(ticker, all_listed)
     exit_code = _guarded(
-        _run_analyze(tickers, whole_exchange=all_listed, verbose=verbose)
+        _run_analyze(tickers, whole_exchange=whole_exchange, verbose=verbose)
     )
     raise typer.Exit(code=exit_code)
 
@@ -1300,11 +1300,9 @@ async def _run_analyze(
     session_factory = create_session_factory(engine)
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
-            if whole_exchange:
+            if whole_exchange or not tickers:
                 tickers, identities = await _universe_tickers(settings, http)
             else:
-                if not tickers:
-                    tickers = await _default_tickers(settings)
                 identities = await _registry_identities(settings, http, tickers)
             # The reader keeps a five-value Sector (the internal regime hint); the
             # stored analysis carries the B3 Classification (ADR 0024). Both are
@@ -1398,7 +1396,10 @@ async def _universe_tickers(
 @app.command()
 def doctor(
     ticker: list[str] | None = typer.Option(
-        None, "--ticker", "-t", help="Ticker to inspect (repeatable). Default: all."
+        None,
+        "--ticker",
+        "-t",
+        help="Ticker to inspect (repeatable). Default: every traded code.",
     ),
     all_listed: bool = typer.Option(
         False, "--all", "-a", help="Every traded code the CVM registry lists."
@@ -1423,13 +1424,13 @@ def doctor(
     nobody has named.
 
     Exits non-zero on any unclassified null. This is the exchange-scale coverage
-    gate, not a proof that non-null arithmetic is correct (ADR 0050).
+    gate, not a proof that non-null arithmetic is correct (ADR 0050). With no
+    flags, the command inspects the complete traded-code universe, the same
+    scope selected explicitly by ``--all``.
     """
-    if all_listed and ticker:
-        raise typer.BadParameter("--all and --ticker are mutually exclusive")
-    tickers = tuple(ticker) if ticker else ()
+    tickers, whole_exchange = _resolve_scope(ticker, all_listed)
     exit_code = _guarded(
-        _run_doctor(tickers, whole_exchange=all_listed, verbose=verbose)
+        _run_doctor(tickers, whole_exchange=whole_exchange, verbose=verbose)
     )
     raise typer.Exit(code=exit_code)
 
@@ -1443,11 +1444,9 @@ async def _run_doctor(
     mongo = await init_database(settings)
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
-            if whole_exchange:
+            if whole_exchange or not tickers:
                 tickers, identities = await _universe_tickers(settings, http)
             else:
-                if not tickers:
-                    tickers = await _default_tickers(settings)
                 identities = await _registry_identities(settings, http, tickers)
         resolver = _sector_resolver(identities)
         use_case = DoctorUseCase(
