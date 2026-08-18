@@ -21,7 +21,7 @@ class UnknownTickerError(SmaugError):
 
     def __init__(self, ticker: str) -> None:
         self.ticker = ticker
-        super().__init__(f"Unknown ticker: {ticker} (not in portfolio)")
+        super().__init__(f"Unknown ticker: {ticker} (not in the CVM FCA registry)")
 
 
 class IneligibleInstrumentError(SmaugError):

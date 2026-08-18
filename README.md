@@ -46,12 +46,15 @@ O entrypoint é a CLI Typer `smaug.entrypoints.cli`; com o pacote instalado
 (`uv sync`) os comandos também respondem pelo atalho `smaug <comando>`.
 
 ```bash
-# Coleta o espelho cru das 9 ações (ou de tickers específicos com -t):
+# Coleta o espelho cru de todas as companhias listadas (escopo padrão):
 uv run python -m smaug.entrypoints.cli ingest
+# --all explicita o mesmo escopo; -t restringe a coleta a tickers específicos:
+uv run python -m smaug.entrypoints.cli ingest --all
 uv run python -m smaug.entrypoints.cli ingest -t PETR4 -t VALE3
 
-# Relatório de completude por ticker (lê o espelho, não recoleta):
-uv run python -m smaug.entrypoints.cli report
+# Relatório de completude para tickers específicos; --all audita todos:
+uv run python -m smaug.entrypoints.cli report -t PETR4 -t VALE3
+uv run python -m smaug.entrypoints.cli report --all
 ```
 
 A coleta é **append-only e re-executável com segurança**: só uma versão fonte
@@ -69,8 +72,8 @@ Duas, ambas públicas e sem autenticação (ADR 0041):
 
 - **CVM** — dados abertos. Baixa o ZIP anual (`CVM_YEAR`, default 2024) e
   espelha os statements crus (`BPA`/`BPP`/`DRE`/`DFC`/…), mais as contagens de
-  ações do FRE. Um arquivo é lido uma vez e serve a bolsa inteira. O mapa
-  ticker → código CVM vive em `portfolio/domain/cvm_codes.py`.
+  ações do FRE. Um arquivo é lido uma vez e serve a bolsa inteira. Tickers são
+  resolvidos pela FCA da CVM, sem um mapa especial para uma carteira fixa.
 - **B3** — os eventos societários e os dividendos que a bolsa publica
   (`CAPITAL_EVENT_B3`, `CASH_DIVIDEND_B3`), e a série de cotações
   (`COTAHIST_A{ano}.ZIP`), que é a única fonte de preço da Fase 2.
@@ -87,7 +90,7 @@ docker compose up -d
 # 2. Cria o schema derivado (uma vez):
 uv run alembic upgrade head
 
-# 3. Calcula e persiste os indicadores das 9 (ou -t TICKER):
+# 3. Calcula e persiste os indicadores de todos os códigos negociados (ou -t TICKER):
 uv run python -m smaug.entrypoints.cli analyze
 
 # 4. Serve a API para o front-end:
@@ -120,7 +123,7 @@ uvicorn smaug.entrypoints.api:app --reload
 src/smaug/
 ├── ingestion/     # leitores CVM/B3 + persistência do espelho cru (Mongo)
 ├── analysis/      # cálculo de indicadores + persistência derivada (Postgres)
-├── portfolio/     # mapas de referência: ticker -> setor, ticker -> código CVM
+├── portfolio/     # favoritos e resolução de ticker/setor
 ├── shared/        # config, conexões Mongo/Postgres, EventBus
 └── entrypoints/   # CLI + API FastAPI
 ```
