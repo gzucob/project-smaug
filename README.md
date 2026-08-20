@@ -1,140 +1,373 @@
 # project-smaug
 
-Ferramenta pessoal de análise da carteira de ações. **Fase 1: ingestão fiel e
-auditável** dos dados fundamentais (CVM/B3), persistidos em MongoDB como um
-espelho cru — sem cálculo, sem interpretação. **Fase 2: análise** — indicadores
-fundamentalistas e de mercado derivados do espelho, persistidos em PostgreSQL e
-servidos por uma API de leitura. Ambas já estão implementadas — veja
-[Status](#status).
+Ferramenta pessoal de análise fundamentalista de ações da B3. O projeto é
+organizado em duas fases:
 
-> A fase seguinte (análise qualitativa por critérios/IA — "tese azedando")
-> ainda **não** foi implementada.
+- **Fase 1 — ingestão:** baixa dados públicos da CVM e da B3 e mantém um
+  espelho cru, fiel e auditável em MongoDB. Essa fase não calcula indicadores
+  nem interpreta os dados.
+- **Fase 2 — análise:** lê o espelho e a série histórica da B3, calcula
+  indicadores fundamentalistas e de mercado, persiste os resultados em
+  PostgreSQL e os disponibiliza por uma API FastAPI.
+
+O front-end Next.js consome a API e apresenta as análises em TTM e exercícios
+fechados. A análise qualitativa por critérios/IA ainda não foi implementada.
+
+## Fluxo
+
+```text
+Arquivos CVM + arquivos B3
+          │
+          ▼
+  smaug ingest  ───────────────► MongoDB
+                                      │
+                                      ▼
+  B3 COTAHIST + espelho CVM ──► smaug analyze ──► PostgreSQL
+                                                       │
+                                                       ▼
+                                           FastAPI ──► Next.js
+```
+
+O cálculo e a persistência dos indicadores acontecem exclusivamente no comando
+`analyze`. A API lê análises já persistidas; a única escrita adicional da API é
+a preferência de favoritar ou desfavoritar um ticker.
 
 ## Stack
 
-- Python 3.13 · [uv](https://docs.astral.sh/uv/)
-- Fase 1: MongoDB (Docker) + Beanie (ODM tipado) · `pycvm` para o parsing dos
-  arquivos da CVM. Gatilho é **CLI** (`smaug.ingest`, `smaug.report`).
-- Fase 2: PostgreSQL + SQLAlchemy + Alembic (dados derivados). Gatilho de
-  cálculo é **CLI** (`smaug.analyze`); FastAPI (`smaug.entrypoints.api`) só lê
-  o que já foi persistido — não recalcula nada por request.
-- mypy strict · ruff · pytest
+### Backend
 
-## Documentação
+- Python 3.13 e [uv](https://docs.astral.sh/uv/)
+- FastAPI e Uvicorn
+- Typer para a CLI
+- MongoDB 8 + Beanie para o espelho cru
+- PostgreSQL 17 + SQLAlchemy + Alembic para os dados derivados
+- Pydantic Settings para configuração
+- Ruff, mypy strict e pytest
 
-- Roadmap (objetivo e milestones M0–M3) — [`docs/ROADMAP.md`](docs/ROADMAP.md)
-- Decisões de arquitetura e modelagem (ADRs) — [`docs/adr/`](docs/adr/)
-- Modelo de documentação (regra vs. ADR vs. issue vs. relatório gerado) —
-  [`docs/AGENTS.md`](docs/AGENTS.md)
+### Front-end
 
-O que é verdade sobre os dados **agora** não vive em documento: vem de um
-comando (`smaug doctor`) e dos testes. Os planos da Fase 1 e o log de achados
-(`FINDINGS_INDICATORS.md`) foram aposentados — suas decisões viraram ADRs, seus
-follow-ups viraram issues. O histórico segue no git.
+- Next.js 15 com App Router e Server Components
+- React 19
+- TypeScript 5
+- Tailwind CSS v4
+- Recharts para gráficos
 
-## Setup local
+Os arquivos da CVM são lidos diretamente como CSV. `pycvm` não é uma
+dependência do projeto.
 
-```bash
-uv sync                 # dependências + venv (baixa o Python 3.13)
-cp .env.example .env    # nada a preencher: nenhuma fonte pede credencial
-docker compose up -d    # sobe Mongo (Fase 1) + Postgres (Fase 2)
-```
+## Fontes e regras de dados
 
-## Uso (Fase 1)
+Todas as fontes são públicas e não exigem autenticação.
 
-O entrypoint é a CLI Typer `smaug.entrypoints.cli`; com o pacote instalado
-(`uv sync`) os comandos também respondem pelo atalho `smaug <comando>`.
+- **CVM:** arquivos anuais DFP, arquivos trimestrais ITR, FRE, FCA e demais
+  registros necessários para demonstrações, contagens de ações, identidade e
+  classes de negociação.
+- **B3:** série histórica `COTAHIST_A{ano}.ZIP`, eventos societários,
+  dividendos e classificação setorial.
 
-```bash
-# Coleta o espelho cru de todas as companhias listadas (escopo padrão):
-uv run python -m smaug.entrypoints.cli ingest
-# --all explicita o mesmo escopo; -t restringe a coleta a tickers específicos:
-uv run python -m smaug.entrypoints.cli ingest --all
-uv run python -m smaug.entrypoints.cli ingest -t PETR4 -t VALE3
+As fronteiras de autoridade são deliberadas:
 
-# Relatório de completude para tickers específicos; --all audita todos:
-uv run python -m smaug.entrypoints.cli report -t PETR4 -t VALE3
-uv run python -m smaug.entrypoints.cli report --all
-```
+- A CVM é a fonte dos documentos e dados contábeis.
+- A B3 é a única fonte de preços.
+- Yahoo Finance, brapi e outros agregadores não são fallback, fixture nem
+  critério de aceitação.
+- Preços como negociados, preços ajustados por eventos societários e preços
+  ajustados por dividendos são bases diferentes e não são misturados.
+- A capitalização soma cada classe listada com seu próprio preço e considera
+  apenas ações em circulação, descontando ações em tesouraria.
+- Dados ausentes permanecem `null` com uma causa nomeada; o sistema não infere
+  zero, dívida inexistente ou preço de outra fonte.
 
-A coleta é **append-only e re-executável com segurança**: só uma versão fonte
-distinta cria documento em `raw_ingestions`. A identidade canônica combina fonte,
-artefato, registrante, módulo, discriminador da requisição e conteúdo estrutural;
-horário de coleta e execução não entram nela. Uma repetição, inclusive com
-`--force`, fica registrada na execução como `unchanged`, sem duplicar a versão.
-Uma emenda do payload permanece uma nova versão append-only. Falha em um
-ticker/módulo não derruba os demais (um erro fatal para a fonte para a coleta;
-404 pula a chamada).
+As decisões de modelagem e proveniência estão registradas em
+[`docs/adr/`](docs/adr/). Em particular, o [ADR 0009](docs/adr/0009-read-cvm-statement-csvs-directly.md)
+documenta a remoção do `pycvm` e a leitura direta dos CSVs da CVM.
 
-### Fontes de dados
+## Pré-requisitos
 
-Duas, ambas públicas e sem autenticação (ADR 0041):
+- Python 3.13
+- [uv](https://docs.astral.sh/uv/)
+- Docker e Docker Compose
+- Node.js e npm, caso o front-end seja executado localmente
 
-- **CVM** — dados abertos. Baixa o ZIP anual (`CVM_YEAR`, default 2024) e
-  espelha os statements crus (`BPA`/`BPP`/`DRE`/`DFC`/…), mais as contagens de
-  ações do FRE. Um arquivo é lido uma vez e serve a bolsa inteira. Tickers são
-  resolvidos pela FCA da CVM, sem um mapa especial para uma carteira fixa.
-- **B3** — os eventos societários e os dividendos que a bolsa publica
-  (`CAPITAL_EVENT_B3`, `CASH_DIVIDEND_B3`), e a série de cotações
-  (`COTAHIST_A{ano}.ZIP`), que é a única fonte de preço da Fase 2.
+Não há credenciais para preencher: os endpoints usados pelo projeto são
+públicos e não autenticados.
 
-## Uso (Fase 2 — indicadores)
+## Configuração e instalação
 
-A Fase 2 calcula os indicadores (contábeis + de mercado) a partir do espelho
-CVM e da série de cotações da B3, persiste no PostgreSQL e serve por FastAPI.
+Na raiz do repositório:
 
 ```bash
-# 1. Sobe Mongo + Postgres:
+uv sync
+cp .env.example .env
 docker compose up -d
-
-# 2. Cria o schema derivado (uma vez):
 uv run alembic upgrade head
-
-# 3. Calcula e persiste os indicadores de todos os códigos negociados (ou -t TICKER):
-uv run python -m smaug.entrypoints.cli analyze
-
-# 4. Serve a API para o front-end:
-uvicorn smaug.entrypoints.api:app --reload
-#   GET /analysis           -> últimas análises de todas as ações
-#   GET /analysis/{ticker}  -> ex.: /analysis/PETR4
 ```
 
-- **Indicadores**: ROE, ROA, margens, dívida líquida/EBITDA, liquidez,
-  crescimento, P/L, P/VP, EV/EBITDA, DY. Cientes de setor — bancos/seguradoras
-  retornam `null` nos que não se aplicam (dívida líquida, EV/EBITDA, liquidez).
-- **Unidades**: os valores da CVM (em milhares) são escalados para reais antes
-  de cruzar com o preço, para os múltiplos de mercado saírem corretos.
-- **Preço**: a série histórica que a **própria B3 publica**
-  (`COTAHIST_A{ano}.ZIP` — sem token, um arquivo por ano desde 1986, ADR 0032),
-  e nada mais (ADR 0041). A B3 publica o preço **como negociado**, então ele é
-  dividido pelos eventos societários posteriores a cada pregão para casar com a
-  base acionária restatada da ADR 0027 (ADR 0033), e os dividendos entram de
-  volta numa terceira base (ADR 0039). Um papel sem nenhum pregão no período
-  fica com os múltiplos de mercado nulos, com a causa nomeada; os indicadores
-  contábeis saem normalmente.
-- **Crescimento**: precisa de ≥2 anos no espelho; rode `CVM_YEAR=2023 uv run
-  python -m smaug.entrypoints.cli ingest` (e 2022) para popular histórico.
-- Ainda **sem critérios de "tese azedando"** — isso fica para a fase de análise
-  com IA (LangGraph/RAG).
+O `.env.example` contém os valores padrão. Os principais parâmetros são:
 
-## Estrutura
+- `CVM_DOCUMENT`: `DFP` para exercícios anuais fechados ou `ITR` para dados
+  trimestrais. O padrão é `DFP`.
+- `CVM_YEAR`: ano do arquivo CVM usado por uma coleta sem `--year`. O padrão é
+  `2024`.
+- `CVM_MODULES`: módulos CVM/B3 a coletar; por padrão inclui demonstrações,
+  capital, eventos societários e dividendos.
+- `MONGO_URI` e `MONGO_DB`: conexão do espelho cru.
+- `POSTGRES_URI`: conexão dos indicadores derivados.
+- `CVM_CACHE_DIR`, `B3_CACHE_DIR` e `SOURCE_ARTIFACT_DIR`: caches locais e
+  armazenamento Bronze dos artefatos de origem.
 
+O Docker Compose inicia:
+
+- MongoDB em `localhost:27017`
+- PostgreSQL em `localhost:5432`
+
+## CLI
+
+Depois de `uv sync`, a CLI pode ser chamada como `uv run smaug`. A forma
+equivalente, útil quando o pacote ainda não foi instalado como script, é
+`uv run python -m smaug.entrypoints.cli`.
+
+```bash
+uv run smaug --help
 ```
+
+### Ingestão
+
+`ingest` baixa os módulos configurados e grava o espelho em MongoDB.
+
+```bash
+# Escopo padrão: universo completo elegível.
+uv run smaug ingest
+
+# Escopo explícito de alguns tickers; --ticker pode ser repetido.
+uv run smaug ingest --ticker PETR4 --ticker VALE3
+
+# Arquivo anual DFP de um ano específico.
+uv run smaug ingest --all --document DFP --year 2024
+
+# Intervalo de arquivos trimestrais ITR.
+uv run smaug ingest --all --document ITR --from-year 2022 --to-year 2024
+
+# Recoleta deliberada e ajuste da concorrência dos arquivos CVM.
+uv run smaug ingest --all --force --concurrency 4
+```
+
+O espelho é append-only e semanticamente idempotente: repetir a mesma fonte e
+o mesmo conteúdo não cria uma nova versão; uma emenda do arquivo permanece uma
+versão nova. A coleta é reexecutável, registra falhas por chamada e pode ser
+retomada sem recolher indiscriminadamente o que já foi processado.
+
+Para uma análise histórica, carregue os DFP necessários. Para TTM, carregue
+também os ITRs dos trimestres necessários; a análise combina as janelas
+disponíveis no espelho.
+
+### Relatório de completude
+
+`report` consulta o espelho cru e mostra a cobertura por módulo. Ele exige um
+escopo explícito para evitar um relatório acidentalmente enorme:
+
+```bash
+uv run smaug report --ticker PETR4 --ticker VALE3
+uv run smaug report --all
+```
+
+`report` não calcula indicadores e não consulta o PostgreSQL.
+
+### Análise e cobertura
+
+`analyze` calcula e persiste os indicadores no PostgreSQL. Sem filtro, ele
+analisa o universo completo de códigos negociados; `--all` torna esse escopo
+explícito.
+
+```bash
+uv run smaug analyze
+uv run smaug analyze --ticker PETR4 --ticker VALE3
+uv run smaug analyze --all --verbose
+```
+
+`doctor` é uma verificação somente leitura da análise persistida. Para cada
+indicador, informa valor, `null` com causa nomeada ou `null` não classificado.
+Ele retorna código diferente de zero quando encontra nulos não classificados.
+O comando é uma verificação de cobertura, não uma prova de que toda aritmética
+não nula está correta.
+
+```bash
+uv run smaug doctor --ticker PETR4
+uv run smaug doctor --all
+uv run smaug doctor --all --verbose
+```
+
+### Diagnóstico e manutenção
+
+```bash
+# Lista execuções de ingestão persistidas.
+uv run smaug ingestion-runs --limit 10
+uv run smaug ingestion-runs --run-id RUN_ID
+
+# Inspeciona validações de lotes e, após revisão, aprova uma quarentena.
+uv run smaug ingestion-validations --limit 20
+uv run smaug ingestion-validations --approve VALIDATION_ID --note "revisado"
+
+# Retoma chamadas elegíveis que falharam em uma execução anterior.
+uv run smaug ingestion-resume --run-id RUN_ID
+uv run smaug ingestion-resume --run-id RUN_ID --retry-permanent
+
+# Verifica divergências da taxonomia B3; --write atualiza o snapshot versionado.
+uv run smaug taxonomy
+uv run smaug taxonomy --write
+
+# Relabela documentos antigos com o registrante CVM correto.
+uv run smaug relink
+
+# Remove execuções de análise substituídas, mantendo a mais recente por célula.
+uv run smaug prune
+```
+
+`taxonomy --write`, `relink` e `prune` são operações deliberadas de
+manutenção. `prune` remove dados derivados antigos que já não são usados pelas
+leituras atuais; não é executado automaticamente pelo `analyze`.
+
+## Indicadores e bases de análise
+
+A análise persistida possui duas perspectivas:
+
+- **TTM:** janela móvel de doze meses, montada a partir dos dados trimestrais
+  disponíveis.
+- **Exercício fechado:** histórico anual baseado nos DFPs.
+
+O conjunto de indicadores cobre, entre outros:
+
+- rentabilidade e retorno: ROE, ROA, ROIC e margens;
+- estrutura de capital: dívida líquida, alavancagem, liquidez e cobertura;
+- crescimento: receita, lucro, EBITDA, EBIT e CAGRs;
+- dados por ação: EPS, valor patrimonial e distribuições;
+- avaliação: P/L, P/VP, PSR, EV/EBIT, EV/EBITDA, preço/FCF e dividend yield;
+- métricas específicas de bancos e seguradoras, quando o regime contábil
+  fornece os insumos aplicáveis.
+
+Cada análise conserva a data de referência, o regime contábil, a origem dos
+insumos, a base de preço/ações e o contrato da fórmula. Indicadores inaplicáveis
+ou sem cobertura suficiente permanecem nulos com a razão correspondente.
+
+## API
+
+Com MongoDB e PostgreSQL disponíveis e o schema criado:
+
+```bash
+uv run uvicorn smaug.entrypoints.api:app --reload --host 0.0.0.0 --port 8000
+```
+
+A documentação interativa fica em <http://localhost:8000/docs>.
+
+| Método | Endpoint | Função |
+|---|---|---|
+| `GET` | `/analysis` | Última análise persistida de cada ticker. |
+| `GET` | `/analysis/{ticker}` | Visão TTM e histórico anual de um ticker. |
+| `GET` | `/portfolio` | Lista de tickers favoritados. |
+| `POST` | `/portfolio/{ticker}` | Favorita um ticker de forma idempotente. |
+| `DELETE` | `/portfolio/{ticker}` | Remove um ticker dos favoritos. |
+
+Os endpoints de análise são de leitura. Favoritos são preferências do usuário,
+não resultados calculados, e por isso são a única escrita exposta pela API.
+
+## Front-end
+
+O front-end fica em `frontend/` e é uma aplicação separada do backend Python.
+Ele busca dados da API no servidor; o navegador não acessa diretamente a API
+para leituras. A exceção é o toggle de favoritos, que passa por uma rota
+same-origin do Next.js.
+
+Em um segundo terminal:
+
+```bash
+cd frontend
+npm install
+cp .env.example .env.local
+npm run dev
+```
+
+O front-end fica em <http://localhost:3000>. O `.env.local` usa:
+
+```dotenv
+NEXT_PUBLIC_API_BASE=http://localhost:8000
+```
+
+Rotas principais:
+
+- `/`: página inicial e busca de ticker;
+- `/portfolio`: visão geral dos favoritos por setor;
+- `/ticker/{symbol}`: detalhes do ticker, indicadores, histórico e gráficos.
+
+Verificações do front-end:
+
+```bash
+npm run typecheck
+npm run build
+```
+
+## Testes e qualidade
+
+Na raiz do projeto:
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src
+uv run pytest
+```
+
+Para mudanças no front-end:
+
+```bash
+cd frontend
+npm run typecheck
+npm run build
+```
+
+Quando o cache padrão do uv não estiver disponível no ambiente local, use um
+cache temporário:
+
+```bash
+UV_CACHE_DIR=/tmp/project-smaug-uv-cache uv run pytest
+```
+
+## Estrutura do repositório
+
+```text
 src/smaug/
-├── ingestion/     # leitores CVM/B3 + persistência do espelho cru (Mongo)
-├── analysis/      # cálculo de indicadores + persistência derivada (Postgres)
-├── portfolio/     # favoritos e resolução de ticker/setor
-├── shared/        # config, conexões Mongo/Postgres, EventBus
-└── entrypoints/   # CLI + API FastAPI
+├── ingestion/     # fontes CVM/B3 e espelho cru em MongoDB
+├── analysis/      # domínio, cálculo e persistência dos indicadores
+├── portfolio/     # favoritos, identidade, classes e taxonomia
+├── shared/        # configuração, conexões, artefatos e eventos
+└── entrypoints/   # CLI e API FastAPI
+
+frontend/          # aplicação Next.js
+alembic/           # migrações do PostgreSQL
+docs/adr/          # decisões de arquitetura e modelagem
+tests/             # testes unitários e de integração isolada
 ```
+
+## Documentação e fonte de verdade
+
+- [`docs/ROADMAP.md`](docs/ROADMAP.md): objetivo e milestones M0–M3;
+- [`docs/adr/`](docs/adr/): decisões imutáveis de arquitetura, modelagem e
+  proveniência;
+- [`AGENTS.md`](AGENTS.md): regras de engenharia e limites do projeto;
+- [`docs/AGENTS.md`](docs/AGENTS.md): onde cada tipo de decisão deve ser
+  documentado;
+- issues do GitHub: trabalho pendente e próximos passos;
+- `smaug doctor` e os testes: estado atual de cobertura e correção.
+
+O README explica o funcionamento e o uso do sistema. Ele não substitui os
+relatórios gerados pelos comandos nem deve ser tratado como um snapshot dos
+dados atualmente persistidos.
 
 ## Status
 
-✅ **Fase 1** — leitura da CVM e da B3 sob a mesma porta `RawDataSource`,
-persistência do espelho cru (append-only), EventBus, CLI de coleta e relatório
-de completude. Roda sobre a bolsa inteira, sem custo e sem credencial.
-
-✅ **Fase 2 implementada** — cálculo de indicadores fundamentalistas (contábeis
-+ de mercado) a partir do espelho CVM + série de cotações da B3, em PostgreSQL
-(SQLAlchemy/Alembic) e servidos por FastAPI (`GET /analysis`). Cálculo próprio,
-tipado e ciente de setor. Falta a fase de análise qualitativa por IA (critérios).
+- ✅ Ingestão CVM/B3 com espelho cru append-only em MongoDB.
+- ✅ Ingestão sem `pycvm`, com leitura direta dos CSVs da CVM.
+- ✅ Cálculo e persistência dos indicadores TTM e de exercícios fechados em
+  PostgreSQL.
+- ✅ API FastAPI para análises e gerenciamento de favoritos.
+- ✅ Front-end Next.js para busca, carteira, indicadores e históricos.
+- ⏳ Análise qualitativa por critérios/IA, prevista no milestone M3.
