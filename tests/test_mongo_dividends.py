@@ -59,6 +59,8 @@ def _document(
     value: str = "0,006",
     quoted_per_shares: str = "1000",
     percentage: str = "0,070588",
+    event_type: str = "DIVIDENDO",
+    last_date_prior: str = "15/04/2024",
 ) -> dict[str, Any]:
     return {
         "source": "b3",
@@ -66,11 +68,11 @@ def _document(
         "module": "CASH_DIVIDEND_B3",
         "payload": {
             "share_class": share_class,
-            "event_type": "DIVIDENDO",
+            "event_type": event_type,
             "value": value,
             "quoted_per_shares": quoted_per_shares,
             "percentage_of_price": percentage,
-            "last_date_prior": "15/04/2024",
+            "last_date_prior": last_date_prior,
             "approval_date": "01/03/2024",
         },
     }
@@ -107,6 +109,38 @@ async def test_explicit_class_reads_a_unit_component_and_deduplicates_mirror_run
 
     assert len(events) == 1
     assert events[0].amount_per_share == Decimal("0.12")
+
+
+async def test_same_economic_fields_with_different_quotation_scales_stay_distinct() -> (
+    None
+):
+    per_share = _document("PN", value="0,006", quoted_per_shares="1")
+    per_lot = _document("PN", value="0,006", quoted_per_shares="1000")
+    reader = MongoCashEventReader(
+        FakeCollection([per_share, per_lot]),
+        registrant_resolver=lambda ticker: "9512",
+    )
+
+    events = await reader.cash_events("PETR4")
+
+    assert len(events) == 2
+    assert {event.amount_per_share for event in events} == {
+        Decimal("0.006"),
+        Decimal("0.000006"),
+    }
+
+
+async def test_same_date_dividend_and_interest_remain_distinct() -> None:
+    dividend = _document("PN", event_type="DIVIDENDO")
+    interest = _document("PN", event_type="JRS CAP PROPRIO")
+    reader = MongoCashEventReader(
+        FakeCollection([dividend, interest]),
+        registrant_resolver=lambda ticker: "9512",
+    )
+
+    events = await reader.cash_events("PETR4")
+
+    assert len(events) == 2
 
 
 async def test_unreadable_absolute_value_is_retained_for_named_dy_null() -> None:

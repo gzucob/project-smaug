@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Coroutine, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
@@ -1976,11 +1976,13 @@ def format_ingestion_validations(
             f"parser={validation.parser.name}@{validation.parser.version}"
         )
         lines.append(f"    artifact={validation.artifact_id or '-'} rules={rules}")
+        _append_validation_reconciliation(lines, validation.observations)
         if validation.findings:
             lines.extend(
                 f"    !! {finding.code}: {finding.detail}"
                 for finding in validation.findings
             )
+        _append_validation_evidence(lines, validation.evidence)
         if report.approval_note is not None:
             lines.append(f"    approval={report.approval_note}")
     lines.append(
@@ -1989,6 +1991,28 @@ def format_ingestion_validations(
         "SHA-256 archive."
     )
     return "\n".join(lines)
+
+
+def _append_validation_reconciliation(
+    lines: list[str], observations: Mapping[str, str | int | bool]
+) -> None:
+    """Render row-level source reconciliation when a validation records it."""
+    fields = ("fetched", "accepted", "rejected", "deduplicated")
+    if not all(field in observations for field in fields):
+        return
+    values = " ".join(f"{field}={observations[field]}" for field in fields)
+    coverage = observations.get("coverage_established")
+    lines.append(f"    reconciliation={values} coverage_established={coverage}")
+
+
+def _append_validation_evidence(
+    lines: list[str], evidence: Mapping[str, object]
+) -> None:
+    """Name retained row evidence without printing a potentially large payload."""
+    for key in ("rejected_rows", "deduplicated_rows"):
+        value = evidence.get(key)
+        if isinstance(value, list):
+            lines.append(f"    evidence={key} count={len(value)}")
 
 
 def format_taxonomy_drift(drift: TaxonomyDrift, *, companies: int) -> str:

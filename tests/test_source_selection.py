@@ -144,7 +144,8 @@ def test_every_configured_parser_has_a_stable_name_and_version() -> None:
         "cvm.treasury.csv": 1,
         "cvm.capital-events.csv": 1,
         "b3.capital-events.json": 1,
-        "b3.cash-dividends.json": 1,
+        # Version 2 records row-level rejection and exact duplicate evidence (#272).
+        "b3.cash-dividends.json": 2,
     }
 
 

@@ -60,9 +60,11 @@ class MongoCashEventReader:
         """Every payment ``ticker``'s class went ex, dated by the first session
         that traded without it.
 
-        Deduplicated on (class, ex date, type, value): every page of the endpoint
-        is mirrored on every run, so the same payment is stored many times over
-        (ADR 0016), and counting one twice would take the cash out twice.
+        Deduplicated on (class, ex date, type, value, quotation factor): every
+        page of the endpoint is mirrored on every run, so the same payment is
+        stored many times over (ADR 0016), and counting one twice would take the
+        cash out twice. The quotation factor is load-bearing: B3 can publish the
+        same nominal value per share and per lot as distinct rights.
         """
         share_class = (
             per_share_class.value
@@ -80,7 +82,7 @@ class MongoCashEventReader:
             )
         )
         mirrored = False
-        seen: dict[tuple[str, str, str], CashEvent] = {}
+        seen: dict[tuple[str, str, str, str, str], CashEvent] = {}
         async for document in cursor:  # type: ignore[attr-defined]
             mirrored = True
             payload = document.get("payload")
@@ -102,11 +104,7 @@ class MongoCashEventReader:
                 and (amount_per_share is None or amount_per_share <= 0)
             ):
                 continue
-            key = (
-                _text(payload.get("last_date_prior")),
-                _text(payload.get("event_type")),
-                _text(payload.get("value")),
-            )
+            key = _cash_event_identity(payload, prior, value, quoted)
             seen[key] = CashEvent(
                 # ``lastDatePriorEx`` is the last session that still carried the
                 # right, so the price goes ex the day after — the same cut the
@@ -148,6 +146,27 @@ class MongoCashEventReader:
 
 def _text(value: object) -> str:
     return str(value).strip() if value is not None else ""
+
+
+def _cash_event_identity(
+    payload: Mapping[str, object],
+    prior: date,
+    value: Decimal | None,
+    quoted: Decimal | None,
+) -> tuple[str, str, str, str, str]:
+    """Identify one economic B3 cash right, independent of display fields."""
+    return (
+        _text(payload.get("share_class")).upper(),
+        _text(payload.get("event_type")).upper(),
+        prior.isoformat(),
+        _decimal_identity(value, payload.get("value")),
+        _decimal_identity(quoted, payload.get("quoted_per_shares")),
+    )
+
+
+def _decimal_identity(value: Decimal | None, raw: object) -> str:
+    """Use parsed B3 numbers when available, retaining unreadable raw values."""
+    return str(value.normalize()) if value is not None else _text(raw)
 
 
 def _br_decimal(value: object) -> Decimal | None:
