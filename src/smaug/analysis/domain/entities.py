@@ -9,11 +9,14 @@ from typing import Literal
 
 from smaug.analysis.domain.financials import (
     AccountingRegime,
+    ClassMarketValue,
     DebtCoverageEvidence,
     DebtEvidenceSnapshot,
     RegimeSource,
+    ShareCountProvenance,
 )
 from smaug.analysis.domain.indicators import Indicators
+from smaug.portfolio.domain.share_classes import ShareClassMapping
 from smaug.portfolio.domain.taxonomy import Classification
 
 # The two analysis perspectives the system produces for each ticker:
@@ -77,3 +80,8 @@ class TickerAnalysis:
     cnpj: str | None = None
     debt_evidence: DebtCoverageEvidence | None = None
     debt_evidence_snapshot: DebtEvidenceSnapshot | None = None
+    # FCA class identity and historical code evidence used by the market-cap
+    # calculation. Empty on legacy rows created before #259.
+    share_class_mappings: tuple[ShareClassMapping, ...] = ()
+    class_market_values: tuple[ClassMarketValue, ...] = ()
+    capital_provenance: ShareCountProvenance | None = None

@@ -34,6 +34,7 @@ def capitalize(
     prices: Mapping[str, Decimal | None],
     *,
     price_null_reasons: Mapping[str, NullReason] | None = None,
+    count_null_reason: NullReason | None = None,
 ) -> tuple[Decimal | None, NullReason | None]:
     """Capitalize a company from its listed ``classes``, prices and filed counts.
 
@@ -44,15 +45,15 @@ def capitalize(
     if not classes:
         # No composition on file for this ticker: we do not know what shares to
         # price, so the cap is unknown rather than guessed.
-        return None, NullReason.MISSING_SHARE_COUNT
+        return None, count_null_reason or NullReason.MISSING_SHARE_COUNT
     if counts is None:
-        return None, NullReason.MISSING_SHARE_COUNT
+        return None, count_null_reason or NullReason.MISSING_SHARE_COUNT
 
     cap = Decimal(0)
     for share_class in classes:
         count = counts.of(share_class.per_share_class)
         if count is None:
-            return None, NullReason.MISSING_SHARE_COUNT
+            return None, count_null_reason or NullReason.MISSING_SHARE_COUNT
         price = prices.get(share_class.symbol)
         if price is None:
             return None, (price_null_reasons or {}).get(

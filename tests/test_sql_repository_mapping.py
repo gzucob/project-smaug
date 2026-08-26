@@ -1,4 +1,4 @@
-"""SQL row <-> entity mapping for the null-reason map (no database connection).
+"""SQL row <-> entity mapping for analysis provenance (no database connection).
 
 ``_to_row`` / ``_to_entity`` are pure attribute mappers, so they are exercised
 directly on a transient ORM instance — what matters is that the ``NullReason``
@@ -6,12 +6,16 @@ enum survives the round trip as plain strings, and that rows persisted before
 the vocabulary existed (NULL column) degrade to "unclassified" ({}).
 """
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from smaug.analysis.domain.entities import VIEW_TTM, TickerAnalysis
 from smaug.analysis.domain.financials import (
     AccountingRegime,
+    CapitalActionEvidence,
+    CapitalComposition,
+    ClassMarketValue,
     DebtBlocker,
     DebtCoverageEvidence,
     DebtEvidenceSnapshot,
@@ -21,9 +25,19 @@ from smaug.analysis.domain.financials import (
     DebtLineEvidence,
     DebtLineRole,
     RegimeSource,
+    ShareCountProvenance,
+    ShareCounts,
 )
 from smaug.analysis.domain.indicators import Indicators, NullReason
 from smaug.analysis.infrastructure.sql_repository import _to_entity, _to_row
+from smaug.portfolio.domain.share_classes import (
+    EconomicRightsStatus,
+    PerShareClass,
+    ShareClassMapping,
+    ShareClassMappingStatus,
+    ShareKind,
+    TickerCodeEvidence,
+)
 from smaug.portfolio.domain.taxonomy import Classification
 
 
@@ -143,3 +157,73 @@ def test_pre_vocabulary_rows_degrade_to_unclassified() -> None:
     row.null_reasons = None  # a row persisted before migration 0005
 
     assert _to_entity(row).indicators.null_reasons == {}
+
+
+def test_share_class_and_capital_provenance_round_trip() -> None:
+    analysis = replace(
+        _analysis(),
+        share_class_mappings=(
+            ShareClassMapping(
+                class_id="12.345.678/0001-90:ON",
+                symbol="BBAS3",
+                kind=ShareKind.COMMON,
+                per_share_class=PerShareClass.ORDINARY,
+                code_evidence=(TickerCodeEvidence("BBAS3", (2018, 2019)),),
+                evidence=("cvm_fca.share_class",),
+            ),
+            ShareClassMapping(
+                class_id="12.345.678/0001-90:PN",
+                symbol=None,
+                kind=ShareKind.PREFERRED,
+                per_share_class=PerShareClass.PREFERRED,
+                status=ShareClassMappingStatus.UNRESOLVED,
+                economic_rights=EconomicRightsStatus.UNRESOLVED,
+                evidence=("cvm_fca.ambiguous_share_class",),
+            ),
+        ),
+        class_market_values=(
+            ClassMarketValue(
+                class_id="12.345.678/0001-90:ON",
+                symbol="BBAS3",
+                per_share_class=PerShareClass.ORDINARY,
+                price=Decimal("25"),
+                shares=Decimal("100"),
+                value=Decimal("2500"),
+                price_basis="b3_latest_close",
+                share_basis="cvm_latest_filed_outstanding_current_base",
+            ),
+        ),
+        capital_provenance=ShareCountProvenance(
+            requested_year=2025,
+            filed_year=2025,
+            status="resolved",
+            issued=ShareCounts(common=Decimal("110"), total=Decimal("110")),
+            outstanding=ShareCounts(common=Decimal("100"), total=Decimal("100")),
+            treasury=CapitalComposition(
+                issued_total=Decimal("110"), treasury_common=Decimal("10")
+            ),
+            restatement_factor=Decimal("2"),
+            actions=(
+                CapitalActionEvidence(
+                    approval_date="2023-04-01",
+                    kind="BONIFICACAO",
+                    common_before=Decimal("50"),
+                    common_after=Decimal("100"),
+                    preferred_before=None,
+                    preferred_after=None,
+                    total_before=Decimal("50"),
+                    total_after=Decimal("100"),
+                ),
+            ),
+            evidence=("cvm_fre.issued", "cvm_dfp.treasury"),
+        ),
+    )
+
+    row = _to_row(analysis)
+    entity = _to_entity(row)
+
+    assert row.share_class_mappings is not None
+    assert row.share_class_mappings[1]["status"] == "unresolved"
+    assert entity.share_class_mappings == analysis.share_class_mappings
+    assert entity.class_market_values == analysis.class_market_values
+    assert entity.capital_provenance == analysis.capital_provenance

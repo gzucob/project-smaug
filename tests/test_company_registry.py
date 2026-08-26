@@ -22,7 +22,12 @@ from smaug.portfolio.domain.company import (
     is_unit,
     per_share_components,
 )
-from smaug.portfolio.domain.share_classes import PerShareClass, UnitComponent
+from smaug.portfolio.domain.share_classes import (
+    EconomicRightsStatus,
+    PerShareClass,
+    ShareClassMappingStatus,
+    UnitComponent,
+)
 from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
 
 _YEAR = 2024
@@ -257,6 +262,39 @@ def test_same_priority_ticker_to_cnpj_collision_is_explicit(
     assert fundamental_exclusion(identity) == (
         f"ambiguous ticker-to-CNPJ mapping ({first}, {second})"
     )
+
+
+def test_same_cnpj_codes_for_one_class_preserve_unresolved_class_evidence(
+    tmp_path: Path,
+) -> None:
+    cnpj = "14.000.000/0001-00"
+    _write_fca_zip(
+        tmp_path,
+        geral=[_cadastre_row(cnpj, "140")],
+        securities=[
+            {
+                "CNPJ_Companhia": cnpj,
+                "Versao": "1",
+                "Codigo_Negociacao": code,
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": "Ações Ordinárias",
+            }
+            for code in ("ABCD3", "ABCE3")
+        ],
+    )
+
+    identity = _registry(tmp_path)._build_index(
+        tmp_path / f"fca_cia_aberta_{_YEAR}.zip"
+    )["ABCD3"]
+
+    assert identity.share_classes == ()
+    assert len(identity.share_class_mappings) == 1
+    mapping = identity.share_class_mappings[0]
+    assert mapping.status is ShareClassMappingStatus.UNRESOLVED
+    assert mapping.economic_rights is EconomicRightsStatus.RESOLVED
+    assert mapping.symbol is None
+    assert {item.symbol for item in mapping.code_evidence} == {"ABCD3", "ABCE3"}
 
 
 def _cadastre_row(cnpj: str, code: str) -> dict[str, str]:

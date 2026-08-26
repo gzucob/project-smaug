@@ -12,6 +12,7 @@ from smaug.analysis.domain.dividends import CashEvent
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.financials import (
     MarketData,
+    ShareCountProvenance,
     ShareCounts,
     StandardizedFinancials,
     YearPrices,
@@ -126,6 +127,24 @@ class FakeShares:
         return ()
 
 
+class StrictFallbackShares(FakeShares):
+    """Expose an issued legacy fallback beside the strict production surface."""
+
+    async def strict_counts(self, ticker: str, year: int) -> ShareCounts | None:
+        return None
+
+    async def strict_outstanding(self, ticker: str, year: int) -> Decimal | None:
+        return None
+
+    async def capital_provenance(self, ticker: str, year: int) -> ShareCountProvenance:
+        return ShareCountProvenance(
+            requested_year=year,
+            filed_year=year,
+            status="missing_treasury_composition",
+            issued=self._by_year.get(year),
+        )
+
+
 class FakeCashEvents:
     def __init__(self, by_class: dict[PerShareClass, tuple[CashEvent, ...]]) -> None:
         self._by_class = by_class
@@ -218,6 +237,35 @@ async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
     assert saved.indicators.company_pb == Decimal(2)  # 12000 / 6000
 
 
+async def test_analyze_does_not_use_issued_counts_when_treasury_is_unreconciled() -> (
+    None
+):
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader(
+            {
+                "PETR4": _quarters(
+                    Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(6000)
+                )
+            }
+        ),
+        FakePrice(MarketData(price=Decimal(10))),
+        repo,
+        StrictFallbackShares({2026: _counts(common=800, preferred=400)}),
+        classes_resolver=fake_classes_resolver,
+    )
+
+    await use_case.execute(["PETR4"])
+
+    saved = repo.saved[0]
+    assert saved.capital_provenance is not None
+    assert saved.capital_provenance.status == "missing_treasury_composition"
+    assert saved.indicators.company_pe is None
+    assert saved.indicators.null_reasons["company_pe"] is (
+        NullReason.MISSING_TREASURY_COMPOSITION
+    )
+
+
 async def test_analyze_sums_the_ttm_cap_over_the_listed_share_classes() -> None:
     # PETR3 (ON) and PETR4 (PN) each trade at their own price, so Petrobras is
     # worth 12 × 800 + 10 × 400 = 13600 — not the analyzed ticker's quote times
@@ -248,6 +296,10 @@ async def test_analyze_sums_the_ttm_cap_over_the_listed_share_classes() -> None:
     saved = repo.saved[0]
     assert saved.price == Decimal(10)  # the analyzed ticker's own quote, unchanged
     assert saved.indicators.company_pb == Decimal(2)
+    assert [(value.symbol, value.value) for value in saved.class_market_values] == [
+        ("PETR3", Decimal("9600")),
+        ("PETR4", Decimal("4000")),
+    ]
     assert saved.indicators.eps is None
     assert saved.indicators.null_reasons["eps"] is (NullReason.MISSING_CPC41_DISCLOSURE)
 

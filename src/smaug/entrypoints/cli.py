@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 from time import perf_counter
@@ -129,9 +129,14 @@ from smaug.portfolio.domain.securities import (
     SiblingCodesResolver,
 )
 from smaug.portfolio.domain.share_classes import (
+    EconomicRightsStatus,
     PerShareClass,
     ShareClass,
+    ShareClassMapping,
+    ShareClassMappingStatus,
+    TickerCodeEvidence,
     UnitComponent,
+    mapping_for_share_class,
 )
 from smaug.portfolio.domain.taxonomy import (
     TAXONOMY_SNAPSHOT,
@@ -316,6 +321,50 @@ def _classes_resolver(
     return resolve
 
 
+def _class_mappings_resolver(
+    identities: dict[str, CompanyIdentity],
+    historical_codes: Callable[[str], tuple[TickerCodeEvidence, ...]],
+) -> Callable[[str], tuple[ShareClassMapping, ...]]:
+    """Combine current FCA class identity with every historical FCA code."""
+
+    def resolve(ticker: str) -> tuple[ShareClassMapping, ...]:
+        identity = identities.get(ticker)
+        if identity is None:
+            return ()
+        mappings = identity.share_class_mappings
+        if not mappings:
+            mappings = tuple(
+                mapping_for_share_class(identity.cnpj, share_class)
+                for share_class in identity.share_classes
+            )
+        enriched: list[ShareClassMapping] = []
+        for mapping in mappings:
+            if mapping.symbol is None:
+                historical: dict[str, TickerCodeEvidence] = {}
+                for code in mapping.code_evidence:
+                    for code_evidence in historical_codes(code.symbol):
+                        historical[code_evidence.symbol] = code_evidence
+                enriched.append(
+                    replace(
+                        mapping,
+                        code_evidence=(
+                            tuple(historical.values()) or mapping.code_evidence
+                        ),
+                    )
+                )
+                continue
+            historical_evidence = historical_codes(mapping.symbol)
+            enriched.append(
+                replace(
+                    mapping,
+                    code_evidence=historical_evidence or mapping.code_evidence,
+                )
+            )
+        return tuple(enriched)
+
+    return resolve
+
+
 def _unit_composition_resolver(
     identities: dict[str, CompanyIdentity],
 ) -> Callable[[str], int | None]:
@@ -356,6 +405,28 @@ def _per_share_classes_resolver(
             if identity is not None
             else ()
         )
+
+    return resolve
+
+
+def _per_share_rights_reason_resolver(
+    identities: dict[str, CompanyIdentity],
+) -> Callable[[str], NullReason]:
+    """Keep unresolved FCA identity distinct from absent CPC41 rights."""
+
+    def resolve(ticker: str) -> NullReason:
+        identity = identities.get(ticker)
+        if identity is not None and any(
+            mapping.status is ShareClassMappingStatus.UNRESOLVED
+            for mapping in identity.share_class_mappings
+        ):
+            return NullReason.UNRESOLVED_SHARE_CLASS
+        if identity is not None and any(
+            mapping.economic_rights is EconomicRightsStatus.UNRESOLVED
+            for mapping in identity.share_class_mappings
+        ):
+            return NullReason.MISSING_ECONOMIC_RIGHTS
+        return NullReason.MISSING_ECONOMIC_RIGHTS
 
     return resolve
 
@@ -1216,7 +1287,11 @@ def analyze(
 
 async def _security_resolvers(
     settings: Settings, http: httpx.AsyncClient
-) -> tuple[SiblingCodesResolver, RegistrantNamesResolver]:
+) -> tuple[
+    SiblingCodesResolver,
+    RegistrantNamesResolver,
+    Callable[[str], tuple[TickerCodeEvidence, ...]],
+]:
     """What the cadastre knows about a security's identity, in two answers.
 
     The codes each share class has been filed under (#193), read across every FCA
@@ -1232,7 +1307,11 @@ async def _security_resolvers(
         through=max(settings.cvm_year, date.today().year),
         cache_dir=settings.cvm_cache_dir,
     )
-    return await history.resolver(), await history.names()
+    return (
+        await history.resolver(),
+        await history.names(),
+        await history.historical_codes(),
+    )
 
 
 def _build_archive(settings: Settings, http: httpx.AsyncClient) -> CotahistArchive:
@@ -1318,7 +1397,9 @@ async def _run_analyze(
             # that must not disagree about it: the price averages the joined
             # sessions and the base-change reader dates the actions filed under
             # the codes those sessions came from (ADR 0042).
-            siblings, names = await _security_resolvers(settings, http)
+            siblings, names, historical_codes = await _security_resolvers(
+                settings, http
+            )
             succession = CodeSuccession(
                 archive,
                 siblings=siblings,
@@ -1349,6 +1430,9 @@ async def _run_analyze(
                     issuer_resolver=_issuer_resolver(identities),
                     per_share_resolver=_per_share_resolver(identities),
                     per_share_classes_resolver=_per_share_classes_resolver(identities),
+                    per_share_rights_reason_resolver=_per_share_rights_reason_resolver(
+                        identities
+                    ),
                 ),
                 price_provider=_build_price_provider(
                     shares_reader,
@@ -1361,6 +1445,9 @@ async def _run_analyze(
                 shares_reader=shares_reader,
                 classification_resolver=_classification_resolver(identities),
                 classes_resolver=_classes_resolver(identities),
+                class_mapping_resolver=_class_mappings_resolver(
+                    identities, historical_codes
+                ),
                 cash_event_reader=cash_events,
                 per_share_resolver=_per_share_resolver(identities),
             )

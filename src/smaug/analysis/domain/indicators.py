@@ -49,7 +49,9 @@ class NullReason(StrEnum):
     * ``MISSING_PRICE`` / ``PRICE_SYMBOL_NOT_FOUND`` /
       ``PRICE_SOURCE_UNAVAILABLE`` / ``PRICE_SOURCE_MALFORMED`` /
       ``PRICE_SOURCE_TIMEOUT`` / ``MISSING_SHARE_COUNT`` /
-      ``MISSING_UNIT_COMPOSITION`` / ``MISSING_PRIOR_PERIOD`` —
+      ``MISSING_UNIT_COMPOSITION`` / ``MISSING_TREASURY_COMPOSITION`` /
+      ``UNRESOLVED_SHARE_CLASS`` / ``MISSING_ECONOMIC_RIGHTS`` /
+      ``MISSING_PRIOR_PERIOD`` —
       an upstream input from another source is missing (the quote series, the
       FRE share count, the prior year's ingestion), split so a report can say
       *which*. ``MISSING_PRICE`` is the *transient* price miss (no session for
@@ -94,6 +96,8 @@ class NullReason(StrEnum):
     NOT_YET_LISTED = "not_yet_listed"
     MISSING_SHARE_COUNT = "missing_share_count"
     MISSING_UNIT_COMPOSITION = "missing_unit_composition"
+    MISSING_TREASURY_COMPOSITION = "missing_treasury_composition"
+    UNRESOLVED_SHARE_CLASS = "unresolved_share_class"
     MISSING_REGULATORY_DISCLOSURE = "missing_regulatory_disclosure"
     PARTIAL_REGULATORY_DISCLOSURE = "partial_regulatory_disclosure"
     INCOMPATIBLE_REGULATORY_DISCLOSURE = "incompatible_regulatory_disclosure"

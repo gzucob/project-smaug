@@ -37,11 +37,17 @@ import httpx
 
 from smaug.portfolio.domain.company import CompanyIdentity, InstrumentKind
 from smaug.portfolio.domain.share_classes import (
+    EconomicRightsStatus,
     PerShareClass,
     ShareClass,
+    ShareClassMapping,
+    ShareClassMappingStatus,
     ShareKind,
+    TickerCodeEvidence,
     UnitComponent,
+    mapping_for_share_class,
     per_share_class_from_symbol,
+    share_class_id,
 )
 from smaug.portfolio.domain.universe import ListedCompany, listed_companies
 from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
@@ -92,10 +98,14 @@ class _ClassAccumulator:
     """The ON/PN/PNA/PNB trading symbols a company lists, gathered per class."""
 
     symbols: dict[PerShareClass, set[str]] = field(default_factory=dict)
+    unresolved: set[PerShareClass] = field(default_factory=set)
 
     def add(self, kind: ShareKind, symbol: str) -> None:
         per_share_class = per_share_class_from_symbol(symbol, kind)
         self.symbols.setdefault(per_share_class, set()).add(symbol)
+
+    def add_unresolved(self, per_share_class: PerShareClass) -> None:
+        self.unresolved.add(per_share_class)
 
 
 def _fold(text: str) -> str:
@@ -222,6 +232,53 @@ def _resolve_classes(
     return tuple(classes)
 
 
+def _resolve_class_mappings(
+    cnpj: str, accumulator: _ClassAccumulator
+) -> tuple[ShareClassMapping, ...]:
+    """Retain resolved and ambiguous class evidence instead of dropping it."""
+    mappings: list[ShareClassMapping] = []
+    for per_share_class in PerShareClass:
+        symbols = tuple(sorted(accumulator.symbols.get(per_share_class, ())))
+        if len(symbols) == 1:
+            symbol = symbols[0]
+            kind = (
+                ShareKind.COMMON
+                if per_share_class is PerShareClass.ORDINARY
+                else ShareKind.PREFERRED
+            )
+            mappings.append(
+                mapping_for_share_class(
+                    cnpj,
+                    ShareClass(symbol=symbol, kind=kind),
+                    code_evidence=(TickerCodeEvidence(symbol=symbol),),
+                )
+            )
+        elif len(symbols) > 1 or per_share_class in accumulator.unresolved:
+            mappings.append(
+                ShareClassMapping(
+                    class_id=share_class_id(cnpj, per_share_class),
+                    symbol=None,
+                    kind=(
+                        ShareKind.COMMON
+                        if per_share_class is PerShareClass.ORDINARY
+                        else ShareKind.PREFERRED
+                    ),
+                    per_share_class=per_share_class,
+                    status=ShareClassMappingStatus.UNRESOLVED,
+                    # The suffix/``Valor_Mobiliario`` witness still identifies
+                    # the economic rights (ON/PN); only the code-to-class
+                    # identity is ambiguous. A textual unit component is the
+                    # same: its rights are known even when no quote is named.
+                    economic_rights=EconomicRightsStatus.RESOLVED,
+                    code_evidence=tuple(
+                        TickerCodeEvidence(symbol=symbol) for symbol in symbols
+                    ),
+                    evidence=("cvm_fca.ambiguous_share_class",),
+                )
+            )
+    return tuple(mappings)
+
+
 class CvmCompanyRegistry:
     """Resolve B3 tickers to CVM identities from the yearly FCA archive."""
 
@@ -344,6 +401,10 @@ class CvmCompanyRegistry:
         classes = {
             cnpj: _resolve_classes(acc) for cnpj, acc in class_accumulators.items()
         }
+        class_mappings = {
+            cnpj: _resolve_class_mappings(cnpj, acc)
+            for cnpj, acc in class_accumulators.items()
+        }
         index: dict[str, CompanyIdentity] = {}
         for ticker, security in securities.items():
             company = cadastre.get(security.cnpj)
@@ -364,6 +425,7 @@ class CvmCompanyRegistry:
                 share_classes=classes.get(security.cnpj, ()),
                 shares_per_unit=security.unit_shares,
                 unit_components=security.unit_components,
+                share_class_mappings=class_mappings.get(security.cnpj, ()),
             )
         return index
 
@@ -472,6 +534,8 @@ class CvmCompanyRegistry:
                                 else ShareKind.PREFERRED
                             )
                             accumulator.add(kind, component.symbol)
+                        else:
+                            accumulator.add_unresolved(component.per_share_class)
         return securities, classes
 
 

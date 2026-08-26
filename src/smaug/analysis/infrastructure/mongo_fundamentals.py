@@ -112,6 +112,7 @@ _NET_INCOME_TOTAL_NAMES = (
 Accounts = Sequence[Mapping[str, Any]]
 PerShareResolver = Callable[[str], tuple[UnitComponent, ...]]
 PerShareClassesResolver = Callable[[str], tuple[PerShareClass, ...]]
+PerShareRightsReasonResolver = Callable[[str], NullReason]
 IssuerResolver = Callable[[str], IssuerIdentity | None]
 
 
@@ -131,6 +132,10 @@ def _no_per_share_components(_ticker: str) -> tuple[UnitComponent, ...]:
 
 def _no_per_share_classes(_ticker: str) -> tuple[PerShareClass, ...]:
     return ()
+
+
+def _missing_economic_rights(_ticker: str) -> NullReason:
+    return NullReason.MISSING_ECONOMIC_RIGHTS
 
 
 def _fold(text: str) -> str:
@@ -1526,6 +1531,8 @@ def _filed_per_share(
     dre: Accounts,
     prefix: str,
     components: Sequence[UnitComponent],
+    *,
+    missing_rights_reason: NullReason = NullReason.MISSING_ECONOMIC_RIGHTS,
 ) -> tuple[Decimal | None, NullReason | None]:
     """One filed CPC 41 result for a share class or composed unit.
 
@@ -1535,17 +1542,19 @@ def _filed_per_share(
     bypass the DRE's thousand-real scale.
     """
     if not components:
-        return None, NullReason.MISSING_ECONOMIC_RIGHTS
+        return None, missing_rights_reason
 
     values, reason = _filed_per_share_values(dre, prefix)
     if values is None:
+        if missing_rights_reason is NullReason.UNRESOLVED_SHARE_CLASS:
+            return None, missing_rights_reason
         return None, reason
 
     total = Decimal(0)
     for component in components:
         value = values.get(component.per_share_class)
         if value is None:
-            return None, NullReason.MISSING_ECONOMIC_RIGHTS
+            return None, missing_rights_reason
         total += Decimal(component.quantity) * value
     return total, None
 
@@ -1643,6 +1652,7 @@ def standardize(
     per_share_components: Sequence[UnitComponent] = (),
     per_share_accounts: Accounts | None = None,
     per_share_classes: Sequence[PerShareClass] = (),
+    per_share_rights_reason: NullReason = NullReason.MISSING_ECONOMIC_RIGHTS,
 ) -> StandardizedFinancials:
     """Build one period's ``StandardizedFinancials`` from its CVM statements.
 
@@ -1659,10 +1669,16 @@ def standardize(
     filed_regime = _filed_regime(dre)
     cpc41_accounts = dre if per_share_accounts is None else per_share_accounts
     eps_basic, eps_basic_reason = _filed_per_share(
-        cpc41_accounts, "3.99.01", per_share_components
+        cpc41_accounts,
+        "3.99.01",
+        per_share_components,
+        missing_rights_reason=per_share_rights_reason,
     )
     eps_diluted, eps_diluted_reason = _filed_per_share(
-        cpc41_accounts, "3.99.02", per_share_components
+        cpc41_accounts,
+        "3.99.02",
+        per_share_components,
+        missing_rights_reason=per_share_rights_reason,
     )
     cpc41_disclosure = _reconciled_cpc41(
         cpc41_accounts, per_share_components, per_share_classes
@@ -1922,6 +1938,9 @@ class MongoFundamentalsReader:
         issuer_resolver: IssuerResolver = _no_issuer,
         per_share_resolver: PerShareResolver = _no_per_share_components,
         per_share_classes_resolver: PerShareClassesResolver = _no_per_share_classes,
+        per_share_rights_reason_resolver: PerShareRightsReasonResolver = (
+            _missing_economic_rights
+        ),
     ) -> None:
         self._collection = collection
         # The sector only seeds the ``expected_regime`` fallback (the filed regime,
@@ -1934,6 +1953,7 @@ class MongoFundamentalsReader:
         self._issuer = issuer_resolver
         self._per_share = per_share_resolver
         self._per_share_classes = per_share_classes_resolver
+        self._per_share_rights_reason = per_share_rights_reason_resolver
 
     async def history(self, ticker: str) -> list[StandardizedFinancials]:
         """ITR quarterly periods (oldest→newest) — the raw material for the TTM."""
@@ -1956,6 +1976,7 @@ class MongoFundamentalsReader:
         sector = self._sector_resolver(ticker)
         components = self._per_share(ticker)
         company_classes = self._per_share_classes(ticker)
+        rights_reason = self._per_share_rights_reason(ticker)
 
         by_period: dict[str, dict[str, Any]] = {}
         doc_type: dict[str, str | None] = {}
@@ -1998,9 +2019,17 @@ class MongoFundamentalsReader:
                     fetched,
                 )
                 accounts = _accounts_of(payload)
-                basic, _basic_reason = _filed_per_share(accounts, "3.99.01", components)
+                basic, _basic_reason = _filed_per_share(
+                    accounts,
+                    "3.99.01",
+                    components,
+                    missing_rights_reason=rights_reason,
+                )
                 diluted, _diluted_reason = _filed_per_share(
-                    accounts, "3.99.02", components
+                    accounts,
+                    "3.99.02",
+                    components,
+                    missing_rights_reason=rights_reason,
                 )
                 # An empty comparative is not a retrospective restatement and
                 # must not erase a valid result from the exercise's own DFP.

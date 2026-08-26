@@ -17,6 +17,7 @@ from enum import StrEnum
 from smaug.portfolio.domain.share_classes import (
     PerShareClass,
     ShareClass,
+    ShareClassMapping,
     ShareKind,
     UnitComponent,
     per_share_class_from_symbol,
@@ -94,6 +95,11 @@ class CompanyIdentity:
     # answers the denominator question; these components answer the different
     # CPC 41 question of how much ON/PN/PNA/PNB result one unit carries.
     unit_components: tuple[UnitComponent, ...] = field(default_factory=tuple)
+    # Current FCA identity evidence for each economic class. It is provenance,
+    # not an alternative identity key, so older value-object callers may omit it.
+    share_class_mappings: tuple[ShareClassMapping, ...] = field(
+        default_factory=tuple, compare=False
+    )
 
 
 UnitResolver = Callable[[str], bool]

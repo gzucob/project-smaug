@@ -20,6 +20,9 @@ from smaug.analysis.domain.entities import (
 from smaug.analysis.domain.financials import (
     AccountingRegime,
     BankRegulatoryProvenance,
+    CapitalActionEvidence,
+    CapitalComposition,
+    ClassMarketValue,
     DebtBlocker,
     DebtCoverageEvidence,
     DebtEvidenceSnapshot,
@@ -28,12 +31,22 @@ from smaug.analysis.domain.financials import (
     DebtLineEvidence,
     DebtLineRole,
     RegimeSource,
+    ShareCountProvenance,
+    ShareCounts,
     SourceAccountEvidence,
     SourceAccountRef,
     SourceAccountStatus,
 )
 from smaug.analysis.domain.indicators import Indicators, NullReason
 from smaug.analysis.infrastructure.sqlalchemy_models import TickerAnalysisRow
+from smaug.portfolio.domain.share_classes import (
+    EconomicRightsStatus,
+    PerShareClass,
+    ShareClassMapping,
+    ShareClassMappingStatus,
+    ShareKind,
+    TickerCodeEvidence,
+)
 from smaug.portfolio.domain.taxonomy import Classification
 
 
@@ -317,6 +330,319 @@ def _bank_regulatory_provenance_from_json(
     )
 
 
+def _share_class_mappings_to_json(
+    mappings: tuple[ShareClassMapping, ...],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "class_id": mapping.class_id,
+            "symbol": mapping.symbol,
+            "kind": None if mapping.kind is None else mapping.kind.value,
+            "per_share_class": (
+                None
+                if mapping.per_share_class is None
+                else mapping.per_share_class.value
+            ),
+            "status": mapping.status.value,
+            "economic_rights": mapping.economic_rights.value,
+            "code_evidence": [
+                {
+                    "symbol": evidence.symbol,
+                    "filed_years": list(evidence.filed_years),
+                    "source": evidence.source,
+                }
+                for evidence in mapping.code_evidence
+            ],
+            "evidence": list(mapping.evidence),
+        }
+        for mapping in mappings
+    ]
+
+
+def _share_class_mappings_from_json(value: object) -> tuple[ShareClassMapping, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    result: list[ShareClassMapping] = []
+    for raw in value:
+        if not isinstance(raw, Mapping):
+            continue
+        try:
+            kind = None if raw.get("kind") is None else ShareKind(str(raw.get("kind")))
+            per_share_class = (
+                None
+                if raw.get("per_share_class") is None
+                else PerShareClass(str(raw.get("per_share_class")))
+            )
+            status = ShareClassMappingStatus(str(raw.get("status")))
+            rights = EconomicRightsStatus(str(raw.get("economic_rights")))
+        except (TypeError, ValueError):
+            continue
+        code_evidence: list[TickerCodeEvidence] = []
+        raw_codes = raw.get("code_evidence", [])
+        if isinstance(raw_codes, (list, tuple)):
+            for code in raw_codes:
+                if not isinstance(code, Mapping):
+                    continue
+                raw_years = code.get("filed_years", [])
+                years = (
+                    tuple(int(year) for year in raw_years)
+                    if isinstance(raw_years, (list, tuple))
+                    else ()
+                )
+                code_evidence.append(
+                    TickerCodeEvidence(
+                        symbol=str(code.get("symbol", "")),
+                        filed_years=years,
+                        source=str(code.get("source", "cvm_fca")),
+                    )
+                )
+        raw_evidence = raw.get("evidence", [])
+        result.append(
+            ShareClassMapping(
+                class_id=str(raw.get("class_id", "")),
+                symbol=None if raw.get("symbol") is None else str(raw.get("symbol")),
+                kind=kind,
+                per_share_class=per_share_class,
+                status=status,
+                economic_rights=rights,
+                code_evidence=tuple(code_evidence),
+                evidence=(
+                    tuple(str(item) for item in raw_evidence)
+                    if isinstance(raw_evidence, (list, tuple))
+                    else ()
+                ),
+            )
+        )
+    return tuple(result)
+
+
+def _class_market_values_to_json(
+    values: tuple[ClassMarketValue, ...],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "class_id": value.class_id,
+            "symbol": value.symbol,
+            "per_share_class": value.per_share_class.value,
+            "price": None if value.price is None else str(value.price),
+            "shares": None if value.shares is None else str(value.shares),
+            "value": None if value.value is None else str(value.value),
+            "price_basis": value.price_basis,
+            "share_basis": value.share_basis,
+            "null_reason": (
+                None if value.null_reason is None else value.null_reason.value
+            ),
+        }
+        for value in values
+    ]
+
+
+def _decimal(raw: object) -> Decimal | None:
+    if raw is None:
+        return None
+    try:
+        return Decimal(str(raw))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def _class_market_values_from_json(value: object) -> tuple[ClassMarketValue, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    result: list[ClassMarketValue] = []
+    for raw in value:
+        if not isinstance(raw, Mapping):
+            continue
+        try:
+            per_share_class = PerShareClass(str(raw.get("per_share_class")))
+            raw_reason = raw.get("null_reason")
+            reason = None if raw_reason is None else NullReason(str(raw_reason))
+        except (TypeError, ValueError):
+            continue
+        result.append(
+            ClassMarketValue(
+                class_id=str(raw.get("class_id", "")),
+                symbol=str(raw.get("symbol", "")),
+                per_share_class=per_share_class,
+                price=_decimal(raw.get("price")),
+                shares=_decimal(raw.get("shares")),
+                value=_decimal(raw.get("value")),
+                price_basis=str(raw.get("price_basis", "")),
+                share_basis=str(raw.get("share_basis", "")),
+                null_reason=reason,
+            )
+        )
+    return tuple(result)
+
+
+def _share_counts_to_json(counts: ShareCounts | None) -> dict[str, str | None] | None:
+    if counts is None:
+        return None
+    return {
+        "common": None if counts.common is None else str(counts.common),
+        "preferred": None if counts.preferred is None else str(counts.preferred),
+        "total": None if counts.total is None else str(counts.total),
+        "preferred_a": None if counts.preferred_a is None else str(counts.preferred_a),
+        "preferred_b": None if counts.preferred_b is None else str(counts.preferred_b),
+        "preferred_other": (
+            None if counts.preferred_other is None else str(counts.preferred_other)
+        ),
+    }
+
+
+def _share_counts_from_json(value: object) -> ShareCounts | None:
+    if not isinstance(value, Mapping):
+        return None
+    return ShareCounts(
+        common=_decimal(value.get("common")),
+        preferred=_decimal(value.get("preferred")),
+        total=_decimal(value.get("total")),
+        preferred_a=_decimal(value.get("preferred_a")),
+        preferred_b=_decimal(value.get("preferred_b")),
+        preferred_other=_decimal(value.get("preferred_other")),
+    )
+
+
+def _capital_composition_to_json(
+    composition: CapitalComposition | None,
+) -> dict[str, str | None] | None:
+    if composition is None:
+        return None
+    return {
+        "issued_total": (
+            None if composition.issued_total is None else str(composition.issued_total)
+        ),
+        "treasury_common": (
+            None
+            if composition.treasury_common is None
+            else str(composition.treasury_common)
+        ),
+        "treasury_preferred": (
+            None
+            if composition.treasury_preferred is None
+            else str(composition.treasury_preferred)
+        ),
+        "treasury_total": (
+            None
+            if composition.treasury_total is None
+            else str(composition.treasury_total)
+        ),
+    }
+
+
+def _capital_composition_from_json(value: object) -> CapitalComposition | None:
+    if not isinstance(value, Mapping):
+        return None
+    return CapitalComposition(
+        issued_total=_decimal(value.get("issued_total")),
+        treasury_common=_decimal(value.get("treasury_common")),
+        treasury_preferred=_decimal(value.get("treasury_preferred")),
+        treasury_total=_decimal(value.get("treasury_total")),
+    )
+
+
+def _capital_provenance_to_json(
+    provenance: ShareCountProvenance | None,
+) -> dict[str, Any] | None:
+    if provenance is None:
+        return None
+    return {
+        "requested_year": provenance.requested_year,
+        "filed_year": provenance.filed_year,
+        "status": provenance.status,
+        "source": provenance.source,
+        "issued": _share_counts_to_json(provenance.issued),
+        "outstanding": _share_counts_to_json(provenance.outstanding),
+        "treasury": _capital_composition_to_json(provenance.treasury),
+        "restatement_factor": (
+            None
+            if provenance.restatement_factor is None
+            else str(provenance.restatement_factor)
+        ),
+        "actions": [
+            {
+                "approval_date": action.approval_date,
+                "kind": action.kind,
+                "common_before": (
+                    None if action.common_before is None else str(action.common_before)
+                ),
+                "common_after": (
+                    None if action.common_after is None else str(action.common_after)
+                ),
+                "preferred_before": (
+                    None
+                    if action.preferred_before is None
+                    else str(action.preferred_before)
+                ),
+                "preferred_after": (
+                    None
+                    if action.preferred_after is None
+                    else str(action.preferred_after)
+                ),
+                "total_before": (
+                    None if action.total_before is None else str(action.total_before)
+                ),
+                "total_after": (
+                    None if action.total_after is None else str(action.total_after)
+                ),
+            }
+            for action in provenance.actions
+        ],
+        "evidence": list(provenance.evidence),
+    }
+
+
+def _capital_provenance_from_json(value: object) -> ShareCountProvenance | None:
+    if not isinstance(value, Mapping):
+        return None
+    raw_evidence = value.get("evidence", [])
+    raw_requested = value.get("requested_year", 0)
+    raw_filed = value.get("filed_year")
+    try:
+        requested_year = int(str(raw_requested))
+        filed_year = None if raw_filed is None else int(str(raw_filed))
+    except (TypeError, ValueError):
+        return None
+    actions: list[CapitalActionEvidence] = []
+    raw_actions = value.get("actions", [])
+    if isinstance(raw_actions, (list, tuple)):
+        for raw_action in raw_actions:
+            if not isinstance(raw_action, Mapping):
+                continue
+            approval_date = raw_action.get("approval_date")
+            kind = raw_action.get("kind")
+            if not isinstance(approval_date, str) or not isinstance(kind, str):
+                continue
+            actions.append(
+                CapitalActionEvidence(
+                    approval_date=approval_date,
+                    kind=kind,
+                    common_before=_decimal(raw_action.get("common_before")),
+                    common_after=_decimal(raw_action.get("common_after")),
+                    preferred_before=_decimal(raw_action.get("preferred_before")),
+                    preferred_after=_decimal(raw_action.get("preferred_after")),
+                    total_before=_decimal(raw_action.get("total_before")),
+                    total_after=_decimal(raw_action.get("total_after")),
+                )
+            )
+    return ShareCountProvenance(
+        requested_year=requested_year,
+        filed_year=filed_year,
+        status=str(value.get("status", "")),
+        source=str(value.get("source", "cvm_fre")),
+        issued=_share_counts_from_json(value.get("issued")),
+        outstanding=_share_counts_from_json(value.get("outstanding")),
+        treasury=_capital_composition_from_json(value.get("treasury")),
+        restatement_factor=_decimal(value.get("restatement_factor")),
+        actions=tuple(actions),
+        evidence=(
+            tuple(str(item) for item in raw_evidence)
+            if isinstance(raw_evidence, (list, tuple))
+            else ()
+        ),
+    )
+
+
 def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
     i = analysis.indicators
     return TickerAnalysisRow(
@@ -429,6 +755,11 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         bank_regulatory_provenance=_bank_regulatory_provenance_to_json(
             i.bank_regulatory_provenance
         ),
+        share_class_mappings=_share_class_mappings_to_json(
+            analysis.share_class_mappings
+        ),
+        class_market_values=_class_market_values_to_json(analysis.class_market_values),
+        capital_provenance=_capital_provenance_to_json(analysis.capital_provenance),
     )
 
 
@@ -548,6 +879,9 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
                 k: NullReason(v) for k, v in (row.null_reasons or {}).items()
             },
         ),
+        share_class_mappings=_share_class_mappings_from_json(row.share_class_mappings),
+        class_market_values=_class_market_values_from_json(row.class_market_values),
+        capital_provenance=_capital_provenance_from_json(row.capital_provenance),
     )
 
 

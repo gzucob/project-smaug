@@ -139,3 +139,15 @@ def test_no_known_classes_names_the_missing_share_count() -> None:
 
     assert cap is None
     assert reason is NullReason.MISSING_SHARE_COUNT
+
+
+def test_unresolved_class_identity_is_not_reported_as_missing_share_count() -> None:
+    cap, reason = capitalize(
+        (),
+        None,
+        {},
+        count_null_reason=NullReason.UNRESOLVED_SHARE_CLASS,
+    )
+
+    assert cap is None
+    assert reason is NullReason.UNRESOLVED_SHARE_CLASS

@@ -26,7 +26,7 @@ import csv
 import io
 import unicodedata
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,6 +39,7 @@ from smaug.portfolio.domain.securities import (
     name_key,
     share_class_suffix,
 )
+from smaug.portfolio.domain.share_classes import TickerCodeEvidence
 from smaug.portfolio.infrastructure.cvm_registry import CVM_FCA_BASE_URL
 from smaug.shared.download import Sleeper, download_zip
 from smaug.shared.errors import CvmDownloadError
@@ -96,6 +97,17 @@ class CvmSecurityHistory:
 
         return names_of
 
+    async def historical_codes(
+        self,
+    ) -> Callable[[str], tuple[TickerCodeEvidence, ...]]:
+        """Return every FCA code witness for the ticker's economic class."""
+        index = await self._ensure_loaded()
+
+        def codes_of(ticker: str) -> tuple[TickerCodeEvidence, ...]:
+            return index.codes_by_ticker.get(ticker.strip().upper(), ())
+
+        return codes_of
+
     async def _ensure_loaded(self) -> _Index:
         cached = self._index
         if cached is not None:
@@ -147,11 +159,13 @@ class _Index:
     siblings: dict[str, tuple[str, ...]]
     registrant: dict[str, str]  # code -> CNPJ
     names: dict[str, frozenset[str]]  # CNPJ -> every name it has filed
+    codes_by_ticker: dict[str, tuple[TickerCodeEvidence, ...]]
 
 
 def _build_index(archives: Sequence[tuple[int, Path]]) -> _Index:
     """Group every filed equity code by (registrant, class), then invert."""
     grouped: dict[tuple[str, str], set[str]] = {}
+    observed: dict[tuple[str, str], dict[str, set[int]]] = {}
     registrant: dict[str, str] = {}
     names: dict[str, set[str]] = {}
     for year, path in archives:
@@ -160,13 +174,24 @@ def _build_index(archives: Sequence[tuple[int, Path]]) -> _Index:
             if suffix is None:
                 continue
             grouped.setdefault((cnpj, suffix), set()).add(code)
+            observed.setdefault((cnpj, suffix), {}).setdefault(code, set()).add(year)
             registrant.setdefault(code, cnpj)
         for cnpj, name in _names(year, path):
             key = name_key(name)
             if key:
                 names.setdefault(cnpj, set()).add(key)
     siblings: dict[str, tuple[str, ...]] = {}
-    for codes in grouped.values():
+    codes_by_ticker: dict[str, tuple[TickerCodeEvidence, ...]] = {}
+    for group, codes in grouped.items():
+        evidence = tuple(
+            TickerCodeEvidence(
+                symbol=code,
+                filed_years=tuple(sorted(observed[group].get(code, ()))),
+            )
+            for code in sorted(codes)
+        )
+        for code in codes:
+            codes_by_ticker[code] = evidence
         if len(codes) < 2:
             continue
         for code in codes:
@@ -175,6 +200,7 @@ def _build_index(archives: Sequence[tuple[int, Path]]) -> _Index:
         siblings=siblings,
         registrant=registrant,
         names={cnpj: frozenset(filed) for cnpj, filed in names.items()},
+        codes_by_ticker=codes_by_ticker,
     )
 
 
