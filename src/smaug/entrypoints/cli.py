@@ -123,6 +123,7 @@ from smaug.portfolio.domain.company import (
     is_unit,
     per_share_components,
 )
+from smaug.portfolio.domain.provenance import FCA_SOURCE, FcaSnapshotProvenance
 from smaug.portfolio.domain.sectors import Sector, sector_from_cvm
 from smaug.portfolio.domain.securities import (
     RegistrantNamesResolver,
@@ -147,9 +148,7 @@ from smaug.portfolio.domain.universe import ListedCompany
 from smaug.portfolio.infrastructure.b3_taxonomy import B3TaxonomySource
 from smaug.portfolio.infrastructure.cvm_registry import (
     CVM_FCA_BASE_URL,
-    FCA_SOURCE,
     CvmCompanyRegistry,
-    FcaSnapshotProvenance,
 )
 from smaug.portfolio.infrastructure.cvm_securities import CvmSecurityHistory
 from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
@@ -1439,13 +1438,23 @@ async def _run_analyze(
     fca_provenance: list[FcaSnapshotProvenance] = []
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
+            artifact_store = LocalSourceArtifactStore(
+                http, settings.source_artifact_dir
+            )
             if whole_exchange or not tickers:
                 tickers, identities = await _universe_tickers(
-                    settings, http, fca_provenance=fca_provenance
+                    settings,
+                    http,
+                    fca_provenance=fca_provenance,
+                    artifact_store=artifact_store,
                 )
             else:
                 identities = await _registry_identities(
-                    settings, http, tickers, fca_provenance=fca_provenance
+                    settings,
+                    http,
+                    tickers,
+                    artifact_store=artifact_store,
+                    fca_provenance=fca_provenance,
                 )
             # The reader keeps a five-value Sector (the internal regime hint); the
             # stored analysis carries the B3 Classification (ADR 0024). Both are
@@ -1532,6 +1541,7 @@ async def _universe_tickers(
     settings: Settings,
     http: httpx.AsyncClient,
     fca_provenance: list[FcaSnapshotProvenance] | None = None,
+    artifact_store: SourceArtifactStore | None = None,
 ) -> tuple[tuple[str, ...], dict[str, CompanyIdentity]]:
     """Every traded code, with the identity each resolver needs (#109).
 
@@ -1545,7 +1555,10 @@ async def _universe_tickers(
     someone typing one into the search box.
     """
     registry = CvmCompanyRegistry(
-        http, year=settings.cvm_fca_year, cache_dir=settings.cvm_cache_dir
+        http,
+        year=settings.cvm_fca_year,
+        cache_dir=settings.cvm_cache_dir,
+        artifact_store=artifact_store,
     )
     tickers = tuple(sorted(t for c in await registry.companies() for t in c.tickers))
     identities = await registry.resolve_all(tickers)
@@ -1607,13 +1620,23 @@ async def _run_doctor(
     fca_provenance: list[FcaSnapshotProvenance] = []
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
+            artifact_store = LocalSourceArtifactStore(
+                http, settings.source_artifact_dir
+            )
             if whole_exchange or not tickers:
                 tickers, identities = await _universe_tickers(
-                    settings, http, fca_provenance=fca_provenance
+                    settings,
+                    http,
+                    fca_provenance=fca_provenance,
+                    artifact_store=artifact_store,
                 )
             else:
                 identities = await _registry_identities(
-                    settings, http, tickers, fca_provenance=fca_provenance
+                    settings,
+                    http,
+                    tickers,
+                    artifact_store=artifact_store,
+                    fca_provenance=fca_provenance,
                 )
         resolver = _sector_resolver(identities)
         use_case = DoctorUseCase(

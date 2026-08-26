@@ -22,6 +22,7 @@ from smaug.portfolio.domain.company import (
     is_unit,
     per_share_components,
 )
+from smaug.portfolio.domain.provenance import FCA_SOURCE
 from smaug.portfolio.domain.share_classes import (
     EconomicRightsStatus,
     PerShareClass,
@@ -30,7 +31,6 @@ from smaug.portfolio.domain.share_classes import (
 )
 from smaug.portfolio.infrastructure.cvm_registry import (
     CVM_FCA_BASE_URL,
-    FCA_SOURCE,
     CvmCompanyRegistry,
 )
 

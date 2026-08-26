@@ -41,6 +41,7 @@ from pathlib import Path
 import httpx
 
 from smaug.portfolio.domain.company import CompanyIdentity, InstrumentKind
+from smaug.portfolio.domain.provenance import FCA_SOURCE, FcaSnapshotProvenance
 from smaug.portfolio.domain.share_classes import (
     EconomicRightsStatus,
     PerShareClass,
@@ -62,20 +63,9 @@ from smaug.shared.logging import get_logger
 logger = get_logger(__name__)
 
 CVM_FCA_BASE_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS"
-FCA_SOURCE = "cvm_fca"
 
 _ENCODING = "latin-1"
 _DELIMITER = ";"
-
-
-@dataclass(frozen=True, slots=True)
-class FcaSnapshotProvenance:
-    """The immutable source identity used for current FCA resolution."""
-
-    year: int
-    source: str
-    source_url: str
-    artifact_id: str | None = None
 
 
 @dataclass

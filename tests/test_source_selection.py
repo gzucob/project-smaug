@@ -14,7 +14,7 @@ from smaug.entrypoints.cli import (
 from smaug.ingestion.infrastructure.cvm_capital import CvmCapitalSource
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource
 from smaug.ingestion.infrastructure.routed_source import RoutedDataSource
-from smaug.portfolio.infrastructure.cvm_registry import FcaSnapshotProvenance
+from smaug.portfolio.domain.provenance import FcaSnapshotProvenance
 from smaug.shared.config import DEFAULT_CVM_FCA_YEAR, DEFAULT_CVM_MODULES, Settings
 
 
@@ -93,6 +93,45 @@ async def test_identity_resolution_uses_fca_year_not_accounting_year(
 
     assert seen["year"] == 2026
     assert provenance[0].year == 2026
+
+
+async def test_current_universe_reuses_the_injected_bronze_store(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+    bronze = object()
+
+    class FakeRegistry:
+        def __init__(self, _http, *, year, cache_dir, artifact_store=None) -> None:
+            seen["year"] = year
+            seen["artifact_store"] = artifact_store
+
+        async def companies(self):
+            return ()
+
+        async def resolve_all(self, tickers):
+            return {}
+
+        async def provenance(self):
+            return FcaSnapshotProvenance(
+                year=2026,
+                source="cvm_fca",
+                source_url="https://example.test/fca_2026.zip",
+                artifact_id="sha256:" + "b" * 64,
+            )
+
+    monkeypatch.setattr(cli, "CvmCompanyRegistry", FakeRegistry)
+    settings = Settings(cvm_year=2024, cvm_fca_year=2026)
+    provenance: list[FcaSnapshotProvenance] = []
+    async with httpx.AsyncClient() as http:
+        await cli._universe_tickers(
+            settings,
+            http,
+            fca_provenance=provenance,
+            artifact_store=bronze,  # type: ignore[arg-type]
+        )
+
+    assert seen["year"] == 2026
+    assert seen["artifact_store"] is bronze
+    assert provenance[0].artifact_id == "sha256:" + "b" * 64
 
 
 def test_every_configured_parser_has_a_stable_name_and_version() -> None:
