@@ -54,7 +54,6 @@ from smaug.analysis.domain.ports import (
     FundamentalsReader,
     PriceProvider,
     SharesReader,
-    StrictSharesReader,
 )
 from smaug.analysis.domain.ttm import build_ttm, build_ttm_as_of
 from smaug.portfolio.domain.share_classes import (
@@ -504,17 +503,11 @@ class AnalyzePortfolioUseCase:
         return await reader.capital_provenance(ticker, year)
 
     async def _counts(self, ticker: str, year: int) -> ShareCounts | None:
-        """Prefer the strict outstanding reading when the adapter provides it."""
-        if hasattr(self._shares_reader, "strict_counts"):
-            reader = cast(StrictSharesReader, self._shares_reader)
-            return await reader.strict_counts(ticker, year)
+        """Read class counts through the ADR 0017 fallback contract."""
         return await self._shares_reader.counts(ticker, year)
 
     async def _outstanding(self, ticker: str, year: int) -> Decimal | None:
-        """Prefer the strict outstanding total when the adapter provides it."""
-        if hasattr(self._shares_reader, "strict_outstanding"):
-            reader = cast(StrictSharesReader, self._shares_reader)
-            return await reader.strict_outstanding(ticker, year)
+        """Read the closing count through the ADR 0017 fallback contract."""
         return await self._shares_reader.outstanding(ticker, year)
 
     def _shares_null_reason(
@@ -522,6 +515,7 @@ class AnalyzePortfolioUseCase:
         ticker: str,
         year: int,
         provenance: ShareCountProvenance | None,
+        shares: Decimal | None,
     ) -> NullReason | None:
         """Carry treasury/filing blockers to the closing-share denominator."""
         reason = self._shares_reader.outstanding_null_reason(ticker, year)
@@ -531,9 +525,36 @@ class AnalyzePortfolioUseCase:
             return None
         if provenance.status == "missing_filing":
             return NullReason.MISSING_SHARE_COUNT
-        if provenance.status == "missing_treasury_composition":
+        if provenance.status == "missing_treasury_composition" and shares is None:
             return NullReason.MISSING_TREASURY_COMPOSITION
         return None
+
+    def _market_count_null_reason(
+        self,
+        ticker: str,
+        year: int,
+        counts: ShareCounts | None,
+        provenance: ShareCountProvenance | None,
+        mappings: tuple[ShareClassMapping, ...],
+    ) -> NullReason | None:
+        """Name a cap blocker without turning the issued fallback into a null.
+
+        ``SharesReader.counts`` follows ADR 0017: when treasury evidence is
+        unreadable, it serves the filed issued count as an explicit approximation.
+        That count is usable for the cap, while the provenance still records why it
+        is not a proven outstanding count. Only an actually unavailable count may
+        make ``missing_treasury_composition`` block the cap.
+        """
+        reason = self._counts_null_reason(ticker, year)
+        if provenance is not None and provenance.status == "missing_filing":
+            reason = NullReason.MISSING_SHARE_COUNT
+        elif (
+            counts is None
+            and provenance is not None
+            and provenance.status == "missing_treasury_composition"
+        ):
+            reason = NullReason.MISSING_TREASURY_COMPOSITION
+        return reason or _mapping_null_reason(mappings)
 
     async def _market_now(
         self,
@@ -556,15 +577,9 @@ class AnalyzePortfolioUseCase:
         classes = self._classes_resolver(ticker)
         mappings = self._class_mappings(ticker)
         provenance = await self._capital_provenance(ticker, year)
-        count_reason = self._counts_null_reason(ticker, year)
-        if provenance is not None and provenance.status == "missing_filing":
-            count_reason = NullReason.MISSING_SHARE_COUNT
-        elif (
-            provenance is not None
-            and provenance.status == "missing_treasury_composition"
-        ):
-            count_reason = NullReason.MISSING_TREASURY_COMPOSITION
-        count_reason = count_reason or _mapping_null_reason(mappings)
+        count_reason = self._market_count_null_reason(
+            ticker, year, counts, provenance, mappings
+        )
         prices: dict[str, Decimal | None] = {}
         price_reasons: dict[str, NullReason] = {}
         for share_class in classes:
@@ -586,14 +601,17 @@ class AnalyzePortfolioUseCase:
         distributions, distributions_reason = await self._cash_distributions(
             ticker, distribution_start, distribution_end
         )
+        shares = await self._outstanding(ticker, year)
         return MarketData(
             price=quote.price,
             market_cap=cap,
-            shares=await self._outstanding(ticker, year),
+            shares=shares,
             cash_distributions=distributions,
             price_null_reason=quote.price_null_reason,
             cap_null_reason=cap_null_reason,
-            shares_null_reason=self._shares_null_reason(ticker, year, provenance),
+            shares_null_reason=self._shares_null_reason(
+                ticker, year, provenance, shares
+            ),
             cash_distributions_null_reason=distributions_reason,
             class_price_null_reasons=price_reasons,
             class_market_values=_class_market_values(
@@ -716,15 +734,9 @@ class AnalyzePortfolioUseCase:
         classes = self._classes_resolver(ticker)
         mappings = self._class_mappings(ticker)
         provenance = await self._capital_provenance(ticker, year)
-        count_reason = self._counts_null_reason(ticker, year)
-        if provenance is not None and provenance.status == "missing_filing":
-            count_reason = NullReason.MISSING_SHARE_COUNT
-        elif (
-            provenance is not None
-            and provenance.status == "missing_treasury_composition"
-        ):
-            count_reason = NullReason.MISSING_TREASURY_COMPOSITION
-        count_reason = count_reason or _mapping_null_reason(mappings)
+        count_reason = self._market_count_null_reason(
+            ticker, year, counts, provenance, mappings
+        )
         for share_class in classes:
             symbol = share_class.symbol
             year_prices = (
@@ -780,14 +792,17 @@ class AnalyzePortfolioUseCase:
         distributions, distributions_reason = await self._cash_distributions(
             ticker, date(year, 1, 1), date(year, 12, 31)
         )
+        shares = await self._outstanding(ticker, year)
         market = MarketData(
             price=own.closing,
             market_cap=cap,
-            shares=await self._outstanding(ticker, year),
+            shares=shares,
             cash_distributions=distributions,
             price_null_reason=own.null_reason,
             cap_null_reason=cap_null_reason,
-            shares_null_reason=self._shares_null_reason(ticker, year, provenance),
+            shares_null_reason=self._shares_null_reason(
+                ticker, year, provenance, shares
+            ),
             cash_distributions_null_reason=distributions_reason,
             class_price_null_reasons=price_reasons,
             class_market_values=class_values,
