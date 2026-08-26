@@ -28,7 +28,11 @@ from smaug.portfolio.domain.share_classes import (
     ShareClassMappingStatus,
     UnitComponent,
 )
-from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
+from smaug.portfolio.infrastructure.cvm_registry import (
+    CVM_FCA_BASE_URL,
+    FCA_SOURCE,
+    CvmCompanyRegistry,
+)
 
 _YEAR = 2024
 
@@ -65,20 +69,22 @@ def _write_fca_zip(
     cache_dir: Path,
     geral: list[dict[str, str]],
     securities: list[dict[str, str]],
+    *,
+    year: int = _YEAR,
 ) -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
-    path = cache_dir / f"fca_cia_aberta_{_YEAR}.zip"
+    path = cache_dir / f"fca_cia_aberta_{year}.zip"
     with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr(f"fca_cia_aberta_geral_{_YEAR}.csv", _csv(_GERAL_COLS, geral))
+        archive.writestr(f"fca_cia_aberta_geral_{year}.csv", _csv(_GERAL_COLS, geral))
         archive.writestr(
-            f"fca_cia_aberta_valor_mobiliario_{_YEAR}.csv",
+            f"fca_cia_aberta_valor_mobiliario_{year}.csv",
             _csv(_SEC_COLS, securities),
         )
 
 
-def _registry(cache_dir: Path) -> CvmCompanyRegistry:
+def _registry(cache_dir: Path, *, year: int = _YEAR) -> CvmCompanyRegistry:
     # The cache file exists, so no download runs and the client is never used.
-    return CvmCompanyRegistry(httpx.AsyncClient(), year=_YEAR, cache_dir=str(cache_dir))
+    return CvmCompanyRegistry(httpx.AsyncClient(), year=year, cache_dir=str(cache_dir))
 
 
 _KLABIN_CNPJ = "89.637.490/0001-45"
@@ -154,6 +160,18 @@ async def test_resolve_is_case_insensitive_and_unknown_is_none(
 
     assert (await registry.resolve("klbn11")) is not None
     assert (await registry.resolve("NOPE99")) is None
+
+
+async def test_registry_exposes_snapshot_source_provenance(tmp_path: Path) -> None:
+    _write_fca_zip(tmp_path, geral=[], securities=[])
+    registry = _registry(tmp_path)
+
+    provenance = await registry.provenance()
+
+    assert provenance.year == _YEAR
+    assert provenance.source == FCA_SOURCE
+    assert provenance.source_url == (f"{CVM_FCA_BASE_URL}/fca_cia_aberta_{_YEAR}.zip")
+    assert provenance.artifact_id is None
 
 
 async def test_resolve_all_skips_unlisted_tickers(tmp_path: Path) -> None:
@@ -583,3 +601,56 @@ async def test_companies_group_trading_codes_and_drop_the_archives_non_tickers(
     assert companies[0].ticker == "IJKL3"  # the ON names the company
     assert companies[0].tickers == ("IJKL3", "IJKL4")
     assert companies[0].cnpj == listed
+
+
+async def test_current_fca_snapshot_is_independent_from_a_filing_year_snapshot(
+    tmp_path: Path,
+) -> None:
+    cnpj = "50.000.000/0001-00"
+    current_cnpj = "51.000.000/0001-00"
+    _write_fca_zip(
+        tmp_path,
+        geral=[_cadastre_row(cnpj, "500")],
+        securities=[
+            {
+                "CNPJ_Companhia": cnpj,
+                "Versao": "1",
+                "Codigo_Negociacao": "OLDE3",
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": "Ações Ordinárias",
+            }
+        ],
+        year=2024,
+    )
+    _write_fca_zip(
+        tmp_path,
+        geral=[_cadastre_row(cnpj, "500"), _cadastre_row(current_cnpj, "510")],
+        securities=[
+            {
+                "CNPJ_Companhia": cnpj,
+                "Versao": "1",
+                "Codigo_Negociacao": "OLDE3",
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "2025-01-01",
+                "Valor_Mobiliario": "Ações Ordinárias",
+            },
+            {
+                "CNPJ_Companhia": current_cnpj,
+                "Versao": "1",
+                "Codigo_Negociacao": "NEWE3",
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": "Ações Ordinárias",
+            },
+        ],
+        year=2026,
+    )
+
+    filing_year = _registry(tmp_path, year=2024)
+    current = _registry(tmp_path, year=2026)
+
+    assert (await filing_year.companies())[0].ticker == "OLDE3"
+    assert (await current.companies())[0].ticker == "NEWE3"
+    assert await current.resolve("OLDE3") is not None  # explicit diagnosis only
+    assert await current.resolve("NEWE3") is not None

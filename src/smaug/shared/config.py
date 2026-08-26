@@ -46,6 +46,11 @@ DEFAULT_CVM_MODULES: tuple[str, ...] = (
     "CASH_DIVIDEND_B3",
 )
 
+# 2026 is the latest complete FCA publication at the time this contract was
+# introduced. Keep the selection explicit and reproducible; advancing it is a
+# deliberate configuration change, not an implicit date-based lookup.
+DEFAULT_CVM_FCA_YEAR = 2026
+
 
 class Settings(BaseSettings):
     """Environment-backed configuration."""
@@ -84,6 +89,11 @@ class Settings(BaseSettings):
     # Year of the CVM file to mirror. 2024 is verified good; bump via ``CVM_YEAR``
     # once a newer year is published in full.
     cvm_year: int = Field(default=2024)
+    # Year of the complete FCA snapshot used for current identity and universe
+    # selection. This is intentionally independent from ``cvm_year``: the
+    # accounting archive may remain on a verified closed year while the current
+    # listed universe advances to a newer FCA publication.
+    cvm_fca_year: int = Field(default=DEFAULT_CVM_FCA_YEAR)
     # Where the downloaded/sanitized CVM ZIPs are cached (gitignored).
     cvm_cache_dir: str = Field(default=".cache/cvm")
     # Durable Bronze archive storage. Content is immutable and has no automatic
