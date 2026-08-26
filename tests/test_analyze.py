@@ -127,8 +127,8 @@ class FakeShares:
         return ()
 
 
-class StrictFallbackShares(FakeShares):
-    """Expose an issued legacy fallback beside the strict production surface."""
+class FallbackSharesWithStrictSurface(FakeShares):
+    """Expose the ADR 0017 fallback beside an opt-in strict surface."""
 
     async def strict_counts(self, ticker: str, year: int) -> ShareCounts | None:
         return None
@@ -237,9 +237,7 @@ async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
     assert saved.indicators.company_pb == Decimal(2)  # 12000 / 6000
 
 
-async def test_analyze_does_not_use_issued_counts_when_treasury_is_unreconciled() -> (
-    None
-):
+async def test_analyze_uses_issued_fallback_when_treasury_is_unreconciled() -> None:
     repo = FakeRepo()
     use_case = AnalyzePortfolioUseCase(
         FakeReader(
@@ -251,7 +249,7 @@ async def test_analyze_does_not_use_issued_counts_when_treasury_is_unreconciled(
         ),
         FakePrice(MarketData(price=Decimal(10))),
         repo,
-        StrictFallbackShares({2026: _counts(common=800, preferred=400)}),
+        FallbackSharesWithStrictSurface({2026: _counts(common=800, preferred=400)}),
         classes_resolver=fake_classes_resolver,
     )
 
@@ -260,10 +258,12 @@ async def test_analyze_does_not_use_issued_counts_when_treasury_is_unreconciled(
     saved = repo.saved[0]
     assert saved.capital_provenance is not None
     assert saved.capital_provenance.status == "missing_treasury_composition"
-    assert saved.indicators.company_pe is None
-    assert saved.indicators.null_reasons["company_pe"] is (
-        NullReason.MISSING_TREASURY_COMPOSITION
-    )
+    assert saved.indicators.shares == Decimal(1200)
+    assert saved.indicators.bvps == Decimal(5)
+    assert saved.indicators.eps_basic_market == Decimal(1)
+    assert saved.indicators.market_cap == Decimal(12000)
+    assert saved.indicators.company_pe == Decimal(10)
+    assert "company_pe" not in saved.indicators.null_reasons
 
 
 async def test_analyze_sums_the_ttm_cap_over_the_listed_share_classes() -> None:

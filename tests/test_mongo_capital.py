@@ -286,7 +286,7 @@ async def test_counts_are_served_for_a_unit_ticker() -> None:
     assert filed.preferred == Decimal(442_784)
 
 
-async def test_strict_counts_refuse_issued_fallback_without_treasury_evidence() -> None:
+async def test_counts_keep_issued_fallback_without_treasury_evidence() -> None:
     reader = MongoSharesReader(
         FakeCollection([_doc("ACME3", 2025, 1_000, common=1_000)])
     )
@@ -294,6 +294,7 @@ async def test_strict_counts_refuse_issued_fallback_without_treasury_evidence() 
     assert await reader.counts("ACME3", 2025) == ShareCounts(
         common=Decimal(1_000), total=Decimal(1_000)
     )
+    assert await reader.outstanding("ACME3", 2025) == Decimal(1_000)
     assert await reader.strict_counts("ACME3", 2025) is None
     provenance = await reader.capital_provenance("ACME3", 2025)
     assert provenance is not None
