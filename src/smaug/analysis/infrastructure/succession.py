@@ -63,6 +63,12 @@ _LOOKBACK_YEARS = 2
 _MAX_TAPE_HOPS = 4
 
 
+def _especi_class(especi: str) -> str | None:
+    """Return B3's explicit species/class token when the tape supplied one."""
+    fields = especi.strip().upper().split()
+    return fields[0] if fields else None
+
+
 def _unknown_listed_since(ticker: str) -> date | None:
     return None
 
@@ -219,14 +225,25 @@ class CodeSuccession:
         before = await self._preceding_session(head.first_session)
         if before is None:
             return None
-        wanted = share_class_suffix(head.code)
+        head_quotes = (await self._archive.year(head.first_session.year)).get(head.code)
+        wanted = None if head_quotes is None else _especi_class(head_quotes.especi)
         proposed = {
             code
             for year in {before.year, head.first_session.year}
             for code, quotes in (await self._archive.year(year)).items()
             if quotes.last_session == before
             and code != head.code
-            and share_class_suffix(code) == wanted
+            and (
+                (
+                    wanted is not None
+                    and (candidate_class := _especi_class(quotes.especi)) is not None
+                    and candidate_class == wanted
+                )
+                or (
+                    wanted is None
+                    and share_class_suffix(code) == share_class_suffix(head.code)
+                )
+            )
         }
         filed = self._names(ticker)
         survivors: list[tuple[CodeWindow, str]] = []

@@ -390,6 +390,10 @@ def _quote(
     cents: int,
     distribution: str,
     marker: str = "",
+    bdi: str = "02",
+    especi: str | None = None,
+    isin: str | None = None,
+    name: str | None = None,
 ) -> str:
     """One COTAHIST quote record, built field by field.
 
@@ -399,16 +403,22 @@ def _quote(
     names the real one it mirrors. ESPECI is ten wide — four for the class, four
     for the "ex" marker, two for the governance segment.
     """
-    especi = f"{'ON':<4}{marker:<4}{'':<2}"
+    full_especi = (especi or f"{'ON':<4}{marker:<4}{'':<2}").ljust(10)
+    assert len(full_especi) == 10
+    isin_value = isin or f"{'BR' + code[:4] + 'ACNOR0':<12}"
+    assert len(isin_value) == 12
+    name_value = name or code[:4]
+    assert len(name_value) <= 12
+    assert len(bdi) == 2
     price = f"{cents:013d}"
     record = (
         "01"
         + session
-        + "02"
+        + bdi
         + f"{code:<12}"
         + "010"
-        + f"{code[:4]:<12}"
-        + especi
+        + f"{name_value:<12}"
+        + full_especi
         + f"{'':<3}"
         + f"{'R$':<4}"
         + price * 5
@@ -421,7 +431,7 @@ def _quote(
         + "99991231"
         + f"{1:07d}"
         + f"{0:013d}"
-        + f"{'BR' + code[:4] + 'ACNOR0':<12}"
+        + isin_value
         + distribution
     )
     assert len(record) == 245, len(record)
@@ -536,8 +546,8 @@ async def test_a_base_change_on_a_year_s_first_session_is_seen_against_december(
 ) -> None:
     """SLCE3's bonus went ex on 3 January 2022, so the state it moved from is 2021's.
 
-    Reading 2022 alone the first session has nothing to differ from, and the
-    action is invisible — which is why the reader walks the years in order.
+    Reading 2022 alone still finds the action: the reader looks back to the
+    immediately preceding B3 publication when the requested window opens.
     """
     _rights_archive(
         tmp_path,
@@ -564,10 +574,83 @@ async def test_a_base_change_on_a_year_s_first_session_is_seen_against_december(
         alone = await reader.base_changes("SLCE3", (2022,))
         joined = await reader.base_changes("SLCE3", (2021, 2022))
 
-    assert alone == ()
+    assert [(c.session, round(c.ratio, 4)) for c in alone] == [
+        (date(2022, 1, 3), Decimal("1.0828"))
+    ]
     assert [(c.session, round(c.ratio, 4)) for c in joined] == [
         (date(2022, 1, 3), Decimal("1.0828"))
     ]
+
+
+async def test_a_first_session_without_a_prior_publication_is_not_an_action(
+    tmp_path: Path,
+) -> None:
+    """A marker on a genuinely new listing has no prior base to compare."""
+    _rights_archive(
+        tmp_path,
+        2022,
+        [
+            _quote(
+                session="20220103",
+                code="NEWW3",
+                cents=4045,
+                distribution="119",
+                marker="EB",
+            )
+        ],
+    )
+    # The previous archive is a valid B3 publication, but it has no NEWW3 row.
+    _rights_archive(
+        tmp_path,
+        2021,
+        [_quote(session="20211230", code="OTHER3", cents=4380, distribution="118")],
+    )
+    archive, http = _archive(tmp_path, today=date(2023, 1, 2))
+
+    async with http:
+        changes = await B3BaseChanges(archive).base_changes("NEWW3", (2022,))
+
+    assert changes == ()
+
+
+async def test_identity_fields_survive_a_reduction_round_trip(tmp_path: Path) -> None:
+    _rights_archive(
+        tmp_path,
+        2022,
+        [
+            _quote(
+                session="20220103",
+                code="IDEN3",
+                cents=4045,
+                distribution="119",
+                marker="EB",
+                bdi="02",
+                especi="ON  EB N1",
+                isin="BRIDENACNOR1",
+                name="IDENTITY",
+            )
+        ],
+    )
+    archive, http = _archive(tmp_path, today=date(2023, 1, 2))
+
+    async with http:
+        quotes = await archive.year(2022)
+
+    identity = quotes["IDEN3"]
+    assert identity.isin == "BRIDENACNOR1"
+    assert identity.codisi == identity.isin
+    assert identity.especi == "ON  EB N1"
+    assert identity.bdi == "02"
+    assert identity.codbdi == identity.bdi
+
+    # The ZIP is no longer needed: this reads the versioned reduction written by
+    # the first archive instance, proving the new fields are persisted too.
+    (tmp_path / "COTAHIST_A2022.ZIP").unlink()
+    reopened, http2 = _archive(tmp_path, today=date(2023, 1, 2))
+    async with http2:
+        restored = (await reopened.year(2022))["IDEN3"]
+
+    assert restored == identity
 
 
 async def test_an_event_named_a_session_after_it_is_dated_is_still_dated(

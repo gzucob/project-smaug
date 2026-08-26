@@ -69,6 +69,7 @@ def _quotes(
     sessions: Sequence[tuple[date, Decimal]],
     rights: Sequence[tuple[date, str, str]] = (),
     name: str = "",
+    especi: str = "",
 ) -> YearQuotes:
     january = date(sessions[0][0].year, 1, 1).toordinal()
     closes = " ".join(
@@ -87,6 +88,7 @@ def _quotes(
         closes=closes,
         rights=encoded,
         name=name,
+        especi=especi,
     )
 
 
@@ -397,6 +399,38 @@ async def test_an_action_filed_under_the_earlier_code_is_still_dated() -> None:
     assert [(change.session, change.ratio) for change in joined] == [
         (date(2023, 1, 3), Decimal("80") / Decimal("40"))
     ]
+
+
+async def test_tape_predecessor_uses_explicit_especi_class_when_available() -> None:
+    """The tape's class field outranks an inconsistent ticker suffix."""
+    archive = _FakeArchive(
+        {
+            2022: {
+                "OLDD3": _quotes(
+                    _sessions(date(2022, 12, 30), ["10"]),
+                    name="LEGACY",
+                    especi="ON      N1",
+                )
+            },
+            # ``HEAA4`` intentionally has an ordinary-share ESPECI despite its
+            # preferred-looking suffix.  The explicit B3 field is the evidence
+            # used to compare it with the predecessor.
+            2023: {
+                "HEAA4": _quotes(
+                    _sessions(date(2023, 1, 2), ["10"]),
+                    name="CURRENT",
+                    especi="ON      N1",
+                )
+            },
+        }
+    )
+    succession = CodeSuccession(
+        archive,  # type: ignore[arg-type]
+        names=lambda ticker: frozenset({"LEGACY"}),
+        today=lambda: date(2023, 12, 31),
+    )
+
+    assert await succession.candidates("HEAA4", 2023) == ("OLDD3", "HEAA4")
 
 
 # --- the codes a registrant has filed ---------------------------------------
