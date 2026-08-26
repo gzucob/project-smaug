@@ -442,6 +442,19 @@ def test_standardize_rejects_an_ambiguous_or_missing_class_disclosure() -> None:
     assert result.eps_diluted_null_reason is NullReason.MISSING_CPC41_DISCLOSURE
 
 
+def test_standardize_preserves_unresolved_security_class_as_its_own_blocker() -> None:
+    result = standardize(
+        {},
+        Sector.COMMODITY,
+        date(2024, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        per_share_rights_reason=NullReason.UNRESOLVED_SHARE_CLASS,
+    )
+
+    assert result.eps_basic is None
+    assert result.eps_basic_null_reason is NullReason.UNRESOLVED_SHARE_CLASS
+
+
 def test_standardize_bank_reads_its_own_chart_of_accounts() -> None:
     # The codes and labels below are the real ones in the raw mirror, from the
     # bank chart of accounts. The loan-loss provision is deducted *inside* 3.02

@@ -34,6 +34,7 @@ from smaug.analysis.infrastructure.succession import (
     SuccessionPriceProvider,
 )
 from smaug.portfolio.domain.securities import confirms_name, name_key
+from smaug.portfolio.domain.share_classes import TickerCodeEvidence
 from smaug.portfolio.infrastructure.cvm_securities import CvmSecurityHistory
 
 TODAY = date(2026, 6, 1)
@@ -467,6 +468,32 @@ async def test_the_codes_of_one_class_are_gathered_across_fca_years(
     assert siblings("ARZZ11") == ()
     # A registrant with one code has nothing to join.
     assert siblings("ALSO3") == ()
+
+
+async def test_historical_code_evidence_keeps_the_fca_years(
+    tmp_path: Path,
+) -> None:
+    _fca_archive(
+        tmp_path,
+        2018,
+        [["16.590.234/0001-76", "ARZZ3", "Ações Ordinárias", "1"]],
+    )
+    _fca_archive(
+        tmp_path,
+        2019,
+        [["16.590.234/0001-76", "AZZA3", "Ações Ordinárias", "1"]],
+    )
+
+    async with httpx.AsyncClient() as http:
+        history = CvmSecurityHistory(
+            http, through=2019, since=2018, cache_dir=str(tmp_path)
+        )
+        codes = await history.historical_codes()
+
+    assert codes("AZZA3") == (
+        TickerCodeEvidence("ARZZ3", (2018,)),
+        TickerCodeEvidence("AZZA3", (2019,)),
+    )
 
 
 async def test_the_names_a_registrant_filed_come_from_every_year(

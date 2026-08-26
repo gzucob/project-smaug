@@ -22,6 +22,9 @@ from pydantic import BaseModel
 from smaug.analysis.domain.entities import VIEW_TTM, TickerAnalysis
 from smaug.analysis.domain.financials import (
     AccountingRegime,
+    CapitalActionEvidence,
+    CapitalComposition,
+    ClassMarketValue,
     DebtBlocker,
     DebtEvidenceSnapshot,
     DebtIdentityStatus,
@@ -30,6 +33,8 @@ from smaug.analysis.domain.financials import (
     DebtLineEvidence,
     DebtLineRole,
     RegimeSource,
+    ShareCountProvenance,
+    ShareCounts,
     SourceAccountStatus,
 )
 from smaug.analysis.domain.indicators import (
@@ -40,6 +45,7 @@ from smaug.analysis.domain.indicators import (
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
 from smaug.portfolio.application.manage_portfolio import ManagePortfolioUseCase
 from smaug.portfolio.domain.entities import PortfolioTicker
+from smaug.portfolio.domain.share_classes import ShareClassMapping
 from smaug.portfolio.infrastructure.sql_repository import SqlAlchemyPortfolioRepository
 from smaug.shared.config import get_settings
 from smaug.shared.errors import UnknownTickerError
@@ -74,6 +80,89 @@ class BankRegulatoryProvenanceResponse(BaseModel):
     available_inputs: list[str]
     missing_inputs: list[str]
     incompatible_inputs: list[str]
+
+
+class TickerCodeEvidenceResponse(BaseModel):
+    """One CVM-filed code and its FCA years."""
+
+    symbol: str
+    filed_years: list[int]
+    source: str
+
+
+class ShareClassMappingResponse(BaseModel):
+    """Stable class identity, economic-right status, and source evidence."""
+
+    class_id: str
+    symbol: str | None
+    kind: str | None
+    per_share_class: str | None
+    status: str
+    economic_rights: str
+    code_evidence: list[TickerCodeEvidenceResponse]
+    evidence: list[str]
+
+
+class ClassMarketValueResponse(BaseModel):
+    """The class-level contribution to the persisted market cap."""
+
+    class_id: str
+    symbol: str
+    per_share_class: str
+    price: Decimal | None
+    shares: Decimal | None
+    value: Decimal | None
+    price_basis: str
+    share_basis: str
+    null_reason: NullReason | None
+
+
+class ShareCountsResponse(BaseModel):
+    """Filed or restated class counts retained as capital evidence."""
+
+    common: Decimal | None
+    preferred: Decimal | None
+    total: Decimal | None
+    preferred_a: Decimal | None
+    preferred_b: Decimal | None
+    preferred_other: Decimal | None
+
+
+class CapitalCompositionResponse(BaseModel):
+    """CVM statement composition that names treasury shares."""
+
+    issued_total: Decimal | None
+    treasury_common: Decimal | None
+    treasury_preferred: Decimal | None
+    treasury_total: Decimal | None
+
+
+class CapitalActionResponse(BaseModel):
+    """Class-aware CVM capital event retained as provenance."""
+
+    approval_date: str
+    kind: str
+    common_before: Decimal | None
+    common_after: Decimal | None
+    preferred_before: Decimal | None
+    preferred_after: Decimal | None
+    total_before: Decimal | None
+    total_after: Decimal | None
+
+
+class ShareCountProvenanceResponse(BaseModel):
+    """Audit trail behind one outstanding-share reading."""
+
+    requested_year: int
+    filed_year: int | None
+    status: str
+    source: str
+    issued: ShareCountsResponse | None
+    outstanding: ShareCountsResponse | None
+    treasury: CapitalCompositionResponse | None
+    restatement_factor: Decimal | None
+    actions: list[CapitalActionResponse]
+    evidence: list[str]
 
 
 class IndicatorsResponse(BaseModel):
@@ -251,6 +340,9 @@ class AnalysisResponse(BaseModel):
     debt_evidence_snapshot: DebtEvidenceSnapshot | None
     debt_evidence: DebtEvidenceResponse | None
     roic_tax_basis: str | None
+    share_class_mappings: list[ShareClassMappingResponse]
+    class_market_values: list[ClassMarketValueResponse]
+    capital_provenance: ShareCountProvenanceResponse | None
     indicators: IndicatorsResponse
     indicator_contract: dict[str, IndicatorContractResponse]
 
@@ -296,6 +388,102 @@ def _to_indicator_contract(
         )
         for key, contract in INDICATOR_CONTRACT.items()
     }
+
+
+def _share_counts_response(counts: ShareCounts | None) -> ShareCountsResponse | None:
+    if counts is None:
+        return None
+    return ShareCountsResponse(
+        common=counts.common,
+        preferred=counts.preferred,
+        total=counts.total,
+        preferred_a=counts.preferred_a,
+        preferred_b=counts.preferred_b,
+        preferred_other=counts.preferred_other,
+    )
+
+
+def _capital_composition_response(
+    composition: CapitalComposition | None,
+) -> CapitalCompositionResponse | None:
+    if composition is None:
+        return None
+    return CapitalCompositionResponse(
+        issued_total=composition.issued_total,
+        treasury_common=composition.treasury_common,
+        treasury_preferred=composition.treasury_preferred,
+        treasury_total=composition.treasury_total,
+    )
+
+
+def _mapping_response(mapping: ShareClassMapping) -> ShareClassMappingResponse:
+    return ShareClassMappingResponse(
+        class_id=mapping.class_id,
+        symbol=mapping.symbol,
+        kind=None if mapping.kind is None else mapping.kind.value,
+        per_share_class=(
+            None if mapping.per_share_class is None else mapping.per_share_class.value
+        ),
+        status=mapping.status.value,
+        economic_rights=mapping.economic_rights.value,
+        code_evidence=[
+            TickerCodeEvidenceResponse(
+                symbol=evidence.symbol,
+                filed_years=list(evidence.filed_years),
+                source=evidence.source,
+            )
+            for evidence in mapping.code_evidence
+        ],
+        evidence=list(mapping.evidence),
+    )
+
+
+def _class_market_value_response(
+    value: ClassMarketValue,
+) -> ClassMarketValueResponse:
+    return ClassMarketValueResponse(
+        class_id=value.class_id,
+        symbol=value.symbol,
+        per_share_class=value.per_share_class.value,
+        price=value.price,
+        shares=value.shares,
+        value=value.value,
+        price_basis=value.price_basis,
+        share_basis=value.share_basis,
+        null_reason=value.null_reason,
+    )
+
+
+def _capital_provenance_response(
+    provenance: ShareCountProvenance | None,
+) -> ShareCountProvenanceResponse | None:
+    if provenance is None:
+        return None
+
+    def action_response(action: CapitalActionEvidence) -> CapitalActionResponse:
+        return CapitalActionResponse(
+            approval_date=action.approval_date,
+            kind=action.kind,
+            common_before=action.common_before,
+            common_after=action.common_after,
+            preferred_before=action.preferred_before,
+            preferred_after=action.preferred_after,
+            total_before=action.total_before,
+            total_after=action.total_after,
+        )
+
+    return ShareCountProvenanceResponse(
+        requested_year=provenance.requested_year,
+        filed_year=provenance.filed_year,
+        status=provenance.status,
+        source=provenance.source,
+        issued=_share_counts_response(provenance.issued),
+        outstanding=_share_counts_response(provenance.outstanding),
+        treasury=_capital_composition_response(provenance.treasury),
+        restatement_factor=provenance.restatement_factor,
+        actions=[action_response(action) for action in provenance.actions],
+        evidence=list(provenance.evidence),
+    )
 
 
 def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
@@ -404,6 +592,14 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
         or (DebtEvidenceSnapshot.LEGACY if evidence is None else None),
         debt_evidence=evidence_response,
         roic_tax_basis=analysis.roic_tax_basis,
+        share_class_mappings=[
+            _mapping_response(mapping) for mapping in analysis.share_class_mappings
+        ],
+        class_market_values=[
+            _class_market_value_response(value)
+            for value in analysis.class_market_values
+        ],
+        capital_provenance=_capital_provenance_response(analysis.capital_provenance),
         indicators=indicator_response,
         indicator_contract=_to_indicator_contract(analysis),
     )

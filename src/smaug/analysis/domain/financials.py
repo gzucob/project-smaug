@@ -457,6 +457,11 @@ class MarketData:
     # calculator receives the selected cap cause, while this map keeps the
     # class-level evidence available to diagnostics and tests.
     class_price_null_reasons: Mapping[str, NullReason] = field(default_factory=dict)
+    # The complete class-by-class cap ledger. It remains present when the total
+    # is null, so a consumer can see whether the blocker was a price, count, or
+    # unresolved class identity.
+    class_market_values: tuple[ClassMarketValue, ...] = ()
+    capital_provenance: ShareCountProvenance | None = None
 
 
 @dataclass(frozen=True)
@@ -502,6 +507,21 @@ class ShareCounts:
         return plain if plain > 0 else None
 
 
+@dataclass(frozen=True, slots=True)
+class ClassMarketValue:
+    """One listed class's contribution to the company market cap."""
+
+    class_id: str
+    symbol: str
+    per_share_class: PerShareClass
+    price: Decimal | None
+    shares: Decimal | None
+    value: Decimal | None
+    price_basis: str
+    share_basis: str
+    null_reason: NullReason | None = None
+
+
 @dataclass(frozen=True)
 class CapitalComposition:
     """The statements' own capital composition — the only filing that names treasury.
@@ -517,6 +537,36 @@ class CapitalComposition:
     treasury_common: Decimal | None = None
     treasury_preferred: Decimal | None = None
     treasury_total: Decimal | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CapitalActionEvidence:
+    """One class-aware CVM capital event retained as calculation evidence."""
+
+    approval_date: str
+    kind: str
+    common_before: Decimal | None
+    common_after: Decimal | None
+    preferred_before: Decimal | None
+    preferred_after: Decimal | None
+    total_before: Decimal | None
+    total_after: Decimal | None
+
+
+@dataclass(frozen=True, slots=True)
+class ShareCountProvenance:
+    """Evidence behind one filed, outstanding, and restated share reading."""
+
+    requested_year: int
+    filed_year: int | None
+    status: str
+    source: str = "cvm_fre"
+    issued: ShareCounts | None = None
+    outstanding: ShareCounts | None = None
+    treasury: CapitalComposition | None = None
+    restatement_factor: Decimal | None = None
+    actions: tuple[CapitalActionEvidence, ...] = ()
+    evidence: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

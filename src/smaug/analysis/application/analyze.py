@@ -22,10 +22,11 @@ each class is summed at: the latest current-year close, or the fiscal-year close
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
+from typing import cast
 
 from smaug.analysis.domain.calculator import compute
 from smaug.analysis.domain.dividends import cash_distributions
@@ -35,8 +36,11 @@ from smaug.analysis.domain.entities import (
     TickerAnalysis,
 )
 from smaug.analysis.domain.financials import (
+    ClassMarketValue,
     DebtEvidenceSnapshot,
     MarketData,
+    ShareCountProvenance,
+    ShareCounts,
     StandardizedFinancials,
     YearPrices,
 )
@@ -44,15 +48,21 @@ from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.market_cap import capitalize
 from smaug.analysis.domain.ports import (
     AnalysisRepository,
+    CapitalProvenanceReader,
     CashEventReader,
+    CountReasonReader,
     FundamentalsReader,
     PriceProvider,
     SharesReader,
+    StrictSharesReader,
 )
 from smaug.analysis.domain.ttm import build_ttm, build_ttm_as_of
 from smaug.portfolio.domain.share_classes import (
+    EconomicRightsStatus,
     PerShareClass,
     ShareClass,
+    ShareClassMapping,
+    ShareClassMappingStatus,
     UnitComponent,
 )
 from smaug.portfolio.domain.taxonomy import Classification, classify
@@ -124,6 +134,7 @@ ClassificationResolver = Callable[[str], Classification]
 # CLI passes a registry-backed resolver, unconditionally, for every ticker
 # (#110, #212).
 ClassesResolver = Callable[[str], tuple[ShareClass, ...]]
+ClassMappingsResolver = Callable[[str], tuple[ShareClassMapping, ...]]
 PerShareResolver = Callable[[str], tuple[UnitComponent, ...]]
 
 
@@ -139,6 +150,10 @@ def _no_per_share_components(_ticker: str) -> tuple[UnitComponent, ...]:
     return ()
 
 
+def _no_class_mappings(_ticker: str) -> tuple[ShareClassMapping, ...]:
+    return ()
+
+
 # Both views are point-in-time valuations (ADR 0057): B3's latest available close
 # for the live view and its last close of the fiscal year for a closed exercise.
 # The dividend-adjusted average stays alongside as a total-return reference, but
@@ -150,6 +165,70 @@ _CLOSED_YEAR_SHARE_BASIS = "cvm_year_end_outstanding_current_base"
 _LIQUIDITY_BASIS = "cpc03_cash_and_cash_equivalents"
 _DEBT_BASIS = "cvm_bpp_explicit_interest_bearing"
 _ROIC_TAX_BASIS = "br_statutory_34pct"
+
+
+def _mapping_null_reason(
+    mappings: tuple[ShareClassMapping, ...],
+) -> NullReason | None:
+    """Translate class-evidence status into a cap blocker."""
+    if any(
+        mapping.status is ShareClassMappingStatus.UNRESOLVED for mapping in mappings
+    ):
+        return NullReason.UNRESOLVED_SHARE_CLASS
+    if any(
+        mapping.economic_rights is EconomicRightsStatus.UNRESOLVED
+        for mapping in mappings
+    ):
+        return NullReason.MISSING_ECONOMIC_RIGHTS
+    return None
+
+
+def _class_market_values(
+    classes: tuple[ShareClass, ...],
+    mappings: tuple[ShareClassMapping, ...],
+    counts: ShareCounts | None,
+    prices: Mapping[str, Decimal | None],
+    price_reasons: Mapping[str, NullReason],
+    *,
+    price_basis: str,
+    share_basis: str,
+    count_reason: NullReason | None,
+) -> tuple[ClassMarketValue, ...]:
+    """Build the persisted class-by-class market-cap ledger."""
+    by_symbol = {mapping.symbol: mapping for mapping in mappings}
+    values: list[ClassMarketValue] = []
+    for share_class in classes:
+        mapping = by_symbol.get(share_class.symbol)
+        class_id = (
+            mapping.class_id
+            if mapping is not None
+            else f"ticker:{share_class.symbol}:{share_class.per_share_class.value}"
+        )
+        shares = None if counts is None else counts.of(share_class.per_share_class)
+        price = prices.get(share_class.symbol)
+        reason: NullReason | None = count_reason
+        if reason is None and shares is None:
+            reason = NullReason.MISSING_SHARE_COUNT
+        if reason is None and price is None:
+            reason = price_reasons.get(share_class.symbol, NullReason.MISSING_PRICE)
+        values.append(
+            ClassMarketValue(
+                class_id=class_id,
+                symbol=share_class.symbol,
+                per_share_class=share_class.per_share_class,
+                price=price,
+                shares=shares,
+                value=(
+                    None
+                    if reason is not None or price is None or shares is None
+                    else price * shares
+                ),
+                price_basis=price_basis,
+                share_basis=share_basis,
+                null_reason=reason,
+            )
+        )
+    return tuple(values)
 
 
 def _utc_now() -> datetime:
@@ -200,6 +279,7 @@ class AnalyzePortfolioUseCase:
         clock: Clock = _utc_now,
         classification_resolver: ClassificationResolver = _default_classification,
         classes_resolver: ClassesResolver,
+        class_mapping_resolver: ClassMappingsResolver = _no_class_mappings,
         cash_event_reader: CashEventReader | None = None,
         per_share_resolver: PerShareResolver = _no_per_share_components,
     ) -> None:
@@ -210,6 +290,7 @@ class AnalyzePortfolioUseCase:
         self._clock = clock
         self._classification_resolver = classification_resolver
         self._classes_resolver = classes_resolver
+        self._class_mappings = class_mapping_resolver
         self._cash_events = cash_event_reader
         self._per_share = per_share_resolver
 
@@ -359,6 +440,9 @@ class AnalyzePortfolioUseCase:
             cnpj=current.cnpj,
             debt_evidence=current.debt_evidence,
             debt_evidence_snapshot=DebtEvidenceSnapshot.CURRENT,
+            share_class_mappings=self._class_mappings(ticker),
+            class_market_values=market.class_market_values,
+            capital_provenance=market.capital_provenance,
         )
 
     async def _closed_year_analysis(
@@ -398,7 +482,58 @@ class AnalyzePortfolioUseCase:
             cnpj=annual.cnpj,
             debt_evidence=annual.debt_evidence,
             debt_evidence_snapshot=DebtEvidenceSnapshot.HISTORICAL,
+            share_class_mappings=self._class_mappings(ticker),
+            class_market_values=market.class_market_values,
+            capital_provenance=market.capital_provenance,
         )
+
+    def _counts_null_reason(self, ticker: str, year: int) -> NullReason | None:
+        """Read an optional class-count blocker without widening old fakes."""
+        if not hasattr(self._shares_reader, "counts_null_reason"):
+            return None
+        reader = cast(CountReasonReader, self._shares_reader)
+        return reader.counts_null_reason(ticker, year)
+
+    async def _capital_provenance(
+        self, ticker: str, year: int
+    ) -> ShareCountProvenance | None:
+        """Read optional capital evidence from the concrete share adapter."""
+        if not hasattr(self._shares_reader, "capital_provenance"):
+            return None
+        reader = cast(CapitalProvenanceReader, self._shares_reader)
+        return await reader.capital_provenance(ticker, year)
+
+    async def _counts(self, ticker: str, year: int) -> ShareCounts | None:
+        """Prefer the strict outstanding reading when the adapter provides it."""
+        if hasattr(self._shares_reader, "strict_counts"):
+            reader = cast(StrictSharesReader, self._shares_reader)
+            return await reader.strict_counts(ticker, year)
+        return await self._shares_reader.counts(ticker, year)
+
+    async def _outstanding(self, ticker: str, year: int) -> Decimal | None:
+        """Prefer the strict outstanding total when the adapter provides it."""
+        if hasattr(self._shares_reader, "strict_outstanding"):
+            reader = cast(StrictSharesReader, self._shares_reader)
+            return await reader.strict_outstanding(ticker, year)
+        return await self._shares_reader.outstanding(ticker, year)
+
+    def _shares_null_reason(
+        self,
+        ticker: str,
+        year: int,
+        provenance: ShareCountProvenance | None,
+    ) -> NullReason | None:
+        """Carry treasury/filing blockers to the closing-share denominator."""
+        reason = self._shares_reader.outstanding_null_reason(ticker, year)
+        if reason is not None:
+            return reason
+        if provenance is None:
+            return None
+        if provenance.status == "missing_filing":
+            return NullReason.MISSING_SHARE_COUNT
+        if provenance.status == "missing_treasury_composition":
+            return NullReason.MISSING_TREASURY_COMPOSITION
+        return None
 
     async def _market_now(
         self,
@@ -417,8 +552,19 @@ class AnalyzePortfolioUseCase:
         all. The analyzed ticker's own quote is already in hand; only its sibling
         classes cost an extra call.
         """
-        counts = await self._shares_reader.counts(ticker, year)
+        counts = await self._counts(ticker, year)
         classes = self._classes_resolver(ticker)
+        mappings = self._class_mappings(ticker)
+        provenance = await self._capital_provenance(ticker, year)
+        count_reason = self._counts_null_reason(ticker, year)
+        if provenance is not None and provenance.status == "missing_filing":
+            count_reason = NullReason.MISSING_SHARE_COUNT
+        elif (
+            provenance is not None
+            and provenance.status == "missing_treasury_composition"
+        ):
+            count_reason = NullReason.MISSING_TREASURY_COMPOSITION
+        count_reason = count_reason or _mapping_null_reason(mappings)
         prices: dict[str, Decimal | None] = {}
         price_reasons: dict[str, NullReason] = {}
         for share_class in classes:
@@ -431,7 +577,11 @@ class AnalyzePortfolioUseCase:
             if class_quote.price is None and class_quote.price_null_reason is not None:
                 price_reasons[share_class.symbol] = class_quote.price_null_reason
         cap, cap_null_reason = capitalize(
-            classes, counts, prices, price_null_reasons=price_reasons
+            classes,
+            counts,
+            prices,
+            price_null_reasons=price_reasons,
+            count_null_reason=count_reason,
         )
         distributions, distributions_reason = await self._cash_distributions(
             ticker, distribution_start, distribution_end
@@ -439,15 +589,24 @@ class AnalyzePortfolioUseCase:
         return MarketData(
             price=quote.price,
             market_cap=cap,
-            shares=await self._shares_reader.outstanding(ticker, year),
+            shares=await self._outstanding(ticker, year),
             cash_distributions=distributions,
             price_null_reason=quote.price_null_reason,
             cap_null_reason=cap_null_reason,
-            shares_null_reason=self._shares_reader.outstanding_null_reason(
-                ticker, year
-            ),
+            shares_null_reason=self._shares_null_reason(ticker, year, provenance),
             cash_distributions_null_reason=distributions_reason,
             class_price_null_reasons=price_reasons,
+            class_market_values=_class_market_values(
+                classes,
+                mappings,
+                counts,
+                prices,
+                price_reasons,
+                price_basis=_TTM_BASIS,
+                share_basis=_TTM_SHARE_BASIS,
+                count_reason=count_reason,
+            ),
+            capital_provenance=provenance,
         )
 
     async def _cash_distributions(
@@ -550,11 +709,22 @@ class AnalyzePortfolioUseCase:
         complete cap. The year's dividend-adjusted average remains a separate
         total-return reference and never reaches valuation arithmetic.
         """
-        counts = await self._shares_reader.counts(ticker, year)
+        counts = await self._counts(ticker, year)
         own = await self._year_prices(ticker, year)
         prices: dict[str, Decimal | None] = {}
         price_reasons: dict[str, NullReason] = {}
         classes = self._classes_resolver(ticker)
+        mappings = self._class_mappings(ticker)
+        provenance = await self._capital_provenance(ticker, year)
+        count_reason = self._counts_null_reason(ticker, year)
+        if provenance is not None and provenance.status == "missing_filing":
+            count_reason = NullReason.MISSING_SHARE_COUNT
+        elif (
+            provenance is not None
+            and provenance.status == "missing_treasury_composition"
+        ):
+            count_reason = NullReason.MISSING_TREASURY_COMPOSITION
+        count_reason = count_reason or _mapping_null_reason(mappings)
         for share_class in classes:
             symbol = share_class.symbol
             year_prices = (
@@ -564,7 +734,11 @@ class AnalyzePortfolioUseCase:
             if year_prices.closing is None and year_prices.null_reason is not None:
                 price_reasons[symbol] = year_prices.null_reason
         cap, cap_null_reason = capitalize(
-            classes, counts, prices, price_null_reasons=price_reasons
+            classes,
+            counts,
+            prices,
+            price_null_reasons=price_reasons,
+            count_null_reason=count_reason,
         )
         if cap is None and own.null_reason is not None:
             # The history chain knows *why* there is no price: the symbol is unknown
@@ -586,20 +760,37 @@ class AnalyzePortfolioUseCase:
             # The FCA cannot tell this apart from a class that is simply illiquid,
             # so the tape does (ADR 0048).
             cap_null_reason = NullReason.NOT_YET_LISTED
+        class_values = _class_market_values(
+            classes,
+            mappings,
+            counts,
+            prices,
+            price_reasons,
+            price_basis=_CLOSED_YEAR_BASIS,
+            share_basis=_CLOSED_YEAR_SHARE_BASIS,
+            count_reason=count_reason,
+        )
+        if cap_null_reason is NullReason.NOT_YET_LISTED:
+            class_values = tuple(
+                replace(value, null_reason=NullReason.NOT_YET_LISTED)
+                if value.value is None
+                else value
+                for value in class_values
+            )
         distributions, distributions_reason = await self._cash_distributions(
             ticker, date(year, 1, 1), date(year, 12, 31)
         )
         market = MarketData(
             price=own.closing,
             market_cap=cap,
-            shares=await self._shares_reader.outstanding(ticker, year),
+            shares=await self._outstanding(ticker, year),
             cash_distributions=distributions,
             price_null_reason=own.null_reason,
             cap_null_reason=cap_null_reason,
-            shares_null_reason=self._shares_reader.outstanding_null_reason(
-                ticker, year
-            ),
+            shares_null_reason=self._shares_null_reason(ticker, year, provenance),
             cash_distributions_null_reason=distributions_reason,
             class_price_null_reasons=price_reasons,
+            class_market_values=class_values,
+            capital_provenance=provenance,
         )
         return market, own.adjusted_avg

@@ -47,6 +47,71 @@ class PerShareClass(StrEnum):
     PREFERRED_B = "PNB"
 
 
+class ShareClassMappingStatus(StrEnum):
+    """Whether CVM evidence identifies one economic class unambiguously."""
+
+    RESOLVED = "resolved"
+    UNRESOLVED = "unresolved"
+    NOT_YET_LISTED = "not_yet_listed"
+
+
+class EconomicRightsStatus(StrEnum):
+    """Whether the filing evidence identifies the class's economic rights."""
+
+    RESOLVED = "resolved"
+    UNRESOLVED = "unresolved"
+
+
+@dataclass(frozen=True, slots=True)
+class TickerCodeEvidence:
+    """One CVM-filed trading code and the FCA years in which it appeared."""
+
+    symbol: str
+    filed_years: tuple[int, ...] = ()
+    source: str = "cvm_fca"
+
+
+@dataclass(frozen=True, slots=True)
+class ShareClassMapping:
+    """Stable economic-class identity with its code and filing evidence.
+
+    ``class_id`` is keyed by the CVM registrant and the economic class, not by
+    the current ticker. This is what lets a rename retain one identity while a
+    merger's extinguished class remains separate from its survivor.
+    """
+
+    class_id: str
+    symbol: str | None
+    kind: ShareKind | None
+    per_share_class: PerShareClass | None
+    status: ShareClassMappingStatus = ShareClassMappingStatus.RESOLVED
+    economic_rights: EconomicRightsStatus = EconomicRightsStatus.RESOLVED
+    code_evidence: tuple[TickerCodeEvidence, ...] = ()
+    evidence: tuple[str, ...] = ()
+
+
+def share_class_id(cnpj: str, per_share_class: PerShareClass) -> str:
+    """Build the stable CVM-registrant/economic-class key."""
+    return f"{cnpj}:{per_share_class.value}"
+
+
+def mapping_for_share_class(
+    cnpj: str,
+    share_class: ShareClass,
+    *,
+    code_evidence: tuple[TickerCodeEvidence, ...] = (),
+) -> ShareClassMapping:
+    """Build resolved mapping evidence for one listed class."""
+    return ShareClassMapping(
+        class_id=share_class_id(cnpj, share_class.per_share_class),
+        symbol=share_class.symbol,
+        kind=share_class.kind,
+        per_share_class=share_class.per_share_class,
+        code_evidence=code_evidence,
+        evidence=("cvm_fca.share_class",),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ShareClass:
     """One listed class of a company's equity: the symbol it trades under."""

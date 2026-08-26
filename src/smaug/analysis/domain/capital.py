@@ -256,6 +256,12 @@ class CorporateAction:
     kind: str  # Grupamento | Desdobramento | Bonificação
     total_before: Decimal
     total_after: Decimal
+    # CVM also files the class sides. The aggregate ratio remains the restatement
+    # input, while these fields keep the filed economic-class witness available.
+    common_before: Decimal | None = None
+    common_after: Decimal | None = None
+    preferred_before: Decimal | None = None
+    preferred_after: Decimal | None = None
 
     @property
     def ratio(self) -> Decimal | None:

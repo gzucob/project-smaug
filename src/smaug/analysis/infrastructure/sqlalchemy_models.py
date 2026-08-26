@@ -134,3 +134,8 @@ class TickerAnalysisRow(Base):
     source_account_evidence: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
     # Contract metadata for any published bank-regulatory ratio (#261).
     bank_regulatory_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    # FCA security-class identity and class-by-class cap ledger (#259). Legacy
+    # rows remain readable with NULL and are backfilled by the next analyze run.
+    share_class_mappings: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
+    class_market_values: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
+    capital_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON)

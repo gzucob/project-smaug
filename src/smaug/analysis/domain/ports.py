@@ -17,6 +17,7 @@ from smaug.analysis.domain.entities import PruneResult, TickerAnalysis
 from smaug.analysis.domain.financials import (
     MarketData,
     SessionClose,
+    ShareCountProvenance,
     ShareCounts,
     StandardizedFinancials,
     YearPrices,
@@ -138,6 +139,28 @@ class SharesReader(Protocol):
         quoted on different bases (ADR 0033). Empty when nothing ever moved.
         """
         ...
+
+
+class CountReasonReader(Protocol):
+    """Optional structural reason for an unavailable class-count reading."""
+
+    def counts_null_reason(self, ticker: str, year: int) -> NullReason | None: ...
+
+
+class CapitalProvenanceReader(Protocol):
+    """Optional audit trail for a share-count reading."""
+
+    async def capital_provenance(
+        self, ticker: str, year: int
+    ) -> ShareCountProvenance | None: ...
+
+
+class StrictSharesReader(Protocol):
+    """Optional strict surface that refuses issued-count fallbacks."""
+
+    async def strict_counts(self, ticker: str, year: int) -> ShareCounts | None: ...
+
+    async def strict_outstanding(self, ticker: str, year: int) -> Decimal | None: ...
 
 
 class BaseChangeReader(Protocol):

@@ -43,7 +43,12 @@ from smaug.analysis.domain.capital import (
     restatement_factors,
     restatement_timeline,
 )
-from smaug.analysis.domain.financials import CapitalComposition, ShareCounts
+from smaug.analysis.domain.financials import (
+    CapitalActionEvidence,
+    CapitalComposition,
+    ShareCountProvenance,
+    ShareCounts,
+)
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.ports import BaseChangeReader
 from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
@@ -283,6 +288,97 @@ class MongoSharesReader:
             return None
         return filed.total
 
+    async def strict_counts(self, ticker: str, year: int) -> ShareCounts | None:
+        """Return only counts proven to be outstanding, never issued fallback."""
+        by_year = await self._by_year(ticker)
+        served = _served_year(by_year, ticker, year, "capital")
+        if served is None:
+            return None
+        issued = by_year[served]
+        net = outstanding_counts(issued, await self._composition(ticker, year))
+        if net is None:
+            logger.info(
+                "No reconciled treasury composition for %s %d; strict counts null",
+                ticker,
+                year,
+            )
+            return None
+        return _scaled(net, await self._factor(ticker, by_year, served))
+
+    async def strict_outstanding(self, ticker: str, year: int) -> Decimal | None:
+        """Return the strict total, applying a unit denominator when applicable."""
+        filed = await self.strict_counts(ticker, year)
+        if filed is None or filed.total is None:
+            return None
+        per_unit = self._unit_composition(ticker)
+        if per_unit is not None:
+            return filed.total / per_unit
+        if self._is_unit(ticker):
+            return None
+        return filed.total
+
+    def counts_null_reason(self, ticker: str, year: int) -> NullReason | None:
+        """Name why strict class counts cannot establish outstanding shares."""
+        # A synchronous reason is deliberately conservative: the raw mirror is
+        # asynchronous, so the presence of a filing is proven by the async
+        # provenance method. This method still names the structural unit blocker
+        # immediately; the use case adds the async provenance status when present.
+        if self._is_unit(ticker) and self._unit_composition(ticker) is None:
+            return NullReason.MISSING_UNIT_COMPOSITION
+        return None
+
+    async def capital_provenance(
+        self, ticker: str, year: int
+    ) -> ShareCountProvenance | None:
+        """Expose the CVM issued/treasury/restatement evidence for one reading."""
+        by_year = await self._by_year(ticker)
+        served = _served_year(by_year, ticker, year, "capital")
+        if served is None:
+            return ShareCountProvenance(
+                requested_year=year,
+                filed_year=None,
+                status="missing_filing",
+                evidence=("cvm_fre.capital_absent",),
+            )
+        issued = by_year[served]
+        treasury = await self._composition(ticker, year)
+        net = outstanding_counts(issued, treasury)
+        factor = await self._factor(ticker, by_year, served)
+        if net is None:
+            return ShareCountProvenance(
+                requested_year=year,
+                filed_year=served,
+                status="missing_treasury_composition",
+                issued=issued,
+                treasury=treasury,
+                restatement_factor=factor,
+                actions=tuple(
+                    _capital_action_evidence(action)
+                    for action in await self._declared_actions(ticker)
+                ),
+                evidence=("cvm_fre.issued", "cvm_dfp.treasury_unreconciled"),
+            )
+        outstanding = _scaled(net, factor)
+        evidence = ["cvm_fre.issued", "cvm_dfp.treasury"]
+        if served != year:
+            evidence.append("nearest_prior_filing")
+        if factor != 1:
+            evidence.append("cvm_b3.restatement_factor")
+        return ShareCountProvenance(
+            requested_year=year,
+            filed_year=served,
+            status="resolved",
+            issued=issued,
+            outstanding=outstanding,
+            treasury=treasury,
+            restatement_factor=factor,
+            actions=tuple(
+                _capital_action_evidence(action)
+                for action in await self._declared_actions(ticker)
+            ),
+            evidence=tuple(evidence),
+        )
+
     def outstanding_null_reason(self, ticker: str, year: int) -> NullReason | None:
         """Name an unreadable unit denominator separately from a missing filing."""
         if self._is_unit(ticker) and self._unit_composition(ticker) is None:
@@ -479,6 +575,10 @@ class MongoSharesReader:
                 CorporateAction(
                     approval_date=approval,
                     kind=kind,
+                    common_before=_dec(payload.get("common_before")),
+                    common_after=_dec(payload.get("common_after")),
+                    preferred_before=_dec(payload.get("preferred_before")),
+                    preferred_after=_dec(payload.get("preferred_after")),
                     total_before=before,
                     total_after=after,
                 ),
@@ -620,3 +720,17 @@ class MongoSharesReader:
             if filed_scale(filed.total, total) == Decimal(1):  # units, not thousands
                 series.append(total)
         return series
+
+
+def _capital_action_evidence(action: CorporateAction) -> CapitalActionEvidence:
+    """Convert the restatement input into persistence-safe financial evidence."""
+    return CapitalActionEvidence(
+        approval_date=action.approval_date,
+        kind=action.kind,
+        common_before=action.common_before,
+        common_after=action.common_after,
+        preferred_before=action.preferred_before,
+        preferred_after=action.preferred_after,
+        total_before=action.total_before,
+        total_after=action.total_after,
+    )
