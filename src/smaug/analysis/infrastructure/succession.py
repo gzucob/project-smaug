@@ -530,6 +530,8 @@ class CodeSuccession:
 
     async def _year(self, year: int) -> Mapping[str, YearQuotes]:
         """Read one reduced archive at most once through this succession."""
+        if year < _FIRST_COTAHIST_YEAR:
+            return {}
         cached = self._years.get(year)
         if cached is not None:
             return cached
