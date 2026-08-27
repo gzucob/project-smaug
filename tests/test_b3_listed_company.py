@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+from datetime import date
 
 import httpx
 import pytest
@@ -37,6 +38,7 @@ class _Transport(httpx.AsyncBaseTransport):
                     "issuingCompany": "AXIA",
                     "tradingName": "AXIA ENERGIA",
                     "codeCVM": "2437",
+                    "dateQuotation": "26/04/2012",
                 },
             )
         root = params["issuingCompany"]
@@ -110,3 +112,13 @@ async def test_an_empty_detail_object_is_an_absent_company_not_a_schema_match() 
 
     assert captured.value.code == "coverage-established"
     assert "names no listed company" in captured.value.detail
+
+
+async def test_detail_quotation_date_is_preserved_for_historical_recovery() -> None:
+    transport = _Transport(initial_code=None)
+    async with httpx.AsyncClient(transport=transport) as http:
+        company = await B3ListedCompanyResolver(
+            http, base_url="https://b3.test"
+        ).resolve_by_cvm("2437")
+
+    assert company.quotation_date == date(2012, 4, 26)

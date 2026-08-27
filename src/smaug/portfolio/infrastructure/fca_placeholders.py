@@ -324,6 +324,7 @@ class FcaPlaceholderRecovery:
         identity_isins: set[str] = set()
         identity_kinds: set[str] = set()
         closes_seen = False
+        identity_seen = False
         try:
             for year in _years(start, end, self._snapshot_year):
                 quote = (await self._archive.year(year)).get(candidate.code)
@@ -336,11 +337,16 @@ class FcaPlaceholderRecovery:
                     state = quote.identity_at(close.session)
                     if state is None:
                         continue
-                    if state.isin:
-                        identity_isins.add(state.isin.upper())
-                    kind = _state_kind(state.especi)
-                    if kind is not None:
-                        identity_kinds.add(kind)
+                    isin = state.isin.strip().upper() if state.isin else ""
+                    kind = _state_kind(state.especi) if state.especi else None
+                    # A price row alone is not identity evidence.  Both the
+                    # COTAHIST ISIN and its class marker must be present in
+                    # the same session before the candidate can be accepted.
+                    if not isin or kind is None:
+                        continue
+                    identity_seen = True
+                    identity_isins.add(isin)
+                    identity_kinds.add(kind)
         except (SourceError, OSError, ValueError, KeyError, IndexError) as exc:
             return _Observation(
                 candidate.code,
@@ -351,6 +357,13 @@ class FcaPlaceholderRecovery:
             )
         if not closes_seen:
             return _Observation(candidate.code, False, False, "not-observed")
+        if not identity_seen:
+            return _Observation(
+                candidate.code,
+                True,
+                False,
+                "cotahist-identity-missing",
+            )
         expected = _expected_kind(row)
         if identity_kinds and expected not in identity_kinds:
             return _Observation(
@@ -506,6 +519,8 @@ def _observation_failure(observations: Sequence[_Observation]) -> str:
     reasons = {observation.reason for observation in observations}
     if "cotahist-unavailable" in reasons:
         return "cotahist-unavailable"
+    if "cotahist-identity-missing" in reasons:
+        return "cotahist-identity-missing"
     if "cotahist-class-mismatch" in reasons:
         return "cotahist-class-mismatch"
     if "cotahist-isin-mismatch" in reasons or "cotahist-identity-collision" in reasons:

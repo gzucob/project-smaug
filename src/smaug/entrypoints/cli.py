@@ -1440,6 +1440,7 @@ class _B3RegistrantAdapter:
             cvm_code=company.cvm_code or cvm_code,
             cnpj=cnpj,
             issuing_company=company.issuing_company,
+            quotation_date=company.quotation_date,
             security_codes=tuple(
                 OfficialSecurityCode(code=code, isin=isin)
                 for code, isin in self.resolver.official_codes(company)

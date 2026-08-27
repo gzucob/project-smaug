@@ -6,18 +6,28 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
+
+import httpx
 
 from smaug.analysis.domain.financials import SessionClose
 from smaug.ingestion.infrastructure.b3_listed_company import (
     B3CompanyResolutionError,
 )
-from smaug.portfolio.domain.company import InstrumentKind
+from smaug.portfolio.domain.company import CompanyIdentity, InstrumentKind
 from smaug.portfolio.domain.fca_placeholders import (
     FcaCodeIssue,
     FcaPlaceholderRow,
     FcaRecoveryStatus,
 )
-from smaug.portfolio.domain.share_classes import PerShareClass, UnitComponent
+from smaug.portfolio.domain.share_classes import (
+    PerShareClass,
+    ShareClass,
+    ShareKind,
+    UnitComponent,
+    mapping_for_share_class,
+)
+from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
 from smaug.portfolio.infrastructure.fca_placeholders import (
     FcaPlaceholderRecovery,
     OfficialRegistrant,
@@ -46,12 +56,33 @@ class _Quote:
         return self._identity
 
 
+class _PriceOnlyQuote:
+    def __init__(self, session: date) -> None:
+        self._close = SessionClose(session=session, close=Decimal(1))
+
+    def session_closes(self) -> Sequence[QuoteClose]:
+        return (self._close,)
+
+    def identity_at(self, _session: date) -> QuoteIdentity | None:
+        return None
+
+
 class _Archive:
     def __init__(self, quotes: Mapping[str, QuoteSeries]) -> None:
         self._quotes = quotes
 
     async def year(self, _year: int) -> Mapping[str, QuoteSeries]:
         return self._quotes
+
+
+class _YearArchive:
+    def __init__(self, quotes: Mapping[int, Mapping[str, QuoteSeries]]) -> None:
+        self._quotes = quotes
+        self.requested_years: list[int] = []
+
+    async def year(self, year: int) -> Mapping[str, QuoteSeries]:
+        self.requested_years.append(year)
+        return self._quotes.get(year, {})
 
 
 class _Resolver:
@@ -268,3 +299,117 @@ async def test_b3_endpoint_failure_is_an_explicit_unresolved_finding() -> None:
 
     assert result.report.unresolved[0].reason == "b3-coverage-established"
     assert "endpoint down" in (result.report.unresolved[0].detail or "")
+
+
+async def test_b3_quotation_date_fills_a_missing_fca_listing_start() -> None:
+    company = OfficialRegistrant(
+        cvm_code="123",
+        cnpj="12.000.000/0001-00",
+        issuing_company="ABCD",
+        security_codes=(OfficialSecurityCode("ABCD3", "BRABCDACNOR0"),),
+        quotation_date=date(2012, 4, 26),
+    )
+    archive = _YearArchive(
+        {2012: {"ABCD3": _Quote(date(2012, 5, 2), isin="BRABCDACNOR0", especi="ON")}}
+    )
+    row = replace(
+        _row(
+            number=2,
+            cnpj=company.cnpj or "",
+            code="",
+            kind=InstrumentKind.COMMON_SHARE,
+            per_share_class=PerShareClass.ORDINARY,
+        ),
+        listed_since=None,
+    )
+
+    result = await FcaPlaceholderRecovery(
+        _Resolver(company), archive, snapshot_year=2026, today=date(2026, 8, 1)
+    ).recover((row,))
+
+    assert result.report.recovered[0].recovered_codes == ("ABCD3",)
+    assert 2012 in archive.requested_years
+
+
+async def test_price_without_cotahist_identity_is_not_recovered() -> None:
+    company = OfficialRegistrant(
+        cvm_code="123",
+        cnpj="12.000.000/0001-00",
+        issuing_company="ABCD",
+        security_codes=(OfficialSecurityCode("ABCD3", "BRABCDACNOR0"),),
+    )
+    row = _row(
+        number=2,
+        cnpj=company.cnpj or "",
+        code="",
+        kind=InstrumentKind.COMMON_SHARE,
+        per_share_class=PerShareClass.ORDINARY,
+    )
+
+    for quote in (
+        _PriceOnlyQuote(date(2026, 2, 2)),
+        _Quote(date(2026, 2, 2), isin="", especi=""),
+    ):
+        result = await FcaPlaceholderRecovery(
+            _Resolver(company), _Archive({"ABCD3": quote}), snapshot_year=2026
+        ).recover((row,))
+
+        finding = result.report.unresolved[0]
+        assert finding.reason == "cotahist-identity-missing"
+        assert finding.observed_codes == ("ABCD3",)
+        assert result.identities == ()
+
+
+async def test_recovered_class_is_merged_with_valid_classes_for_the_cnpj(
+    tmp_path: Path,
+) -> None:
+    cnpj = "03.303.999/0001-36"
+    company = OfficialRegistrant(
+        cvm_code="18597",
+        cnpj=cnpj,
+        issuing_company="DTCY",
+        security_codes=(OfficialSecurityCode("DTCY4", "BRDTCYACNOR0"),),
+    )
+    row = _row(
+        number=2,
+        cnpj=cnpj,
+        code="",
+        kind=InstrumentKind.PREFERRED_SHARE,
+        per_share_class=PerShareClass.PREFERRED,
+    )
+    recovered = await FcaPlaceholderRecovery(
+        _Resolver(company),
+        _Archive({"DTCY4": _Quote(date(2026, 2, 2), isin="BRDTCYACNOR0", especi="PN")}),
+        snapshot_year=2026,
+        today=date(2026, 8, 1),
+    ).recover((row,))
+    valid = CompanyIdentity(
+        ticker="DTCY3",
+        cd_cvm="18597",
+        cnpj=cnpj,
+        denom="DTCY S.A.",
+        cvm_sector="Diversos",
+        situation="Ativo",
+        instrument_kind=InstrumentKind.COMMON_SHARE,
+        instrument_type="Ações Ordinárias",
+        share_classes=(ShareClass("DTCY3", ShareKind.COMMON),),
+        share_class_mappings=(
+            mapping_for_share_class(cnpj, ShareClass("DTCY3", ShareKind.COMMON)),
+        ),
+    )
+
+    # The merge is intentionally exercised at the registry boundary, where
+    # valid FCA rows and recovered placeholder rows become one cap universe.
+    async with httpx.AsyncClient() as http:
+        registry = CvmCompanyRegistry(http, year=2026, cache_dir=str(tmp_path))
+        merged, _ = registry._merge_placeholder_result(
+            {"DTCY3": valid}, recovered, placeholder_rows=(row,)
+        )
+    dtcy3 = merged["DTCY3"]
+    dtcy4 = merged["DTCY4"]
+    assert {item.symbol for item in dtcy3.share_classes} == {"DTCY3", "DTCY4"}
+    assert {item.symbol for item in dtcy4.share_classes} == {"DTCY3", "DTCY4"}
+    assert {item.symbol for item in dtcy3.share_class_mappings if item.symbol} == {
+        "DTCY3",
+        "DTCY4",
+    }

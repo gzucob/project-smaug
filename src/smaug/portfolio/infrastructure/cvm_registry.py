@@ -33,7 +33,7 @@ import io
 import re
 import unicodedata
 import zipfile
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
@@ -539,17 +539,39 @@ class CvmCompanyRegistry:
                 row.row_number, _unresolved_finding(row, "recovery-not-reported")
             )
         merged = dict(index)
+        recovered: list[CompanyIdentity] = []
         for identity in result.identities:
             current = merged.get(identity.ticker)
             if current is None:
                 merged[identity.ticker] = identity
+                recovered.append(identity)
                 continue
             if current.cnpj == identity.cnpj:
+                recovered.append(identity)
                 continue
             for row_number, finding in tuple(findings.items()):
                 if identity.ticker in finding.recovered_codes:
                     findings[row_number] = finding.unresolved(
                         "ticker-collision-with-fca", detail=identity.ticker
+                    )
+        # A recovered placeholder is another security row from the same FCA
+        # registrant, not a separate cap universe.  Enrich every ticker of
+        # that CNPJ with the complete, collision-free class set (ADR 0014).
+        # Keep each ticker's own instrument/window/unit fields unchanged.
+        for cnpj in {identity.cnpj for identity in recovered}:
+            members = tuple(
+                identity
+                for identity in (*merged.values(), *recovered)
+                if identity.cnpj == cnpj
+            )
+            classes = _merged_share_classes(members)
+            mappings = _merged_share_class_mappings(cnpj, members, classes)
+            for ticker, identity in tuple(merged.items()):
+                if identity.cnpj == cnpj:
+                    merged[ticker] = replace(
+                        identity,
+                        share_classes=classes,
+                        share_class_mappings=mappings,
                     )
         report = FcaPlaceholderReport(
             snapshot_year=self._year,
@@ -729,6 +751,158 @@ def _iso_date(value: str | None) -> date | None:
         return date.fromisoformat(text) if text else None
     except ValueError:
         return None
+
+
+def _merged_share_classes(
+    identities: Iterable[CompanyIdentity],
+) -> tuple[ShareClass, ...]:
+    """Return one unambiguous listed class per economic class.
+
+    The normal FCA index has already performed this reduction for valid rows.
+    Placeholder recovery adds another source of current codes, so repeat the
+    same ambiguity gate over both populations instead of allowing the order of
+    the recovered rows to decide which class prices the cap.
+    """
+    symbols: dict[PerShareClass, set[str]] = {}
+    unresolved: set[PerShareClass] = set()
+    for identity in identities:
+        for share_class in identity.share_classes:
+            symbols.setdefault(share_class.per_share_class, set()).add(
+                share_class.symbol
+            )
+        for mapping in identity.share_class_mappings:
+            per_share_class = mapping.per_share_class
+            if per_share_class is None:
+                continue
+            if mapping.status is not ShareClassMappingStatus.RESOLVED:
+                unresolved.add(per_share_class)
+            if mapping.symbol:
+                symbols.setdefault(per_share_class, set()).add(mapping.symbol)
+            elif mapping.status is ShareClassMappingStatus.UNRESOLVED:
+                symbols.setdefault(per_share_class, set()).update(
+                    evidence.symbol for evidence in mapping.code_evidence
+                )
+
+    classes: list[ShareClass] = []
+    for per_share_class in PerShareClass:
+        candidates = symbols.get(per_share_class, set())
+        if per_share_class in unresolved or len(candidates) != 1:
+            continue
+        symbol = next(iter(candidates))
+        kind = (
+            ShareKind.COMMON
+            if per_share_class is PerShareClass.ORDINARY
+            else ShareKind.PREFERRED
+        )
+        classes.append(ShareClass(symbol=symbol, kind=kind))
+    return tuple(classes)
+
+
+def _merged_share_class_mappings(
+    cnpj: str,
+    identities: Iterable[CompanyIdentity],
+    classes: Sequence[ShareClass],
+) -> tuple[ShareClassMapping, ...]:
+    """Merge class evidence while retaining ambiguity and source provenance."""
+    by_class: dict[PerShareClass, list[ShareClassMapping]] = {}
+    unscoped: list[ShareClassMapping] = []
+    for identity in identities:
+        for mapping in identity.share_class_mappings:
+            if mapping.per_share_class is None:
+                unscoped.append(mapping)
+            else:
+                by_class.setdefault(mapping.per_share_class, []).append(mapping)
+
+    class_by_class = {
+        share_class.per_share_class: share_class for share_class in classes
+    }
+    result: list[ShareClassMapping] = []
+    for per_share_class in PerShareClass:
+        entries = by_class.get(per_share_class, [])
+        share_class = class_by_class.get(per_share_class)
+        if not entries:
+            if share_class is not None:
+                result.append(mapping_for_share_class(cnpj, share_class))
+            continue
+
+        symbols = {mapping.symbol for mapping in entries if mapping.symbol is not None}
+        for mapping in entries:
+            if mapping.status is ShareClassMappingStatus.UNRESOLVED:
+                symbols.update(evidence.symbol for evidence in mapping.code_evidence)
+        if share_class is not None:
+            symbols.add(share_class.symbol)
+        ambiguous = (
+            any(
+                mapping.status is not ShareClassMappingStatus.RESOLVED
+                for mapping in entries
+            )
+            or len(symbols) > 1
+        )
+        code_evidence = _unique_code_evidence(
+            evidence for mapping in entries for evidence in mapping.code_evidence
+        )
+        evidence = _unique_text(
+            evidence for mapping in entries for evidence in mapping.evidence
+        )
+        rights = (
+            EconomicRightsStatus.UNRESOLVED
+            if any(
+                mapping.economic_rights is EconomicRightsStatus.UNRESOLVED
+                for mapping in entries
+            )
+            else EconomicRightsStatus.RESOLVED
+        )
+        kind = (
+            share_class.kind
+            if share_class is not None
+            else next(
+                (mapping.kind for mapping in entries if mapping.kind is not None),
+                None,
+            )
+        )
+        if ambiguous:
+            result.append(
+                ShareClassMapping(
+                    class_id=share_class_id(cnpj, per_share_class),
+                    symbol=None,
+                    kind=kind,
+                    per_share_class=per_share_class,
+                    status=ShareClassMappingStatus.UNRESOLVED,
+                    economic_rights=rights,
+                    code_evidence=code_evidence,
+                    evidence=_unique_text((*evidence, "cvm_fca.ambiguous_share_class")),
+                )
+            )
+            continue
+
+        symbol = share_class.symbol if share_class is not None else next(iter(symbols))
+        result.append(
+            ShareClassMapping(
+                class_id=share_class_id(cnpj, per_share_class),
+                symbol=symbol,
+                kind=kind,
+                per_share_class=per_share_class,
+                status=ShareClassMappingStatus.RESOLVED,
+                economic_rights=rights,
+                code_evidence=code_evidence,
+                evidence=evidence,
+            )
+        )
+    result.extend(unscoped)
+    return tuple(result)
+
+
+def _unique_code_evidence(
+    values: Iterable[TickerCodeEvidence],
+) -> tuple[TickerCodeEvidence, ...]:
+    unique: dict[tuple[str, tuple[int, ...], str], TickerCodeEvidence] = {}
+    for value in values:
+        unique.setdefault((value.symbol, value.filed_years, value.source), value)
+    return tuple(unique.values())
+
+
+def _unique_text(values: Iterable[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(value for value in values if value))
 
 
 def _prefer(candidate: _Security, current: _Security) -> bool:

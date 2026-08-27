@@ -7,6 +7,7 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 import httpx
@@ -30,6 +31,7 @@ class B3ListedCompany:
     cvm_code: str | None
     supplement: Mapping[str, Any]
     detail: Mapping[str, Any] | None = None
+    quotation_date: date | None = None
 
 
 class B3CompanyResolutionError(Exception):
@@ -211,6 +213,9 @@ class B3ListedCompanyResolver:
             cvm_code=expected_code or published_code or None,
             supplement=supplement,
             detail=detail,
+            quotation_date=_quotation_date(detail.get("dateQuotation"))
+            if detail is not None
+            else None,
         )
 
     def official_codes(
@@ -364,6 +369,18 @@ def _isin(value: Mapping[str, Any]) -> str | None:
 
 def _text(value: object) -> str:
     return str(value).strip() if value is not None else ""
+
+
+def _quotation_date(value: object) -> date | None:
+    """Parse B3's ``GetDetail.dateQuotation`` (``DD/MM/YYYY``)."""
+    text = _text(value)
+    if not text:
+        return None
+    try:
+        day, month, year = (int(part) for part in text.split("/", 2))
+        return date(year, month, day)
+    except (TypeError, ValueError):
+        return None
 
 
 def _encoded(params: dict[str, object]) -> str:
