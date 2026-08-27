@@ -96,7 +96,10 @@ from smaug.ingestion.infrastructure.b3_cash_dividends import (
     CASH_DIVIDEND_B3_MODULE,
     B3CashDividendSource,
 )
-from smaug.ingestion.infrastructure.b3_listed_company import B3ListedCompanyResolver
+from smaug.ingestion.infrastructure.b3_listed_company import (
+    B3ListedCompany,
+    B3ListedCompanyResolver,
+)
 from smaug.ingestion.infrastructure.cvm_capital import (
     CAPITAL_EVENT_MODULE,
     CAPITAL_MODULE,
@@ -1441,6 +1444,8 @@ class _B3RegistrantAdapter:
             cnpj=cnpj,
             issuing_company=company.issuing_company,
             quotation_date=company.quotation_date,
+            market=_b3_field(company, "market"),
+            venue=_b3_field(company, "venue"),
             security_codes=tuple(
                 OfficialSecurityCode(code=code, isin=isin)
                 for code, isin in self.resolver.official_codes(company)
@@ -1457,6 +1462,17 @@ class _CotahistArchiveAdapter:
     async def year(self, year: int) -> Mapping[str, QuoteSeries]:
         values = await self.archive.year(year)
         return cast(Mapping[str, QuoteSeries], values)
+
+
+def _b3_field(company: B3ListedCompany, field: str) -> str | None:
+    """Read optional venue facts from B3's detail/supplement response."""
+    for source in (company.detail, company.supplement):
+        if source is None:
+            continue
+        value = source.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 async def _remember_placeholder_report(

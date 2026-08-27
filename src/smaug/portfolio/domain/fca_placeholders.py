@@ -2,7 +2,8 @@
 
 The FCA securities member is a regulator-owned identity source, but its
 ``Codigo_Negociacao`` column also contains blanks, registration numbers and
-other free text.  These values are kept as an audit population rather than
+other free text.  It can also carry a code-shaped equity row outside an
+organized B3 market.  These values are kept as an audit population rather than
 silently discarded.  A recovery finding records the evidence chain used (or
 the reason it stopped), so the current identity snapshot remains reproducible.
 """
@@ -21,11 +22,13 @@ from smaug.portfolio.domain.share_classes import (
 
 
 class FcaCodeIssue(StrEnum):
-    """Why an FCA ``Codigo_Negociacao`` cannot be used as a B3 code."""
+    """Why an FCA security row cannot authorize B3 analysis."""
 
     BLANK = "blank"
     NUMERIC_PLACEHOLDER = "numeric_placeholder"
     MALFORMED = "malformed"
+    MARKET_NON_ORGANIZED = "market_non_organized"
+    MARKET_UNSPECIFIED = "market_unspecified"
 
 
 class FcaRecoveryStatus(StrEnum):
@@ -47,6 +50,8 @@ class FcaPlaceholderRow:
     code_issue: FcaCodeIssue
     instrument_kind: InstrumentKind
     instrument_type: str
+    market: str = ""
+    venue: str = ""
     cvm_sector: str = ""
     situation: str = ""
     listed_since: date | None = None

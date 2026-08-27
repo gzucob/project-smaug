@@ -54,6 +54,8 @@ class OfficialRegistrant:
     issuing_company: str
     security_codes: tuple[OfficialSecurityCode, ...]
     quotation_date: date | None = None
+    market: str | None = None
+    venue: str | None = None
 
 
 class RegistrantResolver(Protocol):
@@ -633,6 +635,11 @@ def _identities(accepted: Sequence[_Accepted]) -> tuple[CompanyIdentity, ...]:
                     row.instrument_type
                     if is_primary
                     else _instrument_type_for_code(code)
+                ),
+                market=item.company.market or row.market,
+                venue=item.company.venue or row.venue,
+                listing_evidence=tuple(
+                    dict.fromkeys((*item.finding.evidence, "cvm_fca.market"))
                 ),
                 trading_ended=row.trading_ended,
                 listed_since=row.listed_since,

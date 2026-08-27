@@ -51,7 +51,9 @@ _SEC_COLS = (
     "Versao",
     "Codigo_Negociacao",
     "Mercado",
+    "Sigla_Entidade_Administradora",
     "Data_Fim_Negociacao",
+    "Data_Inicio_Listagem",
     "Valor_Mobiliario",
     "Composicao_BDR_Unit",
 )
@@ -76,6 +78,16 @@ def _write_fca_zip(
 ) -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = cache_dir / f"fca_cia_aberta_{year}.zip"
+    securities = [
+        {
+            **row,
+            "Sigla_Entidade_Administradora": row.get(
+                "Sigla_Entidade_Administradora",
+                "B3" if row.get("Mercado") in {"Bolsa", "Balcão Organizado"} else "",
+            ),
+        }
+        for row in securities
+    ]
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(f"fca_cia_aberta_geral_{year}.csv", _csv(_GERAL_COLS, geral))
         archive.writestr(
@@ -130,6 +142,9 @@ async def test_resolves_a_unit_ticker_joining_securities_and_cadastre(
         situation="Ativo",
         instrument_kind=InstrumentKind.UNIT,
         instrument_type="Units",
+        market="Bolsa",
+        venue="B3",
+        listing_evidence=("cvm_fca.market",),
     )
 
 
@@ -603,6 +618,69 @@ async def test_companies_group_trading_codes_and_drop_the_archives_non_tickers(
     assert companies[0].ticker == "IJKL3"  # the ON names the company
     assert companies[0].tickers == ("IJKL3", "IJKL4")
     assert companies[0].cnpj == listed
+
+
+async def test_unorganized_or_unstated_market_rows_stay_in_fca_inventory_not_universe(
+    tmp_path: Path,
+) -> None:
+    muuu = "21.526.148/0001-34"
+    schlosser = "82.981.929/0001-03"
+    listed = "60.000.000/0001-00"
+    _write_fca_zip(
+        tmp_path,
+        geral=[
+            _cadastre_row(muuu, "028037"),
+            _cadastre_row(schlosser, "003549"),
+            _cadastre_row(listed, "600"),
+        ],
+        securities=[
+            {
+                "CNPJ_Companhia": muuu,
+                "Codigo_Negociacao": "MUUU4",
+                "Mercado": "Balcão Não-Organizado",
+                "Data_Inicio_Listagem": "2026-05-28",
+                "Valor_Mobiliario": "Ações Preferenciais Classe A",
+            },
+            {
+                "CNPJ_Companhia": schlosser,
+                "Codigo_Negociacao": "SC303",
+                "Mercado": "",
+                "Data_Inicio_Listagem": "",
+                "Valor_Mobiliario": "Ações Ordinárias",
+            },
+            {
+                "CNPJ_Companhia": schlosser,
+                "Codigo_Negociacao": "SCL04",
+                "Mercado": "",
+                "Data_Inicio_Listagem": "",
+                "Valor_Mobiliario": "Ações Preferenciais",
+            },
+            {
+                "CNPJ_Companhia": listed,
+                "Codigo_Negociacao": "GOOD3",
+                "Mercado": "Bolsa",
+                "Data_Inicio_Listagem": "2020-01-01",
+                "Valor_Mobiliario": "Ações Ordinárias",
+            },
+        ],
+    )
+
+    registry = _registry(tmp_path)
+    identities = await registry.resolve_all(("MUUU4", "SC303", "SCL04", "GOOD3"))
+
+    assert set(identities) == {"MUUU4", "SC303", "SCL04", "GOOD3"}
+    assert identities["MUUU4"].market == "Balcão Não-Organizado"
+    assert identities["MUUU4"].listed_since == date(2026, 5, 28)
+    assert identities["SC303"].market == ""
+    assert identities["SCL04"].venue == ""
+    assert tuple(company.tickers for company in await registry.companies()) == (
+        ("GOOD3",),
+    )
+
+    inventory = await registry.placeholder_report()
+    assert {row.raw_code for row in inventory.rows} == {"MUUU4", "SC303", "SCL04"}
+    assert inventory.finding_for(2) is not None
+    assert inventory.finding_for(2).row.code_issue.value == "market_non_organized"  # type: ignore[union-attr]
 
 
 async def test_current_fca_snapshot_is_independent_from_a_filing_year_snapshot(

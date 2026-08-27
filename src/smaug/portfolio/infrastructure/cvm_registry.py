@@ -40,7 +40,11 @@ from pathlib import Path
 
 import httpx
 
-from smaug.portfolio.domain.company import CompanyIdentity, InstrumentKind
+from smaug.portfolio.domain.company import (
+    CompanyIdentity,
+    InstrumentKind,
+    is_organized_market,
+)
 from smaug.portfolio.domain.fca_placeholders import (
     FcaCodeIssue,
     FcaPlaceholderFinding,
@@ -104,6 +108,8 @@ class _Security:
     version: int
     instrument_kind: InstrumentKind
     instrument_type: str
+    market: str = ""
+    venue: str = ""
     trading_ended: date | None = None
     listed_since: date | None = None
     # Underlying shares this ticker's own row bundles, when the row is a unit
@@ -513,6 +519,9 @@ class CvmCompanyRegistry:
                 situation=company.situation,
                 instrument_kind=security.instrument_kind,
                 instrument_type=security.instrument_type,
+                market=security.market,
+                venue=security.venue,
+                listing_evidence=("cvm_fca.market",),
                 trading_ended=security.trading_ended,
                 listed_since=security.listed_since,
                 ambiguous_cnpjs=security.ambiguous_cnpjs,
@@ -547,6 +556,7 @@ class CvmCompanyRegistry:
                 recovered.append(identity)
                 continue
             if current.cnpj == identity.cnpj:
+                merged[identity.ticker] = _merge_recovered_identity(current, identity)
                 recovered.append(identity)
                 continue
             for row_number, finding in tuple(findings.items()):
@@ -607,7 +617,7 @@ class CvmCompanyRegistry:
     def _read_placeholder_rows(
         self, archive: zipfile.ZipFile
     ) -> tuple[FcaPlaceholderRow, ...]:
-        """Inventory every FCA securities row whose code is not a B3 shape."""
+        """Inventory codes without positive organized-market evidence."""
         cadastre = self._read_cadastre(archive)
         rows: list[FcaPlaceholderRow] = []
         with archive.open(self._securities_member) as member:
@@ -616,7 +626,9 @@ class CvmCompanyRegistry:
             )
             for row in reader:
                 raw_code = (row.get("Codigo_Negociacao") or "").strip().upper()
-                if is_trading_code(raw_code):
+                market = (row.get("Mercado") or "").strip()
+                venue = (row.get("Sigla_Entidade_Administradora") or "").strip()
+                if is_trading_code(raw_code) and is_organized_market(market, venue):
                     continue
                 cnpj = (row.get("CNPJ_Companhia") or "").strip()
                 company = cadastre.get(cnpj)
@@ -634,9 +646,11 @@ class CvmCompanyRegistry:
                         cd_cvm=company.cd_cvm if company is not None else None,
                         denom=company.denom if company is not None else "",
                         raw_code=raw_code,
-                        code_issue=_code_issue(raw_code),
+                        code_issue=_code_issue(raw_code, market, venue),
                         instrument_kind=instrument_kind,
                         instrument_type=valor,
+                        market=market,
+                        venue=venue,
                         cvm_sector=company.cvm_sector if company is not None else "",
                         situation=company.situation if company is not None else "",
                         listed_since=_iso_date(row.get("Data_Inicio_Listagem")),
@@ -692,6 +706,8 @@ class CvmCompanyRegistry:
                     version=_int(row.get("Versao")),
                     instrument_kind=instrument_kind,
                     instrument_type=valor,
+                    market=(row.get("Mercado") or "").strip(),
+                    venue=(row.get("Sigla_Entidade_Administradora") or "").strip(),
                     trading_ended=trading_ended,
                     listed_since=_iso_date(row.get("Data_Inicio_Listagem")),
                     unit_shares=unit_shares,
@@ -717,7 +733,9 @@ class CvmCompanyRegistry:
                         ),
                     )
 
-                if not trading:
+                if not trading or not is_organized_market(
+                    candidate.market, candidate.venue
+                ):
                     continue
                 if kind is not None:
                     classes.setdefault(cnpj, _ClassAccumulator()).add(kind, ticker)
@@ -796,6 +814,21 @@ def _merged_share_classes(
         )
         classes.append(ShareClass(symbol=symbol, kind=kind))
     return tuple(classes)
+
+
+def _merge_recovered_identity(
+    current: CompanyIdentity, recovered: CompanyIdentity
+) -> CompanyIdentity:
+    """Keep FCA facts while adding the official B3 recovery evidence."""
+    return replace(
+        current,
+        market=recovered.market or current.market,
+        venue=recovered.venue or current.venue,
+        listed_since=recovered.listed_since or current.listed_since,
+        listing_evidence=tuple(
+            dict.fromkeys((*current.listing_evidence, *recovered.listing_evidence))
+        ),
+    )
 
 
 def _merged_share_class_mappings(
@@ -917,12 +950,18 @@ def _same_priority(candidate: _Security, current: _Security) -> bool:
     return candidate.trading == current.trading and candidate.version == current.version
 
 
-def _code_issue(code: str) -> FcaCodeIssue:
-    """Classify an unusable FCA code without interpreting it as an identity."""
+def _code_issue(code: str, market: str = "", venue: str = "") -> FcaCodeIssue:
+    """Classify a code or venue that cannot authorize B3 analysis."""
     if not code:
         return FcaCodeIssue.BLANK
     if code.isdigit():
         return FcaCodeIssue.NUMERIC_PLACEHOLDER
+    if not is_trading_code(code):
+        return FcaCodeIssue.MALFORMED
+    if not market:
+        return FcaCodeIssue.MARKET_UNSPECIFIED
+    if not is_organized_market(market, venue):
+        return FcaCodeIssue.MARKET_NON_ORGANIZED
     return FcaCodeIssue.MALFORMED
 
 
