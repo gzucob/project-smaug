@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import zipfile
 from collections.abc import Mapping, Sequence
 from datetime import date, timedelta
@@ -69,6 +70,8 @@ def _quotes(
     sessions: Sequence[tuple[date, Decimal]],
     rights: Sequence[tuple[date, str, str]] = (),
     name: str = "",
+    especi: str = "",
+    identities: str = "",
 ) -> YearQuotes:
     january = date(sessions[0][0].year, 1, 1).toordinal()
     closes = " ".join(
@@ -87,6 +90,8 @@ def _quotes(
         closes=closes,
         rights=encoded,
         name=name,
+        especi=especi,
+        identities=identities,
     )
 
 
@@ -399,6 +404,74 @@ async def test_an_action_filed_under_the_earlier_code_is_still_dated() -> None:
     ]
 
 
+async def test_tape_predecessor_uses_explicit_especi_class_when_available() -> None:
+    """The tape's class field outranks an inconsistent ticker suffix."""
+    archive = _FakeArchive(
+        {
+            2022: {
+                "OLDD3": _quotes(
+                    _sessions(date(2022, 12, 30), ["10"]),
+                    name="LEGACY",
+                    especi="ON      N1",
+                )
+            },
+            # ``HEAA4`` intentionally has an ordinary-share ESPECI despite its
+            # preferred-looking suffix.  The explicit B3 field is the evidence
+            # used to compare it with the predecessor.
+            2023: {
+                "HEAA4": _quotes(
+                    _sessions(date(2023, 1, 2), ["10"]),
+                    name="CURRENT",
+                    especi="ON      N1",
+                )
+            },
+        }
+    )
+    succession = CodeSuccession(
+        archive,  # type: ignore[arg-type]
+        names=lambda ticker: frozenset({"LEGACY"}),
+        today=lambda: date(2023, 12, 31),
+    )
+
+    assert await succession.candidates("HEAA4", 2023) == ("OLDD3", "HEAA4")
+
+
+async def test_tape_predecessor_uses_identity_at_the_head_session() -> None:
+    """A code-year's first class is not evidence for a later seam session."""
+    head_identities = json.dumps(
+        [[1, "BRHEAAACNOR1", "ON      N1", "02", "CURRENT"]],
+        separators=(",", ":"),
+    )
+    archive = _FakeArchive(
+        {
+            2022: {
+                "OLDD3": _quotes(
+                    _sessions(date(2022, 12, 30), ["10"]),
+                    name="LEGACY",
+                    especi="ON      N1",
+                )
+            },
+            2023: {
+                # The scalar value is an incomplete/historical identity; the
+                # session-scoped evidence is the ordinary-share class.
+                "HEAA4": _quotes(
+                    _sessions(date(2023, 1, 2), ["10"]),
+                    name="CURRENT",
+                    especi="PN      N1",
+                    identities=head_identities,
+                )
+            },
+        }
+    )
+    succession = CodeSuccession(
+        archive,  # type: ignore[arg-type]
+        names=lambda ticker: frozenset({"LEGACY"}),
+        today=lambda: date(2023, 12, 31),
+    )
+
+    assert await succession.candidates("HEAA4", 2023) == ("OLDD3", "HEAA4")
+
+
 # --- the codes a registrant has filed ---------------------------------------
 
 
@@ -678,6 +751,28 @@ def _tape_succession(archive: _FakeArchive, names: frozenset[str]) -> CodeSucces
 async def test_the_tape_names_a_code_the_cadastre_never_did() -> None:
     filed = frozenset({name_key("TRACTEBEL ENERGIA SA")})
     succession = _tape_succession(_retired_archive(), filed)
+
+    assert await succession.candidates("EGIE3", 2015) == ("TBLE3", "EGIE3")
+
+
+async def test_tape_name_uses_identity_at_the_candidate_session() -> None:
+    """A candidate's first NOMRES is not necessarily its seam identity."""
+    identities = json.dumps(
+        [
+            [200, "BRTBLEACNOR1", "ON      N1", "02", "OLD NAME"],
+            [201, "BRTBLEACNOR1", "ON      N1", "02", "TRACTEBEL"],
+        ],
+        separators=(",", ":"),
+    )
+    archive = _retired_archive()
+    archive._years[2016]["TBLE3"] = _quotes(  # type: ignore[index]
+        _sessions(date(2016, 7, 19), ["40", "41.39"]),
+        name="OLD NAME",
+        identities=identities,
+    )
+    succession = _tape_succession(
+        archive, frozenset({name_key("TRACTEBEL ENERGIA SA")})
+    )
 
     assert await succession.candidates("EGIE3", 2015) == ("TBLE3", "EGIE3")
 

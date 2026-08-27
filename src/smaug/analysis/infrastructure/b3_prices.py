@@ -65,6 +65,7 @@ from smaug.analysis.domain.succession import crosses
 from smaug.shared.download import Sleeper, download_zip
 from smaug.shared.errors import (
     CvmDownloadError,
+    SourceError,
     SourceMalformedError,
     SourceTimeoutError,
 )
@@ -80,14 +81,16 @@ B3_SERIES_BASE_URL = "https://bvmf.bmfbovespa.com.br/InstDados/SerHist"
 # 2015: 246 sessions averaging 9.7980 there, 9.80 here).
 _TIPREG = slice(0, 2)  # record type: "01" is a quote line
 _DATA = slice(2, 10)  # session date, YYYYMMDD
+_CODBDI = slice(10, 12)  # BDI market/security code
 _CODNEG = slice(12, 24)  # trading code, space-padded
 _NOMRES = slice(27, 39)  # B3's own abbreviation of the issuer, 12 wide
+_ESPECI = slice(39, 49)  # complete security species/class specification
 _TPMERC = slice(24, 27)  # market type: "010" is the spot market
 _PREULT = slice(108, 121)  # closing price, 11 integer + 2 decimal digits
 _FATCOT = slice(210, 217)  # shares per quote: "1" unitary, "1000" per lot of a thousand
+_CODISI = slice(230, 242)  # ISIN, space-padded
 _DISMES = slice(242, 245)  # distribution number: the paper's current rights state
-# ESPECI is 10 wide (40-49); its first token is the class (ON/PN/UNT) and this is
-# the one that follows, which carries the "ex" markers.
+# ESPECI's marker is the token after its four-character species/class prefix.
 _MARKER = slice(43, 47)
 
 _QUOTE_RECORD = "01"
@@ -107,8 +110,10 @@ _PRICE_SCALE = Decimal(100)
 # divides by the quote factor, which the centavo encoding could not represent;
 # v4 keeps the sessions where the paper's rights state changed; v5 keeps the
 # issuer name B3 prints beside the code, which is what confirms a retired
-# code against the names its registrant filed (#198).
-_REDUCTION_VERSION = 5
+# code against the names its registrant filed (#198); v6 keeps B3's complete
+# identity evidence (CODISI, ESPECI and CODBDI) alongside it; v7 retains identity
+# transitions by session instead of collapsing a code-year to its first row.
+_REDUCTION_VERSION = 7
 
 # A marker with no class attached, used where the field is blank so that the
 # encoded triples stay whitespace-separated.
@@ -137,6 +142,17 @@ class RightsState:
 
 
 @dataclass(frozen=True, slots=True)
+class IdentityState:
+    """B3 identity evidence in force for a code on one published session."""
+
+    session: date
+    isin: str
+    especi: str
+    bdi: str
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
 class YearQuotes:
     """What one trading code did over one year, reduced to what is asked of it.
 
@@ -157,6 +173,13 @@ class YearQuotes:
     changes, and not only on the distribution's, because it is *sticky*: it runs
     for about eight sessions after the event, so knowing whether a given session
     introduced it means knowing what stood immediately before.
+
+    ``isin``, ``especi`` and ``bdi`` retain the first identity values for
+    compatibility, while ``identities`` records every subsequent identity
+    transition as ``[day, isin, especi, bdi, name]`` JSON rows. They are evidence
+    for diagnostics and security resolution, not independent keys; ``code``
+    remains the reduction's map key. The marker used by ``rights`` is still
+    derived from the complete ``especi`` field rather than replacing it.
     """
 
     sessions: int
@@ -166,6 +189,66 @@ class YearQuotes:
     closes: str = ""
     rights: str = ""
     name: str = ""
+    isin: str = ""
+    especi: str = ""
+    bdi: str = ""
+    identities: str = ""
+
+    @property
+    def codisi(self) -> str:
+        """The source-named alias for the retained ISIN evidence."""
+        return self.isin
+
+    @property
+    def isin_code(self) -> str:
+        """The domain-style alias for the retained ISIN evidence."""
+        return self.isin
+
+    @property
+    def codbdi(self) -> str:
+        """The source-named alias for the retained BDI evidence."""
+        return self.bdi
+
+    @property
+    def bdi_code(self) -> str:
+        """The descriptive alias for the retained BDI evidence."""
+        return self.bdi
+
+    def identity_states(self) -> tuple[IdentityState, ...]:
+        """Decode identity transitions, oldest first."""
+        if not self.identities:
+            return (
+                IdentityState(
+                    session=self.first_close().session,
+                    isin=self.isin,
+                    especi=self.especi,
+                    bdi=self.bdi,
+                    name=self.name,
+                ),
+            )
+        january = date(self.last_session.year, 1, 1).toordinal()
+        try:
+            rows = json.loads(self.identities)
+            return tuple(
+                IdentityState(
+                    session=date.fromordinal(january + int(row[0])),
+                    isin=str(row[1]),
+                    especi=str(row[2]),
+                    bdi=str(row[3]),
+                    name=str(row[4]),
+                )
+                for row in rows
+            )
+        except (IndexError, TypeError, ValueError, json.JSONDecodeError):
+            return ()
+
+    def identity_at(self, session: date) -> IdentityState | None:
+        """Return the identity evidence in force on ``session``."""
+        states = self.identity_states()
+        for state in reversed(states):
+            if state.session <= session:
+                return state
+        return None
 
     def rights_states(self) -> tuple[RightsState, ...]:
         """The year's rights states, decoded — oldest first."""
@@ -256,15 +339,35 @@ class _Accumulator:
     rights: list[str]
     markers: list[str]
     name: str = ""
+    isin: str = ""
+    especi: str = ""
+    bdi: str = ""
+    names: list[str] = field(default_factory=list)
+    isins: list[str] = field(default_factory=list)
+    especis: list[str] = field(default_factory=list)
+    bdis: list[str] = field(default_factory=list)
 
     def add(
-        self, cents: int, factor: int, ordinal: int, rights: str, marker: str
+        self,
+        cents: int,
+        factor: int,
+        ordinal: int,
+        rights: str,
+        marker: str,
+        name: str,
+        isin: str,
+        especi: str,
+        bdi: str,
     ) -> None:
         self.ordinals.append(ordinal)
         self.cents.append(cents)
         self.factors.append(factor)
         self.rights.append(rights)
         self.markers.append(marker)
+        self.names.append(name)
+        self.isins.append(isin)
+        self.especis.append(especi)
+        self.bdis.append(bdi)
 
     def freeze(self) -> YearQuotes:
         """The year reduced, with its sessions put back in date order.
@@ -281,31 +384,42 @@ class _Accumulator:
                 self.factors,
                 self.rights,
                 self.markers,
+                self.names,
+                self.isins,
+                self.especis,
+                self.bdis,
                 strict=True,
             )
         )
         prices = [
-            Decimal(cents) / (_PRICE_SCALE * factor)
-            for _, cents, factor, _, _ in series
+            Decimal(cents) / (_PRICE_SCALE * factor) for _, cents, factor, *_ in series
         ]
         last_session = date.fromordinal(series[-1][0])
         january = date(last_session.year, 1, 1).toordinal()
         states = [
-            f"{ordinal - january} {rights} {marker or _NO_MARKER}"
-            for index, (ordinal, _, _, rights, marker) in enumerate(series)
-            if index == 0 or (rights, marker) != series[index - 1][3:5]
+            f"{row[0] - january} {row[3]} {row[4] or _NO_MARKER}"
+            for index, row in enumerate(series)
+            if index == 0 or row[3:5] != series[index - 1][3:5]
         ]
+        identities = []
+        for index, (ordinal, _, _, _, _, name, isin, especi, bdi) in enumerate(series):
+            if index == 0 or (name, isin, especi, bdi) != series[index - 1][5:9]:
+                identities.append([ordinal - january, isin, especi, bdi, name])
         return YearQuotes(
             sessions=len(prices),
             average=sum(prices, Decimal(0)) / len(prices),
             last_session=last_session,
             last_close=prices[-1],
             closes=" ".join(
-                f"{ordinal - january} {price}"
-                for (ordinal, _, _, _, _), price in zip(series, prices, strict=True)
+                f"{row[0] - january} {price}"
+                for row, price in zip(series, prices, strict=True)
             ),
             rights=" ".join(states),
             name=self.name,
+            isin=self.isin,
+            especi=self.especi,
+            bdi=self.bdi,
+            identities=json.dumps(identities, separators=(",", ":")),
         )
 
 
@@ -338,16 +452,37 @@ def _reduce(archive_path: Path) -> dict[str, YearQuotes]:
                 marker = line[_MARKER].strip()
                 entry = totals.get(code)
                 if entry is None:
+                    name = line[_NOMRES].strip()
+                    isin = line[_CODISI].strip()
+                    especi = line[_ESPECI].strip()
+                    bdi = line[_CODBDI].strip()
                     totals[code] = _Accumulator(
-                        [ordinal],
-                        [cents],
-                        [factor],
-                        [rights],
-                        [marker],
-                        line[_NOMRES].strip(),
+                        ordinals=[ordinal],
+                        cents=[cents],
+                        factors=[factor],
+                        rights=[rights],
+                        markers=[marker],
+                        name=name,
+                        isin=isin,
+                        especi=especi,
+                        bdi=bdi,
+                        names=[name],
+                        isins=[isin],
+                        especis=[especi],
+                        bdis=[bdi],
                     )
                 else:
-                    entry.add(cents, factor, ordinal, rights, marker)
+                    entry.add(
+                        cents,
+                        factor,
+                        ordinal,
+                        rights,
+                        marker,
+                        line[_NOMRES].strip(),
+                        line[_CODISI].strip(),
+                        line[_ESPECI].strip(),
+                        line[_CODBDI].strip(),
+                    )
     return {code: entry.freeze() for code, entry in totals.items()}
 
 
@@ -365,6 +500,10 @@ def _dump(reduction: Mapping[str, YearQuotes], built_on: date) -> str:
                     quotes.closes,
                     quotes.rights,
                     quotes.name,
+                    quotes.isin,
+                    quotes.especi,
+                    quotes.bdi,
+                    quotes.identities,
                 ]
                 for code, quotes in reduction.items()
             },
@@ -388,6 +527,10 @@ def _load(text: str) -> tuple[dict[str, YearQuotes], date] | None:
                 closes=row[4],
                 rights=row[5],
                 name=row[6],
+                isin=row[7],
+                especi=row[8],
+                bdi=row[9],
+                identities=row[10],
             )
             for code, row in payload["codes"].items()
         }
@@ -695,10 +838,11 @@ class B3BaseChanges:
         that will not exist until January.
 
         The years are walked in order so a change on a year's first session is
-        seen against December's state, which lives in the previous file. The
-        earliest year has no predecessor, so a code whose base moved on its very
-        first requested session is not dated — the file cannot tell that apart
-        from a code that simply started trading.
+        seen against December's state, which lives in the previous file. When
+        the requested window starts at a year boundary, the previous archive is
+        loaded as a lookback if the tape carries a base-change marker. A code
+        with no preceding publication remains unreportable on its first session:
+        the file cannot tell that apart from a genuinely new listing.
 
         **The tape walked is the security's, not the code's** (#193): a company
         that renamed its code has its earlier actions filed under the earlier
@@ -729,6 +873,20 @@ class B3BaseChanges:
                     seam = _seam(december, series[0])
                     if seam is not None:
                         changes.append(seam)
+                if span.distribution is None and december is None and reading == "":
+                    opening = await self._opening_evidence(tape, year, quotes, series)
+                    if opening is not None:
+                        previous_close, previous_state = opening
+                        # Seed only the state immediately before the requested
+                        # window.  The first state in a genuinely new listing
+                        # remains unreportable because there is no predecessor
+                        # against which B3's rights transition can be measured.
+                        december = previous_close
+                        standing = previous_state.marker
+                        span = _Span(
+                            distribution=previous_state.distribution,
+                            reported=False,
+                        )
                 reading = tape
                 position = {close.session: index for index, close in enumerate(series)}
                 for state in quotes.rights_states():
@@ -754,6 +912,58 @@ class B3BaseChanges:
                         changes.append(change)
                 december = quotes.last_close
         return tuple(changes)
+
+    async def _opening_evidence(
+        self,
+        tape: str,
+        year: int,
+        quotes: YearQuotes,
+        series: Sequence[SessionClose],
+    ) -> tuple[Decimal, RightsState] | None:
+        """Read the same code's last published state before a window starts.
+
+        ``rights`` deliberately stores the first state in every reduction. When
+        the opening distribution is new, B3 can date the action on the first
+        session with ``EX`` and name it with ``EB`` on the next session, without
+        changing ``DISMES`` again. Scan only that initial distribution span for
+        the base-change marker: a later event must not cause an unnecessary
+        download of the preceding publication. Looking back one archive is
+        enough at a year boundary; no predecessor means a new listing (or a real
+        source gap), never a made-up corporate action.
+        """
+        states = quotes.rights_states()
+        if not states:
+            return None
+        opening_distribution = states[0].distribution
+        opening_span: list[RightsState] = []
+        for state in states:
+            if state.distribution != opening_distribution:
+                break
+            opening_span.append(state)
+        if not any(
+            _BASE_CHANGE_LETTERS.intersection(state.marker) for state in opening_span
+        ):
+            return None
+        try:
+            previous = (await self._archive.year(year - 1)).get(tape)
+        except SourceError:
+            # The lookback is supplementary evidence.  If B3 has not published
+            # the prior archive (or it is unavailable), there is no predecessor
+            # to prove an action on this opening session.
+            logger.info(
+                "B3 %d: no prior archive available to evidence %s's opening state",
+                year - 1,
+                tape,
+            )
+            return None
+        if previous is None or not previous.session_closes():
+            return None
+        previous_states = previous.rights_states()
+        if not previous_states or not series:
+            return None
+        if previous.last_session >= series[0].session:
+            return None
+        return previous.last_close, previous_states[-1]
 
 
 def _seam(before: Decimal, opening: SessionClose) -> BaseChange | None:

@@ -63,6 +63,12 @@ _LOOKBACK_YEARS = 2
 _MAX_TAPE_HOPS = 4
 
 
+def _especi_class(especi: str) -> str | None:
+    """Return B3's explicit species/class token when the tape supplied one."""
+    fields = especi.strip().upper().split()
+    return fields[0] if fields else None
+
+
 def _unknown_listed_since(ticker: str) -> date | None:
     return None
 
@@ -219,15 +225,31 @@ class CodeSuccession:
         before = await self._preceding_session(head.first_session)
         if before is None:
             return None
-        wanted = share_class_suffix(head.code)
-        proposed = {
-            code
-            for year in {before.year, head.first_session.year}
-            for code, quotes in (await self._archive.year(year)).items()
-            if quotes.last_session == before
-            and code != head.code
-            and share_class_suffix(code) == wanted
-        }
+        head_quotes = (await self._archive.year(head.first_session.year)).get(head.code)
+        head_identity = (
+            None if head_quotes is None else head_quotes.identity_at(head.first_session)
+        )
+        wanted = None if head_identity is None else _especi_class(head_identity.especi)
+        proposed: set[str] = set()
+        for year in {before.year, head.first_session.year}:
+            for code, quotes in (await self._archive.year(year)).items():
+                if quotes.last_session != before or code == head.code:
+                    continue
+                candidate_identity = quotes.identity_at(before)
+                candidate_class = (
+                    None
+                    if candidate_identity is None
+                    else _especi_class(candidate_identity.especi)
+                )
+                if (
+                    wanted is not None
+                    and candidate_class is not None
+                    and candidate_class == wanted
+                ) or (
+                    wanted is None
+                    and share_class_suffix(code) == share_class_suffix(head.code)
+                ):
+                    proposed.add(code)
         filed = self._names(ticker)
         survivors: list[tuple[CodeWindow, str]] = []
         for code in sorted(proposed):
@@ -251,7 +273,10 @@ class CodeSuccession:
 
     async def _tape_name(self, window: CodeWindow) -> str:
         quotes = (await self._archive.year(window.last_session.year)).get(window.code)
-        return "" if quotes is None else quotes.name
+        if quotes is None:
+            return ""
+        identity = quotes.identity_at(window.last_session)
+        return "" if identity is None else identity.name
 
     async def _preceding_session(self, session: date) -> date | None:
         """The trading session before ``session``, across the year boundary."""
