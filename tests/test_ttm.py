@@ -7,6 +7,8 @@ from decimal import Decimal
 from smaug.analysis.domain.financials import (
     AccountingRegime,
     Cpc41Disclosure,
+    Cpc41EvidenceStatus,
+    Cpc41SelectionStatus,
     DebtCoverageEvidence,
     DebtIdentityStatus,
     DebtLineEvidence,
@@ -151,6 +153,15 @@ def test_ttm_derives_ytd_q4_only_from_a_complete_weighted_prefix() -> None:
     assert ttm.net_income == Decimal(420)
     assert ttm.eps_basic == Decimal(4)
     assert ttm.eps_diluted == Decimal(4)
+    assert ttm.cpc41_window_provenance is not None
+    assert [
+        period.reference_date for period in ttm.cpc41_window_provenance.selected_periods
+    ] == [
+        date(2025, 3, 31),
+        date(2025, 6, 30),
+        date(2025, 9, 30),
+        date(2025, 12, 31),
+    ]
 
 
 def test_ttm_keeps_basic_and_nulls_diluted_when_potential_shares_are_unavailable() -> (
@@ -619,6 +630,110 @@ def test_ttm_preserves_specific_cpc41_blocker_from_a_missing_period() -> None:
     assert ttm is not None
     assert ttm.eps_basic_null_reason is NullReason.MISSING_ECONOMIC_RIGHTS
     assert ttm.eps_diluted_null_reason is NullReason.MISSING_UNIT_COMPOSITION
+
+
+def test_ttm_provenance_keeps_status_and_raw_accounts_for_every_selected_period() -> (
+    None
+):
+    def evidence(
+        field: str,
+        status: SourceAccountStatus,
+        *,
+        code: str | None = None,
+        blocker: NullReason | None = None,
+    ) -> SourceAccountEvidence:
+        return SourceAccountEvidence(
+            field=field,
+            statement="DRE",
+            status=status,
+            found=(
+                ()
+                if code is None
+                else (SourceAccountRef(code, f"LPA {code}", Decimal("2")),)
+            ),
+            blocker=blocker,
+        )
+
+    available = (
+        evidence("eps_basic", SourceAccountStatus.MAPPED, code="3.99.01.1"),
+        evidence("eps_diluted", SourceAccountStatus.MAPPED, code="3.99.02.1"),
+    )
+    quarters = [
+        _q(
+            end,
+            period_start=start,
+            net_income=Decimal("100"),
+            cpc41=_cpc41("2", diluted="2"),
+        )
+        for end, start in zip(
+            _ENDS,
+            (
+                date(2025, 4, 1),
+                date(2025, 7, 1),
+                date(2025, 10, 1),
+                date(2026, 1, 1),
+            ),
+            strict=True,
+        )
+    ]
+    quarters[0] = replace(quarters[0], source_account_evidence=available)
+    quarters[1] = replace(
+        quarters[1],
+        cpc41=None,
+        source_account_evidence=(
+            evidence("eps_basic", SourceAccountStatus.ABSENT),
+            evidence("eps_diluted", SourceAccountStatus.ABSENT),
+        ),
+    )
+    # This blocker is deliberately not the latest selected period. The window
+    # must carry its account identity instead of exposing only Q1/Q4 evidence.
+    quarters[2] = replace(
+        quarters[2],
+        cpc41=None,
+        eps_basic_null_reason=NullReason.MISSING_ECONOMIC_RIGHTS,
+        eps_diluted_null_reason=NullReason.MISSING_UNIT_COMPOSITION,
+        source_account_evidence=(
+            evidence(
+                "eps_basic",
+                SourceAccountStatus.ABSENT,
+                code="3.99.01.1",
+                blocker=NullReason.MISSING_ECONOMIC_RIGHTS,
+            ),
+            evidence(
+                "eps_diluted",
+                SourceAccountStatus.ABSENT,
+                code="3.99.02.1",
+                blocker=NullReason.MISSING_UNIT_COMPOSITION,
+            ),
+        ),
+    )
+    quarters[3] = replace(quarters[3], source_account_evidence=available)
+
+    ttm = build_ttm(quarters, None)
+
+    assert ttm is not None
+    provenance = ttm.cpc41_window_provenance
+    assert provenance is not None
+    assert [period.reference_date for period in provenance.selected_periods] == list(
+        _ENDS
+    )
+    assert provenance.basic_blocker is NullReason.MISSING_ECONOMIC_RIGHTS
+    assert provenance.diluted_blocker is NullReason.MISSING_UNIT_COMPOSITION
+    first, absent, ambiguous, latest = provenance.selected_periods
+    assert first.disclosure_status is Cpc41EvidenceStatus.AVAILABLE
+    assert first.basic_weighted_shares_status is Cpc41EvidenceStatus.AVAILABLE
+    assert first.source_accounts[0].selection_status is Cpc41SelectionStatus.SELECTED
+    assert absent.disclosure_status is Cpc41EvidenceStatus.ABSENT
+    assert absent.basic_weighted_shares_status is Cpc41EvidenceStatus.ABSENT
+    assert ambiguous.disclosure_status is Cpc41EvidenceStatus.AMBIGUOUS
+    assert ambiguous.class_status is Cpc41EvidenceStatus.AMBIGUOUS
+    assert ambiguous.basic_blocker is NullReason.MISSING_ECONOMIC_RIGHTS
+    assert ambiguous.source_accounts[0].code == "3.99.01.1"
+    assert ambiguous.source_accounts[0].name == "LPA 3.99.01.1"
+    assert (
+        ambiguous.source_accounts[0].selection_status is Cpc41SelectionStatus.AMBIGUOUS
+    )
+    assert latest.disclosure_status is Cpc41EvidenceStatus.AVAILABLE
 
 
 def test_ttm_carries_the_null_cause_provenance() -> None:

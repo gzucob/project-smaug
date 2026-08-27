@@ -24,6 +24,11 @@ from smaug.analysis.domain.financials import (
     CapitalActionEvidence,
     CapitalComposition,
     ClassMarketValue,
+    Cpc41AccountEvidence,
+    Cpc41EvidenceStatus,
+    Cpc41PeriodProvenance,
+    Cpc41SelectionStatus,
+    Cpc41WindowProvenance,
     DebtBlocker,
     DebtCoverageEvidence,
     DebtEvidenceSnapshot,
@@ -265,6 +270,169 @@ def _source_account_evidence_from_json(
             )
         )
     return tuple(parsed)
+
+
+def _cpc41_window_provenance_to_json(
+    provenance: Cpc41WindowProvenance | None,
+) -> dict[str, Any] | None:
+    """Serialize selected CPC 41 periods without losing Decimal precision."""
+    if provenance is None:
+        return None
+
+    def account_to_json(account: Cpc41AccountEvidence) -> dict[str, Any]:
+        return {
+            "module": account.module,
+            "code": account.code,
+            "name": account.name,
+            "selection_status": account.selection_status.value,
+            "value": None if account.value is None else str(account.value),
+        }
+
+    def period_to_json(period: Cpc41PeriodProvenance) -> dict[str, Any]:
+        return {
+            "reference_date": period.reference_date.isoformat(),
+            "disclosure_status": period.disclosure_status.value,
+            "class_status": period.class_status.value,
+            "multiplier_status": period.multiplier_status.value,
+            "multiplier": None if period.multiplier is None else str(period.multiplier),
+            "basic_weighted_shares": (
+                None
+                if period.basic_weighted_shares is None
+                else str(period.basic_weighted_shares)
+            ),
+            "basic_weighted_shares_status": period.basic_weighted_shares_status.value,
+            "diluted_weighted_shares": (
+                None
+                if period.diluted_weighted_shares is None
+                else str(period.diluted_weighted_shares)
+            ),
+            "diluted_weighted_shares_status": (
+                period.diluted_weighted_shares_status.value
+            ),
+            "basic_blocker": (
+                None if period.basic_blocker is None else period.basic_blocker.value
+            ),
+            "diluted_blocker": (
+                None if period.diluted_blocker is None else period.diluted_blocker.value
+            ),
+            "source_accounts": [
+                account_to_json(account) for account in period.source_accounts
+            ],
+        }
+
+    return {
+        "selected_periods": [
+            period_to_json(period) for period in provenance.selected_periods
+        ],
+        "basic_blocker": (
+            None if provenance.basic_blocker is None else provenance.basic_blocker.value
+        ),
+        "diluted_blocker": (
+            None
+            if provenance.diluted_blocker is None
+            else provenance.diluted_blocker.value
+        ),
+    }
+
+
+def _cpc41_window_provenance_from_json(
+    value: object,
+) -> Cpc41WindowProvenance | None:
+    """Restore a CPC 41 window while degrading malformed legacy JSON safely."""
+    if not isinstance(value, Mapping):
+        return None
+
+    def evidence_status(raw: object) -> Cpc41EvidenceStatus:
+        if raw == "recoverable":
+            # A short-lived pre-migration shape used this word for a filed
+            # value. Read it as the source-semantic status without retaining
+            # the misleading vocabulary in the domain contract.
+            return Cpc41EvidenceStatus.AVAILABLE
+        if raw is None:
+            return Cpc41EvidenceStatus.ABSENT
+        try:
+            return Cpc41EvidenceStatus(str(raw))
+        except (TypeError, ValueError):
+            return Cpc41EvidenceStatus.AMBIGUOUS
+
+    def selection_status(raw: object) -> Cpc41SelectionStatus:
+        if raw is None:
+            return Cpc41SelectionStatus.ABSENT
+        try:
+            return Cpc41SelectionStatus(str(raw))
+        except (TypeError, ValueError):
+            return Cpc41SelectionStatus.AMBIGUOUS
+
+    def blocker(raw: object) -> NullReason | None:
+        if raw is None:
+            return None
+        try:
+            return NullReason(str(raw))
+        except (TypeError, ValueError):
+            return None
+
+    def parsed_date(raw: object) -> date | None:
+        if raw is None:
+            return None
+        try:
+            return date.fromisoformat(str(raw))
+        except (TypeError, ValueError):
+            return None
+
+    def accounts(raw: object) -> tuple[Cpc41AccountEvidence, ...]:
+        if not isinstance(raw, (list, tuple)):
+            return ()
+        parsed: list[Cpc41AccountEvidence] = []
+        for item in raw:
+            if not isinstance(item, Mapping):
+                continue
+            parsed.append(
+                Cpc41AccountEvidence(
+                    module=str(item.get("module", "")),
+                    code=str(item.get("code", "")),
+                    name=str(item.get("name", "")),
+                    selection_status=selection_status(item.get("selection_status")),
+                    value=_decimal(item.get("value")),
+                )
+            )
+        return tuple(parsed)
+
+    raw_periods = value.get("selected_periods", [])
+    periods: list[Cpc41PeriodProvenance] = []
+    if isinstance(raw_periods, (list, tuple)):
+        for raw in raw_periods:
+            if not isinstance(raw, Mapping):
+                continue
+            reference_date = parsed_date(raw.get("reference_date"))
+            if reference_date is None:
+                continue
+            periods.append(
+                Cpc41PeriodProvenance(
+                    reference_date=reference_date,
+                    disclosure_status=evidence_status(raw.get("disclosure_status")),
+                    class_status=evidence_status(raw.get("class_status")),
+                    multiplier_status=evidence_status(raw.get("multiplier_status")),
+                    multiplier=_decimal(raw.get("multiplier")),
+                    basic_weighted_shares=_decimal(raw.get("basic_weighted_shares")),
+                    basic_weighted_shares_status=evidence_status(
+                        raw.get("basic_weighted_shares_status")
+                    ),
+                    diluted_weighted_shares=_decimal(
+                        raw.get("diluted_weighted_shares")
+                    ),
+                    diluted_weighted_shares_status=(
+                        evidence_status(raw.get("diluted_weighted_shares_status"))
+                    ),
+                    basic_blocker=blocker(raw.get("basic_blocker")),
+                    diluted_blocker=blocker(raw.get("diluted_blocker")),
+                    source_accounts=accounts(raw.get("source_accounts")),
+                )
+            )
+    return Cpc41WindowProvenance(
+        selected_periods=tuple(periods),
+        basic_blocker=blocker(value.get("basic_blocker")),
+        diluted_blocker=blocker(value.get("diluted_blocker")),
+    )
 
 
 def _bank_regulatory_provenance_to_json(
@@ -756,6 +924,9 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         source_account_evidence=_source_account_evidence_to_json(
             i.source_account_evidence
         ),
+        cpc41_window_provenance=_cpc41_window_provenance_to_json(
+            i.cpc41_window_provenance
+        ),
         bank_regulatory_provenance=_bank_regulatory_provenance_to_json(
             i.bank_regulatory_provenance
         ),
@@ -877,6 +1048,9 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
             source_account_evidence=_source_account_evidence_from_json(
                 row.source_account_evidence
             ),
+            cpc41_window_provenance=_cpc41_window_provenance_from_json(
+                row.cpc41_window_provenance
+            ),
             bank_regulatory_provenance=_bank_regulatory_provenance_from_json(
                 row.bank_regulatory_provenance
             ),
@@ -928,6 +1102,12 @@ def _legacy_row_condition() -> ColumnElement[bool]:
         ),
         TickerAnalysisRow.debt_evidence_snapshot.is_(None),
         TickerAnalysisRow.source_account_evidence.is_(None),
+        # CPC 41 window lineage exists only for TTM rows. A closed-year row
+        # legitimately has no four-period window to persist.
+        and_(
+            TickerAnalysisRow.view == VIEW_TTM,
+            TickerAnalysisRow.cpc41_window_provenance.is_(None),
+        ),
         TickerAnalysisRow.share_class_mappings.is_(None),
         TickerAnalysisRow.class_market_values.is_(None),
     )

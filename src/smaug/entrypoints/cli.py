@@ -2200,6 +2200,20 @@ def _format_exercise(exercise: ExerciseCoverage) -> list[str]:
             continue
         mark = "!!" if cell.is_unclassified else "  "
         lines.append(f"    {mark} {cell.indicator:<26} {cell.status}")
+    provenance = exercise.cpc41_window_provenance
+    if provenance is not None:
+        periods = ",".join(
+            f"{period.reference_date}:"
+            f"{period.basic_weighted_shares_status.value}/"
+            f"{period.diluted_weighted_shares_status.value}"
+            for period in provenance.selected_periods
+        )
+        lines.append(
+            "    cpc41 window: "
+            f"periods={periods or 'none'} "
+            f"basic_blocker={provenance.basic_blocker or 'none'} "
+            f"diluted_blocker={provenance.diluted_blocker or 'none'}"
+        )
     return lines
 
 

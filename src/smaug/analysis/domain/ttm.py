@@ -34,9 +34,15 @@ from itertools import pairwise
 from typing import cast
 
 from smaug.analysis.domain.financials import (
+    Cpc41AccountEvidence,
+    Cpc41EvidenceStatus,
+    Cpc41PeriodProvenance,
+    Cpc41SelectionStatus,
+    Cpc41WindowProvenance,
     InsuranceUnderwritingEvidence,
     InsuranceUnderwritingStatus,
     SourceAccountEvidence,
+    SourceAccountStatus,
     StandardizedFinancials,
 )
 from smaug.analysis.domain.indicators import NullReason
@@ -433,6 +439,211 @@ def _cpc41_ttm_null_reason(
     return NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
 
 
+_CPC41_CLASS_REASONS = frozenset(
+    {
+        NullReason.MISSING_ECONOMIC_RIGHTS,
+        NullReason.MISSING_UNIT_COMPOSITION,
+        NullReason.UNRESOLVED_SHARE_CLASS,
+    }
+)
+
+
+def _cpc41_source_entry(
+    period: StandardizedFinancials, *, diluted: bool
+) -> SourceAccountEvidence | None:
+    """Find the raw account inventory for one period and CPC 41 basis."""
+    field = "eps_diluted" if diluted else "eps_basic"
+    return next(
+        (item for item in period.source_account_evidence if item.field == field),
+        None,
+    )
+
+
+def _cpc41_accounts(
+    period: StandardizedFinancials,
+) -> tuple[Cpc41AccountEvidence, ...]:
+    """Copy raw CVM 3.99 identities into the selected-window audit trail."""
+    accounts: list[Cpc41AccountEvidence] = []
+    for diluted in (False, True):
+        entry = _cpc41_source_entry(period, diluted=diluted)
+        if entry is None:
+            continue
+        if entry.status is SourceAccountStatus.MAPPED:
+            selection = Cpc41SelectionStatus.SELECTED
+        elif entry.status is SourceAccountStatus.PRESENT_UNREADABLE:
+            selection = Cpc41SelectionStatus.UNREADABLE
+        elif entry.status is SourceAccountStatus.UNMAPPED:
+            selection = Cpc41SelectionStatus.NOT_SELECTED
+        elif entry.status is SourceAccountStatus.ABSENT:
+            selection = (
+                Cpc41SelectionStatus.AMBIGUOUS
+                if entry.found and entry.blocker in _CPC41_CLASS_REASONS
+                else Cpc41SelectionStatus.ABSENT
+            )
+        else:
+            selection = Cpc41SelectionStatus.NOT_SELECTED
+        accounts.extend(
+            Cpc41AccountEvidence(
+                module=entry.statement,
+                code=ref.code,
+                name=ref.name,
+                selection_status=selection,
+                value=ref.value,
+            )
+            for ref in entry.found
+        )
+    return tuple(accounts)
+
+
+def _cpc41_base_eps(period: StandardizedFinancials, *, diluted: bool) -> Decimal | None:
+    """Read one reconciled base EPS without touching market share counts."""
+    disclosure = period.cpc41
+    if disclosure is None:
+        return None
+    return disclosure.diluted_base_eps if diluted else disclosure.basic_base_eps
+
+
+def _cpc41_disclosure_status(
+    period: StandardizedFinancials, *, diluted: bool
+) -> Cpc41EvidenceStatus:
+    """Classify whether one basic or diluted CPC 41 result is available."""
+    if _cpc41_base_eps(period, diluted=diluted) is not None:
+        return Cpc41EvidenceStatus.AVAILABLE
+    entry = _cpc41_source_entry(period, diluted=diluted)
+    if entry is not None and entry.found:
+        return Cpc41EvidenceStatus.AMBIGUOUS
+    return Cpc41EvidenceStatus.ABSENT
+
+
+def _cpc41_class_status(
+    period: StandardizedFinancials, *, diluted: bool
+) -> Cpc41EvidenceStatus:
+    """Classify whether every required economic class was reconciled."""
+    entry = _cpc41_source_entry(period, diluted=diluted)
+    if entry is not None and entry.blocker in _CPC41_CLASS_REASONS:
+        return Cpc41EvidenceStatus.AMBIGUOUS
+    if _cpc41_base_eps(period, diluted=diluted) is not None:
+        return Cpc41EvidenceStatus.AVAILABLE
+    return Cpc41EvidenceStatus.ABSENT
+
+
+def _cpc41_multiplier_status(
+    period: StandardizedFinancials,
+) -> Cpc41EvidenceStatus:
+    """Classify the unit multiplier independently of the weighted denominator."""
+    disclosure = period.cpc41
+    if disclosure is None:
+        entries = (
+            _cpc41_source_entry(period, diluted=False),
+            _cpc41_source_entry(period, diluted=True),
+        )
+        return (
+            Cpc41EvidenceStatus.AMBIGUOUS
+            if any(entry is not None and entry.found for entry in entries)
+            else Cpc41EvidenceStatus.ABSENT
+        )
+    return (
+        Cpc41EvidenceStatus.AVAILABLE
+        if disclosure.security_multiplier is not None
+        and disclosure.security_multiplier > 0
+        else Cpc41EvidenceStatus.AMBIGUOUS
+    )
+
+
+def _cpc41_weighted_status(
+    period: StandardizedFinancials,
+    candidate: _WeightedPeriod | None,
+    *,
+    diluted: bool,
+) -> Cpc41EvidenceStatus:
+    """Classify the denominator recovered from one selected period."""
+    if candidate is not None:
+        return Cpc41EvidenceStatus.AVAILABLE
+    reason = _cpc41_period_reason(period, diluted=diluted)
+    if reason in _CPC41_CLASS_REASONS:
+        return Cpc41EvidenceStatus.AMBIGUOUS
+    if (
+        period.cpc41 is not None
+        and _cpc41_base_eps(period, diluted=diluted) is not None
+    ):
+        # Filed compatible data that cannot produce a positive denominator is
+        # present but not formula-compatible for this selected window.
+        return Cpc41EvidenceStatus.AMBIGUOUS
+    return Cpc41EvidenceStatus.ABSENT
+
+
+def _weighted_average_shares(
+    candidate: _WeightedPeriod | None,
+) -> Decimal | None:
+    """Recover the weighted shares represented by an isolated candidate."""
+    if candidate is None or candidate.days <= 0:
+        return None
+    return candidate.share_days / Decimal(candidate.days)
+
+
+def _cpc41_window_provenance(
+    periods: Sequence[StandardizedFinancials],
+    weighted_basic: dict[date, _WeightedPeriod | None],
+    weighted_diluted: dict[date, _WeightedPeriod | None],
+    refs: Sequence[date],
+    *,
+    basic_blocker: NullReason | None,
+    diluted_blocker: NullReason | None,
+) -> Cpc41WindowProvenance:
+    """Build the complete selected-window audit, oldest period first."""
+    by_date = {period.reference_date: period for period in periods}
+    selected: list[Cpc41PeriodProvenance] = []
+    for ref in sorted(refs):
+        period = by_date.get(ref)
+        if period is None:
+            selected.append(
+                Cpc41PeriodProvenance(
+                    reference_date=ref,
+                    basic_blocker=NullReason.MISSING_CPC41_DISCLOSURE,
+                    diluted_blocker=NullReason.MISSING_CPC41_DISCLOSURE,
+                )
+            )
+            continue
+
+        basic_candidate = weighted_basic.get(ref)
+        diluted_candidate = weighted_diluted.get(ref)
+        selected.append(
+            Cpc41PeriodProvenance(
+                reference_date=ref,
+                disclosure_status=_cpc41_disclosure_status(period, diluted=False),
+                class_status=_cpc41_class_status(period, diluted=False),
+                multiplier_status=_cpc41_multiplier_status(period),
+                multiplier=(
+                    None if period.cpc41 is None else period.cpc41.security_multiplier
+                ),
+                basic_weighted_shares=_weighted_average_shares(basic_candidate),
+                basic_weighted_shares_status=_cpc41_weighted_status(
+                    period, basic_candidate, diluted=False
+                ),
+                diluted_weighted_shares=_weighted_average_shares(diluted_candidate),
+                diluted_weighted_shares_status=_cpc41_weighted_status(
+                    period, diluted_candidate, diluted=True
+                ),
+                basic_blocker=(
+                    _cpc41_period_reason(period, diluted=False)
+                    if basic_candidate is None
+                    else None
+                ),
+                diluted_blocker=(
+                    _cpc41_period_reason(period, diluted=True)
+                    if diluted_candidate is None
+                    else None
+                ),
+                source_accounts=_cpc41_accounts(period),
+            )
+        )
+    return Cpc41WindowProvenance(
+        selected_periods=tuple(selected),
+        basic_blocker=basic_blocker,
+        diluted_blocker=diluted_blocker,
+    )
+
+
 def _ttm_insurance_underwriting_selection(
     periods: Sequence[StandardizedFinancials],
     annual: StandardizedFinancials | None,
@@ -703,7 +914,11 @@ def _build_ttm(
     weighted_diluted = _weighted_isolated(quarters, annual, diluted=True)
     eps_basic = _ttm_weighted_eps(weighted_basic, refs)
     eps_diluted = _ttm_weighted_eps(weighted_diluted, refs)
-    cpc41_periods = [*quarters, *(() if annual is None else (annual,))]
+    # Keep provenance in lockstep with the arithmetic source. The annual is a
+    # selected period only when its derived Q4 is in this exact TTM window.
+    cpc41_periods = list(quarters)
+    if annual is not None and annual.reference_date in refs:
+        cpc41_periods.append(annual)
     eps_basic_reason = (
         None
         if eps_basic is not None
@@ -713,6 +928,14 @@ def _build_ttm(
         None
         if eps_diluted is not None
         else _cpc41_ttm_null_reason(cpc41_periods, weighted_diluted, refs, diluted=True)
+    )
+    cpc41_provenance = _cpc41_window_provenance(
+        cpc41_periods,
+        weighted_basic,
+        weighted_diluted,
+        refs,
+        basic_blocker=eps_basic_reason,
+        diluted_blocker=eps_diluted_reason,
     )
 
     summed: Flows = {}
@@ -813,4 +1036,5 @@ def _build_ttm(
         bank_regulatory_provenance=bank_provenance,
         unmapped_fields=latest.unmapped_fields,
         source_account_evidence=source_account_evidence,
+        cpc41_window_provenance=cpc41_provenance,
     )

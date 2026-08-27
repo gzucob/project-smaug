@@ -25,6 +25,10 @@ from smaug.analysis.domain.financials import (
     CapitalActionEvidence,
     CapitalComposition,
     ClassMarketValue,
+    Cpc41EvidenceStatus,
+    Cpc41PeriodProvenance,
+    Cpc41SelectionStatus,
+    Cpc41WindowProvenance,
     DebtBlocker,
     DebtEvidenceSnapshot,
     DebtIdentityStatus,
@@ -165,6 +169,41 @@ class ShareCountProvenanceResponse(BaseModel):
     evidence: list[str]
 
 
+class Cpc41AccountEvidenceResponse(BaseModel):
+    """One raw CVM account considered for a selected CPC 41 period."""
+
+    module: str
+    code: str
+    name: str
+    selection_status: Cpc41SelectionStatus
+    value: Decimal | None
+
+
+class Cpc41PeriodProvenanceResponse(BaseModel):
+    """Filed CPC 41 evidence for one period in the arithmetic TTM window."""
+
+    reference_date: date
+    disclosure_status: Cpc41EvidenceStatus
+    class_status: Cpc41EvidenceStatus
+    multiplier_status: Cpc41EvidenceStatus
+    multiplier: Decimal | None
+    basic_weighted_shares: Decimal | None
+    basic_weighted_shares_status: Cpc41EvidenceStatus
+    diluted_weighted_shares: Decimal | None
+    diluted_weighted_shares_status: Cpc41EvidenceStatus
+    basic_blocker: NullReason | None
+    diluted_blocker: NullReason | None
+    source_accounts: list[Cpc41AccountEvidenceResponse]
+
+
+class Cpc41WindowProvenanceResponse(BaseModel):
+    """The selected four-period CPC 41 lineage and its strict blockers."""
+
+    selected_periods: list[Cpc41PeriodProvenanceResponse]
+    basic_blocker: NullReason | None
+    diluted_blocker: NullReason | None
+
+
 class IndicatorsResponse(BaseModel):
     """The computed indicators.
 
@@ -246,6 +285,7 @@ class IndicatorsResponse(BaseModel):
     shares: Decimal | None
     null_reasons: dict[str, str]
     source_account_evidence: list[SourceAccountEvidenceResponse]
+    cpc41_window_provenance: Cpc41WindowProvenanceResponse | None
     bank_regulatory_provenance: BankRegulatoryProvenanceResponse | None
 
 
@@ -488,6 +528,48 @@ def _capital_provenance_response(
     )
 
 
+def _cpc41_window_response(
+    provenance: Cpc41WindowProvenance | None,
+) -> Cpc41WindowProvenanceResponse | None:
+    if provenance is None:
+        return None
+
+    def period_response(
+        period: Cpc41PeriodProvenance,
+    ) -> Cpc41PeriodProvenanceResponse:
+        return Cpc41PeriodProvenanceResponse(
+            reference_date=period.reference_date,
+            disclosure_status=period.disclosure_status,
+            class_status=period.class_status,
+            multiplier_status=period.multiplier_status,
+            multiplier=period.multiplier,
+            basic_weighted_shares=period.basic_weighted_shares,
+            basic_weighted_shares_status=period.basic_weighted_shares_status,
+            diluted_weighted_shares=period.diluted_weighted_shares,
+            diluted_weighted_shares_status=period.diluted_weighted_shares_status,
+            basic_blocker=period.basic_blocker,
+            diluted_blocker=period.diluted_blocker,
+            source_accounts=[
+                Cpc41AccountEvidenceResponse(
+                    module=account.module,
+                    code=account.code,
+                    name=account.name,
+                    selection_status=account.selection_status,
+                    value=account.value,
+                )
+                for account in period.source_accounts
+            ],
+        )
+
+    return Cpc41WindowProvenanceResponse(
+        selected_periods=[
+            period_response(period) for period in provenance.selected_periods
+        ],
+        basic_blocker=provenance.basic_blocker,
+        diluted_blocker=provenance.diluted_blocker,
+    )
+
+
 def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
     evidence = analysis.debt_evidence
 
@@ -542,6 +624,9 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
                 )
                 for item in analysis.indicators.source_account_evidence
             ],
+            "cpc41_window_provenance": _cpc41_window_response(
+                analysis.indicators.cpc41_window_provenance
+            ),
             "bank_regulatory_provenance": (
                 None
                 if analysis.indicators.bank_regulatory_provenance is None
