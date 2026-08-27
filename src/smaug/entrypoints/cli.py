@@ -2199,7 +2199,7 @@ def format_doctor(report: DoctorReport) -> str:
     """Render the coverage report and a status tally over every cell (#47)."""
     lines: list[str] = ["", "=== smaug doctor — persisted analysis coverage ==="]
     named: dict[NullReason, int] = {}
-    values = unclassified = cells = exercises = 0
+    exercises = 0
     tickers_with_unclassified: set[str] = set()
 
     for ticker_cov in report.tickers:
@@ -2211,28 +2211,28 @@ def format_doctor(report: DoctorReport) -> str:
             exercises += 1
             lines.extend(_format_exercise(exercise))
             for cell in exercise.indicators:
-                cells += 1
-                if cell.has_value:
-                    values += 1
-                elif cell.reason is not None:
+                if not cell.has_value and cell.reason is not None:
                     named[cell.reason] = named.get(cell.reason, 0) + 1
-                else:
-                    unclassified += 1
+                elif cell.is_unclassified:
                     tickers_with_unclassified.add(ticker_cov.ticker)
 
+    totals = report.totals
     lines.append("")
     lines.append(
-        f"--- {len(report.tickers)} tickers, {exercises} exercises, {cells} cells "
-        f"| value={values} named={sum(named.values())} unclassified={unclassified}"
+        f"--- {len(report.tickers)} tickers, {exercises} exercises, "
+        f"{totals.total_cells} cells "
+        f"| value={totals.values} named={totals.named_nulls} "
+        f"unclassified={totals.unclassified}"
     )
+    lines.extend(_format_coverage_details(report))
     if named:
         breakdown = ", ".join(
             f"{reason.value}={n}" for reason, n in sorted(named.items())
         )
         lines.append(f"    named breakdown: {breakdown}")
-    if unclassified:
+    if totals.unclassified:
         who = ", ".join(sorted(tickers_with_unclassified))
-        lines.append(f"    !! {unclassified} unclassified nulls across: {who}")
+        lines.append(f"    !! {totals.unclassified} unclassified nulls across: {who}")
     lines.extend(_format_debt_coverage(report.debt_coverage))
     return "\n".join(lines)
 
@@ -2255,6 +2255,59 @@ def _format_debt_coverage(summary: DebtCoverageSummary) -> list[str]:
     ]
 
 
+def _format_coverage_details(report: DoctorReport) -> list[str]:
+    """Render scope, disposition totals, and explicit percentage denominators."""
+    scope = report.coverage_scope
+    totals = report.totals
+    return [
+        (
+            "--- scope --- "
+            f"requested={scope.requested_tickers} "
+            f"persisted={scope.persisted_tickers} "
+            f"no-analysis={scope.no_analysis_tickers} "
+            f"stale={scope.stale_rows} legacy={scope.legacy_rows} "
+            f"stored_rows={scope.stored_rows} "
+            "| "
+            f"requested_tickers={scope.requested_tickers} "
+            f"persisted_tickers={scope.persisted_tickers} "
+            f"no_analysis_tickers={scope.no_analysis_tickers} "
+            f"persisted_exercises={scope.persisted_exercises} "
+            f"stored_rows={scope.stored_rows} "
+            f"stale_rows={scope.stale_rows} legacy_rows={scope.legacy_rows}"
+        ),
+        (
+            "    cells: "
+            f"total={totals.total_cells} values={totals.values} "
+            f"nulls={totals.nulls} named={totals.named_nulls} "
+            f"unclassified={totals.unclassified}"
+        ),
+        (
+            "    dispositions: "
+            f"inapplicable={totals.inapplicable} "
+            f"mathematically_undefined={totals.mathematically_undefined} "
+            f"primary_source_unavailable={totals.primary_source_unavailable} "
+            f"recoverable_gap={totals.recoverable_gap} "
+            "historical_period_does_not_exist="
+            f"{totals.historical_period_does_not_exist}"
+        ),
+        (
+            "    percentages (denominator=null indicator cells "
+            f"({totals.nulls}) / all indicator cells ({totals.total_cells})): "
+            f"missing_or_recoverable={totals.missing_or_recoverable} "
+            f"({totals.missing_or_recoverable_pct_of_nulls:.1f}% of nulls; "
+            f"{totals.missing_or_recoverable_pct_of_cells:.1f}% of all cells); "
+            f"lower_bound={totals.missing_or_recoverable_lower_bound}; "
+            f"upper_bound={totals.missing_or_recoverable_upper_bound} "
+            f"({totals.missing_or_recoverable_upper_pct_of_nulls:.1f}% of nulls; "
+            f"{totals.missing_or_recoverable_upper_pct_of_cells:.1f}% of all cells); "
+            f"mixed_comparability={totals.mixed_comparability}; "
+            f"genuine_inapplicability={totals.inapplicable} "
+            f"({totals.inapplicable_pct_of_nulls:.1f}% of nulls; "
+            f"{totals.inapplicable_pct_of_cells:.1f}% of all cells)"
+        ),
+    ]
+
+
 def format_doctor_summary(report: DoctorReport) -> str:
     """The coverage report as totals — the M0 gate at exchange scale.
 
@@ -2265,8 +2318,7 @@ def format_doctor_summary(report: DoctorReport) -> str:
     it is enough.
     """
     named: dict[NullReason, int] = {}
-    values = unclassified = cells = exercises = 0
-    analyzed = 0
+    exercises = 0
     unnamed_tickers: set[str] = set()
     empty: list[str] = []
 
@@ -2274,37 +2326,35 @@ def format_doctor_summary(report: DoctorReport) -> str:
         if not ticker_cov.exercises:
             empty.append(ticker_cov.ticker)
             continue
-        analyzed += 1
         for exercise in ticker_cov.exercises:
             exercises += 1
             for cell in exercise.indicators:
-                cells += 1
-                if cell.has_value:
-                    values += 1
-                elif cell.reason is not None:
+                if not cell.has_value and cell.reason is not None:
                     named[cell.reason] = named.get(cell.reason, 0) + 1
-                else:
-                    unclassified += 1
+                elif cell.is_unclassified:
                     unnamed_tickers.add(ticker_cov.ticker)
 
-    share = (100 * values / cells) if cells else 0.0
+    totals = report.totals
+    analyzed = report.coverage_scope.persisted_tickers
+    share = totals.percentage_of_cells(totals.values)
     lines: list[str] = [
         "",
         "=== smaug doctor — persisted analysis coverage ===",
         f"  {analyzed} of {len(report.tickers)} ticker(s) analyzed, "
-        f"{exercises} exercises, {cells} cells",
-        f"  value={values} ({share:.1f}%) named={sum(named.values())} "
-        f"unclassified={unclassified}",
+        f"{exercises} exercises, {totals.total_cells} cells",
+        f"  value={totals.values} ({share:.1f}%) named={totals.named_nulls} "
+        f"unclassified={totals.unclassified}",
     ]
+    lines.extend(_format_coverage_details(report))
     for reason, count in sorted(named.items(), key=lambda kv: -kv[1]):
         lines.append(f"    {reason.value:<26} {count:>7}")
     if empty:
         shown = ", ".join(sorted(empty)[:12])
         more = f" (+{len(empty) - 12} more)" if len(empty) > 12 else ""
         lines.append(f"  no persisted analysis: {shown}{more}")
-    if unclassified:
+    if totals.unclassified:
         who = ", ".join(sorted(unnamed_tickers))
-        lines.append(f"    !! {unclassified} unclassified nulls across: {who}")
+        lines.append(f"    !! {totals.unclassified} unclassified nulls across: {who}")
     else:
         lines.append("    every null carries a named cause.")
     lines.extend(_format_debt_coverage(report.debt_coverage))

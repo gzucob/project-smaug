@@ -3,7 +3,14 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from smaug.analysis.application.doctor import DoctorUseCase
+from smaug.analysis.application.doctor import (
+    CoverageScope,
+    DoctorReport,
+    DoctorUseCase,
+    ExerciseCoverage,
+    IndicatorCoverage,
+    TickerCoverage,
+)
 from smaug.analysis.domain.entities import (
     VIEW_CLOSED_YEAR,
     VIEW_TTM,
@@ -11,10 +18,14 @@ from smaug.analysis.domain.entities import (
     TickerAnalysis,
 )
 from smaug.analysis.domain.indicators import (
+    NULL_DISPOSITION_BY_REASON,
     Indicators,
+    NullDisposition,
     NullReason,
     indicator_names,
+    null_disposition,
 )
+from smaug.analysis.domain.ports import AnalysisStorageScope
 from smaug.portfolio.domain.taxonomy import Classification
 from tests.fakes import fake_sector_resolver
 
@@ -44,6 +55,18 @@ class FakeRepo:
         return self._history.get(ticker, [])
 
 
+class ScopedFakeRepo(FakeRepo):
+    """Adds the optional all-row scope read used by the SQL repository."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.scope_tickers: tuple[str, ...] = ()
+
+    async def storage_scope(self, tickers: tuple[str, ...]) -> AnalysisStorageScope:
+        self.scope_tickers = tickers
+        return AnalysisStorageScope(persisted_rows=4, stale_rows=2, legacy_rows=1)
+
+
 def _analysis(
     ticker: str,
     *,
@@ -64,6 +87,107 @@ def _analysis(
 
 def _cells(exercise) -> dict[str, str]:  # type: ignore[no-untyped-def]
     return {c.indicator: c.status for c in exercise.indicators}
+
+
+def test_every_null_reason_has_one_stable_disposition() -> None:
+    assert set(NULL_DISPOSITION_BY_REASON) == set(NullReason)
+    assert all(
+        null_disposition(reason) in set(NullDisposition) for reason in NullReason
+    )
+
+
+def test_doctor_totals_use_explicit_cell_and_null_denominators() -> None:
+    report = DoctorReport(
+        tickers=(
+            TickerCoverage(
+                ticker="PETR4",
+                sector=fake_sector_resolver("PETR4"),
+                exercises=(
+                    ExerciseCoverage(
+                        view=VIEW_TTM,
+                        reference_date=date(2026, 6, 30),
+                        indicators=(
+                            IndicatorCoverage("value", True, None),
+                            IndicatorCoverage(
+                                "inapplicable", False, NullReason.INAPPLICABLE_REGIME
+                            ),
+                            IndicatorCoverage(
+                                "undefined", False, NullReason.ZERO_DENOMINATOR
+                            ),
+                            IndicatorCoverage(
+                                "source", False, NullReason.SOURCE_ACCOUNT_ABSENT
+                            ),
+                            IndicatorCoverage(
+                                "recoverable", False, NullReason.MISSING_PRICE
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        scope=CoverageScope(1, 1, 0, 1),
+    )
+
+    totals = report.totals
+    assert totals.total_cells == 5
+    assert totals.values == 1
+    assert totals.nulls == 4
+    assert totals.inapplicable == 1
+    assert totals.mathematically_undefined == 1
+    assert totals.primary_source_unavailable == 1
+    assert totals.recoverable_gap == 1
+    assert totals.missing_or_recoverable == 2
+    assert totals.missing_or_recoverable_pct_of_nulls == 50.0
+    assert totals.missing_or_recoverable_pct_of_cells == 40.0
+    assert totals.inapplicable_pct_of_nulls == 25.0
+    assert totals.inapplicable_pct_of_cells == 20.0
+
+
+async def test_doctor_preserves_requested_and_storage_scope_counts() -> None:
+    repository = ScopedFakeRepo()
+    report = await DoctorUseCase(
+        repository, sector_resolver=fake_sector_resolver
+    ).execute(["PETR4", "TAEE11", "PETR4"])
+
+    assert report.coverage_scope == CoverageScope(
+        requested_tickers=2,
+        persisted_tickers=0,
+        no_analysis_tickers=2,
+        persisted_exercises=0,
+        persisted_rows=4,
+        stale_rows=2,
+        legacy_rows=1,
+    )
+    assert repository.scope_tickers == ("PETR4", "TAEE11")
+
+
+def test_doctor_excludes_mixed_prior_periods_from_definitive_missing_bound() -> None:
+    report = DoctorReport(
+        tickers=(
+            TickerCoverage(
+                ticker="PETR4",
+                sector=fake_sector_resolver("PETR4"),
+                exercises=(
+                    ExerciseCoverage(
+                        view=VIEW_CLOSED_YEAR,
+                        reference_date=date(2025, 12, 31),
+                        indicators=(
+                            IndicatorCoverage(
+                                "growth", False, NullReason.MISSING_PRIOR_PERIOD
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    totals = report.totals
+    assert totals.mixed_comparability == 1
+    assert totals.missing_or_recoverable == 0
+    assert totals.missing_or_recoverable_upper_bound == 1
+    assert totals.missing_or_recoverable_pct_of_nulls == 0.0
+    assert totals.missing_or_recoverable_upper_pct_of_nulls == 100.0
 
 
 async def test_doctor_classifies_value_named_and_unclassified() -> None:

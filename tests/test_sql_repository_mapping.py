@@ -10,6 +10,9 @@ from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.sql import Select
+
 from smaug.analysis.domain.entities import VIEW_TTM, TickerAnalysis
 from smaug.analysis.domain.financials import (
     AccountingRegime,
@@ -29,7 +32,12 @@ from smaug.analysis.domain.financials import (
     ShareCounts,
 )
 from smaug.analysis.domain.indicators import Indicators, NullReason
-from smaug.analysis.infrastructure.sql_repository import _to_entity, _to_row
+from smaug.analysis.infrastructure.sql_repository import (
+    SqlAlchemyAnalysisRepository,
+    _legacy_row_condition,
+    _to_entity,
+    _to_row,
+)
 from smaug.portfolio.domain.share_classes import (
     EconomicRightsStatus,
     PerShareClass,
@@ -227,3 +235,59 @@ def test_share_class_and_capital_provenance_round_trip() -> None:
     assert entity.share_class_mappings == analysis.share_class_mappings
     assert entity.class_market_values == analysis.class_market_values
     assert entity.capital_provenance == analysis.capital_provenance
+
+
+class _ScopeResult:
+    def one(self) -> tuple[int, int, int]:
+        return (4, 2, 1)
+
+
+class _ScopeSession:
+    def __init__(self) -> None:
+        self.statement: Select[tuple[object, ...]] | None = None
+
+    async def __aenter__(self) -> "_ScopeSession":
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+    async def execute(self, statement: Select[tuple[object, ...]]) -> _ScopeResult:
+        self.statement = statement
+        return _ScopeResult()
+
+
+class _ScopeSessionFactory:
+    def __init__(self, session: _ScopeSession) -> None:
+        self.session = session
+
+    def __call__(self) -> _ScopeSession:
+        return self.session
+
+
+async def test_storage_scope_is_aggregate_and_fallback_is_current() -> None:
+    session = _ScopeSession()
+    repository = SqlAlchemyAnalysisRepository(  # type: ignore[arg-type]
+        _ScopeSessionFactory(session)
+    )
+
+    scope = await repository.storage_scope(("PETR4",))
+
+    assert scope.persisted_rows == 4
+    assert scope.stale_rows == 2
+    assert scope.legacy_rows == 1
+    assert session.statement is not None
+    compiled = session.statement.compile(dialect=postgresql.dialect())
+    assert len(tuple(session.statement.selected_columns)) == 3
+    assert "sector_fallback" in compiled.params.values()
+    assert "ticker_analysis.roe" not in str(compiled)
+
+
+def test_legacy_sql_predicate_accepts_a_valid_sector_fallback() -> None:
+    statement = _legacy_row_condition()
+    compiled = statement.compile(dialect=postgresql.dialect())
+
+    assert "sector_fallback" in compiled.params.values()
+    # A fallback regime is current when all other attribution contracts exist;
+    # this predicate only rejects a missing regime source or non-fallback gap.
+    assert "filed_regime IS NULL" in str(compiled)

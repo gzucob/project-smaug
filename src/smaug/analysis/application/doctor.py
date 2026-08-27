@@ -15,9 +15,10 @@ each null was born with.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
+from typing import cast
 
 from smaug.analysis.domain.entities import AnalysisView, TickerAnalysis
 from smaug.analysis.domain.financials import (
@@ -27,10 +28,16 @@ from smaug.analysis.domain.financials import (
 )
 from smaug.analysis.domain.indicators import (
     Indicators,
+    NullDisposition,
     NullReason,
     indicator_names,
+    null_disposition,
 )
-from smaug.analysis.domain.ports import AnalysisRepository
+from smaug.analysis.domain.ports import (
+    AnalysisRepository,
+    AnalysisStorageScope,
+    AnalysisStorageScopeReader,
+)
 from smaug.portfolio.domain.sectors import Sector
 
 # A CVM-registry-backed resolver, injected at the composition root (cli.py) —
@@ -60,6 +67,13 @@ class IndicatorCoverage:
         if self.has_value:
             return "value"
         return self.reason.value if self.reason is not None else "unclassified"
+
+    @property
+    def disposition(self) -> NullDisposition | None:
+        """The stable top-level disposition of this named null, if any."""
+        if self.has_value or self.reason is None:
+            return None
+        return null_disposition(self.reason)
 
 
 @dataclass(frozen=True)
@@ -104,6 +118,180 @@ class DebtCoverageSummary:
 
 
 @dataclass(frozen=True)
+class CoverageScope:
+    """The population behind a doctor report.
+
+    Ticker counts describe the requested universe; row counts describe what the
+    repository actually stores.  ``stale_rows`` and ``legacy_rows`` are read
+    from all persisted rows, rather than inferred from the latest view.  A
+    repository that only implements the historical read methods reports zero for
+    those optional storage diagnostics (the real SQL repository implements the
+    scope contract).
+    """
+
+    requested_tickers: int
+    persisted_tickers: int
+    no_analysis_tickers: int
+    persisted_exercises: int
+    # All rows selected for the request, including superseded rows.  The short
+    # ``persisted_tickers`` name above is deliberately not reused for rows.
+    persisted_rows: int = 0
+    stale_rows: int = 0
+    legacy_rows: int = 0
+
+    @property
+    def requested(self) -> int:
+        """Short alias for consumers rendering a scope table."""
+        return self.requested_tickers
+
+    @property
+    def persisted(self) -> int:
+        """Short alias for consumers rendering a scope table."""
+        return self.persisted_tickers
+
+    @property
+    def no_analysis(self) -> int:
+        """Short alias for consumers rendering a scope table."""
+        return self.no_analysis_tickers
+
+    @property
+    def stale(self) -> int:
+        """Short alias for the count of superseded persisted rows."""
+        return self.stale_rows
+
+    @property
+    def legacy(self) -> int:
+        """Short alias for the count of rows without current provenance."""
+        return self.legacy_rows
+
+    @property
+    def stored_rows(self) -> int:
+        """Unambiguous alias for all rows selected from persistence."""
+        return self.persisted_rows
+
+
+@dataclass(frozen=True)
+class CoverageTotals:
+    """Counts and denominator-aware measures over indicator cells."""
+
+    total_cells: int
+    values: int
+    nulls: int
+    unclassified: int
+    inapplicable: int
+    mathematically_undefined: int
+    primary_source_unavailable: int
+    recoverable_gap: int
+    historical_period_does_not_exist: int
+    # ``missing_prior_period`` is a mixed family in the current persisted
+    # contract. It remains in the recoverable disposition map for compatibility
+    # but is not included in the definitive lower bound below.
+    mixed_comparability: int = 0
+
+    @property
+    def named_nulls(self) -> int:
+        """Null cells carrying a ``NullReason``."""
+        return self.nulls - self.unclassified
+
+    @property
+    def genuine_inapplicability(self) -> int:
+        """Nulls that are economically inapplicable to the filed regime."""
+        return self.inapplicable
+
+    @property
+    def missing_or_recoverable(self) -> int:
+        """Nulls that may be addressed by source or mapping work.
+
+        Primary-source disclosure absence and definitive recoverable
+        acquisition/mapping gaps are both missing calculable data.  Inapplicable,
+        mathematical, and unresolved prior-period outcomes are deliberately
+        excluded from this lower-bound measure.
+        """
+        return self.missing_or_recoverable_lower_bound
+
+    @property
+    def definitive_recoverable_gap(self) -> int:
+        """Recoverable gaps excluding unresolved prior-period family cells."""
+        return self.recoverable_gap - self.mixed_comparability
+
+    @property
+    def missing_or_recoverable_lower_bound(self) -> int:
+        """Conservative count excluding ambiguous comparability cells."""
+        return self.primary_source_unavailable + self.definitive_recoverable_gap
+
+    @property
+    def missing_or_recoverable_upper_bound(self) -> int:
+        """Upper bound treating every mixed comparability cell as recoverable."""
+        return self.primary_source_unavailable + self.recoverable_gap
+
+    @property
+    def missing_data(self) -> int:
+        """Alias for the report's missing-or-recoverable product measure."""
+        return self.missing_or_recoverable
+
+    @staticmethod
+    def _percentage(count: int, denominator: int) -> float:
+        return 100.0 * count / denominator if denominator else 0.0
+
+    def percentage_of_cells(self, count: int) -> float:
+        """Return ``count`` as a percentage of all indicator cells."""
+        return self._percentage(count, self.total_cells)
+
+    def percentage_of_nulls(self, count: int) -> float:
+        """Return ``count`` as a percentage of null cells."""
+        return self._percentage(count, self.nulls)
+
+    @property
+    def missing_or_recoverable_pct_of_cells(self) -> float:
+        return self.percentage_of_cells(self.missing_or_recoverable)
+
+    @property
+    def missing_or_recoverable_pct_of_nulls(self) -> float:
+        return self.percentage_of_nulls(self.missing_or_recoverable)
+
+    @property
+    def missing_or_recoverable_upper_pct_of_cells(self) -> float:
+        return self.percentage_of_cells(self.missing_or_recoverable_upper_bound)
+
+    @property
+    def missing_or_recoverable_upper_pct_of_nulls(self) -> float:
+        return self.percentage_of_nulls(self.missing_or_recoverable_upper_bound)
+
+    @property
+    def missing_data_pct_of_cells(self) -> float:
+        """Missing/recoverable percentage using all indicator cells."""
+        return self.missing_or_recoverable_pct_of_cells
+
+    @property
+    def missing_data_pct_of_nulls(self) -> float:
+        """Missing/recoverable percentage using null cells only."""
+        return self.missing_or_recoverable_pct_of_nulls
+
+    @property
+    def inapplicable_pct_of_cells(self) -> float:
+        return self.percentage_of_cells(self.inapplicable)
+
+    @property
+    def inapplicable_pct_of_nulls(self) -> float:
+        return self.percentage_of_nulls(self.inapplicable)
+
+    @property
+    def dispositions(self) -> Mapping[NullDisposition, int]:
+        """All top-level buckets, including buckets whose count is zero."""
+        return {
+            NullDisposition.INAPPLICABLE: self.inapplicable,
+            NullDisposition.MATHEMATICALLY_UNDEFINED: (self.mathematically_undefined),
+            NullDisposition.PRIMARY_SOURCE_UNAVAILABLE: (
+                self.primary_source_unavailable
+            ),
+            NullDisposition.RECOVERABLE_GAP: self.recoverable_gap,
+            NullDisposition.HISTORICAL_PERIOD_DOES_NOT_EXIST: (
+                self.historical_period_does_not_exist
+            ),
+        }
+
+
+@dataclass(frozen=True)
 class TickerCoverage:
     """Every persisted exercise for one ticker (TTM first, then closed years).
 
@@ -121,6 +309,100 @@ class DoctorReport:
     """The full coverage report: one entry per requested ticker."""
 
     tickers: tuple[TickerCoverage, ...]
+    scope: CoverageScope | None = None
+
+    def __post_init__(self) -> None:
+        """Give direct report fixtures the same scope contract as the use case."""
+        if self.scope is None:
+            persisted = sum(bool(ticker.exercises) for ticker in self.tickers)
+            object.__setattr__(
+                self,
+                "scope",
+                CoverageScope(
+                    requested_tickers=len(self.tickers),
+                    persisted_tickers=persisted,
+                    no_analysis_tickers=len(self.tickers) - persisted,
+                    persisted_exercises=sum(
+                        len(ticker.exercises) for ticker in self.tickers
+                    ),
+                    persisted_rows=sum(
+                        len(ticker.exercises) for ticker in self.tickers
+                    ),
+                ),
+            )
+
+    @property
+    def coverage_scope(self) -> CoverageScope:
+        """The explicit population metadata used by the CLI report."""
+        assert self.scope is not None
+        return self.scope
+
+    @property
+    def totals(self) -> CoverageTotals:
+        """Aggregate cell counts grouped by the stable null disposition."""
+        counts: dict[NullDisposition, int] = dict.fromkeys(NullDisposition, 0)
+        mixed = values = unclassified = total = 0
+        for ticker in self.tickers:
+            for exercise in ticker.exercises:
+                for cell in exercise.indicators:
+                    total += 1
+                    if cell.has_value:
+                        values += 1
+                    elif cell.disposition is None:
+                        unclassified += 1
+                    else:
+                        disposition = cell.disposition
+                        assert disposition is not None
+                        counts[disposition] += 1
+                        if cell.reason is NullReason.MISSING_PRIOR_PERIOD:
+                            mixed += 1
+        nulls = total - values
+        return CoverageTotals(
+            total_cells=total,
+            values=values,
+            nulls=nulls,
+            unclassified=unclassified,
+            inapplicable=counts[NullDisposition.INAPPLICABLE],
+            mathematically_undefined=counts[NullDisposition.MATHEMATICALLY_UNDEFINED],
+            primary_source_unavailable=counts[
+                NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
+            ],
+            recoverable_gap=counts[NullDisposition.RECOVERABLE_GAP],
+            historical_period_does_not_exist=counts[
+                NullDisposition.HISTORICAL_PERIOD_DOES_NOT_EXIST
+            ],
+            mixed_comparability=mixed,
+        )
+
+    @property
+    def disposition_counts(self) -> Mapping[NullDisposition, int]:
+        """Every disposition count, including zero-valued categories."""
+        return self.totals.dispositions
+
+    @property
+    def total_cells(self) -> int:
+        """Total indicator cells in persisted exercises."""
+        return self.totals.total_cells
+
+    @property
+    def values(self) -> int:
+        """Indicator cells containing a computed value."""
+        return self.totals.values
+
+    @property
+    def nulls(self) -> int:
+        """Indicator cells without a computed value."""
+        return self.totals.nulls
+
+    @property
+    def genuine_inapplicability(self) -> int:
+        """Null cells in the inapplicable top-level disposition."""
+        return self.totals.genuine_inapplicability
+
+    @property
+    def missing_or_recoverable(self) -> int:
+        """Null cells in either missing-primary-source or recoverable-gap."""
+        return self.totals.missing_or_recoverable
 
     @property
     def unclassified(self) -> int:
@@ -208,8 +490,11 @@ class DoctorUseCase:
         self._sector_resolver = sector_resolver
 
     async def execute(self, tickers: Iterable[str]) -> DoctorReport:
+        # A repeated code must represent one requested ticker, otherwise both
+        # the percentages and the no-analysis count depend on caller ordering.
+        requested = tuple(dict.fromkeys(tickers))
         coverages: list[TickerCoverage] = []
-        for ticker in tickers:
+        for ticker in requested:
             exercises: list[ExerciseCoverage] = []
             ttm = await self._repository.latest(ticker)
             if ttm is not None:
@@ -219,4 +504,31 @@ class DoctorUseCase:
             coverages.append(
                 TickerCoverage(ticker, self._sector_resolver(ticker), tuple(exercises))
             )
-        return DoctorReport(tuple(coverages))
+
+        storage = await self._storage_scope(requested)
+        persisted_tickers = sum(bool(ticker.exercises) for ticker in coverages)
+        return DoctorReport(
+            tuple(coverages),
+            scope=CoverageScope(
+                requested_tickers=len(requested),
+                persisted_tickers=persisted_tickers,
+                no_analysis_tickers=len(requested) - persisted_tickers,
+                persisted_exercises=sum(len(ticker.exercises) for ticker in coverages),
+                persisted_rows=(
+                    sum(len(ticker.exercises) for ticker in coverages)
+                    if storage is None
+                    else storage.persisted_rows
+                ),
+                stale_rows=0 if storage is None else storage.stale_rows,
+                legacy_rows=0 if storage is None else storage.legacy_rows,
+            ),
+        )
+
+    async def _storage_scope(
+        self, tickers: Sequence[str]
+    ) -> AnalysisStorageScope | None:
+        """Read optional all-row diagnostics without breaking old test fakes."""
+        if not hasattr(self._repository, "storage_scope"):
+            return None
+        reader = cast(AnalysisStorageScopeReader, self._repository)
+        return await reader.storage_scope(tickers)
