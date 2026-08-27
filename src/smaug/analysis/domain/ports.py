@@ -8,6 +8,7 @@ composition root wires them.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Protocol
 
@@ -24,6 +25,28 @@ from smaug.analysis.domain.financials import (
 )
 from smaug.analysis.domain.indicators import NullReason
 from smaug.portfolio.domain.share_classes import PerShareClass
+
+
+@dataclass(frozen=True)
+class AnalysisStorageScope:
+    """Counts over all persisted rows for a requested ticker scope.
+
+    ``latest`` and ``history`` intentionally hide superseded rows.  The doctor
+    report uses this separate read-only contract when it needs to say how many
+    rows are stale or pre-date the persisted provenance contract.
+    """
+
+    persisted_rows: int
+    stale_rows: int
+    legacy_rows: int
+
+
+class AnalysisStorageScopeReader(Protocol):
+    """Optional repository surface for storage-level doctor diagnostics."""
+
+    async def storage_scope(self, tickers: Sequence[str]) -> AnalysisStorageScope:
+        """Count all rows, superseded rows, and legacy rows for ``tickers``."""
+        ...
 
 
 class FundamentalsReader(Protocol):

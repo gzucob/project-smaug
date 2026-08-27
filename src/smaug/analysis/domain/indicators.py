@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from decimal import Decimal
 from enum import StrEnum
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -110,6 +111,100 @@ class NullReason(StrEnum):
     MISSING_PRIOR_PERIOD = "missing_prior_period"
     ZERO_DENOMINATOR = "zero_denominator"
     NON_POSITIVE_ENDPOINT = "non_positive_endpoint"
+
+
+class NullDisposition(StrEnum):
+    """Stable product-level disposition for a named null.
+
+    ``NullReason`` remains the diagnostic vocabulary and is intentionally more
+    specific.  A disposition is the coarser answer a report or consumer needs:
+    whether a null is inapplicable, an arithmetic dead-end, a disclosure that
+    the primary source does not provide, a gap that can be investigated, or a
+    historical period that did not exist.  The aliases keep the longer wording
+    used in the issue contract available without creating extra categories.
+    """
+
+    INAPPLICABLE = "inapplicable"
+    MATHEMATICALLY_UNDEFINED = "mathematically_undefined"
+    PRIMARY_SOURCE_UNAVAILABLE = "primary_source_unavailable"
+    RECOVERABLE_GAP = "recoverable_gap"
+    HISTORICAL_PERIOD_DOES_NOT_EXIST = "historical_period_does_not_exist"
+
+    # Descriptive aliases for callers that prefer the issue's wording.  They
+    # are aliases, not additional dispositions, so exhaustive iteration remains
+    # exactly five values.
+    LEGITIMATE_INAPPLICABILITY = "inapplicable"
+    PRIMARY_SOURCE_DISCLOSURE_UNAVAILABLE = "primary_source_unavailable"
+    RECOVERABLE_SOURCE_GAP = "recoverable_gap"
+    HISTORICAL_PERIOD_NOT_EXIST = "historical_period_does_not_exist"
+
+
+# Keep this table adjacent to the enum: adding a NullReason without choosing a
+# report disposition must fail loudly rather than silently becoming a sixth,
+# unstable bucket.  ``MappingProxyType`` prevents callers from changing the
+# product contract at runtime.
+NULL_DISPOSITION_BY_REASON = MappingProxyType(
+    {
+        # A formula has no economic meaning under the filed regime.
+        NullReason.INAPPLICABLE_REGIME: NullDisposition.INAPPLICABLE,
+        # Inputs are present, but the requested arithmetic has no real result.
+        NullReason.ZERO_DENOMINATOR: NullDisposition.MATHEMATICALLY_UNDEFINED,
+        NullReason.NON_POSITIVE_ENDPOINT: NullDisposition.MATHEMATICALLY_UNDEFINED,
+        # The applicable primary disclosure is absent or cannot prove the
+        # required perimeter/basis.  There is no safe value to reconstruct.
+        NullReason.SOURCE_ACCOUNT_ABSENT: NullDisposition.PRIMARY_SOURCE_UNAVAILABLE,
+        NullReason.MISSING_REGULATORY_DISCLOSURE: (
+            NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
+        ),
+        NullReason.PARTIAL_REGULATORY_DISCLOSURE: (
+            NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
+        ),
+        NullReason.INCOMPATIBLE_REGULATORY_DISCLOSURE: (
+            NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
+        ),
+        NullReason.INCOMPLETE_DEBT_COVERAGE: (
+            NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
+        ),
+        NullReason.MISSING_CPC41_DISCLOSURE: NullDisposition.PRIMARY_SOURCE_UNAVAILABLE,
+        NullReason.MISSING_WEIGHTED_AVERAGE_SHARES: (
+            NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
+        ),
+        # These are source, mapping, identity, continuity, or acquisition gaps
+        # that can be revisited without changing the accounting formula.  The
+        # generic missing_prior_period stays here until persisted evidence can
+        # safely distinguish its accounting/window/tape causes.
+        NullReason.SOURCE_ACCOUNT_UNMAPPED: NullDisposition.RECOVERABLE_GAP,
+        NullReason.MISSING_PRICE: NullDisposition.RECOVERABLE_GAP,
+        NullReason.PRICE_SYMBOL_NOT_FOUND: NullDisposition.RECOVERABLE_GAP,
+        NullReason.PRICE_SOURCE_UNAVAILABLE: NullDisposition.RECOVERABLE_GAP,
+        NullReason.PRICE_SOURCE_MALFORMED: NullDisposition.RECOVERABLE_GAP,
+        NullReason.PRICE_SOURCE_TIMEOUT: NullDisposition.RECOVERABLE_GAP,
+        NullReason.MISSING_SHARE_COUNT: NullDisposition.RECOVERABLE_GAP,
+        NullReason.MISSING_UNIT_COMPOSITION: NullDisposition.RECOVERABLE_GAP,
+        NullReason.MISSING_TREASURY_COMPOSITION: NullDisposition.RECOVERABLE_GAP,
+        NullReason.UNRESOLVED_SHARE_CLASS: NullDisposition.RECOVERABLE_GAP,
+        NullReason.MISSING_ECONOMIC_RIGHTS: NullDisposition.RECOVERABLE_GAP,
+        NullReason.MISSING_CASH_DISTRIBUTIONS: NullDisposition.RECOVERABLE_GAP,
+        NullReason.MISSING_CASH_DISTRIBUTION_VALUE: NullDisposition.RECOVERABLE_GAP,
+        NullReason.MISSING_PRIOR_PERIOD: NullDisposition.RECOVERABLE_GAP,
+        # The source cannot fill a period before the instrument first traded.
+        NullReason.NOT_YET_LISTED: NullDisposition.HISTORICAL_PERIOD_DOES_NOT_EXIST,
+    }
+)
+
+if set(NULL_DISPOSITION_BY_REASON) != set(NullReason):
+    missing = set(NullReason) - set(NULL_DISPOSITION_BY_REASON)
+    extra = set(NULL_DISPOSITION_BY_REASON) - set(NullReason)
+    raise RuntimeError(
+        "NullReason disposition table is not exhaustive: "
+        f"missing={sorted(reason.value for reason in missing)} "
+        f"extra={sorted(reason.value for reason in extra)}"
+    )
+
+
+def null_disposition(reason: NullReason) -> NullDisposition:
+    """Return the one stable report disposition assigned to ``reason``."""
+    return NULL_DISPOSITION_BY_REASON[reason]
 
 
 class IndicatorTier(StrEnum):

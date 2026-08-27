@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, NamedTuple, cast
@@ -38,6 +38,7 @@ from smaug.analysis.domain.financials import (
     SourceAccountStatus,
 )
 from smaug.analysis.domain.indicators import Indicators, NullReason
+from smaug.analysis.domain.ports import AnalysisStorageScope
 from smaug.analysis.infrastructure.sqlalchemy_models import TickerAnalysisRow
 from smaug.portfolio.domain.share_classes import (
     EconomicRightsStatus,
@@ -971,6 +972,51 @@ class SqlAlchemyAnalysisRepository:
                 seen.add(row.reference_date)
                 by_year.append(_to_entity(row))
         return sorted(by_year, key=lambda a: a.reference_date)
+
+    async def storage_scope(self, tickers: Sequence[str]) -> AnalysisStorageScope:
+        """Count current, stale, and legacy rows for a doctor request.
+
+        The normal reads intentionally collapse superseded computations.  This
+        diagnostic projection reads all rows for the requested tickers and uses
+        the same ``(ticker, view, reference_date, computed_at)`` rule as
+        ``prune`` to identify stale rows.  A row is legacy when it predates any
+        of the persisted attribution contracts that doctor relies on; nullable
+        business inputs such as ``capital_provenance`` are not part of this
+        check because they can legitimately be absent for a current filing.
+        """
+        requested = tuple(dict.fromkeys(tickers))
+        if not requested:
+            return AnalysisStorageScope(0, 0, 0)
+        stmt = select(TickerAnalysisRow).where(TickerAnalysisRow.ticker.in_(requested))
+        async with self._session_factory() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+
+        runs = [
+            _RunKey(
+                row.id,
+                row.ticker,
+                row.view,
+                row.reference_date,
+                row.computed_at,
+            )
+            for row in rows
+        ]
+        keep = _latest_ids(runs)
+        legacy = sum(
+            row.null_reasons is None
+            or row.filed_regime is None
+            or row.regime_source is None
+            or row.debt_evidence_snapshot is None
+            or row.source_account_evidence is None
+            or row.share_class_mappings is None
+            or row.class_market_values is None
+            for row in rows
+        )
+        return AnalysisStorageScope(
+            persisted_rows=len(rows),
+            stale_rows=len(rows) - len(keep),
+            legacy_rows=legacy,
+        )
 
     async def prune(self) -> PruneResult:
         """Delete every superseded run, keeping only the latest per cell (#71).
