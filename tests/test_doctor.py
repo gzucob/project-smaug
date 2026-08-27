@@ -58,7 +58,12 @@ class FakeRepo:
 class ScopedFakeRepo(FakeRepo):
     """Adds the optional all-row scope read used by the SQL repository."""
 
+    def __init__(self) -> None:
+        super().__init__()
+        self.scope_tickers: tuple[str, ...] = ()
+
     async def storage_scope(self, tickers: tuple[str, ...]) -> AnalysisStorageScope:
+        self.scope_tickers = tickers
         return AnalysisStorageScope(persisted_rows=4, stale_rows=2, legacy_rows=1)
 
 
@@ -139,18 +144,50 @@ def test_doctor_totals_use_explicit_cell_and_null_denominators() -> None:
 
 
 async def test_doctor_preserves_requested_and_storage_scope_counts() -> None:
+    repository = ScopedFakeRepo()
     report = await DoctorUseCase(
-        ScopedFakeRepo(), sector_resolver=fake_sector_resolver
-    ).execute(["PETR4", "TAEE11"])
+        repository, sector_resolver=fake_sector_resolver
+    ).execute(["PETR4", "TAEE11", "PETR4"])
 
     assert report.coverage_scope == CoverageScope(
         requested_tickers=2,
         persisted_tickers=0,
         no_analysis_tickers=2,
         persisted_exercises=0,
+        persisted_rows=4,
         stale_rows=2,
         legacy_rows=1,
     )
+    assert repository.scope_tickers == ("PETR4", "TAEE11")
+
+
+def test_doctor_excludes_mixed_prior_periods_from_definitive_missing_bound() -> None:
+    report = DoctorReport(
+        tickers=(
+            TickerCoverage(
+                ticker="PETR4",
+                sector=fake_sector_resolver("PETR4"),
+                exercises=(
+                    ExerciseCoverage(
+                        view=VIEW_CLOSED_YEAR,
+                        reference_date=date(2025, 12, 31),
+                        indicators=(
+                            IndicatorCoverage(
+                                "growth", False, NullReason.MISSING_PRIOR_PERIOD
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    totals = report.totals
+    assert totals.mixed_comparability == 1
+    assert totals.missing_or_recoverable == 0
+    assert totals.missing_or_recoverable_upper_bound == 1
+    assert totals.missing_or_recoverable_pct_of_nulls == 0.0
+    assert totals.missing_or_recoverable_upper_pct_of_nulls == 100.0
 
 
 async def test_doctor_classifies_value_named_and_unclassified() -> None:

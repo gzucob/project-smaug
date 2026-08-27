@@ -40,6 +40,11 @@ class AnalysisStorageScope:
     stale_rows: int
     legacy_rows: int
 
+    @property
+    def stored_rows(self) -> int:
+        """Unambiguous alias used by coverage reports."""
+        return self.persisted_rows
+
 
 class AnalysisStorageScopeReader(Protocol):
     """Optional repository surface for storage-level doctor diagnostics."""

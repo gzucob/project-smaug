@@ -133,6 +133,9 @@ class CoverageScope:
     persisted_tickers: int
     no_analysis_tickers: int
     persisted_exercises: int
+    # All rows selected for the request, including superseded rows.  The short
+    # ``persisted_tickers`` name above is deliberately not reused for rows.
+    persisted_rows: int = 0
     stale_rows: int = 0
     legacy_rows: int = 0
 
@@ -161,6 +164,11 @@ class CoverageScope:
         """Short alias for the count of rows without current provenance."""
         return self.legacy_rows
 
+    @property
+    def stored_rows(self) -> int:
+        """Unambiguous alias for all rows selected from persistence."""
+        return self.persisted_rows
+
 
 @dataclass(frozen=True)
 class CoverageTotals:
@@ -175,6 +183,10 @@ class CoverageTotals:
     primary_source_unavailable: int
     recoverable_gap: int
     historical_period_does_not_exist: int
+    # ``missing_prior_period`` is a mixed family in the current persisted
+    # contract. It remains in the recoverable disposition map for compatibility
+    # but is not included in the definitive lower bound below.
+    mixed_comparability: int = 0
 
     @property
     def named_nulls(self) -> int:
@@ -190,10 +202,26 @@ class CoverageTotals:
     def missing_or_recoverable(self) -> int:
         """Nulls that may be addressed by source or mapping work.
 
-        Primary-source disclosure absence and recoverable acquisition/mapping
-        gaps are both missing calculable data.  Inapplicable and mathematical
-        outcomes are deliberately excluded from this product measure.
+        Primary-source disclosure absence and definitive recoverable
+        acquisition/mapping gaps are both missing calculable data.  Inapplicable,
+        mathematical, and unresolved prior-period outcomes are deliberately
+        excluded from this lower-bound measure.
         """
+        return self.missing_or_recoverable_lower_bound
+
+    @property
+    def definitive_recoverable_gap(self) -> int:
+        """Recoverable gaps excluding unresolved prior-period family cells."""
+        return self.recoverable_gap - self.mixed_comparability
+
+    @property
+    def missing_or_recoverable_lower_bound(self) -> int:
+        """Conservative count excluding ambiguous comparability cells."""
+        return self.primary_source_unavailable + self.definitive_recoverable_gap
+
+    @property
+    def missing_or_recoverable_upper_bound(self) -> int:
+        """Upper bound treating every mixed comparability cell as recoverable."""
         return self.primary_source_unavailable + self.recoverable_gap
 
     @property
@@ -220,6 +248,14 @@ class CoverageTotals:
     @property
     def missing_or_recoverable_pct_of_nulls(self) -> float:
         return self.percentage_of_nulls(self.missing_or_recoverable)
+
+    @property
+    def missing_or_recoverable_upper_pct_of_cells(self) -> float:
+        return self.percentage_of_cells(self.missing_or_recoverable_upper_bound)
+
+    @property
+    def missing_or_recoverable_upper_pct_of_nulls(self) -> float:
+        return self.percentage_of_nulls(self.missing_or_recoverable_upper_bound)
 
     @property
     def missing_data_pct_of_cells(self) -> float:
@@ -289,6 +325,9 @@ class DoctorReport:
                     persisted_exercises=sum(
                         len(ticker.exercises) for ticker in self.tickers
                     ),
+                    persisted_rows=sum(
+                        len(ticker.exercises) for ticker in self.tickers
+                    ),
                 ),
             )
 
@@ -302,7 +341,7 @@ class DoctorReport:
     def totals(self) -> CoverageTotals:
         """Aggregate cell counts grouped by the stable null disposition."""
         counts: dict[NullDisposition, int] = dict.fromkeys(NullDisposition, 0)
-        values = unclassified = total = 0
+        mixed = values = unclassified = total = 0
         for ticker in self.tickers:
             for exercise in ticker.exercises:
                 for cell in exercise.indicators:
@@ -315,6 +354,8 @@ class DoctorReport:
                         disposition = cell.disposition
                         assert disposition is not None
                         counts[disposition] += 1
+                        if cell.reason is NullReason.MISSING_PRIOR_PERIOD:
+                            mixed += 1
         nulls = total - values
         return CoverageTotals(
             total_cells=total,
@@ -330,6 +371,7 @@ class DoctorReport:
             historical_period_does_not_exist=counts[
                 NullDisposition.HISTORICAL_PERIOD_DOES_NOT_EXIST
             ],
+            mixed_comparability=mixed,
         )
 
     @property
@@ -448,7 +490,9 @@ class DoctorUseCase:
         self._sector_resolver = sector_resolver
 
     async def execute(self, tickers: Iterable[str]) -> DoctorReport:
-        requested = tuple(tickers)
+        # A repeated code must represent one requested ticker, otherwise both
+        # the percentages and the no-analysis count depend on caller ordering.
+        requested = tuple(dict.fromkeys(tickers))
         coverages: list[TickerCoverage] = []
         for ticker in requested:
             exercises: list[ExerciseCoverage] = []
@@ -470,6 +514,11 @@ class DoctorUseCase:
                 persisted_tickers=persisted_tickers,
                 no_analysis_tickers=len(requested) - persisted_tickers,
                 persisted_exercises=sum(len(ticker.exercises) for ticker in coverages),
+                persisted_rows=(
+                    sum(len(ticker.exercises) for ticker in coverages)
+                    if storage is None
+                    else storage.persisted_rows
+                ),
                 stale_rows=0 if storage is None else storage.stale_rows,
                 legacy_rows=0 if storage is None else storage.legacy_rows,
             ),

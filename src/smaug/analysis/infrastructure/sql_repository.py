@@ -7,8 +7,9 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, NamedTuple, cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
 
 from smaug.analysis.domain.entities import (
     VIEW_CLOSED_YEAR,
@@ -912,6 +913,22 @@ def _latest_ids(runs: Iterable[_RunKey]) -> set[int]:
     return {row_id for _, row_id in best.values()}
 
 
+def _legacy_row_condition() -> ColumnElement[bool]:
+    """Return the SQL predicate for rows lacking current attribution evidence."""
+    return or_(
+        TickerAnalysisRow.null_reasons.is_(None),
+        TickerAnalysisRow.regime_source.is_(None),
+        and_(
+            TickerAnalysisRow.filed_regime.is_(None),
+            TickerAnalysisRow.regime_source != RegimeSource.SECTOR_FALLBACK.value,
+        ),
+        TickerAnalysisRow.debt_evidence_snapshot.is_(None),
+        TickerAnalysisRow.source_account_evidence.is_(None),
+        TickerAnalysisRow.share_class_mappings.is_(None),
+        TickerAnalysisRow.class_market_values.is_(None),
+    )
+
+
 class SqlAlchemyAnalysisRepository:
     """Persists analyses and reads back the latest per ticker."""
 
@@ -987,35 +1004,42 @@ class SqlAlchemyAnalysisRepository:
         requested = tuple(dict.fromkeys(tickers))
         if not requested:
             return AnalysisStorageScope(0, 0, 0)
-        stmt = select(TickerAnalysisRow).where(TickerAnalysisRow.ticker.in_(requested))
-        async with self._session_factory() as session:
-            rows = (await session.execute(stmt)).scalars().all()
-
-        runs = [
-            _RunKey(
-                row.id,
-                row.ticker,
-                row.view,
-                row.reference_date,
-                row.computed_at,
-            )
-            for row in rows
-        ]
-        keep = _latest_ids(runs)
-        legacy = sum(
-            row.null_reasons is None
-            or row.filed_regime is None
-            or row.regime_source is None
-            or row.debt_evidence_snapshot is None
-            or row.source_account_evidence is None
-            or row.share_class_mappings is None
-            or row.class_market_values is None
-            for row in rows
+        # This is deliberately an aggregate projection. Doctor needs neither
+        # indicator numerics nor JSON payloads to count rows, stale history, or
+        # legacy provenance; selecting ORM entities here made a whole exchange
+        # report unnecessarily deserialize every persisted column.
+        legacy = _legacy_row_condition()
+        rank = func.row_number().over(
+            partition_by=(
+                TickerAnalysisRow.ticker,
+                TickerAnalysisRow.view,
+                TickerAnalysisRow.reference_date,
+            ),
+            order_by=(
+                TickerAnalysisRow.computed_at.desc(),
+                TickerAnalysisRow.id.desc(),
+            ),
         )
+        ranked = (
+            select(
+                TickerAnalysisRow.id,
+                rank.label("rank"),
+                case((legacy, 1), else_=0).label("legacy"),
+            )
+            .where(TickerAnalysisRow.ticker.in_(requested))
+            .subquery()
+        )
+        stmt = select(
+            func.count(ranked.c.id),
+            func.coalesce(func.sum(case((ranked.c.rank > 1, 1), else_=0)), 0),
+            func.coalesce(func.sum(ranked.c.legacy), 0),
+        )
+        async with self._session_factory() as session:
+            stored, stale, legacy_rows = (await session.execute(stmt)).one()
         return AnalysisStorageScope(
-            persisted_rows=len(rows),
-            stale_rows=len(rows) - len(keep),
-            legacy_rows=legacy,
+            persisted_rows=int(stored),
+            stale_rows=int(stale),
+            legacy_rows=int(legacy_rows),
         )
 
     async def prune(self) -> PruneResult:
