@@ -189,6 +189,7 @@ def _source_account_evidence_to_json(
                     "code": ref.code,
                     "name": ref.name,
                     "value": None if ref.value is None else str(ref.value),
+                    "column": ref.column,
                 }
                 for ref in item.found
             ],
@@ -197,6 +198,7 @@ def _source_account_evidence_to_json(
             "dependencies": list(item.dependencies),
             "blocker": None if item.blocker is None else item.blocker.value,
             "consumer_indicators": list(item.consumer_indicators),
+            "duplicates_discarded": item.duplicates_discarded,
         }
         for item in evidence
     ]
@@ -217,6 +219,7 @@ def _source_account_evidence_from_json(
                 code=str(raw.get("code", "")),
                 name=str(raw.get("name", "")),
                 value=None if raw_value is None else Decimal(str(raw_value)),
+                column=(None if raw.get("column") is None else str(raw.get("column"))),
             )
         except (InvalidOperation, ValueError, TypeError):
             return None
@@ -266,6 +269,11 @@ def _source_account_evidence_from_json(
                     tuple(str(item) for item in raw_consumers)
                     if isinstance(raw_consumers, (list, tuple))
                     else ()
+                ),
+                duplicates_discarded=(
+                    int(raw.get("duplicates_discarded", 0))
+                    if isinstance(raw.get("duplicates_discarded", 0), int)
+                    else 0
                 ),
             )
         )

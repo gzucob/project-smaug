@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from smaug.analysis.domain.calculator import compute
 from smaug.analysis.domain.financials import (
     AccountingRegime,
     DebtBlocker,
@@ -15,11 +16,13 @@ from smaug.analysis.domain.financials import (
     DebtLineRole,
     InsuranceUnderwritingStatus,
     IssuerIdentity,
+    MarketData,
     RegimeSource,
 )
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.infrastructure.mongo_fundamentals import (
     MongoFundamentalsReader,
+    _deduplicate_accounts,
     standardize,
 )
 from smaug.portfolio.domain.sectors import Sector
@@ -261,6 +264,137 @@ def test_standardize_does_not_double_count_a_dep_amort_breakdown() -> None:
     f = standardize(by_module, Sector.COMMODITY, date(2024, 12, 31))
 
     assert f.dep_amort == Decimal("100")
+
+
+def test_exact_duplicate_dfc_cells_count_once_through_fcf() -> None:
+    # CVM can repeat the same source cell in a statement. The raw mirror keeps
+    # both rows, while the analysis bridge removes only the exact repeat before
+    # summing dividends, D&A, and capex. The resulting FCF must use those single
+    # occurrences as well.
+    paid = _acc(
+        "6.03.04",
+        "Dividendos ou juros sobre capital próprio pagos aos controladores",
+        "-30",
+    )
+    dep_amort = _acc("6.01.01.02", "Depreciação e amortização", "80")
+    capex = _acc("6.02.01", "Aquisição de imobilizado", "-150")
+    financials = standardize(
+        {
+            "DFC": {
+                "accounts": [
+                    _acc("6.01", "Caixa Líquido Atividades Operacionais", "500"),
+                    paid,
+                    dict(paid),
+                    dep_amort,
+                    dict(dep_amort),
+                    capex,
+                    dict(capex),
+                ]
+            },
+            "DRE": {
+                "accounts": [
+                    _acc("3.01", "Receita de Venda de Bens e/ou Serviços", "900"),
+                    _acc("3.05", "Resultado Antes do Resultado Financeiro", "200"),
+                ]
+            },
+        },
+        Sector.COMMODITY,
+        date(2024, 12, 31),
+    )
+
+    assert financials.dividends_paid == Decimal("30")
+    assert financials.dep_amort == Decimal("80")
+    assert financials.capex == Decimal("150")
+    assert compute(financials, None, MarketData(market_cap=Decimal("1000"))).fcf == (
+        Decimal("350")
+    )
+
+    evidence = {item.field: item for item in financials.source_account_evidence}
+    assert evidence["dividends_paid"].duplicates_discarded == 3
+    assert evidence["dep_amort"].duplicates_discarded == 3
+    assert evidence["capex"].duplicates_discarded == 3
+
+
+def test_source_cell_identity_keeps_distinct_dmpl_columns_and_fixed_flags() -> None:
+    payload = {
+        "statement": "DMPL",
+        "balance_type": "consolidated",
+        "reference_date": "2024-12-31",
+        "period_start_date": "2024-01-01",
+        "period_end_date": "2024-12-31",
+        "version": 2,
+        "ordem_exerc": "ULTIMO",
+        "accounts": [],
+    }
+    cell = {
+        "code": "5.04.06",
+        "name": "Dividendos",
+        "quantity": "-10",
+        "level": 3,
+        "is_fixed": True,
+        "COLUNA_DF": "Patrimônio Líquido",
+    }
+
+    retained, discarded = _deduplicate_accounts(
+        "DMPL",
+        payload,
+        [
+            cell,
+            dict(cell),  # exact duplicate
+            {**cell, "COLUNA_DF": "Lucros ou Prejuízos Acumulados"},
+            {**cell, "is_fixed": False},
+        ],
+    )
+
+    assert discarded == 1
+    assert len(retained) == 3
+    assert [account["COLUNA_DF"] for account in retained[:2]] == [
+        "Patrimônio Líquido",
+        "Lucros ou Prejuízos Acumulados",
+    ]
+
+
+def test_dmpl_evidence_keeps_distinct_columns_after_exact_deduplication() -> None:
+    financials = standardize(
+        {
+            "DMPL": {
+                "accounts": [
+                    {
+                        "code": "5.04.06",
+                        "name": "Dividendos",
+                        "quantity": "-10",
+                        "COLUNA_DF": "Patrimônio Líquido",
+                    },
+                    {
+                        "code": "5.04.06",
+                        "name": "Dividendos",
+                        "quantity": "-10",
+                        "COLUNA_DF": "Patrimônio Líquido",
+                    },
+                    {
+                        "code": "5.04.06",
+                        "name": "Dividendos",
+                        "quantity": "-8",
+                        "COLUNA_DF": "Lucros ou Prejuízos Acumulados",
+                    },
+                ]
+            }
+        },
+        Sector.COMMODITY,
+        date(2024, 12, 31),
+    )
+
+    declared = next(
+        item
+        for item in financials.source_account_evidence
+        if item.field == "dividends_declared"
+    )
+    assert financials.dividends_declared == Decimal("10")
+    assert declared.duplicates_discarded == 1
+    assert [ref.column for ref in declared.found] == [
+        "Patrimônio Líquido",
+        "Lucros ou Prejuízos Acumulados",
+    ]
 
 
 def test_standardize_applies_currency_size_to_absolute_reais() -> None:
