@@ -49,6 +49,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import re
 import zipfile
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -423,6 +424,31 @@ class _Accumulator:
         )
 
 
+_ARCHIVE_NAME = re.compile(r"^COTAHIST_A(?P<year>[0-9]{4})$", re.IGNORECASE)
+
+
+def _quote_member(archive_path: Path, names: Sequence[str]) -> str:
+    """Select exactly one official quote member for the archive's year."""
+    match = _ARCHIVE_NAME.fullmatch(archive_path.stem)
+    if match is None:
+        raise ValueError(f"{archive_path.name} has an invalid COTAHIST filename")
+    year = match.group("year")
+    expected = {
+        f"COTAHIST_A{year}.TXT",
+        f"COTAHIST.A{year}",
+        f"COTAHIST_A{year}",
+    }
+    members = [name for name in names if name.upper() in expected]
+    if not members:
+        raise ValueError(f"{archive_path.name} carries no supported COTAHIST member")
+    if len(members) > 1:
+        raise ValueError(
+            f"{archive_path.name} carries ambiguous COTAHIST members: "
+            f"{', '.join(sorted(members))}"
+        )
+    return members[0]
+
+
 def _reduce(archive_path: Path) -> dict[str, YearQuotes]:
     """Stream one COTAHIST archive and collapse it per trading code (sync).
 
@@ -431,10 +457,8 @@ def _reduce(archive_path: Path) -> dict[str, YearQuotes]:
     """
     totals: dict[str, _Accumulator] = {}
     with zipfile.ZipFile(archive_path) as archive:
-        members = [n for n in archive.namelist() if n.upper().endswith(".TXT")]
-        if not members:
-            raise ValueError(f"{archive_path.name} carries no .TXT member")
-        with archive.open(members[0]) as raw:
+        member = _quote_member(archive_path, archive.namelist())
+        with archive.open(member) as raw:
             stream = io.TextIOWrapper(raw, encoding="latin-1", newline="")
             for line in stream:
                 if line[_TIPREG] != _QUOTE_RECORD or line[_TPMERC] != _SPOT_MARKET:

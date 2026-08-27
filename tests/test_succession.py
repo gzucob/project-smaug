@@ -310,24 +310,24 @@ def _succession(archive: _FakeArchive) -> CodeSuccession:
     )
 
 
-async def test_succession_does_not_probe_before_the_analytical_floor() -> None:
-    class _NoPreAnalysisArchive(_FakeArchive):
+async def test_first_cotahist_session_does_not_probe_a_pre_floor_archive() -> None:
+    class _NoPreFloorArchive(_FakeArchive):
         async def year(self, year: int) -> Mapping[str, YearQuotes]:
-            if year < 2010:
-                raise AssertionError("analysis must not read COTAHIST before 2010")
+            if year == 1985:
+                raise AssertionError("COTAHIST must not be read before 1986")
             return await super().year(year)
 
-    archive = _NoPreAnalysisArchive(
-        {2010: {"OLD3": _quotes(_sessions(date(2010, 1, 4), ["10"]))}}
+    archive = _NoPreFloorArchive(
+        {1986: {"OLD3": _quotes(_sessions(date(1986, 1, 2), ["10"]))}}
     )
     succession = CodeSuccession(
         archive,  # type: ignore[arg-type]
         listed_since=lambda ticker: date(1970, 1, 1),
-        today=lambda: date(2010, 12, 31),
+        today=lambda: date(1986, 12, 31),
     )
 
-    assert await succession.candidates("OLD3", 2010) == ("OLD3",)
-    assert all(year >= 2010 for year in archive.calls)
+    assert await succession.candidates("OLD3", 1986) == ("OLD3",)
+    assert 1985 not in archive.calls
 
 
 async def test_the_year_of_the_rename_is_read_under_both_codes() -> None:
