@@ -178,6 +178,7 @@ class Cpc41AccountEvidenceResponse(BaseModel):
     selection_status: Cpc41SelectionStatus
     value: Decimal | None
     basis: str | None
+    expected: bool = False
 
 
 class Cpc41PeriodProvenanceResponse(BaseModel):
@@ -195,6 +196,12 @@ class Cpc41PeriodProvenanceResponse(BaseModel):
     basic_blocker: NullReason | None
     diluted_blocker: NullReason | None
     source_accounts: list[Cpc41AccountEvidenceResponse]
+    basic_disclosure_status: Cpc41EvidenceStatus | None = None
+    diluted_disclosure_status: Cpc41EvidenceStatus | None = None
+    basic_class_status: Cpc41EvidenceStatus | None = None
+    diluted_class_status: Cpc41EvidenceStatus | None = None
+    basic_multiplier_status: Cpc41EvidenceStatus | None = None
+    diluted_multiplier_status: Cpc41EvidenceStatus | None = None
 
 
 class Cpc41WindowProvenanceResponse(BaseModel):
@@ -550,6 +557,12 @@ def _cpc41_window_response(
             diluted_weighted_shares_status=period.diluted_weighted_shares_status,
             basic_blocker=period.basic_blocker,
             diluted_blocker=period.diluted_blocker,
+            basic_disclosure_status=period.basic_disclosure_status,
+            diluted_disclosure_status=period.diluted_disclosure_status,
+            basic_class_status=period.basic_class_status,
+            diluted_class_status=period.diluted_class_status,
+            basic_multiplier_status=period.basic_multiplier_status,
+            diluted_multiplier_status=period.diluted_multiplier_status,
             source_accounts=[
                 Cpc41AccountEvidenceResponse(
                     module=account.module,
@@ -558,6 +571,7 @@ def _cpc41_window_response(
                     selection_status=account.selection_status,
                     value=account.value,
                     basis=account.basis,
+                    expected=account.expected,
                 )
                 for account in period.source_accounts
             ],

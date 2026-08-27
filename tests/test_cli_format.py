@@ -18,6 +18,11 @@ from smaug.analysis.application.drift import AccountDrift, DriftReport, TickerDr
 from smaug.analysis.domain.entities import VIEW_CLOSED_YEAR, TickerAnalysis
 from smaug.analysis.domain.financials import (
     AccountingRegime,
+    Cpc41AccountEvidence,
+    Cpc41EvidenceStatus,
+    Cpc41PeriodProvenance,
+    Cpc41SelectionStatus,
+    Cpc41WindowProvenance,
     DebtBlocker,
     DebtCoverageEvidence,
     DebtEvidenceSnapshot,
@@ -237,6 +242,60 @@ def test_should_render_doctor_coverage_with_named_and_unclassified() -> None:
     assert "missing_price=1" in out  # breakdown tallies the named cause
     assert "price_source=B3:AZZA3@2026-08-14" in out
     assert "(no persisted analysis)" in out  # a ticker with nothing is still reported
+
+
+def test_should_render_expected_cpc41_refs_and_basis_statuses() -> None:
+    provenance = Cpc41WindowProvenance(
+        selected_periods=(
+            Cpc41PeriodProvenance(
+                reference_date=date(2024, 12, 31),
+                disclosure_status=Cpc41EvidenceStatus.AMBIGUOUS,
+                class_status=Cpc41EvidenceStatus.AMBIGUOUS,
+                multiplier_status=Cpc41EvidenceStatus.ABSENT,
+                basic_disclosure_status=Cpc41EvidenceStatus.ABSENT,
+                diluted_disclosure_status=Cpc41EvidenceStatus.AMBIGUOUS,
+                basic_class_status=Cpc41EvidenceStatus.ABSENT,
+                diluted_class_status=Cpc41EvidenceStatus.AMBIGUOUS,
+                basic_multiplier_status=Cpc41EvidenceStatus.ABSENT,
+                diluted_multiplier_status=Cpc41EvidenceStatus.AMBIGUOUS,
+                source_accounts=(
+                    Cpc41AccountEvidence(
+                        module="DRE",
+                        code="3.99.01.*",
+                        name="class label required",
+                        selection_status=Cpc41SelectionStatus.ABSENT,
+                        basis="basic",
+                        expected=True,
+                    ),
+                ),
+            ),
+        ),
+        basic_blocker=NullReason.MISSING_CPC41_DISCLOSURE,
+    )
+    report = DoctorReport(
+        tickers=(
+            TickerCoverage(
+                ticker="PETR4",
+                sector=Sector.COMMODITY,
+                exercises=(
+                    ExerciseCoverage(
+                        view=VIEW_CLOSED_YEAR,
+                        reference_date=date(2024, 12, 31),
+                        indicators=(),
+                        cpc41_window_provenance=provenance,
+                    ),
+                ),
+            ),
+        )
+    )
+
+    out = format_doctor(report)
+
+    assert "basic=absent/absent/absent/absent" in out
+    assert "diluted=ambiguous/ambiguous/ambiguous/absent" in out
+    assert "module=DRE code=3.99.01.*" in out
+    assert "name='class label required'" in out
+    assert "selection=absent expected=true" in out
 
 
 def test_should_render_analysis_with_view_tag() -> None:

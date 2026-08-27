@@ -320,8 +320,16 @@ def test_cpc41_window_provenance_round_trips_through_sql_and_api() -> None:
                         name="Lucro por ação ON",
                         selection_status=Cpc41SelectionStatus.SELECTED,
                         value=Decimal("1.25"),
+                        basis="basic",
+                        expected=True,
                     ),
                 ),
+                basic_disclosure_status=Cpc41EvidenceStatus.AVAILABLE,
+                diluted_disclosure_status=Cpc41EvidenceStatus.ABSENT,
+                basic_class_status=Cpc41EvidenceStatus.AVAILABLE,
+                diluted_class_status=Cpc41EvidenceStatus.ABSENT,
+                basic_multiplier_status=Cpc41EvidenceStatus.AVAILABLE,
+                diluted_multiplier_status=Cpc41EvidenceStatus.ABSENT,
             ),
         ),
         basic_blocker=None,
@@ -359,3 +367,12 @@ def test_cpc41_window_provenance_round_trips_through_sql_and_api() -> None:
     assert response_provenance.selected_periods[0].source_accounts[
         0
     ].selection_status is (Cpc41SelectionStatus.SELECTED)
+    assert response_provenance.selected_periods[0].source_accounts[0].expected is True
+    assert (
+        response_provenance.selected_periods[0].basic_disclosure_status
+        is Cpc41EvidenceStatus.AVAILABLE
+    )
+    assert (
+        response_provenance.selected_periods[0].diluted_disclosure_status
+        is Cpc41EvidenceStatus.ABSENT
+    )

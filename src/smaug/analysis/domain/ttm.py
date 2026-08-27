@@ -382,6 +382,7 @@ def _ttm_weighted_eps(
 
 _SPECIFIC_CPC41_REASONS = (
     NullReason.MISSING_ECONOMIC_RIGHTS,
+    NullReason.UNRESOLVED_SHARE_CLASS,
     NullReason.MISSING_UNIT_COMPOSITION,
     NullReason.MISSING_CPC41_DISCLOSURE,
     NullReason.MISSING_WEIGHTED_AVERAGE_SHARES,
@@ -436,6 +437,8 @@ def _cpc41_ttm_null_reason(
     for reason in _SPECIFIC_CPC41_REASONS[:-1]:
         if reason in period_reasons:
             return reason
+    if _cpc41_multiplier_mismatch(periods, refs, diluted=diluted):
+        return NullReason.MISSING_UNIT_COMPOSITION
     for ref, candidate in zip(refs, selected, strict=True):
         if candidate is None:
             period = by_date.get(ref)
@@ -498,16 +501,44 @@ def _cpc41_accounts(
             )
         else:
             selection = Cpc41SelectionStatus.NOT_SELECTED
+        basis = "diluted" if diluted else "basic"
+        if entry.found:
+            accounts.extend(
+                Cpc41AccountEvidence(
+                    module=entry.statement,
+                    code=ref.code,
+                    name=ref.name,
+                    selection_status=selection,
+                    value=ref.value,
+                    basis=basis,
+                )
+                for ref in entry.found
+            )
+            continue
+
+        # Keep an absent disclosure auditable too.  There is no raw row to copy,
+        # so materialize the expected CVM identity from the generic source
+        # contract instead of returning an unqualified ``raw_ref none``.
+        expected_codes = tuple(
+            item.removeprefix("code=").strip()
+            for item in entry.expected
+            if item.startswith("code=")
+        ) or (f"3.99.{'02' if diluted else '01'}.*",)
+        expected_name = (
+            "; ".join(item for item in entry.expected if not item.startswith("code="))
+            or "class label required"
+        )
         accounts.extend(
             Cpc41AccountEvidence(
                 module=entry.statement,
-                code=ref.code,
-                name=ref.name,
+                code=code,
+                name=expected_name,
                 selection_status=selection,
-                value=ref.value,
-                basis="diluted" if diluted else "basic",
+                value=None,
+                basis=basis,
+                expected=True,
             )
-            for ref in entry.found
+            for code in expected_codes
         )
     return tuple(accounts)
 
@@ -518,6 +549,31 @@ def _cpc41_base_eps(period: StandardizedFinancials, *, diluted: bool) -> Decimal
     if disclosure is None:
         return None
     return disclosure.diluted_base_eps if diluted else disclosure.basic_base_eps
+
+
+def _cpc41_multiplier_mismatch(
+    periods: Sequence[StandardizedFinancials],
+    refs: Sequence[date],
+    *,
+    diluted: bool,
+) -> bool:
+    """Detect an inconsistent unit basis across a selected strict window."""
+    by_date = {period.reference_date: period for period in periods}
+    multipliers: list[Decimal] = []
+    for ref in refs:
+        period = by_date.get(ref)
+        if period is None:
+            return False
+        disclosure = period.cpc41
+        if (
+            disclosure is None
+            or _cpc41_base_eps(period, diluted=diluted) is None
+            or disclosure.security_multiplier is None
+            or disclosure.security_multiplier <= 0
+        ):
+            return False
+        multipliers.append(disclosure.security_multiplier)
+    return len(set(multipliers)) > 1
 
 
 def _cpc41_disclosure_status(
@@ -582,6 +638,14 @@ def _cpc41_multiplier_status(
     )
 
 
+def _cpc41_aggregate_status(
+    basic: Cpc41EvidenceStatus,
+    diluted: Cpc41EvidenceStatus,
+) -> Cpc41EvidenceStatus:
+    """Retain the legacy aggregate field without hiding basis differences."""
+    return basic if basic is diluted else Cpc41EvidenceStatus.AMBIGUOUS
+
+
 def _cpc41_weighted_status(
     period: StandardizedFinancials,
     candidate: _WeightedPeriod | None,
@@ -624,6 +688,10 @@ def _cpc41_window_provenance(
 ) -> Cpc41WindowProvenance:
     """Build the complete selected-window audit, oldest period first."""
     by_date = {period.reference_date: period for period in periods}
+    basic_multiplier_mismatch = _cpc41_multiplier_mismatch(periods, refs, diluted=False)
+    diluted_multiplier_mismatch = _cpc41_multiplier_mismatch(
+        periods, refs, diluted=True
+    )
     selected: list[Cpc41PeriodProvenance] = []
     for ref in sorted(refs):
         period = by_date.get(ref)
@@ -631,20 +699,69 @@ def _cpc41_window_provenance(
             selected.append(
                 Cpc41PeriodProvenance(
                     reference_date=ref,
+                    disclosure_status=Cpc41EvidenceStatus.ABSENT,
+                    class_status=Cpc41EvidenceStatus.ABSENT,
+                    multiplier_status=Cpc41EvidenceStatus.ABSENT,
                     basic_blocker=NullReason.MISSING_CPC41_DISCLOSURE,
                     diluted_blocker=NullReason.MISSING_CPC41_DISCLOSURE,
+                    basic_disclosure_status=Cpc41EvidenceStatus.ABSENT,
+                    diluted_disclosure_status=Cpc41EvidenceStatus.ABSENT,
+                    basic_class_status=Cpc41EvidenceStatus.ABSENT,
+                    diluted_class_status=Cpc41EvidenceStatus.ABSENT,
+                    basic_multiplier_status=Cpc41EvidenceStatus.ABSENT,
+                    diluted_multiplier_status=Cpc41EvidenceStatus.ABSENT,
                 )
             )
             continue
 
         basic_candidate = weighted_basic.get(ref)
         diluted_candidate = weighted_diluted.get(ref)
+        basic_disclosure_status = _cpc41_disclosure_status(period, diluted=False)
+        diluted_disclosure_status = _cpc41_disclosure_status(period, diluted=True)
+        basic_class_status = _cpc41_class_status(period, diluted=False)
+        diluted_class_status = _cpc41_class_status(period, diluted=True)
+        multiplier_status = _cpc41_multiplier_status(period)
+        basic_multiplier_status = (
+            Cpc41EvidenceStatus.AMBIGUOUS
+            if basic_multiplier_mismatch
+            else multiplier_status
+        )
+        diluted_multiplier_status = (
+            Cpc41EvidenceStatus.AMBIGUOUS
+            if diluted_multiplier_mismatch
+            else multiplier_status
+        )
+        multiplier_status = _cpc41_aggregate_status(
+            basic_multiplier_status, diluted_multiplier_status
+        )
+        basic_blocker_for_period = (
+            NullReason.MISSING_UNIT_COMPOSITION
+            if basic_candidate is None and basic_multiplier_mismatch
+            else (
+                _cpc41_period_reason(period, diluted=False)
+                if basic_candidate is None
+                else None
+            )
+        )
+        diluted_blocker_for_period = (
+            NullReason.MISSING_UNIT_COMPOSITION
+            if diluted_candidate is None and diluted_multiplier_mismatch
+            else (
+                _cpc41_period_reason(period, diluted=True)
+                if diluted_candidate is None
+                else None
+            )
+        )
         selected.append(
             Cpc41PeriodProvenance(
                 reference_date=ref,
-                disclosure_status=_cpc41_disclosure_status(period, diluted=False),
-                class_status=_cpc41_class_status(period, diluted=False),
-                multiplier_status=_cpc41_multiplier_status(period),
+                disclosure_status=_cpc41_aggregate_status(
+                    basic_disclosure_status, diluted_disclosure_status
+                ),
+                class_status=_cpc41_aggregate_status(
+                    basic_class_status, diluted_class_status
+                ),
+                multiplier_status=multiplier_status,
                 multiplier=(
                     None if period.cpc41 is None else period.cpc41.security_multiplier
                 ),
@@ -656,17 +773,15 @@ def _cpc41_window_provenance(
                 diluted_weighted_shares_status=_cpc41_weighted_status(
                     period, diluted_candidate, diluted=True
                 ),
-                basic_blocker=(
-                    _cpc41_period_reason(period, diluted=False)
-                    if basic_candidate is None
-                    else None
-                ),
-                diluted_blocker=(
-                    _cpc41_period_reason(period, diluted=True)
-                    if diluted_candidate is None
-                    else None
-                ),
+                basic_blocker=basic_blocker_for_period,
+                diluted_blocker=diluted_blocker_for_period,
                 source_accounts=_cpc41_accounts(period),
+                basic_disclosure_status=basic_disclosure_status,
+                diluted_disclosure_status=diluted_disclosure_status,
+                basic_class_status=basic_class_status,
+                diluted_class_status=diluted_class_status,
+                basic_multiplier_status=basic_multiplier_status,
+                diluted_multiplier_status=diluted_multiplier_status,
             )
         )
     return Cpc41WindowProvenance(

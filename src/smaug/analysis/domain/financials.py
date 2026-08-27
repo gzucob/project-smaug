@@ -203,6 +203,10 @@ class Cpc41AccountEvidence:
     selection_status: Cpc41SelectionStatus
     value: Decimal | None = None
     basis: str | None = None
+    # ``True`` identifies a synthesized expected reference emitted when CVM did
+    # not return a matching row.  Actual rows remain ``False`` so an audit can
+    # distinguish absence from a found-but-not-selected account.
+    expected: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +225,15 @@ class Cpc41PeriodProvenance:
     basic_blocker: NullReason | None = None
     diluted_blocker: NullReason | None = None
     source_accounts: tuple[Cpc41AccountEvidence, ...] = ()
+    # Basis-specific statuses were added after the initial aggregate fields.
+    # ``None`` keeps rows written by that shape readable; producers of current
+    # windows always populate all six fields.
+    basic_disclosure_status: Cpc41EvidenceStatus | None = None
+    diluted_disclosure_status: Cpc41EvidenceStatus | None = None
+    basic_class_status: Cpc41EvidenceStatus | None = None
+    diluted_class_status: Cpc41EvidenceStatus | None = None
+    basic_multiplier_status: Cpc41EvidenceStatus | None = None
+    diluted_multiplier_status: Cpc41EvidenceStatus | None = None
 
 
 @dataclass(frozen=True, slots=True)

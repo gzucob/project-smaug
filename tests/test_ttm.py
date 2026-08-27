@@ -738,6 +738,179 @@ def test_ttm_provenance_keeps_status_and_raw_accounts_for_every_selected_period(
     assert latest.class_status is Cpc41EvidenceStatus.AVAILABLE
 
 
+def test_ttm_names_an_inconsistent_unit_multiplier_as_the_blocker() -> None:
+    quarters = [
+        _q(
+            end,
+            period_start=start,
+            net_income=Decimal("100"),
+            cpc41=_cpc41("2", multiplier=1 if index < 2 else 2, diluted="2"),
+        )
+        for index, (end, start) in enumerate(
+            zip(
+                _ENDS,
+                (
+                    date(2025, 4, 1),
+                    date(2025, 7, 1),
+                    date(2025, 10, 1),
+                    date(2026, 1, 1),
+                ),
+                strict=True,
+            )
+        )
+    ]
+
+    ttm = build_ttm(quarters, None)
+
+    assert ttm is not None
+    assert ttm.eps_basic is None
+    assert ttm.eps_diluted is None
+    assert ttm.eps_basic_null_reason is NullReason.MISSING_UNIT_COMPOSITION
+    assert ttm.eps_diluted_null_reason is NullReason.MISSING_UNIT_COMPOSITION
+    provenance = ttm.cpc41_window_provenance
+    assert provenance is not None
+    assert provenance.basic_blocker is NullReason.MISSING_UNIT_COMPOSITION
+    assert provenance.diluted_blocker is NullReason.MISSING_UNIT_COMPOSITION
+    assert all(
+        period.multiplier_status is Cpc41EvidenceStatus.AMBIGUOUS
+        for period in provenance.selected_periods
+    )
+    assert provenance.selected_periods[2].basic_blocker is (
+        NullReason.MISSING_UNIT_COMPOSITION
+    )
+    assert provenance.selected_periods[2].diluted_blocker is (
+        NullReason.MISSING_UNIT_COMPOSITION
+    )
+
+
+def test_ttm_preserves_unresolved_share_class_blocker() -> None:
+    def evidence(field: str, code: str) -> SourceAccountEvidence:
+        return SourceAccountEvidence(
+            field=field,
+            statement="DRE",
+            status=SourceAccountStatus.ABSENT,
+            expected=(f"code={code}.*", "class label required"),
+            blocker=NullReason.UNRESOLVED_SHARE_CLASS,
+        )
+
+    quarters = [
+        replace(
+            _q(
+                end,
+                period_start=start,
+                net_income=Decimal("100"),
+            ),
+            eps_basic_null_reason=NullReason.UNRESOLVED_SHARE_CLASS,
+            eps_diluted_null_reason=NullReason.UNRESOLVED_SHARE_CLASS,
+            source_account_evidence=(
+                evidence("eps_basic", "3.99.01"),
+                evidence("eps_diluted", "3.99.02"),
+            ),
+        )
+        for end, start in zip(
+            _ENDS,
+            (
+                date(2025, 4, 1),
+                date(2025, 7, 1),
+                date(2025, 10, 1),
+                date(2026, 1, 1),
+            ),
+            strict=True,
+        )
+    ]
+
+    ttm = build_ttm(quarters, None)
+
+    assert ttm is not None
+    assert ttm.eps_basic_null_reason is NullReason.UNRESOLVED_SHARE_CLASS
+    assert ttm.eps_diluted_null_reason is NullReason.UNRESOLVED_SHARE_CLASS
+    provenance = ttm.cpc41_window_provenance
+    assert provenance is not None
+    assert provenance.basic_blocker is NullReason.UNRESOLVED_SHARE_CLASS
+    assert provenance.diluted_blocker is NullReason.UNRESOLVED_SHARE_CLASS
+
+
+def test_ttm_provenance_materializes_expected_refs_for_absent_cpc41() -> None:
+    def evidence(field: str, code: str) -> SourceAccountEvidence:
+        return SourceAccountEvidence(
+            field=field,
+            statement="DRE",
+            status=SourceAccountStatus.ABSENT,
+            expected=(f"code={code}.*", "class label required"),
+        )
+
+    quarters = [
+        replace(
+            _q(
+                end,
+                period_start=start,
+                net_income=Decimal("100"),
+            ),
+            source_account_evidence=(
+                evidence("eps_basic", "3.99.01"),
+                evidence("eps_diluted", "3.99.02"),
+            ),
+        )
+        for end, start in zip(
+            _ENDS,
+            (
+                date(2025, 4, 1),
+                date(2025, 7, 1),
+                date(2025, 10, 1),
+                date(2026, 1, 1),
+            ),
+            strict=True,
+        )
+    ]
+
+    ttm = build_ttm(quarters, None)
+
+    assert ttm is not None
+    provenance = ttm.cpc41_window_provenance
+    assert provenance is not None
+    period = provenance.selected_periods[0]
+    basic = period.source_accounts[0]
+    assert basic.module == "DRE"
+    assert basic.code == "3.99.01.*"
+    assert basic.name == "class label required"
+    assert basic.selection_status is Cpc41SelectionStatus.ABSENT
+    assert basic.expected is True
+
+
+def test_ttm_provenance_keeps_basic_and_diluted_statuses_separate() -> None:
+    quarters = [
+        _q(
+            end,
+            period_start=start,
+            net_income=Decimal("100"),
+            cpc41=_cpc41("2"),
+        )
+        for end, start in zip(
+            _ENDS,
+            (
+                date(2025, 4, 1),
+                date(2025, 7, 1),
+                date(2025, 10, 1),
+                date(2026, 1, 1),
+            ),
+            strict=True,
+        )
+    ]
+
+    ttm = build_ttm(quarters, None)
+
+    assert ttm is not None
+    provenance = ttm.cpc41_window_provenance
+    assert provenance is not None
+    period = provenance.selected_periods[-1]
+    assert period.basic_disclosure_status is Cpc41EvidenceStatus.AVAILABLE
+    assert period.diluted_disclosure_status is Cpc41EvidenceStatus.ABSENT
+    assert period.basic_class_status is Cpc41EvidenceStatus.AVAILABLE
+    assert period.diluted_class_status is Cpc41EvidenceStatus.ABSENT
+    assert period.disclosure_status is Cpc41EvidenceStatus.AMBIGUOUS
+    assert period.class_status is Cpc41EvidenceStatus.AMBIGUOUS
+
+
 def test_ttm_carries_the_null_cause_provenance() -> None:
     # filed_regime / unmapped_fields (#30) must survive the TTM assembly, or the
     # live view would lose the ability to attribute its nulls.

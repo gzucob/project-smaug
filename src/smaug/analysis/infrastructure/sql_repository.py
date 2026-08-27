@@ -287,6 +287,7 @@ def _cpc41_window_provenance_to_json(
             "selection_status": account.selection_status.value,
             "value": None if account.value is None else str(account.value),
             "basis": account.basis,
+            "expected": account.expected,
         }
 
     def period_to_json(period: Cpc41PeriodProvenance) -> dict[str, Any]:
@@ -319,6 +320,36 @@ def _cpc41_window_provenance_to_json(
             "source_accounts": [
                 account_to_json(account) for account in period.source_accounts
             ],
+            "basic_disclosure_status": (
+                None
+                if period.basic_disclosure_status is None
+                else period.basic_disclosure_status.value
+            ),
+            "diluted_disclosure_status": (
+                None
+                if period.diluted_disclosure_status is None
+                else period.diluted_disclosure_status.value
+            ),
+            "basic_class_status": (
+                None
+                if period.basic_class_status is None
+                else period.basic_class_status.value
+            ),
+            "diluted_class_status": (
+                None
+                if period.diluted_class_status is None
+                else period.diluted_class_status.value
+            ),
+            "basic_multiplier_status": (
+                None
+                if period.basic_multiplier_status is None
+                else period.basic_multiplier_status.value
+            ),
+            "diluted_multiplier_status": (
+                None
+                if period.diluted_multiplier_status is None
+                else period.diluted_multiplier_status.value
+            ),
         }
 
     return {
@@ -355,6 +386,10 @@ def _cpc41_window_provenance_from_json(
             return Cpc41EvidenceStatus(str(raw))
         except (TypeError, ValueError):
             return Cpc41EvidenceStatus.AMBIGUOUS
+
+    def evidence_status_or_none(raw: object) -> Cpc41EvidenceStatus | None:
+        """Read basis-specific fields while preserving the legacy absence."""
+        return None if raw is None else evidence_status(raw)
 
     def selection_status(raw: object) -> Cpc41SelectionStatus:
         if raw is None:
@@ -395,6 +430,7 @@ def _cpc41_window_provenance_from_json(
                     selection_status=selection_status(item.get("selection_status")),
                     value=_decimal(item.get("value")),
                     basis=None if item.get("basis") is None else str(item.get("basis")),
+                    expected=item.get("expected") is True,
                 )
             )
         return tuple(parsed)
@@ -428,6 +464,24 @@ def _cpc41_window_provenance_from_json(
                     basic_blocker=blocker(raw.get("basic_blocker")),
                     diluted_blocker=blocker(raw.get("diluted_blocker")),
                     source_accounts=accounts(raw.get("source_accounts")),
+                    basic_disclosure_status=evidence_status_or_none(
+                        raw.get("basic_disclosure_status")
+                    ),
+                    diluted_disclosure_status=evidence_status_or_none(
+                        raw.get("diluted_disclosure_status")
+                    ),
+                    basic_class_status=evidence_status_or_none(
+                        raw.get("basic_class_status")
+                    ),
+                    diluted_class_status=evidence_status_or_none(
+                        raw.get("diluted_class_status")
+                    ),
+                    basic_multiplier_status=evidence_status_or_none(
+                        raw.get("basic_multiplier_status")
+                    ),
+                    diluted_multiplier_status=evidence_status_or_none(
+                        raw.get("diluted_multiplier_status")
+                    ),
                 )
             )
     return Cpc41WindowProvenance(
