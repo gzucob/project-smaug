@@ -18,6 +18,7 @@ from typing import Protocol
 
 from smaug.portfolio.domain.company import CompanyIdentity
 from smaug.portfolio.domain.entities import PortfolioTicker
+from smaug.portfolio.domain.fca_placeholders import FcaPlaceholderReport
 from smaug.portfolio.domain.universe import ListedCompany
 
 
@@ -34,6 +35,10 @@ class CompanyRegistry(Protocol):
 
     async def companies(self) -> tuple[ListedCompany, ...]:
         """Every listed company, the unit a whole-exchange run iterates."""
+        ...
+
+    async def placeholder_report(self) -> FcaPlaceholderReport:
+        """Inventory FCA rows whose trading code cannot be used as a B3 code."""
         ...
 
 
