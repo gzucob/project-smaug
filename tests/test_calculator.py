@@ -8,6 +8,8 @@ from smaug.analysis.domain.calculator import compute
 from smaug.analysis.domain.financials import (
     AccountingRegime,
     BankRegulatoryProvenance,
+    InsuranceUnderwritingEvidence,
+    InsuranceUnderwritingStatus,
     MarketData,
     StandardizedFinancials,
 )
@@ -383,6 +385,52 @@ def test_insurer_ratios_name_missing_components_and_zero_premium() -> None:
     assert zero_premium.null_reasons["combined_ratio"] is NullReason.ZERO_DENOMINATOR
 
 
+def test_zero_activity_only_suppresses_underwriting_ratios() -> None:
+    financials = StandardizedFinancials(
+        reference_date=date(2025, 12, 31),
+        sector=Sector.INSURER,
+        filed_regime=AccountingRegime.INSURANCE,
+        revenue=Decimal(1000),
+        net_income=Decimal(100),
+        equity=Decimal(1000),
+        insurance_underwriting_evidence=InsuranceUnderwritingEvidence(
+            status=InsuranceUnderwritingStatus.ZERO_ACTIVITY
+        ),
+    )
+
+    ind = compute(financials, None, MarketData())
+
+    for name in ("loss_ratio", "combined_ratio"):
+        assert getattr(ind, name) is None
+        assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
+    # The aggregate proof is scoped to insurer-only ratios. It must not hide a
+    # generic ratio that the insurance chart still supports.
+    assert ind.net_margin == Decimal("0.1")
+    assert "net_margin" not in ind.null_reasons
+
+
+def test_active_ifrs17_insurer_without_legacy_components_stays_source_absent() -> None:
+    financials = StandardizedFinancials(
+        reference_date=date(2025, 12, 31),
+        sector=Sector.INSURER,
+        filed_regime=AccountingRegime.INSURANCE,
+        revenue=Decimal(1000),
+        net_income=Decimal(100),
+        equity=Decimal(1000),
+        insurance_underwriting_evidence=InsuranceUnderwritingEvidence(
+            status=InsuranceUnderwritingStatus.ACTIVE
+        ),
+    )
+
+    ind = compute(financials, None, MarketData())
+
+    assert ind.loss_ratio is None
+    assert ind.combined_ratio is None
+    assert ind.null_reasons["loss_ratio"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    assert ind.null_reasons["combined_ratio"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    assert ind.net_margin == Decimal("0.1")
+
+
 def test_insurer_expense_reversal_reduces_the_combined_ratio() -> None:
     reversal = compute(
         replace(_irbr3_2022(), insurance_admin_expenses=Decimal(421_237)),
@@ -695,6 +743,10 @@ def test_applicability_follows_the_filed_regime_not_the_sector() -> None:
     # filing, not a verdict of ours — which is the whole difference (#95).
     assert ind.null_reasons["gross_margin"] is NullReason.SOURCE_ACCOUNT_ABSENT
     assert ind.null_reasons["fcf"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    for name in ("loss_ratio", "combined_ratio"):
+        assert getattr(ind, name) is None
+        assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
+    assert ind.net_margin == Decimal("0.625")
     assert ind.roe is not None  # the mapped core still computes
 
 

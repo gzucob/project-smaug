@@ -152,6 +152,29 @@ class SourceAccountEvidence:
     consumer_indicators: tuple[str, ...] = ()
 
 
+class InsuranceUnderwritingStatus(StrEnum):
+    """What the insurance DRE proves about consolidated underwriting activity."""
+
+    ACTIVE = "active"
+    ZERO_ACTIVITY = "zero_activity"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class InsuranceUnderwritingEvidence:
+    """Evidence used to decide whether insurer-only ratios apply.
+
+    The two top-level insurance DRE aggregates are the complete consolidated
+    underwriting perimeter. An explicit zero in both is evidence that the filer
+    did not underwrite in that period; it is different from a missing aggregate
+    or from an IFRS 17 aggregate whose legacy components are unavailable.
+    """
+
+    status: InsuranceUnderwritingStatus = InsuranceUnderwritingStatus.UNKNOWN
+    revenue_aggregate: SourceAccountRef | None = None
+    expense_aggregate: SourceAccountRef | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class BankRegulatoryProvenance:
     """Contract metadata for a bank ratio's paired regulatory inputs.
@@ -403,6 +426,7 @@ class StandardizedFinancials:
     claims_incurred: Decimal | None = None
     acquisition_costs: Decimal | None = None
     insurance_admin_expenses: Decimal | None = None
+    insurance_underwriting_evidence: InsuranceUnderwritingEvidence | None = None
     # Null-cause provenance (#30). ``filed_regime`` is what the mapper detected
     # in the statements themselves (None = undetected); ``unmapped_fields`` names
     # the fields above that the mapper deliberately never read for this filer, so

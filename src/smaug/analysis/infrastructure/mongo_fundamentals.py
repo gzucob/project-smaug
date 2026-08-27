@@ -37,6 +37,8 @@ from smaug.analysis.domain.financials import (
     DebtInstrument,
     DebtLineEvidence,
     DebtLineRole,
+    InsuranceUnderwritingEvidence,
+    InsuranceUnderwritingStatus,
     IssuerIdentity,
     SourceAccountEvidence,
     SourceAccountRef,
@@ -156,6 +158,14 @@ def _by_code(accounts: Accounts, code: str) -> Decimal | None:
     for account in accounts:
         if str(account.get("code")) == code:
             return _dec(account.get("quantity"))
+    return None
+
+
+def _account_by_code(accounts: Accounts, code: str) -> Mapping[str, Any] | None:
+    """Return the first raw account with an exact CVM code."""
+    for account in accounts:
+        if str(account.get("code")) == code:
+            return account
     return None
 
 
@@ -521,6 +531,11 @@ _SOURCE_CONSUMERS: dict[str, tuple[str, ...]] = {
     "bank_efficiency_income": ("efficiency_ratio",),
     "credit_loss_expense_annualized": ("cost_of_risk",),
     "average_credit_portfolio": ("cost_of_risk",),
+    "insurance_underwriting_activity": ("loss_ratio", "combined_ratio"),
+    "earned_premium": ("loss_ratio", "combined_ratio"),
+    "claims_incurred": ("loss_ratio", "combined_ratio"),
+    "acquisition_costs": ("combined_ratio",),
+    "insurance_admin_expenses": ("combined_ratio",),
 }
 
 
@@ -746,6 +761,66 @@ def _source_account_evidence(
             financials.unmapped_fields,
         )
     )
+    if regime is AccountingRegime.INSURANCE:
+        underwriting = financials.insurance_underwriting_evidence
+        aggregate_refs: tuple[SourceAccountRef, ...] = ()
+        activity_blocker: NullReason | None = None
+        if underwriting is not None:
+            aggregate_refs = tuple(
+                ref
+                for ref in (
+                    underwriting.revenue_aggregate,
+                    underwriting.expense_aggregate,
+                )
+                if ref is not None
+            )
+            if underwriting.status is InsuranceUnderwritingStatus.ZERO_ACTIVITY:
+                activity_blocker = NullReason.INAPPLICABLE_REGIME
+        add(
+            _source_entry(
+                "insurance_underwriting_activity",
+                "DRE",
+                ("code=3.01", "code=3.02", "both explicit zero => no activity"),
+                aggregate_refs,
+                None,
+                financials.unmapped_fields,
+                formula="3.01 == 0 and 3.02 == 0",
+                blocker=activity_blocker,
+                derived=True,
+            )
+        )
+        for field, codes, value in (
+            (
+                "earned_premium",
+                ("3.01.01.01", "3.01.02.01"),
+                financials.earned_premium,
+            ),
+            (
+                "claims_incurred",
+                ("3.02.01.01", "3.02.02.01"),
+                financials.claims_incurred,
+            ),
+            (
+                "acquisition_costs",
+                ("3.02.01.02", "3.02.02.02"),
+                financials.acquisition_costs,
+            ),
+            (
+                "insurance_admin_expenses",
+                ("3.04",),
+                financials.insurance_admin_expenses,
+            ),
+        ):
+            add(
+                _source_entry(
+                    field,
+                    "DRE",
+                    tuple(f"code={code}" for code in codes),
+                    _code_refs(dre, dre_s, *codes),
+                    value,
+                    financials.unmapped_fields,
+                )
+            )
     cpc_refs_basic = _matching_refs(
         per_share_accounts,
         Decimal(1),
@@ -1826,6 +1901,60 @@ def _loan_book(bpa: Accounts, scale: Decimal) -> Decimal | None:
     return None
 
 
+def _insurance_underwriting_evidence(
+    dre: Accounts, scale: Decimal
+) -> InsuranceUnderwritingEvidence:
+    """Prove insurance activity from the filing's complete DRE aggregates.
+
+    The legacy component leaves are required to calculate the ratios, but their
+    absence alone cannot distinguish a non-underwriting holding from an IFRS 17
+    insurer whose filing only exposes broad aggregates. The top-level 3.01 and
+    3.02 rows are the explicit consolidated perimeter: two parsed zeros prove
+    zero underwriting activity; any other complete pair proves that activity
+    exists; an absent or unreadable side leaves the status unknown.
+    """
+    revenue_account = _account_by_code(dre, "3.01")
+    expense_account = _account_by_code(dre, "3.02")
+    revenue_value = (
+        None
+        if revenue_account is None
+        else _mul(_dec(revenue_account.get("quantity")), scale)
+    )
+    expense_value = (
+        None
+        if expense_account is None
+        else _mul(_dec(expense_account.get("quantity")), scale)
+    )
+    if revenue_value is None or expense_value is None:
+        status = InsuranceUnderwritingStatus.UNKNOWN
+    elif revenue_value == 0 and expense_value == 0:
+        status = InsuranceUnderwritingStatus.ZERO_ACTIVITY
+    else:
+        status = InsuranceUnderwritingStatus.ACTIVE
+
+    return InsuranceUnderwritingEvidence(
+        status=status,
+        revenue_aggregate=(
+            None
+            if revenue_account is None
+            else SourceAccountRef(
+                code="3.01",
+                name=str(revenue_account.get("name", "")),
+                value=revenue_value,
+            )
+        ),
+        expense_aggregate=(
+            None
+            if expense_account is None
+            else SourceAccountRef(
+                code="3.02",
+                name=str(expense_account.get("name", "")),
+                value=expense_value,
+            )
+        ),
+    )
+
+
 def _as_insurer(
     base: StandardizedFinancials,
     bpa: Accounts,
@@ -1846,6 +1975,7 @@ def _as_insurer(
     assessment = _total_debt(bpp, bpp_s)
     total_debt = assessment.total_debt
     debt_reason = assessment.null_reason
+    underwriting_evidence = _insurance_underwriting_evidence(dre, dre_s)
     # Through 2022 the structured insurer DRE separates earned premiums, claims
     # and acquisition costs under the insurance and reinsurance branches. IFRS 17
     # replaced those leaves with broader service/reinsurance aggregates in 2023.
@@ -1877,6 +2007,7 @@ def _as_insurer(
         claims_incurred=_mul(claims_incurred, dre_s),
         acquisition_costs=_mul(acquisition_costs, dre_s),
         insurance_admin_expenses=_mul(_by_code(dre, "3.04"), dre_s),
+        insurance_underwriting_evidence=underwriting_evidence,
         unmapped_fields=_FINANCIAL_UNMAPPED_FIELDS,
     )
 
