@@ -16,17 +16,16 @@ they differ, which is price and therefore analysis.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from smaug.portfolio.domain.company import CompanyIdentity, fundamental_exclusion
-
-# A B3 trading code: a four-character root plus the one- or two-digit class
-# number. The root is alphanumeric because a real one is (``B3SA3`` — the
-# exchange itself); an all-digit code is not a root but a registration number
-# the filer put in the wrong column.
-_TRADING_CODE = re.compile(r"^[A-Z0-9]{4}[0-9]{1,2}$")
+from smaug.portfolio.domain.company import (
+    CompanyIdentity,
+    fundamental_exclusion,
+)
+from smaug.portfolio.domain.company import (
+    is_trading_code as _is_trading_code,
+)
 
 # Which class a company is named by when it lists several. ON first: it is the
 # share that carries the company's name in every reference, and the one a reader
@@ -36,13 +35,8 @@ _PRIMARY_ORDER: tuple[str, ...] = ("3", "4", "11", "5", "6")
 
 
 def is_trading_code(ticker: str) -> bool:
-    """Whether ``ticker`` has the shape of a B3 trading code.
-
-    A shape test, not an existence test — it rejects what the FCA's free-text
-    column collects, and says nothing about whether B3 lists the result.
-    """
-    code = ticker.strip().upper()
-    return bool(_TRADING_CODE.match(code)) and not code.isdigit()
+    """Whether ``ticker`` has the syntax of a B3 security code."""
+    return _is_trading_code(ticker)
 
 
 @dataclass(frozen=True, slots=True)

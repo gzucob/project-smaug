@@ -27,6 +27,9 @@ def _identity(
     cnpj: str = "00.000.000/0001-00",
     kind: InstrumentKind = InstrumentKind.COMMON_SHARE,
     trading_ended: date | None = None,
+    market: str = "Bolsa",
+    venue: str = "B3",
+    listing_evidence: tuple[str, ...] = ("cvm_fca.market",),
 ) -> CompanyIdentity:
     return CompanyIdentity(
         ticker=ticker,
@@ -37,6 +40,9 @@ def _identity(
         situation="Ativo",
         instrument_kind=kind,
         instrument_type=kind.value,
+        market=market,
+        venue=venue,
+        listing_evidence=listing_evidence,
         trading_ended=trading_ended,
     )
 
@@ -130,6 +136,41 @@ def test_only_current_shares_and_units_enter_the_fundamental_universe() -> None:
     )
 
     assert {company.ticker for company in companies} == {"WEGE3", "SAPR11"}
+
+
+def test_non_organized_market_stays_out_without_strict_b3_evidence() -> None:
+    companies = listed_companies(
+        [
+            _identity(
+                "MUUU4",
+                "28037",
+                kind=InstrumentKind.PREFERRED_SHARE,
+                market="Balcão Não-Organizado",
+                venue="",
+            )
+        ]
+    )
+
+    assert companies == ()
+
+
+def test_strict_b3_cotahist_evidence_can_admit_an_incomplete_fca_venue() -> None:
+    identity = _identity(
+        "BRST3",
+        "4601",
+        market="Balcão Não-Organizado",
+        venue="",
+        listing_evidence=(
+            "cvm_fca.market",
+            "b3.get_detail",
+            "b3.listed_supplement",
+            "b3.cotahist",
+        ),
+    )
+
+    companies = listed_companies([identity])
+
+    assert [company.tickers for company in companies] == [("BRST3",)]
 
 
 def test_the_batch_order_does_not_depend_on_the_index_order() -> None:

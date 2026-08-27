@@ -9,6 +9,8 @@ ticker is hard-coded (#212; ``CvmCompanyRegistry``).
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
@@ -51,6 +53,20 @@ _FUNDAMENTAL_INSTRUMENTS = frozenset(
 )
 
 
+# B3 security codes use a four-character alphanumeric root followed by one or
+# two class digits.  FCA carries real organized-market roots with more than one
+# digit (for example B100), so syntax alone cannot decide whether a code-shaped
+# row is listed.  ``fundamental_exclusion`` makes that decision from FCA/B3
+# market evidence below.
+_TRADING_CODE = re.compile(r"^[A-Z0-9]{4}[0-9]{1,2}$")
+
+
+def is_trading_code(ticker: str) -> bool:
+    """Whether ``ticker`` has the syntax of a B3 security code."""
+    code = ticker.strip().upper()
+    return bool(_TRADING_CODE.fullmatch(code)) and not code.isdigit()
+
+
 @dataclass(frozen=True)
 class CompanyIdentity:
     """The CVM registrant keys and cadastral facts a B3 ticker maps to."""
@@ -65,6 +81,15 @@ class CompanyIdentity:
     # The FCA's own ``Valor_Mobiliario`` label, kept verbatim so rejecting a
     # non-equity code can name what the regulator says it is.
     instrument_type: str
+    # The FCA venue fields are identity evidence, not a replacement for B3
+    # tape evidence. ``Mercado`` distinguishes B3's organized markets from
+    # non-organized OTC rows that can look like ordinary trading codes.
+    market: str = ""
+    venue: str = ""
+    # Source labels proving that a recovered code crossed the strict B3 detail,
+    # supplement and COTAHIST chain. Normal FCA rows carry only their market
+    # evidence; recovery may use this to override an incomplete venue field.
+    listing_evidence: tuple[str, ...] = field(default_factory=tuple)
     # End of this security's trading interval. ``None`` means the FCA row is
     # current; a dated identity remains resolvable for an explicit diagnosis but
     # does not enter the listed-equity universe.
@@ -139,6 +164,8 @@ def per_share_components(identity: CompanyIdentity) -> tuple[UnitComponent, ...]
 
 def fundamental_exclusion(identity: CompanyIdentity) -> str | None:
     """Why an FCA security cannot enter fundamental analysis, if anything."""
+    if not is_trading_code(identity.ticker):
+        return f"FCA trading code has invalid syntax: {identity.ticker!r}"
     if identity.ambiguous_cnpjs:
         candidates = ", ".join(identity.ambiguous_cnpjs)
         return f"ambiguous ticker-to-CNPJ mapping ({candidates})"
@@ -147,4 +174,36 @@ def fundamental_exclusion(identity: CompanyIdentity) -> str | None:
     if identity.instrument_kind not in _FUNDAMENTAL_INSTRUMENTS:
         label = identity.instrument_type or identity.instrument_kind.value
         return f"FCA instrument type is {label!r}"
+    market_is_organized = is_organized_market(identity.market, identity.venue)
+    if not market_is_organized and not _has_b3_evidence(identity):
+        market = identity.market or "<blank>"
+        venue = identity.venue or "<blank>"
+        return (
+            "FCA security is outside an organized B3 market "
+            f"(market={market!r}, venue={venue!r})"
+        )
     return None
+
+
+def is_organized_market(market: str, venue: str) -> bool:
+    """Whether FCA market and administrator identify an organized B3 venue."""
+    market_key = _fold(market)
+    venue_key = _fold(venue)
+    return market_key in {"bolsa", "balcao organizado"} and venue_key in {
+        "b3",
+        "b3 sa",
+    }
+
+
+def _has_b3_evidence(identity: CompanyIdentity) -> bool:
+    """Whether a recovered identity crossed every official B3 source boundary."""
+    required = {"b3.get_detail", "b3.listed_supplement", "b3.cotahist"}
+    return required.issubset(identity.listing_evidence)
+
+
+def _fold(text: str) -> str:
+    """Fold the FCA's accent-bearing market labels for comparison."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return (
+        "".join(c for c in decomposed if not unicodedata.combining(c)).strip().lower()
+    )

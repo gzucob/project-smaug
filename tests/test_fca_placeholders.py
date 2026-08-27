@@ -107,6 +107,8 @@ def _row(
     kind: InstrumentKind,
     per_share_class: PerShareClass | None = None,
     components: tuple[UnitComponent, ...] = (),
+    market: str = "Bolsa",
+    venue: str = "B3",
 ) -> FcaPlaceholderRow:
     return FcaPlaceholderRow(
         row_number=number,
@@ -119,6 +121,8 @@ def _row(
         instrument_type=(
             "Units" if kind is InstrumentKind.UNIT else "Ações Ordinárias"
         ),
+        market=market,
+        venue=venue,
         listed_since=date(2026, 1, 1),
         per_share_class=per_share_class,
         unit_components=components,
@@ -175,6 +179,13 @@ async def test_unit_uses_official_codes_and_cotahist_class_evidence() -> None:
         "BPAC3",
         "BPAC5",
     }
+    assert unit.market == "Bolsa"
+    assert unit.venue == "B3"
+    assert {
+        "b3.get_detail",
+        "b3.listed_supplement",
+        "b3.cotahist",
+    }.issubset(unit.listing_evidence)
 
 
 async def test_non_unit_selects_the_class_matching_the_fca_label() -> None:
