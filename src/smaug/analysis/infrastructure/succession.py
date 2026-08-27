@@ -405,8 +405,13 @@ class CodeSuccession:
         self, session: date, *, minimum_year: int | None = None
     ) -> date | None:
         """The trading session before ``session``, across the year boundary."""
+        floor = (
+            _FIRST_COTAHIST_YEAR
+            if minimum_year is None
+            else max(_FIRST_COTAHIST_YEAR, minimum_year)
+        )
         for year in (session.year, session.year - 1):
-            if minimum_year is not None and year < minimum_year:
+            if year < floor:
                 continue
             calendar = await self._calendar(year)
             earlier = [day for day in calendar if day < session]
