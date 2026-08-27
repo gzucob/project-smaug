@@ -96,6 +96,7 @@ from smaug.ingestion.infrastructure.b3_cash_dividends import (
     CASH_DIVIDEND_B3_MODULE,
     B3CashDividendSource,
 )
+from smaug.ingestion.infrastructure.b3_listed_company import B3ListedCompanyResolver
 from smaug.ingestion.infrastructure.cvm_capital import (
     CAPITAL_EVENT_MODULE,
     CAPITAL_MODULE,
@@ -122,6 +123,10 @@ from smaug.portfolio.domain.company import (
     fundamental_exclusion,
     is_unit,
     per_share_components,
+)
+from smaug.portfolio.domain.fca_placeholders import (
+    FcaPlaceholderFinding,
+    FcaPlaceholderReport,
 )
 from smaug.portfolio.domain.provenance import FCA_SOURCE, FcaSnapshotProvenance
 from smaug.portfolio.domain.sectors import Sector, sector_from_cvm
@@ -151,6 +156,12 @@ from smaug.portfolio.infrastructure.cvm_registry import (
     CvmCompanyRegistry,
 )
 from smaug.portfolio.infrastructure.cvm_securities import CvmSecurityHistory
+from smaug.portfolio.infrastructure.fca_placeholders import (
+    FcaPlaceholderRecovery,
+    OfficialRegistrant,
+    OfficialSecurityCode,
+    QuoteSeries,
+)
 from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.build import application_commit
 from smaug.shared.config import Settings, get_settings
@@ -231,6 +242,7 @@ async def _registry_identities(
     tickers: tuple[str, ...],
     artifact_store: SourceArtifactStore | None = None,
     fca_provenance: list[FcaSnapshotProvenance] | None = None,
+    placeholder_reports: list[FcaPlaceholderReport] | None = None,
 ) -> dict[str, CompanyIdentity]:
     """Resolve every requested ticker via the CVM FCA registry (#212).
 
@@ -250,7 +262,9 @@ async def _registry_identities(
         cache_dir=settings.cvm_cache_dir,
         artifact_store=artifact_store,
     )
+    _configure_placeholder_recovery(registry, settings, http)
     identities = await registry.resolve_all(tickers)
+    await _remember_placeholder_report(registry, placeholder_reports)
     if fca_provenance is not None:
         _remember_fca_provenance(fca_provenance, await registry.provenance())
     for ticker in tickers:
@@ -1393,6 +1407,70 @@ def _build_archive(settings: Settings, http: httpx.AsyncClient) -> CotahistArchi
     )
 
 
+def _configure_placeholder_recovery(
+    registry: CvmCompanyRegistry,
+    settings: Settings,
+    http: httpx.AsyncClient,
+) -> None:
+    """Attach the real FCA placeholder producer at the composition root."""
+    setter = getattr(registry, "set_placeholder_recoverer", None)
+    if not callable(setter):
+        return
+    b3 = B3ListedCompanyResolver(http, base_url=settings.b3_listed_base_url)
+    setter(
+        FcaPlaceholderRecovery(
+            _B3RegistrantAdapter(b3),
+            _CotahistArchiveAdapter(_build_archive(settings, http)),
+            snapshot_year=settings.cvm_fca_year,
+        )
+    )
+
+
+@dataclass(frozen=True)
+class _B3RegistrantAdapter:
+    """Translate the existing B3 source into the portfolio boundary."""
+
+    resolver: B3ListedCompanyResolver
+
+    async def resolve_by_cvm(
+        self, cvm_code: str, *, cnpj: str | None = None
+    ) -> OfficialRegistrant:
+        company = await self.resolver.resolve_by_cvm(cvm_code, cnpj=cnpj)
+        return OfficialRegistrant(
+            cvm_code=company.cvm_code or cvm_code,
+            cnpj=cnpj,
+            issuing_company=company.issuing_company,
+            security_codes=tuple(
+                OfficialSecurityCode(code=code, isin=isin)
+                for code, isin in self.resolver.official_codes(company)
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class _CotahistArchiveAdapter:
+    """Expose the existing COTAHIST reader through the portfolio boundary."""
+
+    archive: CotahistArchive
+
+    async def year(self, year: int) -> Mapping[str, QuoteSeries]:
+        values = await self.archive.year(year)
+        return cast(Mapping[str, QuoteSeries], values)
+
+
+async def _remember_placeholder_report(
+    registry: CvmCompanyRegistry,
+    collected: list[FcaPlaceholderReport] | None,
+) -> None:
+    if collected is None:
+        return
+    reader = getattr(registry, "placeholder_report", None)
+    if callable(reader):
+        report = await reader()
+        if report not in collected:
+            collected.append(report)
+
+
 def _build_price_provider(
     shares_reader: SharesReader,
     archive: CotahistArchive,
@@ -1552,6 +1630,7 @@ async def _universe_tickers(
     http: httpx.AsyncClient,
     fca_provenance: list[FcaSnapshotProvenance] | None = None,
     artifact_store: SourceArtifactStore | None = None,
+    placeholder_reports: list[FcaPlaceholderReport] | None = None,
 ) -> tuple[tuple[str, ...], dict[str, CompanyIdentity]]:
     """Every traded code, with the identity each resolver needs (#109).
 
@@ -1570,8 +1649,10 @@ async def _universe_tickers(
         cache_dir=settings.cvm_cache_dir,
         artifact_store=artifact_store,
     )
+    _configure_placeholder_recovery(registry, settings, http)
     tickers = tuple(sorted(t for c in await registry.companies() for t in c.tickers))
     identities = await registry.resolve_all(tickers)
+    await _remember_placeholder_report(registry, placeholder_reports)
     if fca_provenance is not None:
         _remember_fca_provenance(fca_provenance, await registry.provenance())
     logger.info("Universe: %d traded codes", len(tickers))
@@ -1628,6 +1709,7 @@ async def _run_doctor(
     session_factory = create_session_factory(engine)
     mongo = await init_database(settings)
     fca_provenance: list[FcaSnapshotProvenance] = []
+    placeholder_reports: list[FcaPlaceholderReport] = []
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
             artifact_store = LocalSourceArtifactStore(
@@ -1639,6 +1721,7 @@ async def _run_doctor(
                     http,
                     fca_provenance=fca_provenance,
                     artifact_store=artifact_store,
+                    placeholder_reports=placeholder_reports,
                 )
             else:
                 identities = await _registry_identities(
@@ -1647,6 +1730,7 @@ async def _run_doctor(
                     tickers,
                     artifact_store=artifact_store,
                     fca_provenance=fca_provenance,
+                    placeholder_reports=placeholder_reports,
                 )
         resolver = _sector_resolver(identities)
         use_case = DoctorUseCase(
@@ -1675,6 +1759,10 @@ async def _run_doctor(
         output = f"{format_doctor(report)}\n{format_drift(drift)}"
     else:
         output = f"{format_doctor_summary(report)}\n{format_drift_summary(drift)}"
+    if placeholder_reports:
+        output += "\n" + format_fca_placeholder_report(
+            placeholder_reports[0], verbose=verbose
+        )
     print(f"{format_fca_snapshot(snapshot)}\n{output}")
     # The coverage gate (#169, ADR 0046): every named null is a fact about the
     # world already; an unclassified one is a mapping bug or a cause nothing has
@@ -2359,6 +2447,65 @@ def format_doctor_summary(report: DoctorReport) -> str:
         lines.append("    every null carries a named cause.")
     lines.extend(_format_debt_coverage(report.debt_coverage))
     return "\n".join(lines)
+
+
+def format_fca_placeholder_report(
+    report: FcaPlaceholderReport, *, verbose: bool = False
+) -> str:
+    """Render the reproducible FCA placeholder inventory for ``doctor``."""
+    issues: dict[str, int] = {}
+    reasons: dict[str, int] = {}
+    for finding in report.findings:
+        issue = finding.row.code_issue.value
+        issues[issue] = issues.get(issue, 0) + 1
+        reasons[finding.reason] = reasons.get(finding.reason, 0) + 1
+    issue_text = (
+        ", ".join(f"{name}={count}" for name, count in sorted(issues.items())) or "none"
+    )
+    lines = [
+        "",
+        "=== smaug doctor — FCA placeholder ticker recovery ===",
+        (
+            f"  snapshot={report.snapshot_year} rows={report.total} "
+            f"recovered={report.recovered_count} "
+            f"unresolved={report.unresolved_count}"
+        ),
+        f"  inventory: {issue_text}",
+    ]
+    recovered = report.recovered
+    if recovered:
+        lines.append("  recovered:")
+        for finding in recovered:
+            lines.append(_format_placeholder_finding(finding))
+    if verbose:
+        unresolved = report.unresolved
+        if unresolved:
+            lines.append("  unresolved:")
+            lines.extend(_format_placeholder_finding(finding) for finding in unresolved)
+    else:
+        reason_text = (
+            ", ".join(f"{name}={count}" for name, count in sorted(reasons.items()))
+            or "none"
+        )
+        lines.append(f"  outcomes: {reason_text}")
+    return "\n".join(lines)
+
+
+def _format_placeholder_finding(finding: FcaPlaceholderFinding) -> str:
+    """Render one finding without allowing names to become recovery evidence."""
+    row = finding.row
+    candidates = ",".join(finding.candidate_codes) or "-"
+    observed = ",".join(finding.observed_codes) or "-"
+    recovered = ",".join(finding.recovered_codes) or "-"
+    window = f"{finding.window_start or '-'}..{finding.window_end or '-'}"
+    suffix = f" detail={finding.detail}" if finding.detail else ""
+    return (
+        f"    row={row.row_number} cnpj={row.cnpj or '-'} "
+        f"cd_cvm={row.cd_cvm or '-'} raw={row.raw_code or '<blank>'} "
+        f"{finding.status.value} reason={finding.reason} "
+        f"candidates={candidates} observed={observed} recovered={recovered} "
+        f"root={finding.official_root or '-'} window={window}{suffix}"
+    )
 
 
 def format_drift_summary(report: DriftReport) -> str:

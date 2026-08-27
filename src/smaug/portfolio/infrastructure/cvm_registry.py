@@ -33,7 +33,7 @@ import io
 import re
 import unicodedata
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
@@ -41,6 +41,14 @@ from pathlib import Path
 import httpx
 
 from smaug.portfolio.domain.company import CompanyIdentity, InstrumentKind
+from smaug.portfolio.domain.fca_placeholders import (
+    FcaCodeIssue,
+    FcaPlaceholderFinding,
+    FcaPlaceholderReport,
+    FcaPlaceholderRow,
+    FcaRecoveryResult,
+    FcaRecoveryStatus,
+)
 from smaug.portfolio.domain.provenance import FCA_SOURCE, FcaSnapshotProvenance
 from smaug.portfolio.domain.share_classes import (
     EconomicRightsStatus,
@@ -55,12 +63,20 @@ from smaug.portfolio.domain.share_classes import (
     per_share_class_from_symbol,
     share_class_id,
 )
-from smaug.portfolio.domain.universe import ListedCompany, listed_companies
+from smaug.portfolio.domain.universe import (
+    ListedCompany,
+    is_trading_code,
+    listed_companies,
+)
 from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.download import Sleeper, download_zip
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
+
+PlaceholderRecoverer = Callable[
+    [tuple[FcaPlaceholderRow, ...]], Awaitable[FcaRecoveryResult]
+]
 
 CVM_FCA_BASE_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS"
 
@@ -298,6 +314,7 @@ class CvmCompanyRegistry:
         sleep: Sleeper = asyncio.sleep,
         artifact_store: SourceArtifactStore | None = None,
         artifact_id: str | None = None,
+        placeholder_recoverer: PlaceholderRecoverer | None = None,
     ) -> None:
         self._http = http_client
         self._year = year
@@ -308,6 +325,8 @@ class CvmCompanyRegistry:
         self._replay_artifact_id = artifact_id
         self._artifact: SourceArtifact | None = None
         self._index: dict[str, CompanyIdentity] | None = None
+        self._placeholder_recoverer = placeholder_recoverer
+        self._placeholder_report: FcaPlaceholderReport | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -374,6 +393,32 @@ class CvmCompanyRegistry:
         index = await self._ensure_loaded()
         return listed_companies(index.values())
 
+    def set_placeholder_recoverer(self, recoverer: PlaceholderRecoverer | None) -> None:
+        """Set the optional producer before the archive is first read.
+
+        The composition root uses this setter so lightweight registry doubles
+        from older callers remain source-compatible.  Changing the producer
+        after loading is rejected: an identity snapshot and its audit report
+        must always come from one deterministic chain.
+        """
+        if self._index is not None:
+            raise RuntimeError("cannot change FCA recovery after registry load")
+        self._placeholder_recoverer = recoverer
+
+    async def placeholder_report(self) -> FcaPlaceholderReport:
+        """Return the complete malformed-code inventory and recovery outcome."""
+        await self._ensure_loaded()
+        assert self._placeholder_report is not None
+        return self._placeholder_report
+
+    async def fca_placeholder_report(self) -> FcaPlaceholderReport:
+        """Descriptive alias for consumers rendering the doctor report."""
+        return await self.placeholder_report()
+
+    async def placeholder_rows(self) -> tuple[FcaPlaceholderRow, ...]:
+        """Return the affected source rows independently of recovery outcomes."""
+        return (await self.placeholder_report()).rows
+
     async def _ensure_loaded(self) -> dict[str, CompanyIdentity]:
         cached = self._index
         if cached is not None:
@@ -384,6 +429,24 @@ class CvmCompanyRegistry:
                 return cached
             raw = await self._archive_path()
             index = await asyncio.to_thread(self._build_index, raw)
+            with zipfile.ZipFile(raw) as archive:
+                placeholder_rows = self._read_placeholder_rows(archive)
+            if self._placeholder_recoverer is None:
+                result = FcaRecoveryResult(
+                    report=FcaPlaceholderReport(
+                        snapshot_year=self._year,
+                        findings=tuple(
+                            _unresolved_finding(row, "recovery-not-configured")
+                            for row in placeholder_rows
+                        ),
+                    )
+                )
+            else:
+                result = await self._placeholder_recoverer(placeholder_rows)
+            index, report = self._merge_placeholder_result(
+                index, result, placeholder_rows=placeholder_rows
+            )
+            self._placeholder_report = report
             self._index = index
             logger.info(
                 "Loaded CVM FCA %s registry: %d coded securities",
@@ -460,6 +523,40 @@ class CvmCompanyRegistry:
             )
         return index
 
+    def _merge_placeholder_result(
+        self,
+        index: dict[str, CompanyIdentity],
+        result: FcaRecoveryResult,
+        *,
+        placeholder_rows: tuple[FcaPlaceholderRow, ...],
+    ) -> tuple[dict[str, CompanyIdentity], FcaPlaceholderReport]:
+        """Merge only collision-free recovered identities into the ticker index."""
+        findings = {
+            finding.row.row_number: finding for finding in result.report.findings
+        }
+        for row in placeholder_rows:
+            findings.setdefault(
+                row.row_number, _unresolved_finding(row, "recovery-not-reported")
+            )
+        merged = dict(index)
+        for identity in result.identities:
+            current = merged.get(identity.ticker)
+            if current is None:
+                merged[identity.ticker] = identity
+                continue
+            if current.cnpj == identity.cnpj:
+                continue
+            for row_number, finding in tuple(findings.items()):
+                if identity.ticker in finding.recovered_codes:
+                    findings[row_number] = finding.unresolved(
+                        "ticker-collision-with-fca", detail=identity.ticker
+                    )
+        report = FcaPlaceholderReport(
+            snapshot_year=self._year,
+            findings=tuple(findings.values()),
+        )
+        return merged, report
+
     def _read_cadastre(self, archive: zipfile.ZipFile) -> dict[str, _Cadastre]:
         """CNPJ -> cadastre facts, keeping the highest-version row per company."""
         cadastre: dict[str, _Cadastre] = {}
@@ -484,6 +581,54 @@ class CvmCompanyRegistry:
                     version=version,
                 )
         return cadastre
+
+    def _read_placeholder_rows(
+        self, archive: zipfile.ZipFile
+    ) -> tuple[FcaPlaceholderRow, ...]:
+        """Inventory every FCA securities row whose code is not a B3 shape."""
+        cadastre = self._read_cadastre(archive)
+        rows: list[FcaPlaceholderRow] = []
+        with archive.open(self._securities_member) as member:
+            reader = csv.DictReader(
+                io.TextIOWrapper(member, encoding=_ENCODING), delimiter=_DELIMITER
+            )
+            for row in reader:
+                raw_code = (row.get("Codigo_Negociacao") or "").strip().upper()
+                if is_trading_code(raw_code):
+                    continue
+                cnpj = (row.get("CNPJ_Companhia") or "").strip()
+                company = cadastre.get(cnpj)
+                valor = (row.get("Valor_Mobiliario") or "").strip()
+                instrument_kind = _instrument_kind(valor)
+                composition = (
+                    tuple(_unit_composition(row.get("Composicao_BDR_Unit") or ""))
+                    if instrument_kind is InstrumentKind.UNIT
+                    else ()
+                )
+                rows.append(
+                    FcaPlaceholderRow(
+                        row_number=reader.line_num,
+                        cnpj=cnpj,
+                        cd_cvm=company.cd_cvm if company is not None else None,
+                        denom=company.denom if company is not None else "",
+                        raw_code=raw_code,
+                        code_issue=_code_issue(raw_code),
+                        instrument_kind=instrument_kind,
+                        instrument_type=valor,
+                        cvm_sector=company.cvm_sector if company is not None else "",
+                        situation=company.situation if company is not None else "",
+                        listed_since=_iso_date(row.get("Data_Inicio_Listagem")),
+                        trading_ended=(
+                            _iso_date(row.get("Data_Fim_Negociacao"))
+                            or _iso_date(row.get("Data_Fim_Listagem"))
+                        ),
+                        per_share_class=_per_share_class(valor),
+                        unit_components=composition,
+                        shares_per_unit=sum(item.quantity for item in composition)
+                        or None,
+                    )
+                )
+        return tuple(rows)
 
     def _read_securities(
         self, archive: zipfile.ZipFile
@@ -596,3 +741,36 @@ def _prefer(candidate: _Security, current: _Security) -> bool:
 def _same_priority(candidate: _Security, current: _Security) -> bool:
     """Whether two FCA rows are tied before their CNPJ is considered."""
     return candidate.trading == current.trading and candidate.version == current.version
+
+
+def _code_issue(code: str) -> FcaCodeIssue:
+    """Classify an unusable FCA code without interpreting it as an identity."""
+    if not code:
+        return FcaCodeIssue.BLANK
+    if code.isdigit():
+        return FcaCodeIssue.NUMERIC_PLACEHOLDER
+    return FcaCodeIssue.MALFORMED
+
+
+def _per_share_class(valor_mobiliario: str) -> PerShareClass | None:
+    """Read the FCA's economic-class label, where it names one explicitly."""
+    label = _fold(valor_mobiliario).strip()
+    if label.startswith("acoes ordinarias"):
+        return PerShareClass.ORDINARY
+    if label.startswith("acoes preferenciais"):
+        if "classe a" in label or "pna" in label:
+            return PerShareClass.PREFERRED_A
+        if "classe b" in label or "pnb" in label:
+            return PerShareClass.PREFERRED_B
+        return PerShareClass.PREFERRED
+    return None
+
+
+def _unresolved_finding(row: FcaPlaceholderRow, reason: str) -> FcaPlaceholderFinding:
+    """Build the explicit result used when no producer is configured."""
+    return FcaPlaceholderFinding(
+        row=row,
+        status=FcaRecoveryStatus.UNRESOLVED,
+        reason=reason,
+        detail="official B3 recovery producer is not configured",
+    )
