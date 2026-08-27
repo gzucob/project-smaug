@@ -15,6 +15,11 @@ the full identity — resolved this way for every ticker, no hand-picked shortcu
 (#212), and it scales to the whole exchange (the batch-ingestion slice of M2
 reuses the same index).
 
+This registry is a current-identity snapshot. Its year is deliberately separate
+from the accounting year passed to DFP/ITR/FRE readers; a historical filing run
+may therefore keep its verified accounting archive while selecting a newer FCA
+universe.
+
 Follows the same download-once / cache / read-in-a-thread shape as
 ``CvmDataSource``; the FCA CSVs are latin-1, semicolon-separated like every CVM
 open dataset.
@@ -36,6 +41,7 @@ from pathlib import Path
 import httpx
 
 from smaug.portfolio.domain.company import CompanyIdentity, InstrumentKind
+from smaug.portfolio.domain.provenance import FCA_SOURCE, FcaSnapshotProvenance
 from smaug.portfolio.domain.share_classes import (
     EconomicRightsStatus,
     PerShareClass,
@@ -280,7 +286,7 @@ def _resolve_class_mappings(
 
 
 class CvmCompanyRegistry:
-    """Resolve B3 tickers to CVM identities from the yearly FCA archive."""
+    """Resolve B3 tickers to CVM identities from one FCA snapshot archive."""
 
     def __init__(
         self,
@@ -303,6 +309,31 @@ class CvmCompanyRegistry:
         self._artifact: SourceArtifact | None = None
         self._index: dict[str, CompanyIdentity] | None = None
         self._lock = asyncio.Lock()
+
+    @property
+    def snapshot_year(self) -> int:
+        """The FCA publication year used for current identity resolution."""
+        return self._year
+
+    @property
+    def source(self) -> str:
+        """The stable provenance label for CVM FCA identity data."""
+        return FCA_SOURCE
+
+    @property
+    def source_url(self) -> str:
+        """The public URL for the selected FCA archive."""
+        return f"{self._base_url}/{self._zip_name}"
+
+    async def provenance(self) -> FcaSnapshotProvenance:
+        """Return the selected FCA snapshot and its immutable artifact, when any."""
+        artifact = await self._ensure_artifact()
+        return FcaSnapshotProvenance(
+            year=self.snapshot_year,
+            source=FCA_SOURCE,
+            source_url=self.source_url,
+            artifact_id=artifact.artifact_id if artifact is not None else None,
+        )
 
     @property
     def _zip_name(self) -> str:

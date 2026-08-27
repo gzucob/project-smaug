@@ -123,6 +123,7 @@ from smaug.portfolio.domain.company import (
     is_unit,
     per_share_components,
 )
+from smaug.portfolio.domain.provenance import FCA_SOURCE, FcaSnapshotProvenance
 from smaug.portfolio.domain.sectors import Sector, sector_from_cvm
 from smaug.portfolio.domain.securities import (
     RegistrantNamesResolver,
@@ -145,7 +146,10 @@ from smaug.portfolio.domain.taxonomy import (
 )
 from smaug.portfolio.domain.universe import ListedCompany
 from smaug.portfolio.infrastructure.b3_taxonomy import B3TaxonomySource
-from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
+from smaug.portfolio.infrastructure.cvm_registry import (
+    CVM_FCA_BASE_URL,
+    CvmCompanyRegistry,
+)
 from smaug.portfolio.infrastructure.cvm_securities import CvmSecurityHistory
 from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.build import application_commit
@@ -167,6 +171,24 @@ _FAILED_STATUSES = frozenset(
     {OutcomeStatus.ERROR, OutcomeStatus.QUARANTINED, OutcomeStatus.ABORTED}
 )
 _DEFAULT_ARCHIVE_CONCURRENCY = 8
+
+
+def _default_fca_provenance(settings: Settings) -> FcaSnapshotProvenance:
+    """Describe the configured FCA snapshot before its archive is acquired."""
+    return FcaSnapshotProvenance(
+        year=settings.cvm_fca_year,
+        source=FCA_SOURCE,
+        source_url=(f"{CVM_FCA_BASE_URL}/fca_cia_aberta_{settings.cvm_fca_year}.zip"),
+    )
+
+
+def _remember_fca_provenance(
+    collected: list[FcaSnapshotProvenance],
+    provenance: FcaSnapshotProvenance,
+) -> None:
+    """Keep one deterministic provenance record for the selected FCA archive."""
+    if provenance not in collected:
+        collected.append(provenance)
 
 
 @dataclass(frozen=True)
@@ -208,8 +230,13 @@ async def _registry_identities(
     http: httpx.AsyncClient,
     tickers: tuple[str, ...],
     artifact_store: SourceArtifactStore | None = None,
+    fca_provenance: list[FcaSnapshotProvenance] | None = None,
 ) -> dict[str, CompanyIdentity]:
     """Resolve every requested ticker via the CVM FCA registry (#212).
+
+    The registry reads the independently configured current FCA snapshot;
+    ``settings.cvm_year`` remains reserved for the accounting archive selected
+    by the caller.
 
     No hand-picked shortcut: every ticker, including the nine that used to skip
     this call, resolves through a live FCA download/parse. A ticker that
@@ -219,11 +246,13 @@ async def _registry_identities(
     """
     registry = CvmCompanyRegistry(
         http,
-        year=settings.cvm_year,
+        year=settings.cvm_fca_year,
         cache_dir=settings.cvm_cache_dir,
         artifact_store=artifact_store,
     )
     identities = await registry.resolve_all(tickers)
+    if fca_provenance is not None:
+        _remember_fca_provenance(fca_provenance, await registry.provenance())
     for ticker in tickers:
         identity = identities.get(ticker)
         if identity is None:
@@ -446,12 +475,19 @@ async def _cvm_key_maps(
     http: httpx.AsyncClient,
     tickers: tuple[str, ...],
     artifact_store: SourceArtifactStore,
+    fca_provenance: list[FcaSnapshotProvenance] | None = None,
 ) -> tuple[dict[str, str], dict[str, str]]:
     """The ticker -> CD_CVM and ticker -> CNPJ maps the CVM sources need.
 
     Registry-resolved for every ticker, unconditionally (#212).
     """
-    identities = await _registry_identities(settings, http, tickers, artifact_store)
+    identities = await _registry_identities(
+        settings,
+        http,
+        tickers,
+        artifact_store,
+        fca_provenance=fca_provenance,
+    )
     code = {t: i.cd_cvm for t, i in identities.items()}
     cnpj = {t: i.cnpj for t, i in identities.items()}
     return code, cnpj
@@ -756,6 +792,7 @@ async def _run_ingest(
     )
     passes: list[YearPass] = []
     outcomes: list[FetchOutcome] = []
+    fca_provenance: list[FcaSnapshotProvenance] = []
     effective_years = tuple(year or settings.cvm_year for year in years)
     effective_document = (document or settings.cvm_document).upper()
     parameters = IngestionRunParameters(
@@ -802,7 +839,12 @@ async def _run_ingest(
                 observer=artifact_observer,
             )
             companies = (
-                await _universe(settings, http, artifact_store)
+                await _universe(
+                    settings,
+                    http,
+                    artifact_store,
+                    fca_provenance=fca_provenance,
+                )
                 if whole_exchange
                 else ()
             )
@@ -834,6 +876,7 @@ async def _run_ingest(
                         metrics_sink=metrics_sink,
                         artifact_store=artifact_store,
                         validation_reporter=validation_reporter,
+                        fca_provenance=fca_provenance,
                         modules=active_modules,
                         call_plan=(
                             call_plan.get(effective_year)
@@ -869,7 +912,13 @@ async def _run_ingest(
     collection_log = (
         _format_collection_log(outcomes) if verbose else format_batch_log(passes)
     )
-    print(f"{collection_log}\n{format_ingestion_metrics(run)}")
+    snapshot = (
+        fca_provenance[0] if fca_provenance else _default_fca_provenance(settings)
+    )
+    print(
+        f"{format_fca_snapshot(snapshot)}\n"
+        f"{collection_log}\n{format_ingestion_metrics(run)}"
+    )
     return 1 if any(o.status in _FAILED_STATUSES for o in outcomes) else 0
 
 
@@ -877,15 +926,18 @@ async def _universe(
     settings: Settings,
     http: httpx.AsyncClient,
     artifact_store: SourceArtifactStore | None = None,
+    fca_provenance: list[FcaSnapshotProvenance] | None = None,
 ) -> tuple[ListedCompany, ...]:
-    """Every listed company — the iteration unit of a whole-exchange run (#109)."""
+    """Every listed company from the current FCA snapshot (#109)."""
     registry = CvmCompanyRegistry(
         http,
-        year=settings.cvm_year,
+        year=settings.cvm_fca_year,
         cache_dir=settings.cvm_cache_dir,
         artifact_store=artifact_store,
     )
     companies = await registry.companies()
+    if fca_provenance is not None:
+        _remember_fca_provenance(fca_provenance, await registry.provenance())
     logger.info("Universe: %d listed companies", len(companies))
     return companies
 
@@ -907,6 +959,7 @@ async def _ingest_one_year(
     metrics_sink: Callable[[IngestionRunMetrics], Awaitable[None]],
     artifact_store: SourceArtifactStore,
     validation_reporter: BatchValidationReporter,
+    fca_provenance: list[FcaSnapshotProvenance] | None,
     modules: tuple[str, ...],
     call_plan: dict[str, tuple[str, ...]] | None,
     failure_service: IngestionFailureService,
@@ -926,7 +979,11 @@ async def _ingest_one_year(
         wanted = tuple(c.ticker for c in companies)
     else:
         code_map, cnpj_map = await _cvm_key_maps(
-            settings, http, tickers, artifact_store
+            settings,
+            http,
+            tickers,
+            artifact_store,
+            fca_provenance=fca_provenance,
         )
         wanted = tickers
 
@@ -1286,7 +1343,11 @@ def analyze(
 
 
 async def _security_resolvers(
-    settings: Settings, http: httpx.AsyncClient
+    settings: Settings,
+    http: httpx.AsyncClient,
+    *,
+    artifact_store: SourceArtifactStore | None = None,
+    snapshot: FcaSnapshotProvenance | None = None,
 ) -> tuple[
     SiblingCodesResolver,
     RegistrantNamesResolver,
@@ -1295,17 +1356,21 @@ async def _security_resolvers(
     """What the cadastre knows about a security's identity, in two answers.
 
     The codes each share class has been filed under (#193), read across every FCA
-    year that carries the trading code — which is 2018 on. And every name each
-    registrant has filed, which is what confirms a code retired before that
-    column existed, against the name B3 printed beside it (#198).
+    year that carries the trading code — which is 2018 on — through the current
+    FCA snapshot. And every name each registrant has filed, which is what
+    confirms a code retired before that column existed, against the name B3
+    printed beside it (#198).
     """
     history = CvmSecurityHistory(
         http,
         # Through today rather than the mirrored year: a code renamed this year
         # is named by no earlier archive, and the running year's file is skipped
         # if CVM has not published it yet.
-        through=max(settings.cvm_year, date.today().year),
+        through=max(settings.cvm_fca_year, date.today().year),
         cache_dir=settings.cvm_cache_dir,
+        artifact_store=artifact_store,
+        snapshot_year=snapshot.year if snapshot is not None else None,
+        snapshot_artifact_id=(snapshot.artifact_id if snapshot is not None else None),
     )
     return (
         await history.resolver(),
@@ -1377,12 +1442,27 @@ async def _run_analyze(
     mongo = await init_database(settings)
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
+    fca_provenance: list[FcaSnapshotProvenance] = []
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
+            artifact_store = LocalSourceArtifactStore(
+                http, settings.source_artifact_dir
+            )
             if whole_exchange or not tickers:
-                tickers, identities = await _universe_tickers(settings, http)
+                tickers, identities = await _universe_tickers(
+                    settings,
+                    http,
+                    fca_provenance=fca_provenance,
+                    artifact_store=artifact_store,
+                )
             else:
-                identities = await _registry_identities(settings, http, tickers)
+                identities = await _registry_identities(
+                    settings,
+                    http,
+                    tickers,
+                    artifact_store=artifact_store,
+                    fca_provenance=fca_provenance,
+                )
             # The reader keeps a five-value Sector (the internal regime hint); the
             # stored analysis carries the B3 Classification (ADR 0024). Both are
             # built from the same resolved identities.
@@ -1398,7 +1478,10 @@ async def _run_analyze(
             # sessions and the base-change reader dates the actions filed under
             # the codes those sessions came from (ADR 0042).
             siblings, names, historical_codes = await _security_resolvers(
-                settings, http
+                settings,
+                http,
+                artifact_store=artifact_store,
+                snapshot=fca_provenance[0] if fca_provenance else None,
             )
             succession = CodeSuccession(
                 archive,
@@ -1456,14 +1539,24 @@ async def _run_analyze(
         await mongo.close()
         await engine.dispose()
 
-    print(format_analysis(run.analyses) if verbose else format_analysis_run(run))
+    snapshot = (
+        fca_provenance[0] if fca_provenance else _default_fca_provenance(settings)
+    )
+    output = format_analysis(run.analyses) if verbose else format_analysis_run(run)
+    print(f"{format_fca_snapshot(snapshot)}\n{output}")
     return 1 if run.failed else 0
 
 
 async def _universe_tickers(
-    settings: Settings, http: httpx.AsyncClient
+    settings: Settings,
+    http: httpx.AsyncClient,
+    fca_provenance: list[FcaSnapshotProvenance] | None = None,
+    artifact_store: SourceArtifactStore | None = None,
 ) -> tuple[tuple[str, ...], dict[str, CompanyIdentity]]:
     """Every traded code, with the identity each resolver needs (#109).
+
+    The current universe is selected from ``cvm_fca_year``; it does not change
+    when a caller selects a different accounting filing year.
 
     The unit here is the **ticker**, not the company the mirror is keyed on: a
     company's classes trade at different prices, so ELET3 and ELET6 have
@@ -1472,10 +1565,15 @@ async def _universe_tickers(
     someone typing one into the search box.
     """
     registry = CvmCompanyRegistry(
-        http, year=settings.cvm_year, cache_dir=settings.cvm_cache_dir
+        http,
+        year=settings.cvm_fca_year,
+        cache_dir=settings.cvm_cache_dir,
+        artifact_store=artifact_store,
     )
     tickers = tuple(sorted(t for c in await registry.companies() for t in c.tickers))
     identities = await registry.resolve_all(tickers)
+    if fca_provenance is not None:
+        _remember_fca_provenance(fca_provenance, await registry.provenance())
     logger.info("Universe: %d traded codes", len(tickers))
     return tickers, identities
 
@@ -1529,12 +1627,27 @@ async def _run_doctor(
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
     mongo = await init_database(settings)
+    fca_provenance: list[FcaSnapshotProvenance] = []
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
+            artifact_store = LocalSourceArtifactStore(
+                http, settings.source_artifact_dir
+            )
             if whole_exchange or not tickers:
-                tickers, identities = await _universe_tickers(settings, http)
+                tickers, identities = await _universe_tickers(
+                    settings,
+                    http,
+                    fca_provenance=fca_provenance,
+                    artifact_store=artifact_store,
+                )
             else:
-                identities = await _registry_identities(settings, http, tickers)
+                identities = await _registry_identities(
+                    settings,
+                    http,
+                    tickers,
+                    artifact_store=artifact_store,
+                    fca_provenance=fca_provenance,
+                )
         resolver = _sector_resolver(identities)
         use_case = DoctorUseCase(
             SqlAlchemyAnalysisRepository(session_factory), sector_resolver=resolver
@@ -1555,12 +1668,14 @@ async def _run_doctor(
         await mongo.close()
         await engine.dispose()
 
+    snapshot = (
+        fca_provenance[0] if fca_provenance else _default_fca_provenance(settings)
+    )
     if verbose:
-        print(format_doctor(report))
-        print(format_drift(drift))
+        output = f"{format_doctor(report)}\n{format_drift(drift)}"
     else:
-        print(format_doctor_summary(report))
-        print(format_drift_summary(drift))
+        output = f"{format_doctor_summary(report)}\n{format_drift_summary(drift)}"
+    print(f"{format_fca_snapshot(snapshot)}\n{output}")
     # The coverage gate (#169, ADR 0046): every named null is a fact about the
     # world already; an unclassified one is a mapping bug or a cause nothing has
     # vocabularied yet, and at exchange scale that is the only finding a nine-
@@ -2028,6 +2143,15 @@ def format_analysis(analyses: list[TickerAnalysis]) -> str:
             f"  NI growth {_pct(i.net_income_growth)}"
         )
     return "\n".join(lines)
+
+
+def format_fca_snapshot(provenance: FcaSnapshotProvenance) -> str:
+    """Render the FCA identity snapshot used by a command."""
+    return (
+        "=== FCA identity snapshot ===\n"
+        f"  FCA snapshot year={provenance.year} source={provenance.source} "
+        f"url={provenance.source_url} artifact={provenance.artifact_id or '-'}"
+    )
 
 
 def _format_exercise(exercise: ExerciseCoverage) -> list[str]:

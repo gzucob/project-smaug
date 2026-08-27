@@ -109,6 +109,8 @@ O `.env.example` contém os valores padrão. Os principais parâmetros são:
   trimestrais. O padrão é `DFP`.
 - `CVM_YEAR`: ano do arquivo CVM usado por uma coleta sem `--year`. O padrão é
   `2024`.
+- `CVM_FCA_YEAR`: snapshot FCA completo que define a identidade atual e o
+  universo listado. É independente de `CVM_YEAR`; o padrão é `2026`.
 - `CVM_MODULES`: módulos CVM/B3 a coletar; por padrão inclui demonstrações,
   capital, eventos societários e dividendos.
 - `MONGO_URI` e `MONGO_DB`: conexão do espelho cru.

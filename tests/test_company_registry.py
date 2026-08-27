@@ -22,13 +22,19 @@ from smaug.portfolio.domain.company import (
     is_unit,
     per_share_components,
 )
+from smaug.portfolio.domain.provenance import FCA_SOURCE
 from smaug.portfolio.domain.share_classes import (
     EconomicRightsStatus,
     PerShareClass,
     ShareClassMappingStatus,
     UnitComponent,
 )
-from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
+from smaug.portfolio.infrastructure.cvm_registry import (
+    CVM_FCA_BASE_URL,
+    CvmCompanyRegistry,
+)
+from smaug.portfolio.infrastructure.cvm_securities import CvmSecurityHistory
+from smaug.shared.artifacts import SourceArtifact
 
 _YEAR = 2024
 
@@ -65,20 +71,22 @@ def _write_fca_zip(
     cache_dir: Path,
     geral: list[dict[str, str]],
     securities: list[dict[str, str]],
+    *,
+    year: int = _YEAR,
 ) -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
-    path = cache_dir / f"fca_cia_aberta_{_YEAR}.zip"
+    path = cache_dir / f"fca_cia_aberta_{year}.zip"
     with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr(f"fca_cia_aberta_geral_{_YEAR}.csv", _csv(_GERAL_COLS, geral))
+        archive.writestr(f"fca_cia_aberta_geral_{year}.csv", _csv(_GERAL_COLS, geral))
         archive.writestr(
-            f"fca_cia_aberta_valor_mobiliario_{_YEAR}.csv",
+            f"fca_cia_aberta_valor_mobiliario_{year}.csv",
             _csv(_SEC_COLS, securities),
         )
 
 
-def _registry(cache_dir: Path) -> CvmCompanyRegistry:
+def _registry(cache_dir: Path, *, year: int = _YEAR) -> CvmCompanyRegistry:
     # The cache file exists, so no download runs and the client is never used.
-    return CvmCompanyRegistry(httpx.AsyncClient(), year=_YEAR, cache_dir=str(cache_dir))
+    return CvmCompanyRegistry(httpx.AsyncClient(), year=year, cache_dir=str(cache_dir))
 
 
 _KLABIN_CNPJ = "89.637.490/0001-45"
@@ -154,6 +162,18 @@ async def test_resolve_is_case_insensitive_and_unknown_is_none(
 
     assert (await registry.resolve("klbn11")) is not None
     assert (await registry.resolve("NOPE99")) is None
+
+
+async def test_registry_exposes_snapshot_source_provenance(tmp_path: Path) -> None:
+    _write_fca_zip(tmp_path, geral=[], securities=[])
+    registry = _registry(tmp_path)
+
+    provenance = await registry.provenance()
+
+    assert provenance.year == _YEAR
+    assert provenance.source == FCA_SOURCE
+    assert provenance.source_url == (f"{CVM_FCA_BASE_URL}/fca_cia_aberta_{_YEAR}.zip")
+    assert provenance.artifact_id is None
 
 
 async def test_resolve_all_skips_unlisted_tickers(tmp_path: Path) -> None:
@@ -583,3 +603,132 @@ async def test_companies_group_trading_codes_and_drop_the_archives_non_tickers(
     assert companies[0].ticker == "IJKL3"  # the ON names the company
     assert companies[0].tickers == ("IJKL3", "IJKL4")
     assert companies[0].cnpj == listed
+
+
+async def test_current_fca_snapshot_is_independent_from_a_filing_year_snapshot(
+    tmp_path: Path,
+) -> None:
+    cnpj = "50.000.000/0001-00"
+    current_cnpj = "51.000.000/0001-00"
+    _write_fca_zip(
+        tmp_path,
+        geral=[_cadastre_row(cnpj, "500")],
+        securities=[
+            {
+                "CNPJ_Companhia": cnpj,
+                "Versao": "1",
+                "Codigo_Negociacao": "OLDE3",
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": "Ações Ordinárias",
+            }
+        ],
+        year=2024,
+    )
+    _write_fca_zip(
+        tmp_path,
+        geral=[_cadastre_row(cnpj, "500"), _cadastre_row(current_cnpj, "510")],
+        securities=[
+            {
+                "CNPJ_Companhia": cnpj,
+                "Versao": "1",
+                "Codigo_Negociacao": "OLDE3",
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "2025-01-01",
+                "Valor_Mobiliario": "Ações Ordinárias",
+            },
+            {
+                "CNPJ_Companhia": current_cnpj,
+                "Versao": "1",
+                "Codigo_Negociacao": "NEWE3",
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": "Ações Ordinárias",
+            },
+        ],
+        year=2026,
+    )
+
+    filing_year = _registry(tmp_path, year=2024)
+    current = _registry(tmp_path, year=2026)
+
+    assert (await filing_year.companies())[0].ticker == "OLDE3"
+    assert (await current.companies())[0].ticker == "NEWE3"
+    assert await current.resolve("OLDE3") is not None  # explicit diagnosis only
+    assert await current.resolve("NEWE3") is not None
+
+
+async def test_current_fca_artifact_is_acquired_once_for_registry_and_history(
+    tmp_path: Path,
+) -> None:
+    """A clean run shares the current FCA Bronze artifact with history."""
+    cnpj = "52.000.000/0001-00"
+    ticker = "ONCE3"
+    archive_dir = tmp_path / "archive"
+    _write_fca_zip(
+        archive_dir,
+        geral=[_cadastre_row(cnpj, "520")],
+        securities=[
+            {
+                "CNPJ_Companhia": cnpj,
+                "Versao": "1",
+                "Codigo_Negociacao": ticker,
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": "Ações Ordinárias",
+            }
+        ],
+        year=2026,
+    )
+    archive_path = archive_dir / "fca_cia_aberta_2026.zip"
+    artifact = SourceArtifact(
+        artifact_id="sha256:" + "a" * 64,
+        sha256="a" * 64,
+        byte_size=archive_path.stat().st_size,
+        path=archive_path,
+        source_url="https://example.test/fca_cia_aberta_2026.zip",
+    )
+
+    class CountingStore:
+        def __init__(self) -> None:
+            self.acquire_calls = 0
+            self.open_calls = 0
+
+        async def acquire(
+            self, source_url: str, *, follow_redirects: bool = False
+        ) -> SourceArtifact:
+            del source_url, follow_redirects
+            self.acquire_calls += 1
+            return artifact
+
+        async def open(self, artifact_id: str) -> SourceArtifact:
+            assert artifact_id == artifact.artifact_id
+            self.open_calls += 1
+            return artifact
+
+    store = CountingStore()
+    async with httpx.AsyncClient() as http:
+        registry = CvmCompanyRegistry(
+            http,
+            year=2026,
+            cache_dir=str(tmp_path / "registry-cache"),
+            artifact_store=store,
+        )
+        assert await registry.resolve(ticker) is not None
+        provenance = await registry.provenance()
+        assert provenance.artifact_id == artifact.artifact_id
+
+        history = CvmSecurityHistory(
+            http,
+            through=2026,
+            since=2026,
+            cache_dir=str(tmp_path / "history-cache"),
+            artifact_store=store,
+            snapshot_year=provenance.year,
+            snapshot_artifact_id=provenance.artifact_id,
+        )
+        resolver = await history.resolver()
+
+    assert resolver(ticker) == ()
+    assert store.acquire_calls == 1
+    assert store.open_calls == 1
