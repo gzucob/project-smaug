@@ -55,8 +55,11 @@ def _decoded(url: str) -> dict[str, object]:
 class _Transport(httpx.AsyncBaseTransport):
     """Serves the supplement and one page of dividends, recording the calls."""
 
-    def __init__(self, pages: int = 1) -> None:
+    def __init__(
+        self, pages: int = 1, rows: list[dict[str, object]] | None = None
+    ) -> None:
         self.pages = pages
+        self.rows = ROWS if rows is None else rows
         self.asked: list[dict[str, object]] = []
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
@@ -70,7 +73,7 @@ class _Transport(httpx.AsyncBaseTransport):
             200,
             json={
                 "page": {"pageNumber": page, "totalPages": self.pages},
-                "results": ROWS if page <= self.pages else [],
+                "results": self.rows if page <= self.pages else [],
             },
         )
 
@@ -128,7 +131,7 @@ async def test_the_history_is_walked_page_by_page() -> None:
             "BBDC4", CASH_DIVIDEND_B3_MODULE
         )
 
-    assert len(results) == 6  # two rows on each of three pages
+    assert len(results) == 2  # two economic rows repeated on each page
     assert [call.get("pageNumber") for call in transport.asked[1:]] == [1, 2, 3]
 
 
@@ -293,5 +296,122 @@ async def test_a_registrant_fallback_can_prove_zero_cash_rows() -> None:
     assert reporter.reports[-1].status.value == "accepted"
     assert reporter.reports[-1].observations == {
         "rows": 0,
+        "fetched": 0,
+        "accepted": 0,
+        "rejected": 0,
+        "deduplicated": 0,
         "coverage_established": True,
+    }
+
+
+async def test_row_reconciliation_records_rejections_and_duplicate_identities() -> None:
+    duplicate = dict(ROWS[0])
+    same_day_other_right = {
+        **ROWS[0],
+        "corporateAction": "DIVIDENDO",
+        "valueCash": "0,100000000",
+    }
+    malformed = dict(ROWS[0])
+    del malformed["quotedPerShares"]
+    source_rows = [ROWS[0], same_day_other_right, duplicate, malformed]
+
+    class _Reporter:
+        def __init__(self) -> None:
+            self.reports: list[SourceBatchValidation] = []
+
+        async def record(self, validation: SourceBatchValidation) -> None:
+            self.reports.append(validation)
+
+    reporter = _Reporter()
+    transport = _Transport(rows=source_rows)
+    async with httpx.AsyncClient(transport=transport) as http:
+        with pytest.raises(SourceBatchValidationError, match="row-reconciliation"):
+            await B3CashDividendSource(http, validation_reporter=reporter).fetch(
+                "BBDC4", CASH_DIVIDEND_B3_MODULE
+            )
+
+    report = reporter.reports[-1]
+    assert report.status.value == "quarantined"
+    assert report.observations == {
+        "rows": 4,
+        "fetched": 4,
+        "accepted": 2,
+        "rejected": 1,
+        "deduplicated": 1,
+        "coverage_established": False,
+    }
+    rejected = report.evidence["rejected_rows"]
+    assert isinstance(rejected, list)
+    assert rejected[0]["finding"]["code"] == "response-schema"
+    assert "quotedPerShares" in rejected[0]["finding"]["detail"]
+    duplicates = report.evidence["deduplicated_rows"]
+    assert isinstance(duplicates, list)
+    assert duplicates[0]["matches"] == 1
+    assert duplicates[0]["identity"] == {
+        "share_class": "ON",
+        "event_type": "JRS CAP PROPRIO",
+        "last_date_prior": "03/07/2026",
+        "value": "0.315359035",
+        "quoted_per_shares": "1",
+    }
+
+
+async def test_rows_with_changed_published_metadata_are_not_source_duplicates() -> None:
+    amended = {
+        **ROWS[0],
+        "dateApproval": "24/06/2026",
+        "closingPricePriorExDate": "15,90",
+        "corporateActionPrice": "1,983000",
+        "dateClosingPricePriorExDate": "25/06/2026",
+        "lastDateTimePriorEx": "03/07/2026 17:00",
+        "ratio": "2,0",
+    }
+    transport = _Transport(rows=[ROWS[0], amended])
+    async with httpx.AsyncClient(transport=transport) as http:
+        results = await B3CashDividendSource(http).fetch(
+            "BBDC4", CASH_DIVIDEND_B3_MODULE
+        )
+
+    assert len(results) == 2
+    amended_result = results[1]
+    assert amended_result.request["b3_row"]["ratio"] == "2,0"
+    assert amended_result.request["b3_row"]["dateClosingPricePriorExDate"] == (
+        "25/06/2026"
+    )
+    assert amended_result.request["b3_row"]["lastDateTimePriorEx"] == (
+        "03/07/2026 17:00"
+    )
+    assert amended_result.request["ratio"] == "2,0"
+    assert amended_result.payload["corporateActionPrice"] == "1,983000"
+    assert amended_result.payload["dateClosingPricePriorExDate"] == "25/06/2026"
+    assert amended_result.payload["lastDateTimePriorEx"] == "03/07/2026 17:00"
+
+
+async def test_all_rejected_rows_quarantine_with_a_nonempty_coverage_finding() -> None:
+    malformed = dict(ROWS[0])
+    del malformed["typeStock"]
+
+    class _Reporter:
+        def __init__(self) -> None:
+            self.reports: list[SourceBatchValidation] = []
+
+        async def record(self, validation: SourceBatchValidation) -> None:
+            self.reports.append(validation)
+
+    reporter = _Reporter()
+    transport = _Transport(rows=[malformed])
+    async with httpx.AsyncClient(transport=transport) as http:
+        source = B3CashDividendSource(http, validation_reporter=reporter)
+        with pytest.raises(SourceBatchValidationError, match="row-reconciliation"):
+            await source.fetch("BBDC4", CASH_DIVIDEND_B3_MODULE)
+
+    report = reporter.reports[-1]
+    assert report.status.value == "quarantined"
+    assert report.observations == {
+        "rows": 1,
+        "fetched": 1,
+        "accepted": 0,
+        "rejected": 1,
+        "deduplicated": 0,
+        "coverage_established": False,
     }

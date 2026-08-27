@@ -169,6 +169,39 @@ def test_should_render_quarantine_evidence_and_reprocessing_guidance() -> None:
     assert "rerun the same ingest command with --force" in output
 
 
+def test_should_render_cash_row_reconciliation_without_dumping_raw_evidence() -> None:
+    report = IngestionValidationReport(
+        report_id="validation-cash",
+        run_id="run-123",
+        recorded_at=datetime(2026, 8, 10, tzinfo=UTC),
+        status=BatchValidationStatus.ACCEPTED,
+        validation=SourceBatchValidation(
+            source="b3",
+            batch="GetListedCashDividends:BBDC",
+            module="CASH_DIVIDEND_B3",
+            parser=ParserIdentity("b3.cash-dividends.json", 2),
+            rules=(ValidationRule("row-reconciliation", 1),),
+            observations={
+                "rows": 4,
+                "fetched": 4,
+                "accepted": 2,
+                "rejected": 1,
+                "deduplicated": 1,
+                "coverage_established": False,
+            },
+            evidence={"rejected_rows": [{"row": 4}], "deduplicated_rows": [{"row": 3}]},
+        ),
+    )
+
+    output = format_ingestion_validations((report,))
+
+    assert "reconciliation=fetched=4 accepted=2 rejected=1 deduplicated=1" in output
+    assert "coverage_established=False" in output
+    assert "evidence=rejected_rows count=1" in output
+    assert "evidence=deduplicated_rows count=1" in output
+    assert '"row": 4' not in output
+
+
 def test_should_render_doctor_coverage_with_named_and_unclassified() -> None:
     report = DoctorReport(
         tickers=(

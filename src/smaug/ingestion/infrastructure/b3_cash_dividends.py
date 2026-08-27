@@ -52,6 +52,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Mapping, Sequence
+from decimal import Decimal, InvalidOperation
 from typing import Any, Never
 
 import httpx
@@ -93,6 +94,7 @@ _RULES = (
     ValidationRule("response-schema", 1),
     ValidationRule("coverage-established", 2),
     ValidationRule("record-count", 1),
+    ValidationRule("row-reconciliation", 1),
 )
 
 
@@ -100,7 +102,7 @@ class B3CashDividendSource:
     """Fetch every cash payout B3 lists for one ticker's company."""
 
     source = "b3"
-    parser_identity = ParserIdentity("b3.cash-dividends.json", 1)
+    parser_identity = ParserIdentity("b3.cash-dividends.json", 2)
 
     def __init__(
         self,
@@ -159,24 +161,37 @@ class B3CashDividendSource:
             await self._record(self._validation(root, rows=0))
             raise SourceNotFoundError(f"B3 lists no cash payout for {ticker}")
 
-        if not all(isinstance(row, Mapping) for row in rows):
-            await self._quarantine(
-                root,
-                "response-schema",
-                "B3 dividends contains a non-object row",
+        accepted_rows, rejected_rows, duplicate_rows = _reconcile_rows(rows)
+        fetched = len(rows)
+        evidence: dict[str, object] = {}
+        if rejected_rows:
+            evidence["rejected_rows"] = rejected_rows
+        if duplicate_rows:
+            evidence["deduplicated_rows"] = duplicate_rows
+        findings = (
+            (
+                ValidationFinding(
+                    "row-reconciliation",
+                    f"B3 dividends rejected {len(rejected_rows)} row(s); "
+                    "the batch is not admitted",
+                ),
             )
-        required = {"typeStock", "lastDatePriorEx", "corporateAction", "valueCash"}
-        missing = next(
-            (sorted(required - set(row)) for row in rows if required - set(row)),
-            None,
+            if rejected_rows
+            else ()
         )
-        if missing is not None:
-            await self._quarantine(
+        await self._record(
+            self._validation(
                 root,
-                "response-schema",
-                f"B3 dividends row lacks {', '.join(missing)}",
+                rows=fetched,
+                fetched=fetched,
+                accepted=len(accepted_rows),
+                rejected=len(rejected_rows),
+                deduplicated=len(duplicate_rows),
+                coverage_established=not rejected_rows,
+                findings=findings,
+                evidence=evidence,
             )
-        await self._record(self._validation(root, rows=len(rows)))
+        )
 
         code = company.cvm_code
         return [
@@ -189,6 +204,9 @@ class B3CashDividendSource:
                     "issuing_company": issuing_company,
                     "trading_name": trading_name,
                     "statement": module,
+                    # Keep every source field in the request discriminator: a
+                    # corrected approval/reference value is a new raw fact.
+                    "b3_row": dict(row),
                     # What tells one filed row from another: the same payment is
                     # listed once per class, and one ex date can carry both a
                     # dividend and interest on own capital.
@@ -196,16 +214,25 @@ class B3CashDividendSource:
                     "last_date_prior": _text(row.get("lastDatePriorEx")),
                     "event_type": _text(row.get("corporateAction")),
                     "value": _text(row.get("valueCash")),
+                    "quoted_per_shares": _text(row.get("quotedPerShares")),
+                    "approval_date": _text(row.get("dateApproval")),
+                    "closing_price_prior": _text(row.get("closingPricePriorExDate")),
+                    "percentage_of_price": _text(row.get("corporateActionPrice")),
+                    "last_date_time_prior": _text(row.get("lastDateTimePriorEx")),
+                    "date_closing_price_prior": _text(
+                        row.get("dateClosingPricePriorExDate")
+                    ),
+                    "ratio": _text(row.get("ratio")),
                 },
                 http_status=200,
                 payload=_to_payload(row, issuing_company, code),
                 cvm_code=code,
             )
-            for row in rows
+            for row in accepted_rows
         ]
 
-    async def _dividends(self, root: str, trading_name: str) -> list[Mapping[str, Any]]:
-        rows: list[Mapping[str, Any]] = []
+    async def _dividends(self, root: str, trading_name: str) -> list[object]:
+        rows: list[object] = []
         page = 1
         while page <= _MAX_PAGES:
             body = await self._json(
@@ -246,13 +273,6 @@ class B3CashDividendSource:
                     root,
                     "response-schema",
                     "B3 dividends response lacks a matching page contract",
-                    evidence=body,
-                )
-            if not all(isinstance(row, Mapping) for row in results):
-                await self._quarantine(
-                    root,
-                    "response-schema",
-                    "B3 dividends results contains a non-object row",
                     evidence=body,
                 )
             if not results:
@@ -308,16 +328,36 @@ class B3CashDividendSource:
         root: str,
         *,
         rows: int,
+        fetched: int | None = None,
+        accepted: int | None = None,
+        rejected: int = 0,
+        deduplicated: int = 0,
+        coverage_established: bool | None = None,
         findings: tuple[ValidationFinding, ...] = (),
         evidence: Mapping[str, object] | None = None,
     ) -> SourceBatchValidation:
+        fetched_count = rows if fetched is None else fetched
+        accepted_count = (
+            rows - rejected - deduplicated if accepted is None else accepted
+        )
         return SourceBatchValidation(
             source="b3",
             batch=f"GetListedCashDividends:{root}",
             module=CASH_DIVIDEND_B3_MODULE,
             parser=self.parser_identity,
             rules=_RULES,
-            observations={"rows": rows, "coverage_established": not findings},
+            observations={
+                "rows": rows,
+                "fetched": fetched_count,
+                "accepted": accepted_count,
+                "rejected": rejected,
+                "deduplicated": deduplicated,
+                "coverage_established": (
+                    not findings
+                    if coverage_established is None
+                    else coverage_established
+                ),
+            },
             findings=findings,
             evidence=evidence or {},
         )
@@ -346,25 +386,170 @@ class B3CashDividendSource:
 
 def _to_payload(row: Mapping[str, Any], root: str, code: str | None) -> dict[str, Any]:
     """Mirror the row as B3 publishes it — its vocabulary, its number format."""
-    return {
-        "issuing_company": root,
-        "cvm_code": code,
-        "share_class": _text(row.get("typeStock")),
-        "event_type": _text(row.get("corporateAction")),
-        "value": _text(row.get("valueCash")),
-        # 1 or 1000: the payment and the reference price are both quoted on it.
-        "quoted_per_shares": _text(row.get("quotedPerShares")),
-        "approval_date": _text(row.get("dateApproval")),
-        # The last session that still carried the right to the payment.
-        "last_date_prior": _text(row.get("lastDatePriorEx")),
-        "closing_price_prior": _text(row.get("closingPricePriorExDate")),
-        # B3's own reading of the payment as a percentage of that close.
-        "percentage_of_price": _text(row.get("corporateActionPrice")),
-    }
+    payload = {str(key): value for key, value in row.items()}
+    payload.update(
+        {
+            "issuing_company": root,
+            "cvm_code": code,
+            "share_class": _text(row.get("typeStock")),
+            "event_type": _text(row.get("corporateAction")),
+            "value": _text(row.get("valueCash")),
+            # 1 or 1000: the payment and the reference price are both quoted on it.
+            "quoted_per_shares": _text(row.get("quotedPerShares")),
+            "approval_date": _text(row.get("dateApproval")),
+            # The last session that still carried the right to the payment.
+            "last_date_prior": _text(row.get("lastDatePriorEx")),
+            "closing_price_prior": _text(row.get("closingPricePriorExDate")),
+            # B3's own reading of the payment as a percentage of that close.
+            "percentage_of_price": _text(row.get("corporateActionPrice")),
+            # Keep identity-bearing variants that are present on some B3 revisions.
+            "last_date_time_prior": _text(row.get("lastDateTimePriorEx")),
+            "date_closing_price_prior": _text(row.get("dateClosingPricePriorExDate")),
+            "ratio": _text(row.get("ratio")),
+        }
+    )
+    return payload
 
 
 def _text(value: Any) -> str:
     return str(value).strip() if value is not None else ""
+
+
+_REQUIRED_ROW_FIELDS = frozenset(
+    {
+        "typeStock",
+        "lastDatePriorEx",
+        "corporateAction",
+        "valueCash",
+        "quotedPerShares",
+    }
+)
+
+
+def _reconcile_rows(
+    rows: Sequence[object],
+) -> tuple[
+    list[Mapping[str, Any]],
+    list[dict[str, object]],
+    list[dict[str, object]],
+]:
+    """Classify source rows before they become raw mirror records.
+
+    B3 occasionally repeats a payment while walking the paginated endpoint. The
+    canonical source identity includes every published field, so an amended
+    approval or reference price remains a distinct raw fact. The separate
+    economic identity used by the analysis reader intentionally excludes those
+    display-only fields. Rows that cannot carry either identity are retained in
+    validation evidence, never silently interpreted as an empty history.
+    """
+    accepted: list[Mapping[str, Any]] = []
+    rejected: list[dict[str, object]] = []
+    deduplicated: list[dict[str, object]] = []
+    first_by_identity: dict[str, int] = {}
+
+    for row_number, row in enumerate(rows, start=1):
+        finding = _row_finding(row, row_number)
+        if finding is not None:
+            rejected.append(
+                {
+                    "row": row_number,
+                    "finding": {
+                        "code": finding.code,
+                        "detail": finding.detail,
+                    },
+                    "raw": row,
+                }
+            )
+            continue
+
+        assert isinstance(row, Mapping)
+        identity = _source_row_identity(row)
+        first_row = first_by_identity.get(identity)
+        if first_row is not None:
+            deduplicated.append(
+                {
+                    "row": row_number,
+                    "matches": first_row,
+                    "identity": _identity_evidence(row),
+                    "source_identity": identity,
+                }
+            )
+            continue
+        first_by_identity[identity] = row_number
+        accepted.append(row)
+
+    return accepted, rejected, deduplicated
+
+
+def _row_finding(row: object, row_number: int) -> ValidationFinding | None:
+    if not isinstance(row, Mapping):
+        return ValidationFinding(
+            "response-schema",
+            f"B3 dividends row {row_number} is not an object",
+        )
+    missing = sorted(field for field in _REQUIRED_ROW_FIELDS if field not in row)
+    if missing:
+        return ValidationFinding(
+            "response-schema",
+            f"B3 dividends row {row_number} lacks {', '.join(missing)}",
+        )
+    blank = sorted(field for field in _REQUIRED_ROW_FIELDS if not _text(row[field]))
+    if blank:
+        return ValidationFinding(
+            "response-schema",
+            f"B3 dividends row {row_number} has empty {', '.join(blank)}",
+        )
+    return None
+
+
+def _economic_identity(row: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return the B3 fields that identify one economic cash right."""
+    return (
+        _text(row.get("typeStock")).upper(),
+        _text(row.get("corporateAction")).upper(),
+        _text(row.get("lastDatePriorEx")),
+        _number_identity(row.get("valueCash")),
+        _number_identity(row.get("quotedPerShares")),
+    )
+
+
+def _source_row_identity(row: Mapping[str, Any]) -> str:
+    """Identify an exact source row without discarding amended B3 fields.
+
+    Economic fields are enough for the analysis reader to avoid paying one right
+    twice, but they are not enough for the raw mirror: a changed approval date,
+    reference close or corporate-action percentage is a distinct source fact and
+    must remain available for audit and replay.
+    """
+    return json.dumps(
+        {str(key): value for key, value in row.items()},
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _identity_evidence(row: Mapping[str, Any]) -> dict[str, str]:
+    """Render an economic identity with source vocabulary for audit reports."""
+    identity = _economic_identity(row)
+    return {
+        "share_class": identity[0],
+        "event_type": identity[1],
+        "last_date_prior": identity[2],
+        "value": identity[3],
+        "quoted_per_shares": identity[4],
+    }
+
+
+def _number_identity(value: object) -> str:
+    """Canonicalize B3's pt-BR number spelling without changing its raw payload."""
+    raw = _text(value)
+    try:
+        parsed = Decimal(raw.replace(".", "").replace(",", "."))
+    except InvalidOperation:
+        return raw
+    return format(parsed.normalize(), "f")
 
 
 def _encoded(params: dict[str, object]) -> str:
