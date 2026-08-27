@@ -111,8 +111,9 @@ _PRICE_SCALE = Decimal(100)
 # v4 keeps the sessions where the paper's rights state changed; v5 keeps the
 # issuer name B3 prints beside the code, which is what confirms a retired
 # code against the names its registrant filed (#198); v6 keeps B3's complete
-# identity evidence (CODISI, ESPECI and CODBDI) alongside it.
-_REDUCTION_VERSION = 6
+# identity evidence (CODISI, ESPECI and CODBDI) alongside it; v7 retains identity
+# transitions by session instead of collapsing a code-year to its first row.
+_REDUCTION_VERSION = 7
 
 # A marker with no class attached, used where the field is blank so that the
 # encoded triples stay whitespace-separated.
@@ -141,6 +142,17 @@ class RightsState:
 
 
 @dataclass(frozen=True, slots=True)
+class IdentityState:
+    """B3 identity evidence in force for a code on one published session."""
+
+    session: date
+    isin: str
+    especi: str
+    bdi: str
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
 class YearQuotes:
     """What one trading code did over one year, reduced to what is asked of it.
 
@@ -162,11 +174,12 @@ class YearQuotes:
     for about eight sessions after the event, so knowing whether a given session
     introduced it means knowing what stood immediately before.
 
-    ``isin``, ``especi`` and ``bdi`` retain B3's identity/provenance fields from
-    the first spot record for the code. They are evidence for diagnostics and
-    security resolution, not independent keys; ``code`` remains the reduction's
-    map key. The marker used by ``rights`` is still derived from the complete
-    ``especi`` field rather than replacing it.
+    ``isin``, ``especi`` and ``bdi`` retain the first identity values for
+    compatibility, while ``identities`` records every subsequent identity
+    transition as ``[day, isin, especi, bdi, name]`` JSON rows. They are evidence
+    for diagnostics and security resolution, not independent keys; ``code``
+    remains the reduction's map key. The marker used by ``rights`` is still
+    derived from the complete ``especi`` field rather than replacing it.
     """
 
     sessions: int
@@ -179,6 +192,7 @@ class YearQuotes:
     isin: str = ""
     especi: str = ""
     bdi: str = ""
+    identities: str = ""
 
     @property
     def codisi(self) -> str:
@@ -199,6 +213,42 @@ class YearQuotes:
     def bdi_code(self) -> str:
         """The descriptive alias for the retained BDI evidence."""
         return self.bdi
+
+    def identity_states(self) -> tuple[IdentityState, ...]:
+        """Decode identity transitions, oldest first."""
+        if not self.identities:
+            return (
+                IdentityState(
+                    session=self.first_close().session,
+                    isin=self.isin,
+                    especi=self.especi,
+                    bdi=self.bdi,
+                    name=self.name,
+                ),
+            )
+        january = date(self.last_session.year, 1, 1).toordinal()
+        try:
+            rows = json.loads(self.identities)
+            return tuple(
+                IdentityState(
+                    session=date.fromordinal(january + int(row[0])),
+                    isin=str(row[1]),
+                    especi=str(row[2]),
+                    bdi=str(row[3]),
+                    name=str(row[4]),
+                )
+                for row in rows
+            )
+        except (IndexError, TypeError, ValueError, json.JSONDecodeError):
+            return ()
+
+    def identity_at(self, session: date) -> IdentityState | None:
+        """Return the identity evidence in force on ``session``."""
+        states = self.identity_states()
+        for state in reversed(states):
+            if state.session <= session:
+                return state
+        return None
 
     def rights_states(self) -> tuple[RightsState, ...]:
         """The year's rights states, decoded — oldest first."""
@@ -292,6 +342,10 @@ class _Accumulator:
     isin: str = ""
     especi: str = ""
     bdi: str = ""
+    names: list[str] = field(default_factory=list)
+    isins: list[str] = field(default_factory=list)
+    especis: list[str] = field(default_factory=list)
+    bdis: list[str] = field(default_factory=list)
 
     def add(
         self,
@@ -300,12 +354,20 @@ class _Accumulator:
         ordinal: int,
         rights: str,
         marker: str,
+        name: str,
+        isin: str,
+        especi: str,
+        bdi: str,
     ) -> None:
         self.ordinals.append(ordinal)
         self.cents.append(cents)
         self.factors.append(factor)
         self.rights.append(rights)
         self.markers.append(marker)
+        self.names.append(name)
+        self.isins.append(isin)
+        self.especis.append(especi)
+        self.bdis.append(bdi)
 
     def freeze(self) -> YearQuotes:
         """The year reduced, with its sessions put back in date order.
@@ -322,34 +384,42 @@ class _Accumulator:
                 self.factors,
                 self.rights,
                 self.markers,
+                self.names,
+                self.isins,
+                self.especis,
+                self.bdis,
                 strict=True,
             )
         )
         prices = [
-            Decimal(cents) / (_PRICE_SCALE * factor)
-            for _, cents, factor, _, _ in series
+            Decimal(cents) / (_PRICE_SCALE * factor) for _, cents, factor, *_ in series
         ]
         last_session = date.fromordinal(series[-1][0])
         january = date(last_session.year, 1, 1).toordinal()
         states = [
-            f"{ordinal - january} {rights} {marker or _NO_MARKER}"
-            for index, (ordinal, _, _, rights, marker) in enumerate(series)
-            if index == 0 or (rights, marker) != series[index - 1][3:5]
+            f"{row[0] - january} {row[3]} {row[4] or _NO_MARKER}"
+            for index, row in enumerate(series)
+            if index == 0 or row[3:5] != series[index - 1][3:5]
         ]
+        identities = []
+        for index, (ordinal, _, _, _, _, name, isin, especi, bdi) in enumerate(series):
+            if index == 0 or (name, isin, especi, bdi) != series[index - 1][5:9]:
+                identities.append([ordinal - january, isin, especi, bdi, name])
         return YearQuotes(
             sessions=len(prices),
             average=sum(prices, Decimal(0)) / len(prices),
             last_session=last_session,
             last_close=prices[-1],
             closes=" ".join(
-                f"{ordinal - january} {price}"
-                for (ordinal, _, _, _, _), price in zip(series, prices, strict=True)
+                f"{row[0] - january} {price}"
+                for row, price in zip(series, prices, strict=True)
             ),
             rights=" ".join(states),
             name=self.name,
             isin=self.isin,
             especi=self.especi,
             bdi=self.bdi,
+            identities=json.dumps(identities, separators=(",", ":")),
         )
 
 
@@ -382,19 +452,37 @@ def _reduce(archive_path: Path) -> dict[str, YearQuotes]:
                 marker = line[_MARKER].strip()
                 entry = totals.get(code)
                 if entry is None:
+                    name = line[_NOMRES].strip()
+                    isin = line[_CODISI].strip()
+                    especi = line[_ESPECI].strip()
+                    bdi = line[_CODBDI].strip()
                     totals[code] = _Accumulator(
-                        [ordinal],
-                        [cents],
-                        [factor],
-                        [rights],
-                        [marker],
+                        ordinals=[ordinal],
+                        cents=[cents],
+                        factors=[factor],
+                        rights=[rights],
+                        markers=[marker],
+                        name=name,
+                        isin=isin,
+                        especi=especi,
+                        bdi=bdi,
+                        names=[name],
+                        isins=[isin],
+                        especis=[especi],
+                        bdis=[bdi],
+                    )
+                else:
+                    entry.add(
+                        cents,
+                        factor,
+                        ordinal,
+                        rights,
+                        marker,
                         line[_NOMRES].strip(),
                         line[_CODISI].strip(),
                         line[_ESPECI].strip(),
                         line[_CODBDI].strip(),
                     )
-                else:
-                    entry.add(cents, factor, ordinal, rights, marker)
     return {code: entry.freeze() for code, entry in totals.items()}
 
 
@@ -415,6 +503,7 @@ def _dump(reduction: Mapping[str, YearQuotes], built_on: date) -> str:
                     quotes.isin,
                     quotes.especi,
                     quotes.bdi,
+                    quotes.identities,
                 ]
                 for code, quotes in reduction.items()
             },
@@ -441,6 +530,7 @@ def _load(text: str) -> tuple[dict[str, YearQuotes], date] | None:
                 isin=row[7],
                 especi=row[8],
                 bdi=row[9],
+                identities=row[10],
             )
             for code, row in payload["codes"].items()
         }
@@ -840,9 +930,7 @@ class B3BaseChanges:
         corporate action.
         """
         states = quotes.rights_states()
-        if not states or not any(
-            _BASE_CHANGE_LETTERS.intersection(state.marker) for state in states
-        ):
+        if not states or not _BASE_CHANGE_LETTERS.intersection(states[0].marker):
             return None
         try:
             previous = (await self._archive.year(year - 1)).get(tape)

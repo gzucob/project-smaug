@@ -226,25 +226,30 @@ class CodeSuccession:
         if before is None:
             return None
         head_quotes = (await self._archive.year(head.first_session.year)).get(head.code)
-        wanted = None if head_quotes is None else _especi_class(head_quotes.especi)
-        proposed = {
-            code
-            for year in {before.year, head.first_session.year}
-            for code, quotes in (await self._archive.year(year)).items()
-            if quotes.last_session == before
-            and code != head.code
-            and (
-                (
-                    wanted is not None
-                    and (candidate_class := _especi_class(quotes.especi)) is not None
-                    and candidate_class == wanted
+        head_identity = (
+            None if head_quotes is None else head_quotes.identity_at(head.first_session)
+        )
+        wanted = None if head_identity is None else _especi_class(head_identity.especi)
+        proposed: set[str] = set()
+        for year in {before.year, head.first_session.year}:
+            for code, quotes in (await self._archive.year(year)).items():
+                if quotes.last_session != before or code == head.code:
+                    continue
+                candidate_identity = quotes.identity_at(before)
+                candidate_class = (
+                    None
+                    if candidate_identity is None
+                    else _especi_class(candidate_identity.especi)
                 )
-                or (
+                if (
+                    wanted is not None
+                    and candidate_class is not None
+                    and candidate_class == wanted
+                ) or (
                     wanted is None
                     and share_class_suffix(code) == share_class_suffix(head.code)
-                )
-            )
-        }
+                ):
+                    proposed.add(code)
         filed = self._names(ticker)
         survivors: list[tuple[CodeWindow, str]] = []
         for code in sorted(proposed):

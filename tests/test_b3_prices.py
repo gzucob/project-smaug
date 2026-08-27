@@ -628,7 +628,17 @@ async def test_identity_fields_survive_a_reduction_round_trip(tmp_path: Path) ->
                 especi="ON  EB N1",
                 isin="BRIDENACNOR1",
                 name="IDENTITY",
-            )
+            ),
+            _quote(
+                session="20220104",
+                code="IDEN3",
+                cents=4020,
+                distribution="119",
+                bdi="03",
+                especi="PN  EB N1",
+                isin="BRIDENACNOR2",
+                name="IDENTITY2",
+            ),
         ],
     )
     archive, http = _archive(tmp_path, today=date(2023, 1, 2))
@@ -642,6 +652,15 @@ async def test_identity_fields_survive_a_reduction_round_trip(tmp_path: Path) ->
     assert identity.especi == "ON  EB N1"
     assert identity.bdi == "02"
     assert identity.codbdi == identity.bdi
+    states = identity.identity_states()
+    assert [
+        (state.session, state.isin, state.especi, state.bdi, state.name)
+        for state in states
+    ] == [
+        (date(2022, 1, 3), "BRIDENACNOR1", "ON  EB N1", "02", "IDENTITY"),
+        (date(2022, 1, 4), "BRIDENACNOR2", "PN  EB N1", "03", "IDENTITY2"),
+    ]
+    assert identity.identity_at(date(2022, 1, 4)) == states[-1]
 
     # The ZIP is no longer needed: this reads the versioned reduction written by
     # the first archive instance, proving the new fields are persisted too.
@@ -697,6 +716,34 @@ async def test_an_event_named_a_session_after_it_is_dated_is_still_dated(
 
     # Dated by the session the state moved on, not by the one that named it.
     assert [c.session for c in changes] == [date(2025, 12, 19)]
+
+
+async def test_late_base_marker_does_not_trigger_an_opening_lookback(
+    tmp_path: Path,
+) -> None:
+    """A later ``B`` marker is handled in-year and needs no prior archive."""
+    _rights_archive(
+        tmp_path,
+        2022,
+        [
+            _quote(session="20220103", code="LATE3", cents=1000, distribution="001"),
+            _quote(
+                session="20220104",
+                code="LATE3",
+                cents=500,
+                distribution="002",
+                marker="EB",
+            ),
+        ],
+    )
+    transport = _CountingTransport(b"")
+    archive, http = _archive(tmp_path, today=date(2023, 1, 2), transport=transport)
+
+    async with http:
+        changes = await B3BaseChanges(archive).base_changes("LATE3", (2022,))
+
+    assert [change.session for change in changes] == [date(2022, 1, 4)]
+    assert transport.requests == 0
 
 
 async def test_a_bonus_following_a_bonus_is_a_second_action(tmp_path: Path) -> None:
