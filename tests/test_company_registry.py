@@ -33,6 +33,8 @@ from smaug.portfolio.infrastructure.cvm_registry import (
     CVM_FCA_BASE_URL,
     CvmCompanyRegistry,
 )
+from smaug.portfolio.infrastructure.cvm_securities import CvmSecurityHistory
+from smaug.shared.artifacts import SourceArtifact
 
 _YEAR = 2024
 
@@ -654,3 +656,79 @@ async def test_current_fca_snapshot_is_independent_from_a_filing_year_snapshot(
     assert (await current.companies())[0].ticker == "NEWE3"
     assert await current.resolve("OLDE3") is not None  # explicit diagnosis only
     assert await current.resolve("NEWE3") is not None
+
+
+async def test_current_fca_artifact_is_acquired_once_for_registry_and_history(
+    tmp_path: Path,
+) -> None:
+    """A clean run shares the current FCA Bronze artifact with history."""
+    cnpj = "52.000.000/0001-00"
+    ticker = "ONCE3"
+    archive_dir = tmp_path / "archive"
+    _write_fca_zip(
+        archive_dir,
+        geral=[_cadastre_row(cnpj, "520")],
+        securities=[
+            {
+                "CNPJ_Companhia": cnpj,
+                "Versao": "1",
+                "Codigo_Negociacao": ticker,
+                "Mercado": "Bolsa",
+                "Data_Fim_Negociacao": "",
+                "Valor_Mobiliario": "Ações Ordinárias",
+            }
+        ],
+        year=2026,
+    )
+    archive_path = archive_dir / "fca_cia_aberta_2026.zip"
+    artifact = SourceArtifact(
+        artifact_id="sha256:" + "a" * 64,
+        sha256="a" * 64,
+        byte_size=archive_path.stat().st_size,
+        path=archive_path,
+        source_url="https://example.test/fca_cia_aberta_2026.zip",
+    )
+
+    class CountingStore:
+        def __init__(self) -> None:
+            self.acquire_calls = 0
+            self.open_calls = 0
+
+        async def acquire(
+            self, source_url: str, *, follow_redirects: bool = False
+        ) -> SourceArtifact:
+            del source_url, follow_redirects
+            self.acquire_calls += 1
+            return artifact
+
+        async def open(self, artifact_id: str) -> SourceArtifact:
+            assert artifact_id == artifact.artifact_id
+            self.open_calls += 1
+            return artifact
+
+    store = CountingStore()
+    async with httpx.AsyncClient() as http:
+        registry = CvmCompanyRegistry(
+            http,
+            year=2026,
+            cache_dir=str(tmp_path / "registry-cache"),
+            artifact_store=store,
+        )
+        assert await registry.resolve(ticker) is not None
+        provenance = await registry.provenance()
+        assert provenance.artifact_id == artifact.artifact_id
+
+        history = CvmSecurityHistory(
+            http,
+            through=2026,
+            since=2026,
+            cache_dir=str(tmp_path / "history-cache"),
+            artifact_store=store,
+            snapshot_year=provenance.year,
+            snapshot_artifact_id=provenance.artifact_id,
+        )
+        resolver = await history.resolver()
+
+    assert resolver(ticker) == ()
+    assert store.acquire_calls == 1
+    assert store.open_calls == 1

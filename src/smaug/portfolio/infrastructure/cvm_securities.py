@@ -41,6 +41,7 @@ from smaug.portfolio.domain.securities import (
 )
 from smaug.portfolio.domain.share_classes import TickerCodeEvidence
 from smaug.portfolio.infrastructure.cvm_registry import CVM_FCA_BASE_URL
+from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.download import Sleeper, download_zip
 from smaug.shared.errors import CvmDownloadError
 from smaug.shared.logging import get_logger
@@ -63,12 +64,18 @@ class CvmSecurityHistory:
         since: int = FIRST_FCA_YEAR,
         base_url: str | None = None,
         sleep: Sleeper = asyncio.sleep,
+        artifact_store: SourceArtifactStore | None = None,
+        snapshot_year: int | None = None,
+        snapshot_artifact_id: str | None = None,
     ) -> None:
         self._http = http_client
         self._years = range(since, through + 1)
         self._cache_dir = Path(cache_dir)
         self._base_url = (base_url or CVM_FCA_BASE_URL).rstrip("/")
         self._sleep = sleep
+        self._artifact_store = artifact_store
+        self._snapshot_year = snapshot_year
+        self._snapshot_artifact_id = snapshot_artifact_id
         self._index: _Index | None = None
         self._lock = asyncio.Lock()
 
@@ -119,6 +126,10 @@ class CvmSecurityHistory:
             self._cache_dir.mkdir(parents=True, exist_ok=True)
             archives: list[tuple[int, Path]] = []
             for year in self._years:
+                artifact = await self._snapshot_artifact(year)
+                if artifact is not None:
+                    archives.append((year, artifact.path))
+                    continue
                 path = self._cache_dir / f"fca_cia_aberta_{year}.zip"
                 if not path.exists():
                     url = f"{self._base_url}/{path.name}"
@@ -150,6 +161,32 @@ class CvmSecurityHistory:
                 len(index.names),
             )
             return index
+
+    async def _snapshot_artifact(self, year: int) -> SourceArtifact | None:
+        """Reuse the current registry snapshot already stored in Bronze.
+
+        The current FCA archive is also one of the historical inputs.  Opening
+        its content-addressed artifact avoids a second HTTP acquisition (and
+        avoids creating a second cache copy) while leaving older years on the
+        history reader's normal cache/download path.
+        """
+        if (
+            self._artifact_store is None
+            or self._snapshot_artifact_id is None
+            or self._snapshot_year != year
+        ):
+            return None
+        try:
+            return await self._artifact_store.open(self._snapshot_artifact_id)
+        except FileNotFoundError:
+            # A replay reference may outlive its local Bronze store.  The
+            # history reader remains usable by falling back to its year cache.
+            logger.info(
+                "FCA Bronze artifact %s is unavailable; reading %d from cache",
+                self._snapshot_artifact_id,
+                year,
+            )
+            return None
 
 
 @dataclass(frozen=True, slots=True)

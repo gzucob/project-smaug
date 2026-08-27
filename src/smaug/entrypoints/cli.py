@@ -1343,7 +1343,11 @@ def analyze(
 
 
 async def _security_resolvers(
-    settings: Settings, http: httpx.AsyncClient
+    settings: Settings,
+    http: httpx.AsyncClient,
+    *,
+    artifact_store: SourceArtifactStore | None = None,
+    snapshot: FcaSnapshotProvenance | None = None,
 ) -> tuple[
     SiblingCodesResolver,
     RegistrantNamesResolver,
@@ -1364,6 +1368,9 @@ async def _security_resolvers(
         # if CVM has not published it yet.
         through=max(settings.cvm_fca_year, date.today().year),
         cache_dir=settings.cvm_cache_dir,
+        artifact_store=artifact_store,
+        snapshot_year=snapshot.year if snapshot is not None else None,
+        snapshot_artifact_id=(snapshot.artifact_id if snapshot is not None else None),
     )
     return (
         await history.resolver(),
@@ -1471,7 +1478,10 @@ async def _run_analyze(
             # sessions and the base-change reader dates the actions filed under
             # the codes those sessions came from (ADR 0042).
             siblings, names, historical_codes = await _security_resolvers(
-                settings, http
+                settings,
+                http,
+                artifact_store=artifact_store,
+                snapshot=fca_provenance[0] if fca_provenance else None,
             )
             succession = CodeSuccession(
                 archive,
