@@ -378,6 +378,81 @@ def test_ttm_requires_zero_activity_proof_for_the_whole_insurance_window() -> No
     assert ttm.source_account_evidence == (source,)
 
 
+def test_ttm_keeps_active_underwriting_provenance_over_a_newer_zero_period() -> None:
+    def underwriting(
+        label: str, status: InsuranceUnderwritingStatus
+    ) -> InsuranceUnderwritingEvidence:
+        value = (
+            Decimal(100) if status is InsuranceUnderwritingStatus.ACTIVE else Decimal(0)
+        )
+        return InsuranceUnderwritingEvidence(
+            status=status,
+            revenue_aggregate=SourceAccountRef("3.01", f"{label} revenue", value),
+            expense_aggregate=SourceAccountRef("3.02", f"{label} expenses", -value),
+        )
+
+    def activity_source(
+        label: str, status: InsuranceUnderwritingStatus
+    ) -> SourceAccountEvidence:
+        value = (
+            Decimal(100) if status is InsuranceUnderwritingStatus.ACTIVE else Decimal(0)
+        )
+        return SourceAccountEvidence(
+            field="insurance_underwriting_activity",
+            statement="DRE",
+            status=SourceAccountStatus.DERIVED,
+            expected=("code=3.01", "code=3.02"),
+            found=(
+                SourceAccountRef("3.01", f"{label} revenue", value),
+                SourceAccountRef("3.02", f"{label} expenses", -value),
+            ),
+            formula="3.01 == 0 and 3.02 == 0",
+            blocker=(
+                NullReason.INAPPLICABLE_REGIME
+                if status is InsuranceUnderwritingStatus.ZERO_ACTIVITY
+                else None
+            ),
+        )
+
+    statuses = [
+        InsuranceUnderwritingStatus.ACTIVE,
+        InsuranceUnderwritingStatus.ZERO_ACTIVITY,
+        InsuranceUnderwritingStatus.ZERO_ACTIVITY,
+        InsuranceUnderwritingStatus.ZERO_ACTIVITY,
+    ]
+    quarters = [
+        replace(
+            _q(end, revenue=Decimal(100)),
+            sector=Sector.INSURER,
+            filed_regime=AccountingRegime.INSURANCE,
+            insurance_underwriting_evidence=underwriting(f"Q{index}", status),
+            source_account_evidence=(activity_source(f"Q{index}", status),),
+        )
+        for index, (end, status) in enumerate(
+            zip(_ENDS, statuses, strict=True), start=1
+        )
+    ]
+
+    ttm = build_ttm(quarters, None)
+
+    assert ttm is not None
+    assert ttm.insurance_underwriting_evidence is not None
+    assert (
+        ttm.insurance_underwriting_evidence.status is InsuranceUnderwritingStatus.ACTIVE
+    )
+    assert ttm.insurance_underwriting_evidence.revenue_aggregate == SourceAccountRef(
+        "3.01", "Q1 revenue", Decimal(100)
+    )
+    activity = {item.field: item for item in ttm.source_account_evidence}[
+        "insurance_underwriting_activity"
+    ]
+    assert activity.found == (
+        SourceAccountRef("3.01", "Q1 revenue", Decimal(100)),
+        SourceAccountRef("3.02", "Q1 expenses", Decimal(-100)),
+    )
+    assert activity.blocker is None
+
+
 def test_ttm_uses_annual_underwriting_proof_without_losing_latest_lineage() -> None:
     def activity_source(label: str) -> SourceAccountEvidence:
         return SourceAccountEvidence(

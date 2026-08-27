@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import calendar
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from decimal import Decimal
 from itertools import pairwise
@@ -460,6 +460,55 @@ def _ttm_insurance_underwriting_selection(
     return selected, latest
 
 
+def _ttm_insurance_underwriting_status(
+    selected: Sequence[tuple[date, StandardizedFinancials]],
+    refs: Sequence[date],
+) -> InsuranceUnderwritingStatus:
+    """Aggregate the selected periods without allowing a zero to mask activity."""
+    selected_evidence = [
+        period.insurance_underwriting_evidence for _, period in selected
+    ]
+    if len(selected) == len(refs) and all(
+        evidence is not None
+        and evidence.status is InsuranceUnderwritingStatus.ZERO_ACTIVITY
+        for evidence in selected_evidence
+    ):
+        return InsuranceUnderwritingStatus.ZERO_ACTIVITY
+    if any(
+        evidence is not None and evidence.status is InsuranceUnderwritingStatus.ACTIVE
+        for evidence in selected_evidence
+    ):
+        return InsuranceUnderwritingStatus.ACTIVE
+    return InsuranceUnderwritingStatus.UNKNOWN
+
+
+def _ttm_insurance_underwriting_representative(
+    selected: Sequence[tuple[date, StandardizedFinancials]],
+    status: InsuranceUnderwritingStatus,
+) -> tuple[date, StandardizedFinancials] | None:
+    """Choose raw evidence whose status supports the aggregate verdict.
+
+    A newer zero period must not replace an older active period in an active TTM.
+    When the aggregate is unknown because the window is incomplete, retain the
+    newest available raw evidence but let the caller remove any period-local
+    inapplicability blocker.
+    """
+    with_evidence = [
+        (ref, period)
+        for ref, period in selected
+        if period.insurance_underwriting_evidence is not None
+    ]
+    if not with_evidence:
+        return None
+    matching = [
+        (ref, period)
+        for ref, period in with_evidence
+        if period.insurance_underwriting_evidence is not None
+        and period.insurance_underwriting_evidence.status is status
+    ]
+    return max(matching or with_evidence, key=lambda item: item[0])
+
+
 def _ttm_insurance_underwriting_evidence(
     periods: Sequence[StandardizedFinancials],
     annual: StandardizedFinancials | None,
@@ -469,29 +518,17 @@ def _ttm_insurance_underwriting_evidence(
 
     A current TTM is a four-period window. One zero quarter cannot establish
     that the whole window is a non-underwriting holding, while one active quarter
-    is enough to prevent that false inapplicability. The selected latest evidence
+    is enough to prevent that false inapplicability. The representative evidence
     retains the raw aggregate accounts for the persisted source lineage.
     """
-    selected, latest = _ttm_insurance_underwriting_selection(periods, annual, refs)
-    if not selected or latest is None:
+    selected, _latest = _ttm_insurance_underwriting_selection(periods, annual, refs)
+    if not selected:
         return None
-    selected_evidence = [
-        period.insurance_underwriting_evidence for _, period in selected
-    ]
-    if len(selected) == len(refs) and all(
-        evidence is not None
-        and evidence.status is InsuranceUnderwritingStatus.ZERO_ACTIVITY
-        for evidence in selected_evidence
-    ):
-        status = InsuranceUnderwritingStatus.ZERO_ACTIVITY
-    elif any(
-        evidence is not None and evidence.status is InsuranceUnderwritingStatus.ACTIVE
-        for evidence in selected_evidence
-    ):
-        status = InsuranceUnderwritingStatus.ACTIVE
-    else:
-        status = InsuranceUnderwritingStatus.UNKNOWN
-    evidence = latest[1].insurance_underwriting_evidence
+    status = _ttm_insurance_underwriting_status(selected, refs)
+    representative = _ttm_insurance_underwriting_representative(selected, status)
+    if representative is None:
+        return None
+    evidence = representative[1].insurance_underwriting_evidence
     assert evidence is not None
     return InsuranceUnderwritingEvidence(
         status=status,
@@ -506,17 +543,30 @@ def _ttm_insurance_underwriting_source(
     refs: Sequence[date],
 ) -> SourceAccountEvidence | None:
     """Return raw activity proof from the period selected for the verdict."""
-    _selected, latest = _ttm_insurance_underwriting_selection(periods, annual, refs)
-    if latest is None:
+    selected, _latest = _ttm_insurance_underwriting_selection(periods, annual, refs)
+    if not selected:
         return None
-    return next(
+    status = _ttm_insurance_underwriting_status(selected, refs)
+    representative = _ttm_insurance_underwriting_representative(selected, status)
+    if representative is None:
+        return None
+    source = next(
         (
             entry
-            for entry in latest[1].source_account_evidence
+            for entry in representative[1].source_account_evidence
             if entry.field == "insurance_underwriting_activity"
         ),
         None,
     )
+    if (
+        source is not None
+        and status is not InsuranceUnderwritingStatus.ZERO_ACTIVITY
+        and source.blocker is NullReason.INAPPLICABLE_REGIME
+    ):
+        # ``INAPPLICABLE_REGIME`` belongs to an individual zero period. It is
+        # not valid provenance for an incomplete or active aggregate window.
+        source = replace(source, blocker=None)
+    return source
 
 
 def _merge_source_account_evidence(
