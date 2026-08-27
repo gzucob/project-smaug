@@ -20,6 +20,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.infrastructure.b3_prices import (
     B3BaseChanges,
     B3PriceProvider,
@@ -138,6 +139,7 @@ async def test_year_prices_carry_the_nominal_average_and_no_adjusted_one(
     )
     assert prices.closing == Decimal("8.33")
     assert prices.closing_session == date(2015, 1, 6)
+    assert prices.closing_code == "PETR4"
     # The published file carries the traded price and no dividend adjustment;
     # the total-return basis is rebuilt from corporate events, not read here.
     assert prices.adjusted_avg is None
@@ -292,6 +294,8 @@ async def test_the_quote_is_the_last_close_of_the_running_year(
         )
 
     assert quote.price == Decimal("20.96")  # its last session, not its average
+    assert quote.price_source_code == "VALE3"
+    assert quote.price_source_session == date(2015, 1, 5)
     # The cap is summed by the use case from the CVM's filed counts (ADR 0014),
     # so a quote source never volunteers a market cap of its own.
     assert quote.market_cap is None
@@ -309,6 +313,7 @@ async def test_a_code_absent_from_the_running_year_has_no_quote(
         )
 
     assert quote.price is None
+    assert quote.price_null_reason is NullReason.MISSING_PRICE
 
 
 async def test_the_archive_is_downloaded_and_reduced_once_per_run(

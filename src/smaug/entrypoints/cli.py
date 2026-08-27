@@ -2181,10 +2181,18 @@ def format_fca_snapshot(provenance: FcaSnapshotProvenance) -> str:
 def _format_exercise(exercise: ExerciseCoverage) -> list[str]:
     """One header line per exercise, then a line per null cell with its cause."""
     total = len(exercise.indicators)
+    price_source = (
+        f" | price_source=B3:{exercise.price_source_code}"
+        f"@{exercise.price_source_session}"
+        if exercise.price_source_code is not None
+        and exercise.price_source_session is not None
+        else " | price_source=unavailable"
+    )
     header = (
         f"  {exercise.view:<11} ref {exercise.reference_date} "
         f"| {exercise.values}/{total} values, "
         f"named {exercise.named_nulls}, unclassified {exercise.unclassified}"
+        f"{price_source}"
     )
     lines = [header]
     for cell in exercise.indicators:
@@ -2318,7 +2326,7 @@ def format_doctor_summary(report: DoctorReport) -> str:
     it is enough.
     """
     named: dict[NullReason, int] = {}
-    exercises = 0
+    exercises = price_provenance = 0
     unnamed_tickers: set[str] = set()
     empty: list[str] = []
 
@@ -2328,6 +2336,11 @@ def format_doctor_summary(report: DoctorReport) -> str:
             continue
         for exercise in ticker_cov.exercises:
             exercises += 1
+            if (
+                exercise.price_source_code is not None
+                and exercise.price_source_session is not None
+            ):
+                price_provenance += 1
             for cell in exercise.indicators:
                 if not cell.has_value and cell.reason is not None:
                     named[cell.reason] = named.get(cell.reason, 0) + 1
@@ -2344,6 +2357,8 @@ def format_doctor_summary(report: DoctorReport) -> str:
         f"{exercises} exercises, {totals.total_cells} cells",
         f"  value={totals.values} ({share:.1f}%) named={totals.named_nulls} "
         f"unclassified={totals.unclassified}",
+        f"  price provenance={price_provenance}/{exercises} exercises "
+        "(B3 code + session)",
     ]
     lines.extend(_format_coverage_details(report))
     for reason, count in sorted(named.items(), key=lambda kv: -kv[1]):

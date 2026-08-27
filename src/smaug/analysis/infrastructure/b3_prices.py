@@ -666,6 +666,7 @@ class B3PriceHistory:
             nominal_avg=quotes.average,
             closing=quotes.last_close,
             closing_session=quotes.last_session,
+            closing_code=ticker.strip().upper(),
         )
 
     async def year_sessions(self, ticker: str, year: int) -> tuple[SessionClose, ...]:
@@ -710,7 +711,11 @@ class B3QuoteProvider:
                 ticker,
             )
             return MarketData(price_null_reason=NullReason.MISSING_PRICE)
-        return MarketData(price=quotes.last_close)
+        return MarketData(
+            price=quotes.last_close,
+            price_source_code=ticker.strip().upper(),
+            price_source_session=quotes.last_session,
+        )
 
 
 def _opened_base_change(before: frozenset[str], after: frozenset[str]) -> bool:

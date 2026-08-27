@@ -85,6 +85,8 @@ class ExerciseCoverage:
     indicators: tuple[IndicatorCoverage, ...]
     debt_evidence: DebtCoverageEvidence | None = None
     debt_evidence_snapshot: DebtEvidenceSnapshot | None = None
+    price_source_code: str | None = None
+    price_source_session: date | None = None
 
     @property
     def values(self) -> int:
@@ -474,6 +476,8 @@ def _exercise_of(analysis: TickerAnalysis) -> ExerciseCoverage:
         indicators=_coverage_of(analysis.indicators),
         debt_evidence=analysis.debt_evidence,
         debt_evidence_snapshot=analysis.debt_evidence_snapshot,
+        price_source_code=analysis.price_source_code,
+        price_source_session=analysis.price_source_session,
     )
 
 

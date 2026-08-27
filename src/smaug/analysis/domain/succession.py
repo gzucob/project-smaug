@@ -67,6 +67,11 @@ class CodeWindow:
     last_session: date
     first_close: Decimal
     last_close: Decimal
+    # The exchange session immediately before/after the code window.  These are
+    # populated by the COTAHIST reader; keeping them on the window lets the pure
+    # decision reject a calendar hole without importing the archive here.
+    previous_session: date | None = None
+    next_session: date | None = None
 
 
 def crosses(before: Decimal, after: Decimal) -> bool:
@@ -84,7 +89,22 @@ def crosses(before: Decimal, after: Decimal) -> bool:
 
 def adjacent(predecessor: CodeWindow, successor: CodeWindow) -> bool:
     """Whether ``predecessor`` stops where ``successor`` starts."""
-    return predecessor.last_session < successor.first_session
+    witnesses = tuple(
+        witness
+        for witness in (
+            predecessor.next_session == successor.first_session
+            if predecessor.next_session is not None
+            else None,
+            successor.previous_session == predecessor.last_session
+            if successor.previous_session is not None
+            else None,
+        )
+        if witness is not None
+    )
+    # A chronological pair without a B3 calendar witness is not enough: a
+    # trading session may exist in the gap. If both sides supplied a witness,
+    # they must agree; conflicting exchange evidence is a hard stop.
+    return bool(witnesses) and all(witnesses)
 
 
 def joins(predecessor: CodeWindow, successor: CodeWindow) -> bool:
@@ -156,7 +176,13 @@ def joined(
     """
     for index in range(len(candidates) - 1, 0, -1):
         predecessor, successor = candidates[index - 1], candidates[index]
-        if not joins(predecessor, successor) and not explains(predecessor, successor):
+        # An explanation can date an otherwise discontinuous *price* seam, but
+        # it cannot manufacture a missing exchange session.  The tape must say
+        # that these are the two immediately adjacent sessions first.
+        if not adjacent(predecessor, successor) or (
+            not crosses(predecessor.last_close, successor.first_close)
+            and not explains(predecessor, successor)
+        ):
             return tuple(candidates[index:])
     return tuple(candidates)
 

@@ -98,6 +98,7 @@ class RestatedPriceProvider:
             adjusted_avg=_divided(prices.adjusted_avg, average_divisor),
             closing=_divided(prices.closing, closing_divisor),
             closing_session=prices.closing_session,
+            closing_code=prices.closing_code,
             null_reason=prices.null_reason,
         )
 

@@ -74,6 +74,7 @@ class DividendAdjustedPriceProvider:
                 adjusted_avg=prices.nominal_avg,
                 closing=prices.closing,
                 closing_session=prices.closing_session,
+                closing_code=prices.closing_code,
                 null_reason=prices.null_reason,
             )
         sessions = await self._inner.year_sessions(ticker, year)
@@ -91,6 +92,7 @@ class DividendAdjustedPriceProvider:
             adjusted_avg=_scaled(prices.nominal_avg, factor),
             closing=prices.closing,
             closing_session=prices.closing_session,
+            closing_code=prices.closing_code,
             null_reason=prices.null_reason,
         )
 

@@ -74,6 +74,8 @@ def _analysis(
     reference_date: date,
     indicators: Indicators,
     classification: Classification = _DEFAULT_CLASSIFICATION,
+    price_source_code: str | None = None,
+    price_source_session: date | None = None,
 ) -> TickerAnalysis:
     return TickerAnalysis(
         ticker=ticker,
@@ -81,6 +83,8 @@ def _analysis(
         reference_date=reference_date,
         computed_at=datetime(2026, 7, 10, tzinfo=UTC),
         indicators=indicators,
+        price_source_code=price_source_code,
+        price_source_session=price_source_session,
         view=view,
     )
 
@@ -306,6 +310,29 @@ async def test_doctor_reports_ticker_without_persisted_analysis() -> None:
     (ticker_cov,) = report.tickers
     assert ticker_cov.ticker == "TAEE11"
     assert ticker_cov.exercises == ()
+
+
+async def test_doctor_exposes_b3_price_provenance() -> None:
+    repo = FakeRepo(
+        latest={
+            "AZZA3": _analysis(
+                "AZZA3",
+                view=VIEW_TTM,
+                reference_date=date(2026, 6, 1),
+                indicators=Indicators(),
+                price_source_code="ARZZ3",
+                price_source_session=date(2026, 5, 29),
+            )
+        }
+    )
+
+    report = await DoctorUseCase(repo, sector_resolver=fake_sector_resolver).execute(
+        ["AZZA3"]
+    )
+
+    (exercise,) = report.tickers[0].exercises
+    assert exercise.price_source_code == "ARZZ3"
+    assert exercise.price_source_session == date(2026, 5, 29)
 
 
 async def test_doctor_report_sums_unclassified_across_every_ticker() -> None:

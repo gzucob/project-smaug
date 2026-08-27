@@ -332,6 +332,8 @@ class AnalysisResponse(BaseModel):
     cd_cvm: str | None
     cnpj: str | None
     price: Decimal | None
+    price_source_code: str | None
+    price_source_session: date | None
     price_adjusted: Decimal | None
     price_basis: str | None
     share_count_basis: str | None
@@ -583,6 +585,8 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
         cd_cvm=analysis.cd_cvm,
         cnpj=analysis.cnpj,
         price=analysis.price,
+        price_source_code=analysis.price_source_code,
+        price_source_session=analysis.price_source_session,
         price_adjusted=analysis.price_adjusted,
         price_basis=analysis.price_basis,
         share_count_basis=analysis.share_count_basis,

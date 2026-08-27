@@ -58,6 +58,9 @@ def _analysis() -> TickerAnalysis:
         reference_date=date(2024, 12, 31),
         computed_at=datetime(2026, 7, 10, tzinfo=UTC),
         view=VIEW_TTM,
+        price=Decimal("38.25"),
+        price_source_code="AZZA3",
+        price_source_session=date(2026, 8, 14),
         price_basis="b3_latest_close",
         share_count_basis="cvm_latest_filed_outstanding_current_base",
         liquidity_basis="cpc03_cash_and_cash_equivalents",
@@ -126,6 +129,9 @@ def test_null_reasons_round_trip_through_the_row() -> None:
     assert entity.indicators.loss_ratio == Decimal("0.72")
     assert entity.indicators.combined_ratio == Decimal("0.94")
     assert entity.price_basis == "b3_latest_close"
+    assert entity.price == Decimal("38.25")
+    assert entity.price_source_code == "AZZA3"
+    assert entity.price_source_session == date(2026, 8, 14)
     assert entity.share_count_basis == "cvm_latest_filed_outstanding_current_base"
     assert entity.liquidity_basis == "cpc03_cash_and_cash_equivalents"
     assert entity.debt_basis == "cvm_bpp_explicit_interest_bearing"

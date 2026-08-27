@@ -42,6 +42,8 @@ def _analysis(view: AnalysisView) -> TickerAnalysis:
         computed_at=datetime(2026, 8, 15, tzinfo=UTC),
         view=view,
         price=Decimal("38"),
+        price_source_code="PETR4",
+        price_source_session=date(2026, 8, 14),
         price_basis="b3_latest_close",
         share_count_basis="cvm_latest_filed_outstanding_current_base",
         filed_regime=AccountingRegime.CORPORATE,
@@ -140,6 +142,13 @@ def test_api_response_exposes_filed_regime_provenance() -> None:
 
     assert response.filed_regime is AccountingRegime.CORPORATE
     assert response.regime_source is RegimeSource.FILED
+
+
+def test_api_response_exposes_b3_price_provenance() -> None:
+    response = _to_response(_analysis(VIEW_TTM))
+
+    assert response.price_source_code == "PETR4"
+    assert response.price_source_session == date(2026, 8, 14)
 
 
 def test_api_response_exposes_raw_bpp_debt_evidence() -> None:
