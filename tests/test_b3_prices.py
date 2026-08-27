@@ -48,7 +48,9 @@ class _CountingTransport(httpx.AsyncBaseTransport):
         return httpx.Response(200, content=self._bytes)
 
 
-def _archive_bytes(*, out_of_order: bool = False) -> bytes:
+def _archive_bytes(
+    *, out_of_order: bool = False, member: str = "COTAHIST_A2015.TXT"
+) -> bytes:
     import io
 
     payload = FIXTURE.read_bytes()
@@ -57,7 +59,7 @@ def _archive_bytes(*, out_of_order: bool = False) -> bytes:
         payload = b"\r\n".join(reversed(records)) + b"\r\n"
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr("COTAHIST_A2015.TXT", payload)
+        archive.writestr(member, payload)
     return buffer.getvalue()
 
 
@@ -328,6 +330,46 @@ async def test_the_archive_is_downloaded_and_reduced_once_per_run(
 
     assert transport.requests == 1  # the second caller got the memoized reduction
     assert first is second
+
+
+@pytest.mark.parametrize("member", ["COTAHIST.A2015", "COTAHIST_A2015"])
+async def test_a_legacy_quote_member_is_reduced_without_a_text_suffix(
+    member: str, tmp_path: Path
+) -> None:
+    transport = _CountingTransport(_archive_bytes(member=member))
+    archive, http = _archive(tmp_path, transport=transport)
+
+    async with http:
+        year = await archive.year(2015)
+
+    assert year["PETR4"].sessions == 3
+    assert transport.requests == 1
+
+
+@pytest.mark.parametrize("member", ["COTAHIST_A2015.dat", "COTAHIST_A2014.TXT"])
+async def test_a_strange_quote_member_fails_closed(member: str, tmp_path: Path) -> None:
+    transport = _CountingTransport(_archive_bytes(member=member))
+    archive, http = _archive(tmp_path, transport=transport)
+
+    with pytest.raises(SourceMalformedError, match="malformed B3 quote archive"):
+        async with http:
+            await archive.year(2015)
+
+
+async def test_ambiguous_quote_members_fail_closed(tmp_path: Path) -> None:
+    import io
+
+    payload = FIXTURE.read_bytes()
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive_zip:
+        archive_zip.writestr("COTAHIST.A2015", payload)
+        archive_zip.writestr("COTAHIST_A2015.TXT", payload)
+    transport = _CountingTransport(buffer.getvalue())
+    archive, http = _archive(tmp_path, transport=transport)
+
+    with pytest.raises(SourceMalformedError, match="malformed B3 quote archive"):
+        async with http:
+            await archive.year(2015)
 
 
 async def test_a_closed_year_is_served_from_the_reduction_without_the_archive(
