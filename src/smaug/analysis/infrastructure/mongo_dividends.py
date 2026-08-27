@@ -73,6 +73,11 @@ class MongoCashEventReader:
         )
         if share_class is None:
             return ()
+        # A quarantined or partially rejected latest batch must hide any mirror
+        # rows from analysis. Returning an older/subset history would make a
+        # source-validation failure look like a valid distribution history.
+        if not await self._batch_is_usable(ticker):
+            return None
         cursor = self._collection.find(
             mirror_filter(
                 ticker,
@@ -123,17 +128,7 @@ class MongoCashEventReader:
 
     async def _confirmed_empty(self, ticker: str) -> bool:
         """Whether B3 coverage succeeded and returned zero rows for the company."""
-        if self._validations is None:
-            return False
-        root = ticker.strip().upper()[:4]
-        report = await self._validations.find_one(
-            {
-                "source": "b3",
-                "module": CASH_DIVIDEND_B3_MODULE,
-                "batch": f"GetListedCashDividends:{root}",
-            },
-            sort=[("recorded_at", -1)],
-        )
+        report = await self._latest_validation(ticker)
         if report is None or report.get("status") != "accepted":
             return False
         observations = report.get("observations")
@@ -141,6 +136,37 @@ class MongoCashEventReader:
             isinstance(observations, Mapping)
             and observations.get("coverage_established") is True
             and observations.get("rows") == 0
+        )
+
+    async def _batch_is_usable(self, ticker: str) -> bool:
+        """Fail closed when the latest source validation did not admit the batch."""
+        report = await self._latest_validation(ticker)
+        if report is None:
+            # Legacy mirror rows predate durable validation reports. Keep them
+            # readable until a new source run supplies an explicit decision.
+            return True
+        if report.get("status") != "accepted":
+            return False
+        observations = report.get("observations")
+        if not isinstance(observations, Mapping):
+            return False
+        if observations.get("coverage_established") is False:
+            return False
+        rejected = observations.get("rejected")
+        return not isinstance(rejected, int) or rejected == 0
+
+    async def _latest_validation(self, ticker: str) -> Mapping[str, object] | None:
+        """Read the newest validation decision for this ticker's B3 root."""
+        if self._validations is None:
+            return None
+        root = ticker.strip().upper()[:4]
+        return await self._validations.find_one(
+            {
+                "source": "b3",
+                "module": CASH_DIVIDEND_B3_MODULE,
+                "batch": f"GetListedCashDividends:{root}",
+            },
+            sort=[("recorded_at", -1)],
         )
 
 

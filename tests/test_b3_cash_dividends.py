@@ -325,13 +325,13 @@ async def test_row_reconciliation_records_rejections_and_duplicate_identities() 
     reporter = _Reporter()
     transport = _Transport(rows=source_rows)
     async with httpx.AsyncClient(transport=transport) as http:
-        results = await B3CashDividendSource(http, validation_reporter=reporter).fetch(
-            "BBDC4", CASH_DIVIDEND_B3_MODULE
-        )
+        with pytest.raises(SourceBatchValidationError, match="row-reconciliation"):
+            await B3CashDividendSource(http, validation_reporter=reporter).fetch(
+                "BBDC4", CASH_DIVIDEND_B3_MODULE
+            )
 
-    assert len(results) == 2
     report = reporter.reports[-1]
-    assert report.status.value == "accepted"
+    assert report.status.value == "quarantined"
     assert report.observations == {
         "rows": 4,
         "fetched": 4,
@@ -362,6 +362,9 @@ async def test_rows_with_changed_published_metadata_are_not_source_duplicates() 
         "dateApproval": "24/06/2026",
         "closingPricePriorExDate": "15,90",
         "corporateActionPrice": "1,983000",
+        "dateClosingPricePriorExDate": "25/06/2026",
+        "lastDateTimePriorEx": "03/07/2026 17:00",
+        "ratio": "2,0",
     }
     transport = _Transport(rows=[ROWS[0], amended])
     async with httpx.AsyncClient(transport=transport) as http:
@@ -370,6 +373,18 @@ async def test_rows_with_changed_published_metadata_are_not_source_duplicates() 
         )
 
     assert len(results) == 2
+    amended_result = results[1]
+    assert amended_result.request["b3_row"]["ratio"] == "2,0"
+    assert amended_result.request["b3_row"]["dateClosingPricePriorExDate"] == (
+        "25/06/2026"
+    )
+    assert amended_result.request["b3_row"]["lastDateTimePriorEx"] == (
+        "03/07/2026 17:00"
+    )
+    assert amended_result.request["ratio"] == "2,0"
+    assert amended_result.payload["corporateActionPrice"] == "1,983000"
+    assert amended_result.payload["dateClosingPricePriorExDate"] == "25/06/2026"
+    assert amended_result.payload["lastDateTimePriorEx"] == "03/07/2026 17:00"
 
 
 async def test_all_rejected_rows_quarantine_with_a_nonempty_coverage_finding() -> None:
@@ -387,7 +402,7 @@ async def test_all_rejected_rows_quarantine_with_a_nonempty_coverage_finding() -
     transport = _Transport(rows=[malformed])
     async with httpx.AsyncClient(transport=transport) as http:
         source = B3CashDividendSource(http, validation_reporter=reporter)
-        with pytest.raises(SourceBatchValidationError, match="response-schema"):
+        with pytest.raises(SourceBatchValidationError, match="row-reconciliation"):
             await source.fetch("BBDC4", CASH_DIVIDEND_B3_MODULE)
 
     report = reporter.reports[-1]

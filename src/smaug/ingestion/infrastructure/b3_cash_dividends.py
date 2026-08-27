@@ -171,11 +171,12 @@ class B3CashDividendSource:
         findings = (
             (
                 ValidationFinding(
-                    "response-schema",
-                    "B3 dividends contains no admissible rows after validation",
+                    "row-reconciliation",
+                    f"B3 dividends rejected {len(rejected_rows)} row(s); "
+                    "the batch is not admitted",
                 ),
             )
-            if rejected_rows and not accepted_rows
+            if rejected_rows
             else ()
         )
         await self._record(
@@ -203,6 +204,9 @@ class B3CashDividendSource:
                     "issuing_company": issuing_company,
                     "trading_name": trading_name,
                     "statement": module,
+                    # Keep every source field in the request discriminator: a
+                    # corrected approval/reference value is a new raw fact.
+                    "b3_row": dict(row),
                     # What tells one filed row from another: the same payment is
                     # listed once per class, and one ex date can carry both a
                     # dividend and interest on own capital.
@@ -210,6 +214,15 @@ class B3CashDividendSource:
                     "last_date_prior": _text(row.get("lastDatePriorEx")),
                     "event_type": _text(row.get("corporateAction")),
                     "value": _text(row.get("valueCash")),
+                    "quoted_per_shares": _text(row.get("quotedPerShares")),
+                    "approval_date": _text(row.get("dateApproval")),
+                    "closing_price_prior": _text(row.get("closingPricePriorExDate")),
+                    "percentage_of_price": _text(row.get("corporateActionPrice")),
+                    "last_date_time_prior": _text(row.get("lastDateTimePriorEx")),
+                    "date_closing_price_prior": _text(
+                        row.get("dateClosingPricePriorExDate")
+                    ),
+                    "ratio": _text(row.get("ratio")),
                 },
                 http_status=200,
                 payload=_to_payload(row, issuing_company, code),
@@ -373,21 +386,29 @@ class B3CashDividendSource:
 
 def _to_payload(row: Mapping[str, Any], root: str, code: str | None) -> dict[str, Any]:
     """Mirror the row as B3 publishes it — its vocabulary, its number format."""
-    return {
-        "issuing_company": root,
-        "cvm_code": code,
-        "share_class": _text(row.get("typeStock")),
-        "event_type": _text(row.get("corporateAction")),
-        "value": _text(row.get("valueCash")),
-        # 1 or 1000: the payment and the reference price are both quoted on it.
-        "quoted_per_shares": _text(row.get("quotedPerShares")),
-        "approval_date": _text(row.get("dateApproval")),
-        # The last session that still carried the right to the payment.
-        "last_date_prior": _text(row.get("lastDatePriorEx")),
-        "closing_price_prior": _text(row.get("closingPricePriorExDate")),
-        # B3's own reading of the payment as a percentage of that close.
-        "percentage_of_price": _text(row.get("corporateActionPrice")),
-    }
+    payload = {str(key): value for key, value in row.items()}
+    payload.update(
+        {
+            "issuing_company": root,
+            "cvm_code": code,
+            "share_class": _text(row.get("typeStock")),
+            "event_type": _text(row.get("corporateAction")),
+            "value": _text(row.get("valueCash")),
+            # 1 or 1000: the payment and the reference price are both quoted on it.
+            "quoted_per_shares": _text(row.get("quotedPerShares")),
+            "approval_date": _text(row.get("dateApproval")),
+            # The last session that still carried the right to the payment.
+            "last_date_prior": _text(row.get("lastDatePriorEx")),
+            "closing_price_prior": _text(row.get("closingPricePriorExDate")),
+            # B3's own reading of the payment as a percentage of that close.
+            "percentage_of_price": _text(row.get("corporateActionPrice")),
+            # Keep identity-bearing variants that are present on some B3 revisions.
+            "last_date_time_prior": _text(row.get("lastDateTimePriorEx")),
+            "date_closing_price_prior": _text(row.get("dateClosingPricePriorExDate")),
+            "ratio": _text(row.get("ratio")),
+        }
+    )
+    return payload
 
 
 def _text(value: Any) -> str:

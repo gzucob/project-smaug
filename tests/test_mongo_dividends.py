@@ -214,3 +214,35 @@ async def test_the_latest_quarantine_overrides_an_older_confirmed_zero() -> None
     )
 
     assert await reader.cash_events("RDNI3") is None
+
+
+async def test_latest_partial_batch_quarantines_an_existing_partial_mirror() -> None:
+    """A source rejection must not expose rows admitted by an earlier run."""
+    reader = MongoCashEventReader(
+        FakeCollection([_document("PN")]),
+        registrant_resolver=lambda ticker: "9512",
+        validation_collection=FakeValidations(
+            [
+                {
+                    "source": "b3",
+                    "module": "CASH_DIVIDEND_B3",
+                    "batch": "GetListedCashDividends:PETR",
+                    "status": "quarantined",
+                    "recorded_at": 2,
+                    "observations": {
+                        "rows": 2,
+                        "fetched": 2,
+                        "accepted": 1,
+                        "rejected": 1,
+                        "deduplicated": 0,
+                        "coverage_established": False,
+                    },
+                    "evidence": {
+                        "rejected_rows": [{"finding": {"code": "row-reconciliation"}}]
+                    },
+                }
+            ]
+        ),
+    )
+
+    assert await reader.cash_events("PETR4") is None
