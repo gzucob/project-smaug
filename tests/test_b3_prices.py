@@ -346,8 +346,9 @@ async def test_a_legacy_quote_member_is_reduced_without_a_text_suffix(
     assert transport.requests == 1
 
 
-async def test_a_strange_quote_member_fails_closed(tmp_path: Path) -> None:
-    transport = _CountingTransport(_archive_bytes(member="COTAHIST_A2015.dat"))
+@pytest.mark.parametrize("member", ["COTAHIST_A2015.dat", "COTAHIST_A2014.TXT"])
+async def test_a_strange_quote_member_fails_closed(member: str, tmp_path: Path) -> None:
+    transport = _CountingTransport(_archive_bytes(member=member))
     archive, http = _archive(tmp_path, transport=transport)
 
     with pytest.raises(SourceMalformedError, match="malformed B3 quote archive"):
