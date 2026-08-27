@@ -175,6 +175,76 @@ class InsuranceUnderwritingEvidence:
     expense_aggregate: SourceAccountRef | None = None
 
 
+class Cpc41EvidenceStatus(StrEnum):
+    """Whether one CPC 41 input is proved by the filed source evidence."""
+
+    AVAILABLE = "available"
+    ABSENT = "absent"
+    AMBIGUOUS = "ambiguous"
+
+
+class Cpc41SelectionStatus(StrEnum):
+    """How a raw CVM account participated in the CPC 41 selection."""
+
+    SELECTED = "selected"
+    NOT_SELECTED = "not_selected"
+    ABSENT = "absent"
+    UNREADABLE = "unreadable"
+    AMBIGUOUS = "ambiguous"
+
+
+@dataclass(frozen=True, slots=True)
+class Cpc41AccountEvidence:
+    """One raw CVM account considered for a selected CPC 41 period."""
+
+    module: str
+    code: str
+    name: str
+    selection_status: Cpc41SelectionStatus
+    value: Decimal | None = None
+    basis: str | None = None
+    # ``True`` identifies a synthesized expected reference emitted when CVM did
+    # not return a matching row.  Actual rows remain ``False`` so an audit can
+    # distinguish absence from a found-but-not-selected account.
+    expected: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Cpc41PeriodProvenance:
+    """Strict CPC 41 evidence for one period selected into a TTM window."""
+
+    reference_date: date
+    disclosure_status: Cpc41EvidenceStatus = Cpc41EvidenceStatus.ABSENT
+    class_status: Cpc41EvidenceStatus = Cpc41EvidenceStatus.ABSENT
+    multiplier_status: Cpc41EvidenceStatus = Cpc41EvidenceStatus.ABSENT
+    multiplier: Decimal | None = None
+    basic_weighted_shares: Decimal | None = None
+    basic_weighted_shares_status: Cpc41EvidenceStatus = Cpc41EvidenceStatus.ABSENT
+    diluted_weighted_shares: Decimal | None = None
+    diluted_weighted_shares_status: Cpc41EvidenceStatus = Cpc41EvidenceStatus.ABSENT
+    basic_blocker: NullReason | None = None
+    diluted_blocker: NullReason | None = None
+    source_accounts: tuple[Cpc41AccountEvidence, ...] = ()
+    # Basis-specific statuses were added after the initial aggregate fields.
+    # ``None`` keeps rows written by that shape readable; producers of current
+    # windows always populate all six fields.
+    basic_disclosure_status: Cpc41EvidenceStatus | None = None
+    diluted_disclosure_status: Cpc41EvidenceStatus | None = None
+    basic_class_status: Cpc41EvidenceStatus | None = None
+    diluted_class_status: Cpc41EvidenceStatus | None = None
+    basic_multiplier_status: Cpc41EvidenceStatus | None = None
+    diluted_multiplier_status: Cpc41EvidenceStatus | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Cpc41WindowProvenance:
+    """Reproducible CPC 41 provenance for one selected four-period TTM window."""
+
+    selected_periods: tuple[Cpc41PeriodProvenance, ...] = ()
+    basic_blocker: NullReason | None = None
+    diluted_blocker: NullReason | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class BankRegulatoryProvenance:
     """Contract metadata for a bank ratio's paired regulatory inputs.
@@ -439,6 +509,9 @@ class StandardizedFinancials:
     # blocked an indicator, while these entries show which filed account was
     # expected, found, skipped, or used as a derived root.
     source_account_evidence: tuple[SourceAccountEvidence, ...] = ()
+    # Four-period strict CPC 41 lineage; unlike generic source evidence this
+    # retains every selected period, including a non-latest blocker.
+    cpc41_window_provenance: Cpc41WindowProvenance | None = None
 
     @property
     def regime_source(self) -> RegimeSource:

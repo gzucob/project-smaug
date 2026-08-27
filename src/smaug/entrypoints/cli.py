@@ -2289,6 +2289,57 @@ def _format_exercise(exercise: ExerciseCoverage) -> list[str]:
             continue
         mark = "!!" if cell.is_unclassified else "  "
         lines.append(f"    {mark} {cell.indicator:<26} {cell.status}")
+    provenance = exercise.cpc41_window_provenance
+    if provenance is not None:
+        periods = ",".join(
+            f"{period.reference_date}:"
+            f"{period.basic_weighted_shares_status.value}/"
+            f"{period.diluted_weighted_shares_status.value}"
+            for period in provenance.selected_periods
+        )
+        lines.append(
+            "    cpc41 window: "
+            f"periods={periods or 'none'} "
+            f"basic_blocker={provenance.basic_blocker or 'none'} "
+            f"diluted_blocker={provenance.diluted_blocker or 'none'}"
+        )
+        for period in provenance.selected_periods:
+            basic_disclosure = (
+                period.basic_disclosure_status or period.disclosure_status
+            )
+            diluted_disclosure = (
+                period.diluted_disclosure_status or period.disclosure_status
+            )
+            basic_class = period.basic_class_status or period.class_status
+            diluted_class = period.diluted_class_status or period.class_status
+            basic_multiplier = (
+                period.basic_multiplier_status or period.multiplier_status
+            )
+            diluted_multiplier = (
+                period.diluted_multiplier_status or period.multiplier_status
+            )
+            lines.append(
+                f"      cpc41 period={period.reference_date} "
+                f"basic={basic_disclosure.value}/{basic_class.value}/"
+                f"{basic_multiplier.value}/{period.basic_weighted_shares_status.value} "
+                f"blocker={period.basic_blocker or 'none'} "
+                f"diluted={diluted_disclosure.value}/{diluted_class.value}/"
+                f"{diluted_multiplier.value}/"
+                f"{period.diluted_weighted_shares_status.value} "
+                f"blocker={period.diluted_blocker or 'none'}"
+            )
+            if period.source_accounts:
+                for account in period.source_accounts:
+                    lines.append(
+                        "        cpc41 raw_ref "
+                        f"basis={account.basis or 'unknown'} "
+                        f"module={account.module} code={account.code} "
+                        f"name={account.name!r} "
+                        f"selection={account.selection_status.value} "
+                        f"expected={str(account.expected).lower()}"
+                    )
+            else:
+                lines.append("        cpc41 raw_ref none")
     return lines
 
 

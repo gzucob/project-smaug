@@ -712,5 +712,6 @@ def compute(
         indicators,
         null_reasons=_null_reasons(indicators, f, previous, market, history),
         source_account_evidence=f.source_account_evidence,
+        cpc41_window_provenance=f.cpc41_window_provenance,
         bank_regulatory_provenance=f.bank_regulatory_provenance,
     )

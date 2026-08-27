@@ -10,6 +10,11 @@ from smaug.analysis.domain.entities import VIEW_TTM, TickerAnalysis
 from smaug.analysis.domain.financials import (
     AccountingRegime,
     BankRegulatoryProvenance,
+    Cpc41AccountEvidence,
+    Cpc41EvidenceStatus,
+    Cpc41PeriodProvenance,
+    Cpc41SelectionStatus,
+    Cpc41WindowProvenance,
     MarketData,
     SourceAccountEvidence,
     SourceAccountRef,
@@ -290,4 +295,84 @@ def test_source_lineage_round_trips_through_sql_and_api() -> None:
     assert response.indicators.bank_regulatory_provenance is not None
     assert response.indicators.bank_regulatory_provenance.basis == (
         "issuer_defined_annualized_disclosure"
+    )
+
+
+def test_cpc41_window_provenance_round_trips_through_sql_and_api() -> None:
+    provenance = Cpc41WindowProvenance(
+        selected_periods=(
+            Cpc41PeriodProvenance(
+                reference_date=date(2025, 12, 31),
+                disclosure_status=Cpc41EvidenceStatus.AVAILABLE,
+                class_status=Cpc41EvidenceStatus.AVAILABLE,
+                multiplier_status=Cpc41EvidenceStatus.AVAILABLE,
+                multiplier=Decimal("2"),
+                basic_weighted_shares=Decimal("100"),
+                basic_weighted_shares_status=Cpc41EvidenceStatus.AVAILABLE,
+                diluted_weighted_shares=None,
+                diluted_weighted_shares_status=Cpc41EvidenceStatus.ABSENT,
+                basic_blocker=None,
+                diluted_blocker=NullReason.MISSING_CPC41_DISCLOSURE,
+                source_accounts=(
+                    Cpc41AccountEvidence(
+                        module="DRE",
+                        code="3.99.01.01",
+                        name="Lucro por ação ON",
+                        selection_status=Cpc41SelectionStatus.SELECTED,
+                        value=Decimal("1.25"),
+                        basis="basic",
+                        expected=True,
+                    ),
+                ),
+                basic_disclosure_status=Cpc41EvidenceStatus.AVAILABLE,
+                diluted_disclosure_status=Cpc41EvidenceStatus.ABSENT,
+                basic_class_status=Cpc41EvidenceStatus.AVAILABLE,
+                diluted_class_status=Cpc41EvidenceStatus.ABSENT,
+                basic_multiplier_status=Cpc41EvidenceStatus.AVAILABLE,
+                diluted_multiplier_status=Cpc41EvidenceStatus.ABSENT,
+            ),
+        ),
+        basic_blocker=None,
+        diluted_blocker=NullReason.MISSING_CPC41_DISCLOSURE,
+    )
+    analysis = TickerAnalysis(
+        ticker="PETR4",
+        classification=Classification("Petróleo", "Petróleo", None),
+        reference_date=date(2025, 12, 31),
+        computed_at=datetime(2026, 8, 17, tzinfo=UTC),
+        view=VIEW_TTM,
+        indicators=Indicators(cpc41_window_provenance=provenance),
+    )
+
+    row = _to_row(analysis)
+    assert row.cpc41_window_provenance is not None
+    assert (
+        row.cpc41_window_provenance["selected_periods"][0]["source_accounts"][0]["code"]
+        == "3.99.01.01"
+    )
+    assert (
+        row.cpc41_window_provenance["selected_periods"][0][
+            "basic_weighted_shares_status"
+        ]
+        == "available"
+    )
+    restored = _to_entity(row)
+    assert restored.indicators.cpc41_window_provenance == provenance
+
+    response = _to_response(analysis)
+    response_provenance = response.indicators.cpc41_window_provenance
+    assert response_provenance is not None
+    assert response_provenance.diluted_blocker is NullReason.MISSING_CPC41_DISCLOSURE
+    assert response_provenance.selected_periods[0].source_accounts[0].module == "DRE"
+    assert response_provenance.selected_periods[0].source_accounts[
+        0
+    ].selection_status is (Cpc41SelectionStatus.SELECTED)
+    assert response_provenance.selected_periods[0].source_accounts[0].expected is True
+    assert (
+        response_provenance.selected_periods[0].basic_disclosure_status
+        is Cpc41EvidenceStatus.AVAILABLE
+    )
+    assert (
+        response_provenance.selected_periods[0].diluted_disclosure_status
+        is Cpc41EvidenceStatus.ABSENT
     )

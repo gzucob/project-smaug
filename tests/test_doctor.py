@@ -17,6 +17,11 @@ from smaug.analysis.domain.entities import (
     AnalysisView,
     TickerAnalysis,
 )
+from smaug.analysis.domain.financials import (
+    Cpc41EvidenceStatus,
+    Cpc41PeriodProvenance,
+    Cpc41WindowProvenance,
+)
 from smaug.analysis.domain.indicators import (
     NULL_DISPOSITION_BY_REASON,
     Indicators,
@@ -226,6 +231,35 @@ async def test_doctor_classifies_value_named_and_unclassified() -> None:
     assert exercise.values == 1
     assert exercise.named_nulls == 1
     assert exercise.unclassified == len(indicator_names()) - 2
+
+
+async def test_doctor_carries_the_selected_cpc41_window() -> None:
+    provenance = Cpc41WindowProvenance(
+        selected_periods=(
+            Cpc41PeriodProvenance(
+                reference_date=date(2025, 9, 30),
+                disclosure_status=Cpc41EvidenceStatus.AVAILABLE,
+                class_status=Cpc41EvidenceStatus.AVAILABLE,
+                multiplier_status=Cpc41EvidenceStatus.AVAILABLE,
+            ),
+        )
+    )
+    repo = FakeRepo(
+        latest={
+            "PETR4": _analysis(
+                "PETR4",
+                view=VIEW_TTM,
+                reference_date=date(2025, 9, 30),
+                indicators=Indicators(cpc41_window_provenance=provenance),
+            )
+        }
+    )
+
+    report = await DoctorUseCase(repo, sector_resolver=fake_sector_resolver).execute(
+        ["PETR4"]
+    )
+
+    assert report.tickers[0].exercises[0].cpc41_window_provenance == provenance
 
 
 async def test_doctor_names_missing_price_never_a_bare_null() -> None:

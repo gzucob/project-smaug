@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from smaug.analysis.domain.financials import (
         BankRegulatoryProvenance,
+        Cpc41WindowProvenance,
         SourceAccountEvidence,
     )
 
@@ -587,6 +588,9 @@ class Indicators:
     # Raw-account lineage is output metadata, not an indicator cell. It is
     # intentionally excluded from ``indicator_names`` below.
     source_account_evidence: tuple[SourceAccountEvidence, ...] = ()
+    # Strict CPC 41 TTM evidence is a window-level contract rather than one
+    # latest-period account snapshot. It is metadata, not an indicator cell.
+    cpc41_window_provenance: Cpc41WindowProvenance | None = None
     bank_regulatory_provenance: BankRegulatoryProvenance | None = None
     # Why each null field is null, keyed by the field's name. Only null fields
     # appear; a null field with no entry is unclassified (see ``NullReason``).
@@ -607,6 +611,7 @@ def indicator_names() -> tuple[str, ...]:
         not in {
             "null_reasons",
             "source_account_evidence",
+            "cpc41_window_provenance",
             "bank_regulatory_provenance",
         }
     )

@@ -22,6 +22,7 @@ from typing import cast
 
 from smaug.analysis.domain.entities import AnalysisView, TickerAnalysis
 from smaug.analysis.domain.financials import (
+    Cpc41WindowProvenance,
     DebtBlocker,
     DebtCoverageEvidence,
     DebtEvidenceSnapshot,
@@ -85,6 +86,7 @@ class ExerciseCoverage:
     indicators: tuple[IndicatorCoverage, ...]
     debt_evidence: DebtCoverageEvidence | None = None
     debt_evidence_snapshot: DebtEvidenceSnapshot | None = None
+    cpc41_window_provenance: Cpc41WindowProvenance | None = None
     price_source_code: str | None = None
     price_source_session: date | None = None
 
@@ -476,6 +478,7 @@ def _exercise_of(analysis: TickerAnalysis) -> ExerciseCoverage:
         indicators=_coverage_of(analysis.indicators),
         debt_evidence=analysis.debt_evidence,
         debt_evidence_snapshot=analysis.debt_evidence_snapshot,
+        cpc41_window_provenance=analysis.indicators.cpc41_window_provenance,
         price_source_code=analysis.price_source_code,
         price_source_session=analysis.price_source_session,
     )

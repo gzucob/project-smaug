@@ -134,6 +134,9 @@ class TickerAnalysisRow(Base):
     # Raw-account provenance for the calculation roots (#260). Legacy rows keep
     # NULL until ``smaug analyze`` recomputes them.
     source_account_evidence: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
+    # Selected-period CPC 41 denominator lineage for a TTM window. Legacy rows
+    # remain NULL until a subsequent ``smaug analyze`` run rebuilds the window.
+    cpc41_window_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     # Contract metadata for any published bank-regulatory ratio (#261).
     bank_regulatory_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     # FCA security-class identity and class-by-class cap ledger (#259). Legacy
