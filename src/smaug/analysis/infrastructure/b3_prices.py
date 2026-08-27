@@ -922,15 +922,27 @@ class B3BaseChanges:
     ) -> tuple[Decimal, RightsState] | None:
         """Read the same code's last published state before a window starts.
 
-        ``rights`` deliberately stores the first state in every reduction.  When
-        the caller asks only for a year whose first session carries a new state,
-        that first state needs the last state from the preceding B3 publication
-        to be classified.  Looking back one archive is enough at a year boundary;
-        no predecessor means a new listing (or a real source gap), never a made-up
-        corporate action.
+        ``rights`` deliberately stores the first state in every reduction. When
+        the opening distribution is new, B3 can date the action on the first
+        session with ``EX`` and name it with ``EB`` on the next session, without
+        changing ``DISMES`` again. Scan only that initial distribution span for
+        the base-change marker: a later event must not cause an unnecessary
+        download of the preceding publication. Looking back one archive is
+        enough at a year boundary; no predecessor means a new listing (or a real
+        source gap), never a made-up corporate action.
         """
         states = quotes.rights_states()
-        if not states or not _BASE_CHANGE_LETTERS.intersection(states[0].marker):
+        if not states:
+            return None
+        opening_distribution = states[0].distribution
+        opening_span: list[RightsState] = []
+        for state in states:
+            if state.distribution != opening_distribution:
+                break
+            opening_span.append(state)
+        if not any(
+            _BASE_CHANGE_LETTERS.intersection(state.marker) for state in opening_span
+        ):
             return None
         try:
             previous = (await self._archive.year(year - 1)).get(tape)

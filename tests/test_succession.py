@@ -755,6 +755,28 @@ async def test_the_tape_names_a_code_the_cadastre_never_did() -> None:
     assert await succession.candidates("EGIE3", 2015) == ("TBLE3", "EGIE3")
 
 
+async def test_tape_name_uses_identity_at_the_candidate_session() -> None:
+    """A candidate's first NOMRES is not necessarily its seam identity."""
+    identities = json.dumps(
+        [
+            [200, "BRTBLEACNOR1", "ON      N1", "02", "OLD NAME"],
+            [201, "BRTBLEACNOR1", "ON      N1", "02", "TRACTEBEL"],
+        ],
+        separators=(",", ":"),
+    )
+    archive = _retired_archive()
+    archive._years[2016]["TBLE3"] = _quotes(  # type: ignore[index]
+        _sessions(date(2016, 7, 19), ["40", "41.39"]),
+        name="OLD NAME",
+        identities=identities,
+    )
+    succession = _tape_succession(
+        archive, frozenset({name_key("TRACTEBEL ENERGIA SA")})
+    )
+
+    assert await succession.candidates("EGIE3", 2015) == ("TBLE3", "EGIE3")
+
+
 async def test_the_tape_alone_is_not_enough_to_name_it() -> None:
     # Same adjacency, same price — but this registrant never filed that name.
     succession = _tape_succession(

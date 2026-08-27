@@ -273,7 +273,10 @@ class CodeSuccession:
 
     async def _tape_name(self, window: CodeWindow) -> str:
         quotes = (await self._archive.year(window.last_session.year)).get(window.code)
-        return "" if quotes is None else quotes.name
+        if quotes is None:
+            return ""
+        identity = quotes.identity_at(window.last_session)
+        return "" if identity is None else identity.name
 
     async def _preceding_session(self, session: date) -> date | None:
         """The trading session before ``session``, across the year boundary."""

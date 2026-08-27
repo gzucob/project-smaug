@@ -613,6 +613,45 @@ async def test_a_first_session_without_a_prior_publication_is_not_an_action(
     assert changes == ()
 
 
+async def test_opening_ex_marker_and_same_distribution_eb_use_prior_publication(
+    tmp_path: Path,
+) -> None:
+    """A delayed marker still dates a new opening distribution on its first day."""
+    _rights_archive(
+        tmp_path,
+        2021,
+        [_quote(session="20211230", code="OPEN3", cents=4380, distribution="118")],
+    )
+    _rights_archive(
+        tmp_path,
+        2022,
+        [
+            _quote(
+                session="20220103",
+                code="OPEN3",
+                cents=4045,
+                distribution="119",
+                marker="EX",
+            ),
+            _quote(
+                session="20220104",
+                code="OPEN3",
+                cents=4000,
+                distribution="119",
+                marker="EB",
+            ),
+        ],
+    )
+    archive, http = _archive(tmp_path, today=date(2023, 1, 2))
+
+    async with http:
+        changes = await B3BaseChanges(archive).base_changes("OPEN3", (2022,))
+
+    assert [(change.session, round(change.ratio, 4)) for change in changes] == [
+        (date(2022, 1, 3), Decimal("1.0828"))
+    ]
+
+
 async def test_identity_fields_survive_a_reduction_round_trip(tmp_path: Path) -> None:
     _rights_archive(
         tmp_path,
