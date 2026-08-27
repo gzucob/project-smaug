@@ -33,7 +33,12 @@ from decimal import Decimal
 from itertools import pairwise
 from typing import cast
 
-from smaug.analysis.domain.financials import StandardizedFinancials
+from smaug.analysis.domain.financials import (
+    InsuranceUnderwritingEvidence,
+    InsuranceUnderwritingStatus,
+    SourceAccountEvidence,
+    StandardizedFinancials,
+)
 from smaug.analysis.domain.indicators import NullReason
 
 # Flows summed over the window; EBITDA is recomposed from EBIT+D&A. DRE flows are
@@ -428,6 +433,103 @@ def _cpc41_ttm_null_reason(
     return NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
 
 
+def _ttm_insurance_underwriting_selection(
+    periods: Sequence[StandardizedFinancials],
+    annual: StandardizedFinancials | None,
+    refs: Sequence[date],
+) -> tuple[
+    list[tuple[date, StandardizedFinancials]],
+    tuple[date, StandardizedFinancials] | None,
+]:
+    """Select TTM periods and the latest one carrying underwriting evidence."""
+    by_date = {period.reference_date: period for period in periods}
+    if annual is not None:
+        by_date[annual.reference_date] = annual
+    selected = [
+        (ref, period) for ref in refs if (period := by_date.get(ref)) is not None
+    ]
+    latest = max(
+        (
+            (ref, period)
+            for ref, period in selected
+            if period.insurance_underwriting_evidence is not None
+        ),
+        key=lambda item: item[0],
+        default=None,
+    )
+    return selected, latest
+
+
+def _ttm_insurance_underwriting_evidence(
+    periods: Sequence[StandardizedFinancials],
+    annual: StandardizedFinancials | None,
+    refs: Sequence[date],
+) -> InsuranceUnderwritingEvidence | None:
+    """Carry an activity verdict only when every quarter proves the verdict.
+
+    A current TTM is a four-period window. One zero quarter cannot establish
+    that the whole window is a non-underwriting holding, while one active quarter
+    is enough to prevent that false inapplicability. The selected latest evidence
+    retains the raw aggregate accounts for the persisted source lineage.
+    """
+    selected, latest = _ttm_insurance_underwriting_selection(periods, annual, refs)
+    if not selected or latest is None:
+        return None
+    selected_evidence = [
+        period.insurance_underwriting_evidence for _, period in selected
+    ]
+    if len(selected) == len(refs) and all(
+        evidence is not None
+        and evidence.status is InsuranceUnderwritingStatus.ZERO_ACTIVITY
+        for evidence in selected_evidence
+    ):
+        status = InsuranceUnderwritingStatus.ZERO_ACTIVITY
+    elif any(
+        evidence is not None and evidence.status is InsuranceUnderwritingStatus.ACTIVE
+        for evidence in selected_evidence
+    ):
+        status = InsuranceUnderwritingStatus.ACTIVE
+    else:
+        status = InsuranceUnderwritingStatus.UNKNOWN
+    evidence = latest[1].insurance_underwriting_evidence
+    assert evidence is not None
+    return InsuranceUnderwritingEvidence(
+        status=status,
+        revenue_aggregate=evidence.revenue_aggregate,
+        expense_aggregate=evidence.expense_aggregate,
+    )
+
+
+def _ttm_insurance_underwriting_source(
+    periods: Sequence[StandardizedFinancials],
+    annual: StandardizedFinancials | None,
+    refs: Sequence[date],
+) -> SourceAccountEvidence | None:
+    """Return raw activity proof from the period selected for the verdict."""
+    _selected, latest = _ttm_insurance_underwriting_selection(periods, annual, refs)
+    if latest is None:
+        return None
+    return next(
+        (
+            entry
+            for entry in latest[1].source_account_evidence
+            if entry.field == "insurance_underwriting_activity"
+        ),
+        None,
+    )
+
+
+def _merge_source_account_evidence(
+    base: tuple[SourceAccountEvidence, ...],
+    overrides: tuple[SourceAccountEvidence, ...],
+) -> tuple[SourceAccountEvidence, ...]:
+    """Merge lineage by field, preserving base order and appending new fields."""
+    merged = {entry.field: entry for entry in base}
+    for entry in overrides:
+        merged[entry.field] = entry
+    return tuple(merged.values())
+
+
 def _isolate_year(
     periods: list[StandardizedFinancials],
 ) -> tuple[dict[date, Flows], Flows]:
@@ -578,6 +680,15 @@ def _build_ttm(
         if annual is not None and annual.reference_date > latest.reference_date
         else latest
     )
+    insurance_underwriting_evidence = _ttm_insurance_underwriting_evidence(
+        quarters, annual, refs
+    )
+    source_account_evidence = latest.source_account_evidence
+    underwriting_source = _ttm_insurance_underwriting_source(quarters, annual, refs)
+    if underwriting_source is not None:
+        source_account_evidence = _merge_source_account_evidence(
+            source_account_evidence, (underwriting_source,)
+        )
     bank_provenance = latest.bank_regulatory_provenance
 
     def bank_input(name: str) -> Decimal | None:
@@ -635,6 +746,7 @@ def _build_ttm(
         claims_incurred=summed["claims_incurred"],
         acquisition_costs=summed["acquisition_costs"],
         insurance_admin_expenses=summed["insurance_admin_expenses"],
+        insurance_underwriting_evidence=insurance_underwriting_evidence,
         # Null-cause provenance (#30) travels with the window: same filer, same
         # regime and same deliberately-skipped fields as its quarters.
         filed_regime=stock_source.filed_regime,
@@ -650,5 +762,5 @@ def _build_ttm(
         average_credit_portfolio=bank_input("average_credit_portfolio"),
         bank_regulatory_provenance=bank_provenance,
         unmapped_fields=latest.unmapped_fields,
-        source_account_evidence=latest.source_account_evidence,
+        source_account_evidence=source_account_evidence,
     )

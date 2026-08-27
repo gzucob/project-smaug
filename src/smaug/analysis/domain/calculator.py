@@ -24,6 +24,7 @@ from typing import Any
 
 from smaug.analysis.domain.financials import (
     AccountingRegime,
+    InsuranceUnderwritingStatus,
     MarketData,
     StandardizedFinancials,
     expected_regime,
@@ -231,7 +232,19 @@ def _inapplicable(f: StandardizedFinancials) -> frozenset[str]:
     not be detected at all, where there is nothing better to ask.
     """
     regime = f.filed_regime or expected_regime(f.sector)
-    return _INAPPLICABLE_BY_REGIME.get(regime, frozenset())
+    inapplicable = _INAPPLICABLE_BY_REGIME.get(regime, frozenset())
+    underwriting = f.insurance_underwriting_evidence
+    if (
+        regime is AccountingRegime.INSURANCE
+        and underwriting is not None
+        and underwriting.status is InsuranceUnderwritingStatus.ZERO_ACTIVITY
+    ):
+        # The insurance chart can describe a holding that does not underwrite in
+        # its consolidated statements. The explicit zero aggregate proof makes
+        # these ratios inapplicable for this period; missing IFRS 17 components
+        # without that proof remain source-account nulls.
+        return inapplicable | _INSURER_ONLY
+    return inapplicable
 
 
 def _suppressed(indicators: Indicators, inapplicable: frozenset[str]) -> Indicators:
