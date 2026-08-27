@@ -219,6 +219,8 @@ def test_should_render_doctor_coverage_with_named_and_unclassified() -> None:
                             ),
                             IndicatorCoverage("net_margin", False, None),
                         ),
+                        price_source_code="AZZA3",
+                        price_source_session=date(2026, 8, 14),
                     ),
                 ),
             ),
@@ -233,6 +235,7 @@ def test_should_render_doctor_coverage_with_named_and_unclassified() -> None:
     assert "net_margin" in out
     assert "unclassified" in out
     assert "missing_price=1" in out  # breakdown tallies the named cause
+    assert "price_source=B3:AZZA3@2026-08-14" in out
     assert "(no persisted analysis)" in out  # a ticker with nothing is still reported
 
 
@@ -334,6 +337,7 @@ def test_doctor_summary_counts_causes_but_still_names_an_unclassified_null() -> 
     assert "missing_price" in out
     assert "2 of 3 ticker(s) analyzed" in out
     assert "value=1" in out
+    assert "price provenance=0/2 exercises" in out
     assert "unclassified=1" in out
     assert "BBBB3" in out  # the ticker carrying it is named
     assert "AAAA3" not in out  # a fully named ticker is a number, not a line

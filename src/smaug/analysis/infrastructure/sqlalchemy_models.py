@@ -44,6 +44,8 @@ class TickerAnalysisRow(Base):
     reference_date: Mapped[date] = mapped_column(Date)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     price: Mapped[Decimal | None] = mapped_column(Numeric)
+    price_source_code: Mapped[str | None] = mapped_column(String(12))
+    price_source_session: Mapped[date | None] = mapped_column(Date)
     price_adjusted: Mapped[Decimal | None] = mapped_column(Numeric)
     price_basis: Mapped[str | None] = mapped_column(String(24))
     share_count_basis: Mapped[str | None] = mapped_column(String(48))

@@ -671,6 +671,8 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         reference_date=analysis.reference_date,
         computed_at=analysis.computed_at,
         price=analysis.price,
+        price_source_code=analysis.price_source_code,
+        price_source_session=analysis.price_source_session,
         price_adjusted=analysis.price_adjusted,
         price_basis=analysis.price_basis,
         share_count_basis=analysis.share_count_basis,
@@ -787,6 +789,8 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
             else None
         ),
         price=row.price,
+        price_source_code=row.price_source_code,
+        price_source_session=row.price_source_session,
         price_adjusted=row.price_adjusted,
         price_basis=row.price_basis,
         share_count_basis=row.share_count_basis,

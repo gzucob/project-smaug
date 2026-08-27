@@ -442,6 +442,11 @@ class MarketData:
     """
 
     price: Decimal | None = None
+    # The exact COTAHIST observation behind ``price``.  A security may have
+    # requested one code while a proven succession serves another, so the
+    # requested ticker is not sufficient provenance.
+    price_source_code: str | None = None
+    price_source_session: date | None = None
     market_cap: Decimal | None = None
     shares: Decimal | None = None
     # B3 cash rights whose ex dates fall inside this view's explicit window,
@@ -606,4 +611,7 @@ class YearPrices:
     adjusted_avg: Decimal | None = None
     closing: Decimal | None = None
     closing_session: date | None = None
+    # The code that printed ``closing``.  Historical succession can change it
+    # inside a year, so the requested ticker is not necessarily the tape code.
+    closing_code: str | None = None
     null_reason: NullReason | None = None

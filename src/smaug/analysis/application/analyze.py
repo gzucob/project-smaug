@@ -423,6 +423,8 @@ class AnalyzePortfolioUseCase:
             # closed year carries.
             indicators=compute(current, previous, market, annuals),
             price=quote.price,
+            price_source_code=quote.price_source_code,
+            price_source_session=quote.price_source_session,
             # A live quote has no adjusted counterpart: nothing has been paid out
             # since it, so there is nothing to adjust it by.
             price_adjusted=None,
@@ -467,6 +469,8 @@ class AnalyzePortfolioUseCase:
             computed_at=computed_at,
             indicators=compute(annual, previous, market, elapsed),
             price=market.price,
+            price_source_code=market.price_source_code,
+            price_source_session=market.price_source_session,
             price_adjusted=adjusted_avg,
             price_basis=_CLOSED_YEAR_BASIS,
             share_count_basis=_CLOSED_YEAR_SHARE_BASIS,
@@ -604,6 +608,8 @@ class AnalyzePortfolioUseCase:
         shares = await self._outstanding(ticker, year)
         return MarketData(
             price=quote.price,
+            price_source_code=quote.price_source_code,
+            price_source_session=quote.price_source_session,
             market_cap=cap,
             shares=shares,
             cash_distributions=distributions,
@@ -795,6 +801,8 @@ class AnalyzePortfolioUseCase:
         shares = await self._outstanding(ticker, year)
         market = MarketData(
             price=own.closing,
+            price_source_code=own.closing_code,
+            price_source_session=own.closing_session,
             market_cap=cap,
             shares=shares,
             cash_distributions=distributions,
