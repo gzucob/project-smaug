@@ -25,6 +25,7 @@ from smaug.portfolio.domain.fca_placeholders import (
     FcaRecoveryResult,
     FcaRecoveryStatus,
 )
+from smaug.portfolio.domain.securities import FIRST_FCA_YEAR
 from smaug.portfolio.domain.share_classes import (
     PerShareClass,
     ShareClass,
@@ -113,6 +114,11 @@ _FUNDAMENTAL = frozenset(
         InstrumentKind.UNIT,
     }
 )
+
+# COTAHIST's legacy 1986--2001 archives use a different member shape. FCA's
+# identity history, and the analysis mirror that consumes recovered identities,
+# both begin in 2010, so identity observations never need those source files.
+_FIRST_ANALYSIS_YEAR = FIRST_FCA_YEAR
 
 
 @dataclass(frozen=True, slots=True)
@@ -539,7 +545,10 @@ def _window(
 def _years(start: date | None, end: date | None, snapshot_year: int) -> range:
     first = start.year if start is not None else snapshot_year
     last = end.year if end is not None else snapshot_year
-    return range(min(first, last), max(first, last) + 1)
+    lower, upper = min(first, last), max(first, last)
+    if upper < _FIRST_ANALYSIS_YEAR:
+        return range(0)
+    return range(max(lower, _FIRST_ANALYSIS_YEAR), upper + 1)
 
 
 def _in_window(session: date, start: date | None, end: date | None) -> bool:

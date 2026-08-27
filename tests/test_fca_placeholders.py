@@ -342,6 +342,35 @@ async def test_b3_quotation_date_fills_a_missing_fca_listing_start() -> None:
     assert 2012 in archive.requested_years
 
 
+async def test_placeholder_recovery_does_not_probe_before_analysis_floor() -> None:
+    company = OfficialRegistrant(
+        cvm_code="123",
+        cnpj="12.000.000/0001-00",
+        issuing_company="ABCD",
+        security_codes=(OfficialSecurityCode("ABCD3", "BRABCDACNOR0"),),
+    )
+    archive = _YearArchive(
+        {2010: {"ABCD3": _Quote(date(2010, 1, 4), isin="BRABCDACNOR0", especi="ON")}}
+    )
+    row = replace(
+        _row(
+            number=2,
+            cnpj=company.cnpj or "",
+            code="",
+            kind=InstrumentKind.COMMON_SHARE,
+            per_share_class=PerShareClass.ORDINARY,
+        ),
+        listed_since=date(1973, 1, 1),
+    )
+
+    result = await FcaPlaceholderRecovery(
+        _Resolver(company), archive, snapshot_year=2010, today=date(2010, 12, 31)
+    ).recover((row,))
+
+    assert result.report.recovered[0].recovered_codes == ("ABCD3",)
+    assert archive.requested_years == [2010]
+
+
 async def test_price_without_cotahist_identity_is_not_recovered() -> None:
     company = OfficialRegistrant(
         cvm_code="123",

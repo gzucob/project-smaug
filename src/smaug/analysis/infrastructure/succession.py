@@ -35,6 +35,7 @@ from smaug.analysis.domain.succession import (
 )
 from smaug.analysis.infrastructure.b3_prices import CotahistArchive, YearQuotes
 from smaug.portfolio.domain.securities import (
+    FIRST_FCA_YEAR,
     RegistrantNamesResolver,
     SiblingCodesResolver,
     confirms_name,
@@ -54,9 +55,11 @@ ListedSinceResolver = Callable[[str], date | None]
 # feeds it.
 TimelineReader = Callable[[str], Awaitable[Sequence[RestatementStep]]]
 
-# COTAHIST's first published annual archive. A lower FCA listing date is not a
-# reason to ask for files that cannot exist; it is clamped to this source floor.
-_FIRST_COTAHIST_YEAR = 1986
+# The analysis mirror and the FCA identity history both begin in 2010. Keep that
+# analytical floor separate from ``CotahistArchive``'s source coverage: B3 has
+# published files since 1986, but its legacy 1986--2001 members have a different
+# shape and cannot answer this analysis's 2010+ history.
+_FIRST_ANALYSIS_YEAR = FIRST_FCA_YEAR
 
 # How far back the tape may be asked to name a code the cadastre cannot. Each
 # hop is a rename, and no security in the window has had more than two.
@@ -406,9 +409,9 @@ class CodeSuccession:
     ) -> date | None:
         """The trading session before ``session``, across the year boundary."""
         floor = (
-            _FIRST_COTAHIST_YEAR
+            _FIRST_ANALYSIS_YEAR
             if minimum_year is None
-            else max(_FIRST_COTAHIST_YEAR, minimum_year)
+            else max(_FIRST_ANALYSIS_YEAR, minimum_year)
         )
         for year in (session.year, session.year - 1):
             if year < floor:
@@ -438,10 +441,10 @@ class CodeSuccession:
 
     def _window_start(self, code: str, since: int, *, ticker: str | None = None) -> int:
         """Choose the earliest archive year justified by available evidence."""
-        opened = max(_FIRST_COTAHIST_YEAR, since)
+        opened = max(_FIRST_ANALYSIS_YEAR, since)
         listed_since = self._listed_since(ticker or code)
         if listed_since is not None:
-            opened = min(opened, max(_FIRST_COTAHIST_YEAR, listed_since.year))
+            opened = min(opened, max(_FIRST_ANALYSIS_YEAR, listed_since.year))
         cached = self._chains.get(code.strip().upper())
         if cached is not None:
             opened = min(opened, cached[0])
@@ -450,7 +453,7 @@ class CodeSuccession:
     async def _window(self, code: str, since: int) -> CodeWindow | None:
         """Where ``code``'s series starts and ends inside the readable years."""
         normalized = code.strip().upper()
-        opened = max(_FIRST_COTAHIST_YEAR, since)
+        opened = max(_FIRST_ANALYSIS_YEAR, since)
         cache_key = (normalized, opened)
         if cache_key in self._windows:
             return self._windows[cache_key]
@@ -530,7 +533,7 @@ class CodeSuccession:
 
     async def _year(self, year: int) -> Mapping[str, YearQuotes]:
         """Read one reduced archive at most once through this succession."""
-        if year < _FIRST_COTAHIST_YEAR:
+        if year < _FIRST_ANALYSIS_YEAR:
             return {}
         cached = self._years.get(year)
         if cached is not None:
