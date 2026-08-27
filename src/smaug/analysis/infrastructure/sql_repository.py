@@ -286,6 +286,7 @@ def _cpc41_window_provenance_to_json(
             "name": account.name,
             "selection_status": account.selection_status.value,
             "value": None if account.value is None else str(account.value),
+            "basis": account.basis,
         }
 
     def period_to_json(period: Cpc41PeriodProvenance) -> dict[str, Any]:
@@ -393,6 +394,7 @@ def _cpc41_window_provenance_from_json(
                     name=str(item.get("name", "")),
                     selection_status=selection_status(item.get("selection_status")),
                     value=_decimal(item.get("value")),
+                    basis=None if item.get("basis") is None else str(item.get("basis")),
                 )
             )
         return tuple(parsed)

@@ -400,6 +400,17 @@ def _cpc41_period_reason(
         return explicit
     disclosure = period.cpc41
     if disclosure is None:
+        # A class-specific EPS can be valid for the annual view while the
+        # complete class reconciliation required by TTM is not. Source evidence
+        # proves that the filed leaf existed, so this is an economic-rights gap,
+        # not an absent CPC 41 disclosure.
+        entry = _cpc41_source_entry(period, diluted=diluted)
+        if (
+            entry is not None
+            and entry.found
+            and entry.status is SourceAccountStatus.MAPPED
+        ):
+            return NullReason.MISSING_ECONOMIC_RIGHTS
         return NullReason.MISSING_CPC41_DISCLOSURE
     base_eps = disclosure.diluted_base_eps if diluted else disclosure.basic_base_eps
     if base_eps is None or disclosure.security_multiplier is None:
@@ -469,7 +480,12 @@ def _cpc41_accounts(
         if entry is None:
             continue
         if entry.status is SourceAccountStatus.MAPPED:
-            selection = Cpc41SelectionStatus.SELECTED
+            if _cpc41_base_eps(period, diluted=diluted) is not None:
+                selection = Cpc41SelectionStatus.SELECTED
+            elif _cpc41_period_reason(period, diluted=diluted) in _CPC41_CLASS_REASONS:
+                selection = Cpc41SelectionStatus.AMBIGUOUS
+            else:
+                selection = Cpc41SelectionStatus.NOT_SELECTED
         elif entry.status is SourceAccountStatus.PRESENT_UNREADABLE:
             selection = Cpc41SelectionStatus.UNREADABLE
         elif entry.status is SourceAccountStatus.UNMAPPED:
@@ -489,6 +505,7 @@ def _cpc41_accounts(
                 name=ref.name,
                 selection_status=selection,
                 value=ref.value,
+                basis="diluted" if diluted else "basic",
             )
             for ref in entry.found
         )
@@ -510,7 +527,12 @@ def _cpc41_disclosure_status(
     if _cpc41_base_eps(period, diluted=diluted) is not None:
         return Cpc41EvidenceStatus.AVAILABLE
     entry = _cpc41_source_entry(period, diluted=diluted)
-    if entry is not None and entry.found:
+    if (
+        entry is not None
+        and entry.found
+        or (period.eps_diluted_null_reason if diluted else period.eps_basic_null_reason)
+        in _CPC41_CLASS_REASONS
+    ):
         return Cpc41EvidenceStatus.AMBIGUOUS
     return Cpc41EvidenceStatus.ABSENT
 
@@ -519,11 +541,21 @@ def _cpc41_class_status(
     period: StandardizedFinancials, *, diluted: bool
 ) -> Cpc41EvidenceStatus:
     """Classify whether every required economic class was reconciled."""
-    entry = _cpc41_source_entry(period, diluted=diluted)
-    if entry is not None and entry.blocker in _CPC41_CLASS_REASONS:
-        return Cpc41EvidenceStatus.AMBIGUOUS
     if _cpc41_base_eps(period, diluted=diluted) is not None:
         return Cpc41EvidenceStatus.AVAILABLE
+    entry = _cpc41_source_entry(period, diluted=diluted)
+    explicit = (
+        period.eps_diluted_null_reason if diluted else period.eps_basic_null_reason
+    )
+    if (
+        entry is not None
+        and (
+            entry.blocker in _CPC41_CLASS_REASONS
+            or (entry.found and entry.status is SourceAccountStatus.MAPPED)
+        )
+        or explicit in _CPC41_CLASS_REASONS
+    ):
+        return Cpc41EvidenceStatus.AMBIGUOUS
     return Cpc41EvidenceStatus.ABSENT
 
 

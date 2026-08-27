@@ -2214,6 +2214,25 @@ def _format_exercise(exercise: ExerciseCoverage) -> list[str]:
             f"basic_blocker={provenance.basic_blocker or 'none'} "
             f"diluted_blocker={provenance.diluted_blocker or 'none'}"
         )
+        for period in provenance.selected_periods:
+            lines.append(
+                f"      cpc41 period={period.reference_date} "
+                f"basic={period.basic_weighted_shares_status.value} "
+                f"blocker={period.basic_blocker or 'none'} "
+                f"diluted={period.diluted_weighted_shares_status.value} "
+                f"blocker={period.diluted_blocker or 'none'}"
+            )
+            if period.source_accounts:
+                for account in period.source_accounts:
+                    lines.append(
+                        "        cpc41 raw_ref "
+                        f"basis={account.basis or 'unknown'} "
+                        f"module={account.module} code={account.code} "
+                        f"name={account.name!r} "
+                        f"selection={account.selection_status.value}"
+                    )
+            else:
+                lines.append("        cpc41 raw_ref none")
     return lines
 
 

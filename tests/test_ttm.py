@@ -723,6 +723,7 @@ def test_ttm_provenance_keeps_status_and_raw_accounts_for_every_selected_period(
     assert first.disclosure_status is Cpc41EvidenceStatus.AVAILABLE
     assert first.basic_weighted_shares_status is Cpc41EvidenceStatus.AVAILABLE
     assert first.source_accounts[0].selection_status is Cpc41SelectionStatus.SELECTED
+    assert first.source_accounts[0].basis == "basic"
     assert absent.disclosure_status is Cpc41EvidenceStatus.ABSENT
     assert absent.basic_weighted_shares_status is Cpc41EvidenceStatus.ABSENT
     assert ambiguous.disclosure_status is Cpc41EvidenceStatus.AMBIGUOUS
@@ -734,6 +735,7 @@ def test_ttm_provenance_keeps_status_and_raw_accounts_for_every_selected_period(
         ambiguous.source_accounts[0].selection_status is Cpc41SelectionStatus.AMBIGUOUS
     )
     assert latest.disclosure_status is Cpc41EvidenceStatus.AVAILABLE
+    assert latest.class_status is Cpc41EvidenceStatus.AVAILABLE
 
 
 def test_ttm_carries_the_null_cause_provenance() -> None:

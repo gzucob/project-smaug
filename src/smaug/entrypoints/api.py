@@ -177,6 +177,7 @@ class Cpc41AccountEvidenceResponse(BaseModel):
     name: str
     selection_status: Cpc41SelectionStatus
     value: Decimal | None
+    basis: str | None
 
 
 class Cpc41PeriodProvenanceResponse(BaseModel):
@@ -556,6 +557,7 @@ def _cpc41_window_response(
                     name=account.name,
                     selection_status=account.selection_status,
                     value=account.value,
+                    basis=account.basis,
                 )
                 for account in period.source_accounts
             ],

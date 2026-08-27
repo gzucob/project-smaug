@@ -202,6 +202,7 @@ class Cpc41AccountEvidence:
     name: str
     selection_status: Cpc41SelectionStatus
     value: Decimal | None = None
+    basis: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
