@@ -261,9 +261,10 @@ def test_source_lineage_round_trips_through_sql_and_api() -> None:
         statement="DFC",
         status=SourceAccountStatus.MAPPED,
         expected=("code=6.01",),
-        found=(SourceAccountRef("6.01", "CFO", Decimal("100")),),
+        found=(SourceAccountRef("6.01", "CFO", Decimal("100"), "Operating"),),
         parent_code="6.01",
         consumer_indicators=("fcf",),
+        duplicates_discarded=2,
     )
     indicators = Indicators(
         source_account_evidence=(evidence,),
@@ -292,6 +293,10 @@ def test_source_lineage_round_trips_through_sql_and_api() -> None:
     assert response.indicators.source_account_evidence[0].found[0].value == Decimal(
         "100"
     )
+    assert response.indicators.source_account_evidence[0].found[0].column == (
+        "Operating"
+    )
+    assert response.indicators.source_account_evidence[0].duplicates_discarded == 2
     assert response.indicators.bank_regulatory_provenance is not None
     assert response.indicators.bank_regulatory_provenance.basis == (
         "issuer_defined_annualized_disclosure"

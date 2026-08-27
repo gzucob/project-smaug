@@ -324,6 +324,7 @@ class SourceAccountRefResponse(BaseModel):
     code: str
     name: str
     value: Decimal | None
+    column: str | None = None
 
 
 class SourceAccountEvidenceResponse(BaseModel):
@@ -339,6 +340,7 @@ class SourceAccountEvidenceResponse(BaseModel):
     dependencies: list[str]
     blocker: NullReason | None
     consumer_indicators: list[str]
+    duplicates_discarded: int = 0
 
 
 class DebtLineResponse(BaseModel):
@@ -629,6 +631,7 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
                             code=ref.code,
                             name=ref.name,
                             value=ref.value,
+                            column=ref.column,
                         )
                         for ref in item.found
                     ],
@@ -637,6 +640,7 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
                     dependencies=list(item.dependencies),
                     blocker=item.blocker,
                     consumer_indicators=list(item.consumer_indicators),
+                    duplicates_discarded=item.duplicates_discarded,
                 )
                 for item in analysis.indicators.source_account_evidence
             ],

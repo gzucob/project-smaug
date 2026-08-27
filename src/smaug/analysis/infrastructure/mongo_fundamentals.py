@@ -550,6 +550,7 @@ def _matching_refs(
             code=str(account.get("code", "")),
             name=str(account.get("name", "")),
             value=_mul(_dec(account.get("quantity")), scale),
+            column=_account_column(account),
         )
         for account in accounts
         if predicate(account)
@@ -653,11 +654,17 @@ def _source_account_evidence(
     dre, dre_s = _accounts(by_module, "DRE"), _scale(by_module, "DRE")
     dfc, dfc_s = _accounts(by_module, "DFC"), _scale(by_module, "DFC")
     dmpl, dmpl_s = _accounts(by_module, "DMPL"), _scale(by_module, "DMPL")
+    duplicate_counts = {
+        module: _duplicate_count(by_module, module) for module in _STATEMENTS
+    }
     regime = financials.filed_regime or expected_regime(financials.sector)
     entries: list[SourceAccountEvidence] = []
     seen: set[str] = set()
 
     def add(entry: SourceAccountEvidence) -> None:
+        duplicate_count = duplicate_counts.get(entry.statement, 0)
+        if duplicate_count:
+            entry = replace(entry, duplicates_discarded=duplicate_count)
         if entry.field not in seen:
             entries.append(entry)
             seen.add(entry.field)
@@ -869,6 +876,7 @@ def _source_account_evidence(
             code=str(account.get("code", "")),
             name=str(account.get("name", "")),
             value=_mul(_dec(account.get("quantity")), dfc_s),
+            column=_account_column(account),
         )
         for account in _dep_amort_accounts(dfc)
     )
@@ -1539,12 +1547,145 @@ def _period_start(by_module: Mapping[str, Any], module: str) -> date | None:
     return None
 
 
+_ACCOUNT_IDENTITY_ALIASES = frozenset(
+    {
+        "code",
+        "CD_CONTA",
+        "name",
+        "DS_CONTA",
+        "quantity",
+        "VL_CONTA",
+        "level",
+        "is_fixed",
+        "ST_CONTA_FIXA",
+        "column",
+        "COLUNA_DF",
+    }
+)
+
+
+def _identity_value(value: Any) -> str:
+    """Render one source value into a deterministic identity component."""
+    if value is None:
+        return "<none>"
+    if isinstance(value, Mapping):
+        items = sorted(value.items(), key=lambda item: str(item[0]))
+        return (
+            "<mapping:"
+            + ",".join(f"{key!s}={_identity_value(item)}" for key, item in items)
+            + ">"
+        )
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return "<sequence:" + ",".join(_identity_value(item) for item in value) + ">"
+    return f"<{type(value).__name__}:{value!r}>"
+
+
+def _first_account_value(
+    account: Mapping[str, Any], *names: str
+) -> Any:  # genuinely untyped source payload
+    for name in names:
+        if name in account:
+            return account[name]
+    return None
+
+
+def _account_column(account: Mapping[str, Any]) -> str | None:
+    """Read the DMPL column under either the parsed or source field name."""
+    value = _first_account_value(account, "column", "COLUNA_DF")
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _account_fixed_flag(account: Mapping[str, Any]) -> Any:  # source payload value
+    value = _first_account_value(account, "is_fixed", "ST_CONTA_FIXA")
+    if isinstance(value, str):
+        normalized = value.strip().upper()
+        if normalized in {"S", "SIM", "TRUE", "1"}:
+            return True
+        if normalized in {"N", "NAO", "NÃO", "FALSE", "0"}:
+            return False
+    return value
+
+
+def _source_cell_identity(
+    module: str, payload: Mapping[str, Any], account: Mapping[str, Any]
+) -> tuple[str, ...]:
+    """Identify one CVM account cell without crossing filing boundaries.
+
+    The parser intentionally preserves repeated rows in the raw mirror. Analysis
+    may remove only an exact repeated source cell, so filing metadata and every
+    account identity-bearing value participate in this key. In particular,
+    ``COLUNA_DF`` distinguishes DMPL matrix cells that share a code and label.
+    """
+    payload_identity = tuple(
+        f"payload:{str(key)}={_identity_value(value)}"
+        for key, value in sorted(payload.items(), key=lambda item: str(item[0]))
+        if key != "accounts"
+    )
+    canonical: dict[str, Any] = {
+        "code": _first_account_value(account, "code", "CD_CONTA"),
+        "name": _first_account_value(account, "name", "DS_CONTA"),
+        "quantity": _first_account_value(account, "quantity", "VL_CONTA"),
+        "level": _first_account_value(account, "level"),
+        "is_fixed": _account_fixed_flag(account),
+    }
+    if module.upper() == "DMPL" or any(
+        key in account for key in ("column", "COLUNA_DF")
+    ):
+        canonical["column"] = _account_column(account)
+    account_identity = tuple(
+        f"account:{key}={_identity_value(value)}"
+        for key, value in sorted(canonical.items())
+    )
+    extras = tuple(
+        f"account-extra:{str(key)}={_identity_value(value)}"
+        for key, value in sorted(account.items(), key=lambda item: str(item[0]))
+        if str(key) not in _ACCOUNT_IDENTITY_ALIASES
+    )
+    return (f"module:{module}", *payload_identity, *account_identity, *extras)
+
+
+def _deduplicate_accounts(
+    module: str,
+    payload: Mapping[str, Any],
+    accounts: Sequence[Mapping[str, Any]],
+) -> tuple[tuple[Mapping[str, Any], ...], int]:
+    """Drop only exact repeated source cells for one selected filing.
+
+    This function is deliberately called after the reader has selected the
+    authoritative filing. It never compares rows across versions, periods,
+    statement scopes, or ``ORDEM_EXERC`` values, and it never mutates the raw
+    payload. The first occurrence remains in source order for stable evidence.
+    """
+    seen: set[tuple[str, ...]] = set()
+    retained: list[Mapping[str, Any]] = []
+    discarded = 0
+    for account in accounts:
+        identity = _source_cell_identity(module, payload, account)
+        if identity in seen:
+            discarded += 1
+            continue
+        seen.add(identity)
+        retained.append(account)
+    return tuple(retained), discarded
+
+
+def _duplicate_count(by_module: Mapping[str, Any], module: str) -> int:
+    payload = by_module.get(module)
+    if not isinstance(payload, Mapping):
+        return 0
+    accounts = _accounts_of(payload)
+    return _deduplicate_accounts(module, payload, accounts)[1]
+
+
 def _accounts(by_module: Mapping[str, Any], module: str) -> Accounts:
     payload = by_module.get(module)
     if not isinstance(payload, Mapping):
         return []
-    accounts = payload.get("accounts")
-    return accounts if isinstance(accounts, list) else []
+    accounts = _accounts_of(payload)
+    return _deduplicate_accounts(module, payload, accounts)[0]
 
 
 def _scale(by_module: Mapping[str, Any], module: str) -> Decimal:
@@ -1587,7 +1728,12 @@ def _accounts_of(payload: Mapping[str, Any] | None) -> Accounts:
     if payload is None:
         return ()
     accounts = payload.get("accounts")
-    return accounts if isinstance(accounts, Sequence) else ()
+    return (
+        accounts
+        if isinstance(accounts, Sequence)
+        and not isinstance(accounts, (str, bytes, bytearray))
+        else ()
+    )
 
 
 _PER_SHARE_LABELS: dict[str, PerShareClass] = {

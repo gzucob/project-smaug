@@ -126,6 +126,10 @@ class SourceAccountRef:
     code: str
     name: str
     value: Decimal | None
+    # DMPL is a matrix: the same account code/name may be filed once per
+    # ``COLUNA_DF``. The parser calls this field ``column`` while retaining the
+    # source meaning, so provenance can show which cells survived analysis.
+    column: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +154,10 @@ class SourceAccountEvidence:
     dependencies: tuple[str, ...] = ()
     blocker: NullReason | None = None
     consumer_indicators: tuple[str, ...] = ()
+    # Exact repeated source cells removed from this statement before mapping.
+    # The count is statement-level evidence; it is repeated on each evidence
+    # entry sourced from that statement so it survives the existing lineage path.
+    duplicates_discarded: int = 0
 
 
 class InsuranceUnderwritingStatus(StrEnum):
