@@ -30,6 +30,7 @@ from smaug.analysis.domain.succession import (
     candidates_of,
     crosses,
     joined,
+    joins,
     structural_gap,
 )
 from smaug.analysis.infrastructure.b3_prices import CotahistArchive
@@ -119,6 +120,88 @@ class CodeSuccession:
             if quotes is not None:
                 merged.extend(quotes.session_closes())
         return tuple(sorted(merged, key=lambda close: close.session))
+
+    async def current_code(self, ticker: str) -> str | None:
+        """Return the code carrying the latest B3 session for this security.
+
+        The historical chain is walked backwards from the requested code, which
+        is the right direction when reading a closed year.  A live quote can be
+        requested by a code that was just retired, however, so this answer walks
+        the same FCA sibling set forwards.  A forward edge still needs the B3
+        seam to be adjacent and price-continuous; a registrant or root match on
+        its own never supplies a current quote.
+
+        Only plain share classes enter this path.  Units and other instruments
+        have no class suffix that can safely be compared, and two simultaneous
+        classes must never lend one another a quote.
+        """
+        code = ticker.strip().upper()
+        suffix = share_class_suffix(code)
+        if suffix is None:
+            return None
+        opened = self._today().year - _LOOKBACK_YEARS
+        sibling_codes = {
+            sibling.strip().upper()
+            for sibling in self._siblings(code)
+            if share_class_suffix(sibling.strip().upper()) == suffix
+        }
+        latest_year = self._today().year
+        latest_quotes = await self._archive.year(latest_year)
+        listed_since = self._listed_since(ticker)
+        windows: list[CodeWindow] = []
+        for candidate in (code, *sorted(sibling_codes)):
+            quotes = latest_quotes.get(candidate)
+            window: CodeWindow | None
+            if quotes is not None:
+                first = quotes.first_close()
+                window = CodeWindow(
+                    code=candidate,
+                    first_session=first.session,
+                    last_session=quotes.last_session,
+                    first_close=first.close,
+                    last_close=quotes.last_close,
+                )
+            else:
+                window = await self._window(candidate, opened)
+            if window is not None and (
+                candidate == code
+                or listed_since is None
+                or window.last_session >= listed_since
+            ):
+                windows.append(window)
+        served = next((window for window in windows if window.code == code), None)
+        if served is None:
+            return None
+
+        path = [served]
+        seen = {served.code}
+        while True:
+            successors = [
+                candidate
+                for candidate in windows
+                if candidate.code not in seen and joins(path[-1], candidate)
+            ]
+            if len(successors) != 1:
+                # No edge is the normal endpoint. More than one is ambiguous:
+                # choosing by ticker, root, name, or quote would be an unproven
+                # identity change.
+                if len(successors) > 1:
+                    return None
+                break
+            successor = successors[0]
+            path.append(successor)
+            seen.add(successor.code)
+
+        latest = [
+            (quotes.last_session, window.code)
+            for window in path
+            if (quotes := latest_quotes.get(window.code)) is not None
+        ]
+        if not latest:
+            return None
+        latest_session = max(session for session, _ in latest)
+        codes = {code for session, code in latest if session == latest_session}
+        return next(iter(codes)) if len(codes) == 1 else None
 
     async def unpriceable(
         self, ticker: str, year: int, resolved: Sequence[CodeWindow]
@@ -361,8 +444,22 @@ class SuccessionPriceProvider:
         self._steps: dict[str, Sequence[RestatementStep]] = {}
 
     async def get(self, ticker: str) -> MarketData:
-        # The live quote is today's code by definition; nothing to join.
-        return await self._inner.get(ticker)
+        original = await self._inner.get(ticker)
+        current = await self._succession.current_code(ticker)
+        if current is None or current == ticker.strip().upper():
+            return original
+        successor = await self._inner.get(current)
+        if successor.price is None:
+            # The succession is evidence about identity, not a second price
+            # source. Keep the source's own null when it cannot serve the chosen
+            # B3 code.
+            return original
+        logger.info(
+            "%s current quote follows proven B3 succession to %s (#270)",
+            ticker,
+            current,
+        )
+        return successor
 
     async def year_sessions(self, ticker: str, year: int) -> tuple[SessionClose, ...]:
         resolved = await self._chain(ticker, year)

@@ -21,6 +21,7 @@ from pathlib import Path
 import httpx
 
 from smaug.analysis.domain.capital import RestatementStep
+from smaug.analysis.domain.financials import MarketData
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.succession import (
     CodeWindow,
@@ -112,7 +113,8 @@ class _StaticPrices:
         self._archive = archive
 
     async def get(self, ticker: str):  # noqa: ANN201 - only the year API is exercised
-        raise AssertionError("the live quote is never joined")
+        quotes = (await self._archive.year(TODAY.year)).get(ticker)
+        return MarketData() if quotes is None else MarketData(price=quotes.last_close)
 
     async def year_sessions(self, ticker: str, year: int):  # noqa: ANN201
         quotes = (await self._archive.year(year)).get(ticker)
@@ -341,6 +343,78 @@ async def test_a_code_with_no_sibling_is_delegated_untouched() -> None:
     prices = await provider.year_prices("PETR4", 2024)
 
     assert prices.nominal_avg == Decimal("37")
+
+
+async def test_the_current_quote_follows_a_proven_forward_successor() -> None:
+    archive = _renamed_archive()
+    archive._years[TODAY.year] = {  # type: ignore[index]
+        "ARZZ3": _quotes(_sessions(date(2026, 1, 1), ["69"])),
+        "AZZA3": _quotes(_sessions(date(2026, 1, 2), ["70", "71"])),
+    }
+    succession = CodeSuccession(
+        archive,  # type: ignore[arg-type]
+        siblings=lambda ticker: (
+            ("AZZA3",) if ticker == "ARZZ3" else ("ARZZ3",) if ticker == "AZZA3" else ()
+        ),
+        listed_since=lambda ticker: date(2011, 2, 2),
+        today=lambda: TODAY,
+    )
+    provider = SuccessionPriceProvider(
+        _StaticPrices(archive),  # type: ignore[arg-type]
+        succession,
+    )
+
+    quote = await provider.get("ARZZ3")
+
+    assert quote.price == Decimal("71")
+
+
+async def test_an_unproven_forward_change_keeps_the_current_price_missing() -> None:
+    archive = _FakeArchive(
+        {
+            2025: {"NINJ3": _quotes(_sessions(date(2025, 12, 29), ["10"]))},
+            2026: {"ARND3": _quotes(_sessions(date(2026, 1, 2), ["100"]))},
+        }
+    )
+    succession = CodeSuccession(
+        archive,  # type: ignore[arg-type]
+        # A registrant/root claim is not enough. The seam's price does not carry.
+        siblings=lambda ticker: ("ARND3",) if ticker == "NINJ3" else ("NINJ3",),
+        today=lambda: TODAY,
+    )
+    provider = SuccessionPriceProvider(
+        _StaticPrices(archive),  # type: ignore[arg-type]
+        succession,
+    )
+
+    quote = await provider.get("NINJ3")
+
+    assert quote.price is None
+    assert quote.price_null_reason is None
+
+
+async def test_a_simultaneous_class_cannot_supply_the_current_quote() -> None:
+    archive = _FakeArchive(
+        {
+            2025: {"NINJ3": _quotes(_sessions(date(2025, 12, 29), ["10"]))},
+            2026: {"ARND4": _quotes(_sessions(date(2026, 1, 2), ["10"]))},
+        }
+    )
+    succession = CodeSuccession(
+        archive,  # type: ignore[arg-type]
+        # The fake resolver intentionally offers a different class. The
+        # succession must enforce the exact class suffix at this boundary too.
+        siblings=lambda ticker: ("ARND4",) if ticker == "NINJ3" else ("NINJ3",),
+        today=lambda: TODAY,
+    )
+    provider = SuccessionPriceProvider(
+        _StaticPrices(archive),  # type: ignore[arg-type]
+        succession,
+    )
+
+    quote = await provider.get("NINJ3")
+
+    assert quote.price is None
 
 
 async def test_a_year_the_chain_cannot_name_is_a_named_null() -> None:
