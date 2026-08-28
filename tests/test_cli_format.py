@@ -6,6 +6,7 @@ from decimal import Decimal
 from smaug.analysis.application.analyze import (
     AnalysisRun,
     AnalysisStatus,
+    NoAnalysisReason,
     TickerOutcome,
 )
 from smaug.analysis.application.doctor import (
@@ -463,7 +464,13 @@ def test_analysis_run_summary_names_a_failure_and_counts_the_rest() -> None:
     run = AnalysisRun(
         outcomes=(
             TickerOutcome("AAAA3", AnalysisStatus.ANALYZED, (_analysis(),)),
-            TickerOutcome("BBBB3", AnalysisStatus.SKIPPED, (), "no CVM fundamentals"),
+            TickerOutcome(
+                "BBBB3",
+                AnalysisStatus.SKIPPED,
+                (),
+                "no CVM fundamentals are mirrored",
+                NoAnalysisReason.NO_MIRRORED_FUNDAMENTALS,
+            ),
             TickerOutcome("CCCC3", AnalysisStatus.ERROR, (), "ValueError: boom"),
         )
     )
@@ -472,7 +479,8 @@ def test_analysis_run_summary_names_a_failure_and_counts_the_rest() -> None:
 
     assert "!! CCCC3" in out
     assert "ValueError: boom" in out
-    assert "skipped (nothing mirrored): BBBB3" in out
+    assert "skipped:" in out
+    assert "BBBB3    no_mirrored_fundamentals: no CVM fundamentals are mirrored" in out
     assert "3 ticker(s), 1 view(s) stored" in out
     assert "analyzed=1" in out
 

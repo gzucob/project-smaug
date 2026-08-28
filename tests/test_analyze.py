@@ -6,12 +6,14 @@ from decimal import Decimal
 from smaug.analysis.application.analyze import (
     AnalysisStatus,
     AnalyzePortfolioUseCase,
+    NoAnalysisReason,
 )
 from smaug.analysis.domain.capital import RestatementStep
 from smaug.analysis.domain.dividends import CashEvent
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.financials import (
     MarketData,
+    SessionClose,
     ShareCountProvenance,
     ShareCounts,
     StandardizedFinancials,
@@ -1080,6 +1082,116 @@ async def test_a_year_before_the_tickers_first_trade_gets_no_row() -> None:
     assert closed_years == {2021}  # 2020 produced no row at all
 
 
+async def test_only_pre_trading_filings_have_a_named_no_analysis_outcome() -> None:
+    annual = StandardizedFinancials(
+        reference_date=date(2020, 12, 31),
+        sector=Sector.INSURER,
+        period_start=date(2020, 1, 1),
+        net_income=Decimal(600),
+        equity=Decimal(3600),
+    )
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"CXSE3": []}, annuals={"CXSE3": [annual]}),
+        FakePrice(
+            year_by_symbol_and_year={
+                ("CXSE3", 2021): YearPrices(
+                    nominal_avg=Decimal(12), closing=Decimal(12)
+                ),
+            },
+        ),
+        FakeRepo(),
+        FakeShares({2020: _counts(common=800)}),
+        classes_resolver=fake_classes_resolver,
+    )
+
+    outcome = (await use_case.execute(["CXSE3"])).outcomes[0]
+
+    assert outcome.status is AnalysisStatus.SKIPPED
+    assert outcome.no_analysis_reason is (
+        NoAnalysisReason.ALL_EXERCISES_PRE_FIRST_B3_SESSION
+    )
+    assert "all 1 closed exercise(s)" in outcome.detail
+    assert "no complete four-quarter TTM window" in outcome.detail
+
+
+async def test_sparse_b3_year_keeps_its_accounting_analysis_row() -> None:
+    class SparseSessionPrice(FakePrice):
+        async def year_sessions(
+            self, ticker: str, year: int
+        ) -> tuple[SessionClose, ...]:
+            if ticker == "PETR4" and year == 2025:
+                return (SessionClose(date(2025, 12, 3), Decimal(10)),)
+            return ()
+
+    annual = StandardizedFinancials(
+        reference_date=date(2025, 12, 31),
+        sector=Sector.INDUSTRY,
+        period_start=date(2025, 1, 1),
+        revenue=Decimal(1000),
+        net_income=Decimal(100),
+        equity=Decimal(600),
+    )
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"PETR4": []}, annuals={"PETR4": [annual]}),
+        SparseSessionPrice(
+            year_by_symbol_and_year={
+                ("PETR4", 2025): YearPrices(
+                    null_reason=NullReason.PRICE_SYMBOL_NOT_FOUND
+                ),
+                ("PETR4", 2026): YearPrices(
+                    nominal_avg=Decimal(12), closing=Decimal(12)
+                ),
+            },
+        ),
+        FakeRepo(),
+        FakeShares({2025: _counts(common=800)}),
+        classes_resolver=fake_classes_resolver,
+    )
+
+    outcome = (await use_case.execute(["PETR4"])).outcomes[0]
+
+    assert outcome.status is AnalysisStatus.ANALYZED
+    assert len(outcome.analyses) == 1
+    assert outcome.analyses[0].reference_date == date(2025, 12, 31)
+    assert outcome.analyses[0].indicators.net_margin == Decimal("0.1")
+    assert outcome.analyses[0].indicators.company_pe is None
+    assert outcome.analyses[0].indicators.null_reasons["company_pe"] is (
+        NullReason.PRICE_SYMBOL_NOT_FOUND
+    )
+
+
+async def test_unresolved_b3_identity_has_a_named_no_analysis_outcome() -> None:
+    annual = StandardizedFinancials(
+        reference_date=date(2020, 12, 31),
+        sector=Sector.INDUSTRY,
+        period_start=date(2020, 1, 1),
+        net_income=Decimal(600),
+        equity=Decimal(3600),
+    )
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"PETR4": []}, annuals={"PETR4": [annual]}),
+        FakePrice(
+            year_by_symbol_and_year={
+                ("PETR4", 2020): YearPrices(
+                    null_reason=NullReason.PRICE_SYMBOL_NOT_FOUND
+                ),
+                ("PETR4", 2021): YearPrices(
+                    nominal_avg=Decimal(12), closing=Decimal(12)
+                ),
+            },
+        ),
+        FakeRepo(),
+        FakeShares({2020: _counts(common=800)}),
+        classes_resolver=fake_classes_resolver,
+    )
+
+    outcome = (await use_case.execute(["PETR4"])).outcomes[0]
+
+    assert outcome.status is AnalysisStatus.SKIPPED
+    assert outcome.no_analysis_reason is NoAnalysisReason.UNRESOLVED_SECURITY_IDENTITY
+    assert "code chain cannot name" in outcome.detail
+
+
 async def test_a_priced_ticker_with_a_vendor_gap_stays_a_transient_miss() -> None:
     # A ticker the tape never prices, in any direction, is left alone rather than
     # guessed at: there is no later year to prove it "had not started yet", so the
@@ -1212,4 +1324,8 @@ async def test_a_ticker_with_nothing_mirrored_is_skipped_not_failed() -> None:
     run = await use_case.execute(["NADA3"])
 
     assert run.outcomes[0].status == AnalysisStatus.SKIPPED
+    assert (
+        run.outcomes[0].no_analysis_reason is NoAnalysisReason.NO_MIRRORED_FUNDAMENTALS
+    )
+    assert run.outcomes[0].detail == "no CVM fundamentals are mirrored"
     assert run.failed == ()
