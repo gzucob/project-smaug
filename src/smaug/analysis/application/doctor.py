@@ -34,7 +34,9 @@ from smaug.analysis.domain.indicators import (
     indicator_names,
     null_disposition,
 )
+from smaug.analysis.domain.outcomes import AnalysisOutcome
 from smaug.analysis.domain.ports import (
+    AnalysisOutcomeReader,
     AnalysisRepository,
     AnalysisStorageScope,
     AnalysisStorageScopeReader,
@@ -306,6 +308,12 @@ class TickerCoverage:
     ticker: str
     sector: Sector
     exercises: tuple[ExerciseCoverage, ...]
+    outcome: AnalysisOutcome | None = None
+
+    @property
+    def latest_outcome(self) -> AnalysisOutcome | None:
+        """The latest run status, kept separate from indicator-cell coverage."""
+        return self.outcome
 
 
 @dataclass(frozen=True)
@@ -492,14 +500,17 @@ class DoctorUseCase:
         repository: AnalysisRepository,
         *,
         sector_resolver: SectorResolver,
+        outcome_reader: AnalysisOutcomeReader | None = None,
     ) -> None:
         self._repository = repository
         self._sector_resolver = sector_resolver
+        self._outcome_reader = outcome_reader
 
     async def execute(self, tickers: Iterable[str]) -> DoctorReport:
         # A repeated code must represent one requested ticker, otherwise both
         # the percentages and the no-analysis count depend on caller ordering.
         requested = tuple(dict.fromkeys(tickers))
+        outcomes = await self._latest_outcomes(requested)
         coverages: list[TickerCoverage] = []
         for ticker in requested:
             exercises: list[ExerciseCoverage] = []
@@ -509,7 +520,12 @@ class DoctorUseCase:
             for closed in await self._repository.history(ticker):
                 exercises.append(_exercise_of(closed))
             coverages.append(
-                TickerCoverage(ticker, self._sector_resolver(ticker), tuple(exercises))
+                TickerCoverage(
+                    ticker,
+                    self._sector_resolver(ticker),
+                    tuple(exercises),
+                    outcomes.get(ticker),
+                )
             )
 
         storage = await self._storage_scope(requested)
@@ -530,6 +546,17 @@ class DoctorUseCase:
                 legacy_rows=0 if storage is None else storage.legacy_rows,
             ),
         )
+
+    async def _latest_outcomes(
+        self, tickers: Sequence[str]
+    ) -> Mapping[str, AnalysisOutcome]:
+        """Read optional run outcomes without requiring old repository fakes."""
+        reader = self._outcome_reader
+        if reader is None:
+            if not hasattr(self._repository, "latest_outcomes"):
+                return {}
+            reader = cast(AnalysisOutcomeReader, self._repository)
+        return await reader.latest_outcomes(tickers)
 
     async def _storage_scope(
         self, tickers: Sequence[str]

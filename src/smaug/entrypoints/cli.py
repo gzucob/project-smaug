@@ -20,8 +20,15 @@ import httpx
 import typer
 
 from smaug.analysis.application.analyze import (
-    AnalysisRun,
-    AnalysisStatus,
+    AnalysisOutcome as AnalysisOutcome,
+)
+from smaug.analysis.application.analyze import (
+    AnalysisRun as AnalysisRun,
+)
+from smaug.analysis.application.analyze import (
+    AnalysisStatus as AnalysisStatus,
+)
+from smaug.analysis.application.analyze import (
     AnalyzePortfolioUseCase,
 )
 from smaug.analysis.application.doctor import (
@@ -29,6 +36,7 @@ from smaug.analysis.application.doctor import (
     DoctorReport,
     DoctorUseCase,
     ExerciseCoverage,
+    TickerCoverage,
 )
 from smaug.analysis.application.drift import AccountDriftUseCase, DriftReport
 from smaug.analysis.domain.entities import TickerAnalysis
@@ -1600,6 +1608,7 @@ async def _run_analyze(
                 registrant_resolver=registrant,
                 validation_collection=mongo[settings.mongo_db]["ingestion_validations"],
             )
+            analysis_repository = SqlAlchemyAnalysisRepository(session_factory)
             use_case = AnalyzePortfolioUseCase(
                 reader=MongoFundamentalsReader(
                     mongo[settings.mongo_db]["raw_ingestions"],
@@ -1619,7 +1628,7 @@ async def _run_analyze(
                     succession,
                     units,
                 ),
-                repository=SqlAlchemyAnalysisRepository(session_factory),
+                repository=analysis_repository,
                 shares_reader=shares_reader,
                 classification_resolver=_classification_resolver(identities),
                 classes_resolver=_classes_resolver(identities),
@@ -1628,6 +1637,7 @@ async def _run_analyze(
                 ),
                 cash_event_reader=cash_events,
                 per_share_resolver=_per_share_resolver(identities),
+                outcome_repository=analysis_repository,
             )
             run = await use_case.execute(tickers)
     finally:
@@ -2376,6 +2386,9 @@ def format_doctor(report: DoctorReport) -> str:
 
     for ticker_cov in report.tickers:
         lines.append(f"\n{ticker_cov.ticker} [{ticker_cov.sector.value}]")
+        outcome = _format_no_analysis_outcome(ticker_cov)
+        if outcome is not None:
+            lines.append(f"  no-analysis outcome: {outcome}")
         if not ticker_cov.exercises:
             lines.append("  !! (no persisted analysis)")
             continue
@@ -2480,6 +2493,21 @@ def _format_coverage_details(report: DoctorReport) -> list[str]:
     ]
 
 
+def _format_no_analysis_outcome(ticker: TickerCoverage) -> str | None:
+    """Render only a named skip from the latest run, never a stale reason."""
+    outcome: AnalysisOutcome | None = ticker.outcome
+    if (
+        outcome is None
+        or outcome.status is not AnalysisStatus.SKIPPED
+        or outcome.no_analysis_reason is None
+    ):
+        return None
+    return (
+        f"ticker={ticker.ticker} status={outcome.status.value} "
+        f"reason={outcome.no_analysis_reason.value} detail={outcome.detail}"
+    )
+
+
 def format_doctor_summary(report: DoctorReport) -> str:
     """The coverage report as totals — the M0 gate at exchange scale.
 
@@ -2493,8 +2521,12 @@ def format_doctor_summary(report: DoctorReport) -> str:
     exercises = price_provenance = 0
     unnamed_tickers: set[str] = set()
     empty: list[str] = []
+    no_analysis_outcomes: list[str] = []
 
     for ticker_cov in report.tickers:
+        outcome = _format_no_analysis_outcome(ticker_cov)
+        if outcome is not None:
+            no_analysis_outcomes.append(outcome)
         if not ticker_cov.exercises:
             empty.append(ticker_cov.ticker)
             continue
@@ -2525,6 +2557,9 @@ def format_doctor_summary(report: DoctorReport) -> str:
         "(B3 code + session)",
     ]
     lines.extend(_format_coverage_details(report))
+    if no_analysis_outcomes:
+        lines.append("  latest no-analysis outcomes:")
+        lines.extend(f"    {outcome}" for outcome in sorted(no_analysis_outcomes))
     for reason, count in sorted(named.items(), key=lambda kv: -kv[1]):
         lines.append(f"    {reason.value:<26} {count:>7}")
     if empty:

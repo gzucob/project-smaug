@@ -44,8 +44,16 @@ from smaug.analysis.domain.financials import (
     SourceAccountStatus,
 )
 from smaug.analysis.domain.indicators import Indicators, NullReason
+from smaug.analysis.domain.outcomes import (
+    AnalysisOutcome,
+    AnalysisStatus,
+    NoAnalysisReason,
+)
 from smaug.analysis.domain.ports import AnalysisStorageScope
-from smaug.analysis.infrastructure.sqlalchemy_models import TickerAnalysisRow
+from smaug.analysis.infrastructure.sqlalchemy_models import (
+    AnalysisOutcomeRow,
+    TickerAnalysisRow,
+)
 from smaug.portfolio.domain.share_classes import (
     EconomicRightsStatus,
     PerShareClass,
@@ -680,6 +688,38 @@ def _decimal(raw: object) -> Decimal | None:
         return None
 
 
+def _outcome_to_row(outcome: AnalysisOutcome) -> AnalysisOutcomeRow:
+    """Map a domain outcome to its dedicated PostgreSQL row."""
+    return AnalysisOutcomeRow(
+        run_id=outcome.run_id,
+        ticker=outcome.ticker,
+        status=outcome.status.value,
+        no_analysis_reason=(
+            None
+            if outcome.no_analysis_reason is None
+            else outcome.no_analysis_reason.value
+        ),
+        detail=outcome.detail,
+        recorded_at=outcome.recorded_at,
+    )
+
+
+def _outcome_from_row(row: AnalysisOutcomeRow) -> AnalysisOutcome:
+    """Map a dedicated PostgreSQL row back to a domain outcome."""
+    return AnalysisOutcome(
+        run_id=row.run_id,
+        ticker=row.ticker,
+        status=AnalysisStatus(row.status),
+        recorded_at=row.recorded_at,
+        no_analysis_reason=(
+            None
+            if row.no_analysis_reason is None
+            else NoAnalysisReason(row.no_analysis_reason)
+        ),
+        detail=row.detail,
+    )
+
+
 def _class_market_values_from_json(value: object) -> tuple[ClassMarketValue, ...]:
     if not isinstance(value, (list, tuple)):
         return ()
@@ -1187,6 +1227,48 @@ class SqlAlchemyAnalysisRepository:
         async with self._session_factory() as session:
             session.add(_to_row(analysis))
             await session.commit()
+
+    async def save_outcome(self, outcome: AnalysisOutcome) -> None:
+        """Persist one ticker/run outcome without creating a ticker-analysis row."""
+        async with self._session_factory() as session:
+            session.add(_outcome_to_row(outcome))
+            await session.commit()
+
+    async def latest_outcomes(
+        self, tickers: Sequence[str]
+    ) -> dict[str, AnalysisOutcome]:
+        """Read the newest outcome for each requested ticker."""
+        requested = tuple(dict.fromkeys(tickers))
+        if not requested:
+            return {}
+        ranked = (
+            select(
+                AnalysisOutcomeRow.id,
+                func.row_number()
+                .over(
+                    partition_by=AnalysisOutcomeRow.ticker,
+                    order_by=(
+                        AnalysisOutcomeRow.recorded_at.desc(),
+                        AnalysisOutcomeRow.id.desc(),
+                    ),
+                )
+                .label("row_number"),
+            )
+            .where(AnalysisOutcomeRow.ticker.in_(requested))
+            .subquery()
+        )
+        stmt = (
+            select(AnalysisOutcomeRow)
+            .join(ranked, AnalysisOutcomeRow.id == ranked.c.id)
+            .where(ranked.c.row_number == 1)
+            .order_by(
+                AnalysisOutcomeRow.recorded_at.desc(),
+                AnalysisOutcomeRow.id.desc(),
+            )
+        )
+        async with self._session_factory() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+        return {row.ticker: _outcome_from_row(row) for row in rows}
 
     async def latest(self, ticker: str) -> TickerAnalysis | None:
         stmt = (

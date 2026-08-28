@@ -30,6 +30,7 @@ from smaug.analysis.domain.financials import (
     RegimeSource,
 )
 from smaug.analysis.domain.indicators import Indicators, NullReason
+from smaug.analysis.domain.outcomes import AnalysisOutcome
 from smaug.entrypoints.cli import (
     _format_collection_log,
     format_analysis,
@@ -419,6 +420,63 @@ def test_doctor_summary_says_so_when_every_null_is_named() -> None:
     )
 
     assert "every null carries a named cause." in format_doctor_summary(report)
+
+
+def test_doctor_formatters_render_named_skip_outcome_outside_cell_counts() -> None:
+    outcome = AnalysisOutcome(
+        run_id="analysis-run-3",
+        ticker="TAEE11",
+        status=AnalysisStatus.SKIPPED,
+        recorded_at=datetime(2026, 8, 28, 12, 0, tzinfo=UTC),
+        no_analysis_reason=NoAnalysisReason.NO_FOUR_QUARTER_WINDOW,
+        detail="the CVM mirror has no complete four-quarter TTM window",
+    )
+    report = DoctorReport(
+        tickers=(
+            TickerCoverage(
+                ticker="TAEE11",
+                sector=Sector.UTILITY,
+                exercises=(),
+                outcome=outcome,
+            ),
+        )
+    )
+
+    verbose = format_doctor(report)
+    summary = format_doctor_summary(report)
+
+    for output in (verbose, summary):
+        assert "TAEE11" in output
+        assert "reason=no_four_quarter_window" in output
+        assert "detail=the CVM mirror has no complete four-quarter TTM window" in output
+        assert "cells: total=0" in output
+    assert "no-analysis outcome" in verbose
+    assert "latest no-analysis outcomes" in summary
+
+
+def test_doctor_formatters_do_not_report_a_skip_reason_after_analyzed_outcome() -> None:
+    report = DoctorReport(
+        tickers=(
+            TickerCoverage(
+                ticker="TAEE11",
+                sector=Sector.UTILITY,
+                exercises=(),
+                outcome=AnalysisOutcome(
+                    run_id="analysis-run-4",
+                    ticker="TAEE11",
+                    status=AnalysisStatus.ANALYZED,
+                    recorded_at=datetime(2026, 8, 28, 12, 1, tzinfo=UTC),
+                    detail="one view stored",
+                ),
+            ),
+        )
+    )
+
+    output = f"{format_doctor(report)}\n{format_doctor_summary(report)}"
+
+    assert "no_four_quarter_window" not in output
+    assert "no-analysis outcome" not in output
+    assert "no persisted analysis: TAEE11" in output
 
 
 def test_doctor_reconciles_debt_decisions_with_dependent_indicator_cells() -> None:

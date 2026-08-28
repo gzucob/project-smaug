@@ -30,6 +30,11 @@ from smaug.analysis.domain.indicators import (
     indicator_names,
     null_disposition,
 )
+from smaug.analysis.domain.outcomes import (
+    AnalysisOutcome,
+    AnalysisStatus,
+    NoAnalysisReason,
+)
 from smaug.analysis.domain.ports import AnalysisStorageScope
 from smaug.portfolio.domain.taxonomy import Classification
 from tests.fakes import fake_sector_resolver
@@ -58,6 +63,25 @@ class FakeRepo:
 
     async def history(self, ticker: str) -> list[TickerAnalysis]:
         return self._history.get(ticker, [])
+
+
+class OutcomeFakeRepo(FakeRepo):
+    """Adds the optional latest-outcome projection used by ``doctor``."""
+
+    def __init__(self, outcomes: dict[str, AnalysisOutcome]) -> None:
+        super().__init__()
+        self._outcomes = outcomes
+        self.requested_outcomes: tuple[str, ...] = ()
+
+    async def latest_outcomes(
+        self, tickers: tuple[str, ...]
+    ) -> dict[str, AnalysisOutcome]:
+        self.requested_outcomes = tickers
+        return {
+            ticker: self._outcomes[ticker]
+            for ticker in tickers
+            if ticker in self._outcomes
+        }
 
 
 class ScopedFakeRepo(FakeRepo):
@@ -344,6 +368,27 @@ async def test_doctor_reports_ticker_without_persisted_analysis() -> None:
     (ticker_cov,) = report.tickers
     assert ticker_cov.ticker == "TAEE11"
     assert ticker_cov.exercises == ()
+
+
+async def test_doctor_attaches_latest_named_outcome_without_counting_cells() -> None:
+    outcome = AnalysisOutcome(
+        run_id="analysis-run-2",
+        ticker="TAEE11",
+        status=AnalysisStatus.SKIPPED,
+        recorded_at=datetime(2026, 8, 28, 12, 0, tzinfo=UTC),
+        no_analysis_reason=NoAnalysisReason.NO_FOUR_QUARTER_WINDOW,
+        detail="the CVM mirror has no complete four-quarter TTM window",
+    )
+    repository = OutcomeFakeRepo({"TAEE11": outcome})
+
+    report = await DoctorUseCase(
+        repository, sector_resolver=fake_sector_resolver
+    ).execute(["TAEE11", "TAEE11"])
+
+    assert repository.requested_outcomes == ("TAEE11",)
+    assert report.tickers[0].outcome == outcome
+    assert report.tickers[0].latest_outcome == outcome
+    assert report.totals.total_cells == 0
 
 
 async def test_doctor_exposes_b3_price_provenance() -> None:

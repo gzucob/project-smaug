@@ -32,12 +32,20 @@ from smaug.analysis.domain.financials import (
     ShareCounts,
 )
 from smaug.analysis.domain.indicators import Indicators, NullReason
+from smaug.analysis.domain.outcomes import (
+    AnalysisOutcome,
+    AnalysisStatus,
+    NoAnalysisReason,
+)
 from smaug.analysis.infrastructure.sql_repository import (
     SqlAlchemyAnalysisRepository,
     _legacy_row_condition,
+    _outcome_from_row,
+    _outcome_to_row,
     _to_entity,
     _to_row,
 )
+from smaug.analysis.infrastructure.sqlalchemy_models import AnalysisOutcomeRow
 from smaug.portfolio.domain.share_classes import (
     EconomicRightsStatus,
     PerShareClass,
@@ -109,6 +117,29 @@ def _analysis() -> TickerAnalysis:
             },
         ),
     )
+
+
+def test_analysis_outcome_round_trips_without_a_ticker_analysis_row() -> None:
+    outcome = AnalysisOutcome(
+        run_id="analysis-run-1",
+        ticker="TAEE11",
+        status=AnalysisStatus.SKIPPED,
+        recorded_at=datetime(2026, 8, 28, 12, 0, tzinfo=UTC),
+        no_analysis_reason=NoAnalysisReason.NO_FOUR_QUARTER_WINDOW,
+        detail="no complete four-quarter TTM window",
+    )
+
+    row = _outcome_to_row(outcome)
+    restored = _outcome_from_row(row)
+
+    assert AnalysisOutcomeRow.__tablename__ == "analysis_outcomes"
+    assert row.run_id == outcome.run_id
+    assert row.ticker == outcome.ticker
+    assert row.status == "skipped"
+    assert row.no_analysis_reason == "no_four_quarter_window"
+    assert row.detail == outcome.detail
+    assert row.recorded_at == outcome.recorded_at
+    assert restored == outcome
 
 
 def test_null_reasons_round_trip_through_the_row() -> None:
@@ -271,6 +302,39 @@ class _ScopeSessionFactory:
         return self.session
 
 
+class _OutcomeScalarResult:
+    def all(self) -> list[AnalysisOutcomeRow]:
+        return []
+
+
+class _OutcomeResult:
+    def scalars(self) -> _OutcomeScalarResult:
+        return _OutcomeScalarResult()
+
+
+class _OutcomeSession:
+    def __init__(self) -> None:
+        self.statement: Select[tuple[object, ...]] | None = None
+
+    async def __aenter__(self) -> "_OutcomeSession":
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+    async def execute(self, statement: Select[tuple[object, ...]]) -> _OutcomeResult:
+        self.statement = statement
+        return _OutcomeResult()
+
+
+class _OutcomeSessionFactory:
+    def __init__(self, session: _OutcomeSession) -> None:
+        self.session = session
+
+    def __call__(self) -> _OutcomeSession:
+        return self.session
+
+
 async def test_storage_scope_is_aggregate_and_fallback_is_current() -> None:
     session = _ScopeSession()
     repository = SqlAlchemyAnalysisRepository(  # type: ignore[arg-type]
@@ -287,6 +351,25 @@ async def test_storage_scope_is_aggregate_and_fallback_is_current() -> None:
     assert len(tuple(session.statement.selected_columns)) == 3
     assert "sector_fallback" in compiled.params.values()
     assert "ticker_analysis.roe" not in str(compiled)
+
+
+async def test_latest_outcomes_selects_one_newest_row_per_ticker_in_sql() -> None:
+    session = _OutcomeSession()
+    repository = SqlAlchemyAnalysisRepository(  # type: ignore[arg-type]
+        _OutcomeSessionFactory(session)
+    )
+
+    assert await repository.latest_outcomes(("PETR4", "VALE3", "PETR4")) == {}
+    assert session.statement is not None
+    compiled = session.statement.compile(dialect=postgresql.dialect())
+    sql = str(compiled)
+
+    assert "row_number() OVER" in sql
+    assert "PARTITION BY analysis_outcomes.ticker" in sql
+    assert (
+        "ORDER BY analysis_outcomes.recorded_at DESC, analysis_outcomes.id DESC" in sql
+    )
+    assert "anon_1.row_number =" in sql
 
 
 def test_legacy_sql_predicate_accepts_a_valid_sector_fallback() -> None:
