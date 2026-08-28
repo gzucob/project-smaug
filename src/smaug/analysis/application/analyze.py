@@ -25,8 +25,8 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from enum import StrEnum
 from typing import cast
+from uuid import uuid4
 
 from smaug.analysis.domain.calculator import compute
 from smaug.analysis.domain.dividends import cash_distributions
@@ -46,7 +46,23 @@ from smaug.analysis.domain.financials import (
 )
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.market_cap import capitalize
+from smaug.analysis.domain.outcomes import (
+    AnalysisOutcome as AnalysisOutcome,
+)
+from smaug.analysis.domain.outcomes import (
+    AnalysisRun as AnalysisRun,
+)
+from smaug.analysis.domain.outcomes import (
+    AnalysisStatus as AnalysisStatus,
+)
+from smaug.analysis.domain.outcomes import (
+    NoAnalysisReason as NoAnalysisReason,
+)
+from smaug.analysis.domain.outcomes import (
+    TickerOutcome as TickerOutcome,
+)
 from smaug.analysis.domain.ports import (
+    AnalysisOutcomeWriter,
     AnalysisRepository,
     CapitalProvenanceReader,
     CashEventReader,
@@ -78,34 +94,11 @@ from smaug.shared.logging import get_logger
 logger = get_logger(__name__)
 
 Clock = Callable[[], datetime]
+IdFactory = Callable[[], str]
 
 
-class AnalysisStatus(StrEnum):
-    """How one ticker fared in a run."""
-
-    ANALYZED = "analyzed"
-    SKIPPED = "skipped"  # a named source/period outcome — not an error
-    ERROR = "error"
-
-
-class NoAnalysisReason(StrEnum):
-    """Why mirrored inputs produced no persisted analysis view."""
-
-    NO_MIRRORED_FUNDAMENTALS = "no_mirrored_fundamentals"
-    NO_FOUR_QUARTER_WINDOW = "no_four_quarter_window"
-    ALL_EXERCISES_PRE_FIRST_B3_SESSION = "all_exercises_pre_first_b3_session"
-    UNRESOLVED_SECURITY_IDENTITY = "unresolved_security_identity"
-
-
-@dataclass(frozen=True)
-class TickerOutcome:
-    """One ticker's result: its views, or why there are none."""
-
-    ticker: str
-    status: AnalysisStatus
-    analyses: tuple[TickerAnalysis, ...]
-    detail: str = ""
-    no_analysis_reason: NoAnalysisReason | None = None
+def _new_id() -> str:
+    return str(uuid4())
 
 
 @dataclass(frozen=True)
@@ -124,22 +117,6 @@ class _AnnualEligibility:
     annuals: tuple[StandardizedFinancials, ...]
     excluded_before_first_session: int = 0
     unresolved_identity: bool = False
-
-
-@dataclass(frozen=True)
-class AnalysisRun:
-    """Everything one run produced, per ticker."""
-
-    outcomes: tuple[TickerOutcome, ...]
-
-    @property
-    def analyses(self) -> list[TickerAnalysis]:
-        """Every view computed, flattened — what the CLI renders."""
-        return [a for outcome in self.outcomes for a in outcome.analyses]
-
-    @property
-    def failed(self) -> tuple[TickerOutcome, ...]:
-        return tuple(o for o in self.outcomes if o.status is AnalysisStatus.ERROR)
 
 
 def _price_null_reason(error: SourceError) -> NullReason:
@@ -310,6 +287,8 @@ class AnalyzePortfolioUseCase:
         class_mapping_resolver: ClassMappingsResolver = _no_class_mappings,
         cash_event_reader: CashEventReader | None = None,
         per_share_resolver: PerShareResolver = _no_per_share_components,
+        outcome_repository: AnalysisOutcomeWriter | None = None,
+        id_factory: IdFactory = _new_id,
     ) -> None:
         self._reader = reader
         self._price_provider = price_provider
@@ -321,6 +300,8 @@ class AnalyzePortfolioUseCase:
         self._class_mappings = class_mapping_resolver
         self._cash_events = cash_event_reader
         self._per_share = per_share_resolver
+        self._outcome_repository = outcome_repository
+        self._id_factory = id_factory
 
     async def execute(self, tickers: Iterable[str]) -> AnalysisRun:
         """Analyze each ticker, and never let one of them end the run.
@@ -330,10 +311,37 @@ class AnalyzePortfolioUseCase:
         A ticker's failure is recorded and the run continues, which is the shape
         the ingestion use case has always had.
         """
+        run_id = self._id_factory()
+        recorded_at = self._clock()
         outcomes: list[TickerOutcome] = []
-        for ticker in tickers:
-            outcomes.append(await self._analyze_guarded(ticker))
-        return AnalysisRun(tuple(outcomes))
+        for ticker in dict.fromkeys(tickers):
+            outcome = replace(
+                await self._analyze_guarded(ticker),
+                run_id=run_id,
+                recorded_at=recorded_at,
+            )
+            outcomes.append(outcome)
+            await self._save_outcome(
+                AnalysisOutcome(
+                    run_id=run_id,
+                    ticker=outcome.ticker,
+                    status=outcome.status,
+                    recorded_at=recorded_at,
+                    no_analysis_reason=outcome.no_analysis_reason,
+                    detail=outcome.detail,
+                )
+            )
+        return AnalysisRun(tuple(outcomes), run_id=run_id, recorded_at=recorded_at)
+
+    async def _save_outcome(self, outcome: AnalysisOutcome) -> None:
+        """Persist an outcome when the optional storage surface is available."""
+        if self._outcome_repository is not None:
+            await self._outcome_repository.save_outcome(outcome)
+            return
+        if not hasattr(self._repository, "save_outcome"):
+            return
+        repository = cast(AnalysisOutcomeWriter, self._repository)
+        await repository.save_outcome(outcome)
 
     async def _analyze_guarded(self, ticker: str) -> TickerOutcome:
         try:

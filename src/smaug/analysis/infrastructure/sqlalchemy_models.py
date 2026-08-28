@@ -12,7 +12,16 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, Date, DateTime, Numeric, String
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    Date,
+    DateTime,
+    Index,
+    Numeric,
+    String,
+    Text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -144,3 +153,28 @@ class TickerAnalysisRow(Base):
     share_class_mappings: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
     class_market_values: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
     capital_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+
+
+class AnalysisOutcomeRow(Base):
+    """Durable ticker/run status, separate from computed analysis cells."""
+
+    __tablename__ = "analysis_outcomes"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('analyzed', 'skipped', 'error')",
+            name="ck_analysis_outcomes_status",
+        ),
+        Index(
+            "ix_analysis_outcomes_ticker_recorded_at",
+            "ticker",
+            "recorded_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(64), index=True)
+    ticker: Mapped[str] = mapped_column(String(12), index=True)
+    status: Mapped[str] = mapped_column(String(16))
+    no_analysis_reason: Mapped[str | None] = mapped_column(String(64))
+    detail: Mapped[str] = mapped_column(Text)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

@@ -7,7 +7,7 @@ composition root wires them.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Protocol
@@ -24,6 +24,7 @@ from smaug.analysis.domain.financials import (
     YearPrices,
 )
 from smaug.analysis.domain.indicators import NullReason
+from smaug.analysis.domain.outcomes import AnalysisOutcome
 from smaug.portfolio.domain.share_classes import PerShareClass
 
 
@@ -51,6 +52,24 @@ class AnalysisStorageScopeReader(Protocol):
 
     async def storage_scope(self, tickers: Sequence[str]) -> AnalysisStorageScope:
         """Count all rows, superseded rows, and legacy rows for ``tickers``."""
+        ...
+
+
+class AnalysisOutcomeWriter(Protocol):
+    """Optional write surface for durable ticker/run outcomes."""
+
+    async def save_outcome(self, outcome: AnalysisOutcome) -> None:
+        """Persist one ticker outcome without creating an analysis row."""
+        ...
+
+
+class AnalysisOutcomeReader(Protocol):
+    """Optional read surface for the latest outcome of each ticker."""
+
+    async def latest_outcomes(
+        self, tickers: Sequence[str]
+    ) -> Mapping[str, AnalysisOutcome]:
+        """Return the newest outcome for every requested ticker that has one."""
         ...
 
 

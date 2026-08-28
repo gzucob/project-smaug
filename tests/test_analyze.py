@@ -1,6 +1,6 @@
 """Analysis use case: build the TTM, price it nominally, skip/degrade gracefully."""
 
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from smaug.analysis.application.analyze import (
@@ -20,6 +20,7 @@ from smaug.analysis.domain.financials import (
     YearPrices,
 )
 from smaug.analysis.domain.indicators import NullReason
+from smaug.analysis.domain.outcomes import AnalysisOutcome
 from smaug.portfolio.domain.sectors import Sector
 from smaug.portfolio.domain.share_classes import (
     PerShareClass,
@@ -183,6 +184,60 @@ class FakeRepo:
 
     async def history(self, ticker: str) -> list[TickerAnalysis]:
         return [a for a in self.saved if a.ticker == ticker and a.view == "closed_year"]
+
+
+class FakeOutcomeRepo(FakeRepo):
+    """Analysis repository with the optional durable outcome surface."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.outcomes: list[AnalysisOutcome] = []
+
+    async def save_outcome(self, outcome: AnalysisOutcome) -> None:
+        self.outcomes.append(outcome)
+
+
+async def test_analyze_persists_stable_outcomes_for_analyzed_and_skipped_tickers() -> (
+    None
+):
+    repo = FakeOutcomeRepo()
+    recorded_at = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader(
+            {
+                "PETR4": _quarters(
+                    Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(6000)
+                )
+            }
+        ),
+        FakePrice(MarketData(price=Decimal(10))),
+        repo,
+        FakeShares({2026: _counts(common=800, preferred=400)}),
+        clock=lambda: recorded_at,
+        id_factory=lambda: "analysis-run-1",
+        classes_resolver=fake_classes_resolver,
+    )
+
+    run = await use_case.execute(["PETR4", "EMPTY3", "PETR4", "EMPTY3"])
+
+    assert run.run_id == "analysis-run-1"
+    assert run.recorded_at == recorded_at
+    assert len(repo.outcomes) == 2
+    assert [outcome.ticker for outcome in run.outcomes] == ["PETR4", "EMPTY3"]
+    assert [analysis.ticker for analysis in repo.saved] == ["PETR4"]
+    by_ticker = {outcome.ticker: outcome for outcome in repo.outcomes}
+    assert by_ticker["PETR4"].status is AnalysisStatus.ANALYZED
+    assert by_ticker["PETR4"].no_analysis_reason is None
+    assert by_ticker["EMPTY3"].status is AnalysisStatus.SKIPPED
+    assert (
+        by_ticker["EMPTY3"].no_analysis_reason
+        is NoAnalysisReason.NO_MIRRORED_FUNDAMENTALS
+    )
+    assert by_ticker["EMPTY3"].detail == "no CVM fundamentals are mirrored"
+    assert {outcome.run_id for outcome in repo.outcomes} == {run.run_id}
+    assert {outcome.recorded_at for outcome in repo.outcomes} == {recorded_at}
+    assert all(outcome.run_id == run.run_id for outcome in run.outcomes)
+    assert all(outcome.recorded_at == recorded_at for outcome in run.outcomes)
 
 
 def _quarters(
