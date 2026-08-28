@@ -53,6 +53,7 @@ from smaug.analysis.domain.ports import (
     CountReasonReader,
     FundamentalsReader,
     PriceProvider,
+    SessionPriceProvider,
     SharesReader,
 )
 from smaug.analysis.domain.ttm import build_ttm, build_ttm_as_of
@@ -83,8 +84,17 @@ class AnalysisStatus(StrEnum):
     """How one ticker fared in a run."""
 
     ANALYZED = "analyzed"
-    SKIPPED = "skipped"  # nothing mirrored for it — not an error
+    SKIPPED = "skipped"  # a named source/period outcome — not an error
     ERROR = "error"
+
+
+class NoAnalysisReason(StrEnum):
+    """Why mirrored inputs produced no persisted analysis view."""
+
+    NO_MIRRORED_FUNDAMENTALS = "no_mirrored_fundamentals"
+    NO_FOUR_QUARTER_WINDOW = "no_four_quarter_window"
+    ALL_EXERCISES_PRE_FIRST_B3_SESSION = "all_exercises_pre_first_b3_session"
+    UNRESOLVED_SECURITY_IDENTITY = "unresolved_security_identity"
 
 
 @dataclass(frozen=True)
@@ -95,6 +105,25 @@ class TickerOutcome:
     status: AnalysisStatus
     analyses: tuple[TickerAnalysis, ...]
     detail: str = ""
+    no_analysis_reason: NoAnalysisReason | None = None
+
+
+@dataclass(frozen=True)
+class _TickerResult:
+    """Views computed for one ticker, or its normal no-analysis cause."""
+
+    analyses: tuple[TickerAnalysis, ...]
+    no_analysis_reason: NoAnalysisReason | None = None
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class _AnnualEligibility:
+    """Closed exercises retained after B3 trading-window evidence."""
+
+    annuals: tuple[StandardizedFinancials, ...]
+    excluded_before_first_session: int = 0
+    unresolved_identity: bool = False
 
 
 @dataclass(frozen=True)
@@ -308,29 +337,38 @@ class AnalyzePortfolioUseCase:
 
     async def _analyze_guarded(self, ticker: str) -> TickerOutcome:
         try:
-            analyses = await self._analyze_ticker(ticker)
+            result = await self._analyze_ticker(ticker)
         except Exception as exc:  # noqa: BLE001 - one ticker must not end the run
             logger.exception("Analysis failed for %s", ticker)
             return TickerOutcome(
                 ticker, AnalysisStatus.ERROR, (), f"{type(exc).__name__}: {exc}"
             )
-        if not analyses:
+        if not result.analyses:
             return TickerOutcome(
-                ticker, AnalysisStatus.SKIPPED, (), "no CVM fundamentals"
+                ticker,
+                AnalysisStatus.SKIPPED,
+                (),
+                result.detail,
+                result.no_analysis_reason,
             )
-        return TickerOutcome(ticker, AnalysisStatus.ANALYZED, tuple(analyses))
+        return TickerOutcome(ticker, AnalysisStatus.ANALYZED, result.analyses)
 
-    async def _analyze_ticker(self, ticker: str) -> list[TickerAnalysis]:
+    async def _analyze_ticker(self, ticker: str) -> _TickerResult:
         quarters = await self._reader.history(ticker)
         filed = await self._reader.annuals(ticker)
         if not quarters and not filed:
             logger.warning("No CVM fundamentals for %s; skipping", ticker)
-            return []
+            return _TickerResult(
+                (),
+                NoAnalysisReason.NO_MIRRORED_FUNDAMENTALS,
+                "no CVM fundamentals are mirrored",
+            )
         # Ahead of everything else: a fiscal year filed before the ticker's own
         # first B3 session is not a row this analysis produces at all (ADR 0048),
         # and filtering here — rather than per closed-year row — keeps a
         # suppressed year out of the TTM's growth/CAGR comparisons too.
-        annuals = await self._traded_annuals(ticker, filed)
+        eligibility = await self._traded_annuals(ticker, filed)
+        annuals = list(eligibility.annuals)
 
         classification = self._classification_resolver(ticker)
         computed_at = self._clock()
@@ -354,11 +392,39 @@ class AnalyzePortfolioUseCase:
         for analysis in analyses:
             await self._repository.save(analysis)
         logger.info("Analyzed %s: %d view(s)", ticker, len(analyses))
-        return analyses
+        if not analyses:
+            if eligibility.unresolved_identity:
+                reason = NoAnalysisReason.UNRESOLVED_SECURITY_IDENTITY
+                detail = (
+                    f"the B3 code chain cannot name the security identity for "
+                    f"{eligibility.excluded_before_first_session} closed "
+                    "exercise(s), and the CVM mirror has no complete four-quarter "
+                    "TTM window"
+                )
+            elif eligibility.excluded_before_first_session:
+                reason = NoAnalysisReason.ALL_EXERCISES_PRE_FIRST_B3_SESSION
+                detail = (
+                    f"all {eligibility.excluded_before_first_session} closed "
+                    "exercise(s) precede the first B3 session proved for this "
+                    "security, and the CVM mirror has no complete four-quarter "
+                    "TTM window"
+                )
+            else:
+                reason = NoAnalysisReason.NO_FOUR_QUARTER_WINDOW
+                detail = (
+                    f"the CVM mirror has {len(quarters)} quarterly period(s), no "
+                    "closed exercise, and no complete four-quarter TTM window"
+                )
+            return _TickerResult(
+                (),
+                reason,
+                detail,
+            )
+        return _TickerResult(tuple(analyses))
 
     async def _traded_annuals(
         self, ticker: str, annuals: list[StandardizedFinancials]
-    ) -> list[StandardizedFinancials]:
+    ) -> _AnnualEligibility:
         """The closed exercises ``ticker`` was actually trading in, oldest first.
 
         A fiscal year CVM filed before the security's own first B3 session is not
@@ -377,15 +443,48 @@ class AnalyzePortfolioUseCase:
         """
         traded: list[StandardizedFinancials] = []
         seen_priced = False
+        excluded = 0
+        unresolved_identity = False
         for annual in annuals:
             year = annual.reference_date.year
-            if (await self._year_prices(ticker, year)).closing is not None:
+            prices = await self._year_prices(ticker, year)
+            if prices.closing is not None:
+                seen_priced = True
+                traded.append(annual)
+                continue
+            # A sparse first year can be deliberately unpriceable as an annual
+            # series while B3 still proves the security traded in that exercise.
+            # Keep its accounting row (and its Q4 input for TTM); only the market
+            # fields stay null. Treating it as pre-listing would discard valid CVM
+            # fundamentals merely because a complete price average is unavailable.
+            if await self._has_year_sessions(ticker, year):
                 seen_priced = True
                 traded.append(annual)
                 continue
             if seen_priced or not await self._not_yet_traded(ticker, year):
                 traded.append(annual)
-        return traded
+                continue
+            excluded += 1
+            unresolved_identity = unresolved_identity or (
+                prices.null_reason is NullReason.PRICE_SYMBOL_NOT_FOUND
+            )
+        return _AnnualEligibility(tuple(traded), excluded, unresolved_identity)
+
+    async def _has_year_sessions(self, ticker: str, year: int) -> bool:
+        """Whether B3 proves any trade without claiming a usable annual price."""
+        if not hasattr(self._price_provider, "year_sessions"):
+            return False
+        provider = cast(SessionPriceProvider, self._price_provider)
+        try:
+            return bool(await provider.year_sessions(ticker, year))
+        except SourceError as exc:
+            logger.warning(
+                "No %d sessions for %s (%s); retaining the price null",
+                year,
+                ticker,
+                exc,
+            )
+            return False
 
     async def _ttm_analysis(
         self,

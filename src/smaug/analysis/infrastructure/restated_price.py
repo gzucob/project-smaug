@@ -39,7 +39,7 @@ from datetime import date
 from decimal import Decimal
 
 from smaug.analysis.domain.capital import average_factor, factor_at
-from smaug.analysis.domain.financials import MarketData, YearPrices
+from smaug.analysis.domain.financials import MarketData, SessionClose, YearPrices
 from smaug.analysis.domain.ports import SessionPriceProvider, SharesReader
 from smaug.shared.logging import get_logger
 
@@ -61,6 +61,10 @@ class RestatedPriceProvider:
 
     async def get(self, ticker: str) -> MarketData:
         return await self._inner.get(ticker)
+
+    async def year_sessions(self, ticker: str, year: int) -> tuple[SessionClose, ...]:
+        """Expose the B3 sessions used to decide accounting-period eligibility."""
+        return tuple(await self._inner.year_sessions(ticker, year))
 
     async def year_prices(self, ticker: str, year: int) -> YearPrices:
         prices = await self._inner.year_prices(ticker, year)

@@ -73,6 +73,19 @@ def provider_for(
 BONUS_2024 = RestatementStep(effective=date(2024, 4, 25), ratio=Decimal(2))
 
 
+async def test_as_traded_sessions_remain_available_for_period_eligibility() -> None:
+    sessions = _traded(("2025-12-03", "10"))
+    provider = provider_for(
+        FakeAsTradedPrices(
+            YearPrices(null_reason=NullReason.PRICE_SYMBOL_NOT_FOUND),
+            sessions=sessions,
+        ),
+        (),
+    )
+
+    assert await provider.year_sessions("ARND3", 2025) == sessions
+
+
 async def test_the_price_is_divided_by_the_factor_the_counts_were_multiplied_by() -> (
     None
 ):

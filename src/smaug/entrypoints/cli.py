@@ -1899,8 +1899,9 @@ def format_analysis_run(run: AnalysisRun) -> str:
     """Per-ticker tally of a run, naming every ticker that failed.
 
     Printing 29 indicators for each of 506 codes is 15,000 numbers nobody reads.
-    What the summary must still do is name a failure: a skip is a company with
-    nothing mirrored, an error is ours.
+    What the summary must still do is name a failure or a normal no-analysis
+    outcome. A skip can mean absent filings or no eligible accounting period;
+    an error is ours.
     """
     counts: dict[AnalysisStatus, int] = {}
     for outcome in run.outcomes:
@@ -1911,9 +1912,16 @@ def format_analysis_run(run: AnalysisRun) -> str:
     for outcome in run.outcomes:
         if outcome.status is AnalysisStatus.ERROR:
             lines.append(f"  !! {outcome.ticker:<8} {outcome.detail}")
-    skipped = [o.ticker for o in run.outcomes if o.status is AnalysisStatus.SKIPPED]
+    skipped = [o for o in run.outcomes if o.status is AnalysisStatus.SKIPPED]
     if skipped:
-        lines.append(f"  skipped (nothing mirrored): {', '.join(sorted(skipped))}")
+        lines.append("  skipped:")
+        for outcome in sorted(skipped, key=lambda item: item.ticker):
+            reason = (
+                "unknown"
+                if outcome.no_analysis_reason is None
+                else outcome.no_analysis_reason.value
+            )
+            lines.append(f"    -- {outcome.ticker:<8} {reason}: {outcome.detail}")
     views = sum(len(o.analyses) for o in run.outcomes)
     lines.append(
         f"--- {len(run.outcomes)} ticker(s), {views} view(s) stored | {tally or 'none'}"
