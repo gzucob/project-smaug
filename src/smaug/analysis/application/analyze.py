@@ -759,9 +759,21 @@ class AnalyzePortfolioUseCase:
         timeline = await self._shares_reader.restatement_timeline(ticker)
         total = Decimal(0)
         for per_share_class, quantity in quantities.items():
-            events = await self._cash_events.cash_events(
-                ticker, per_share_class=per_share_class
-            )
+            try:
+                events = await self._cash_events.cash_events(
+                    ticker, per_share_class=per_share_class
+                )
+            except SourceError as exc:
+                # A source failure leaves coverage unestablished. It is the
+                # existing missing-cash reason, not an economic zero and not a
+                # partial unit distribution; the remaining analysis survives.
+                logger.warning(
+                    "No B3 cash distribution history for %s (%s): %s",
+                    ticker,
+                    type(exc).__name__,
+                    exc,
+                )
+                return None, NullReason.MISSING_CASH_DISTRIBUTIONS
             if events is None:
                 return None, NullReason.MISSING_CASH_DISTRIBUTIONS
             amount = cash_distributions(events, start, end, timeline)

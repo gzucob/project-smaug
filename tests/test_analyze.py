@@ -29,8 +29,11 @@ from smaug.portfolio.domain.share_classes import (
     UnitComponent,
 )
 from smaug.shared.errors import (
+    SourceBatchValidationError,
+    SourceError,
     SourceForbiddenError,
     SourceMalformedError,
+    SourceNotFoundError,
     SourceTimeoutError,
 )
 from tests.fakes import fake_classes_resolver
@@ -158,6 +161,18 @@ class FakeCashEvents:
         if per_share_class is None:
             return ()
         return self._by_class.get(per_share_class, ())
+
+
+class FailingCashEvents:
+    """A B3 cash reader whose failure must degrade only cash-derived fields."""
+
+    def __init__(self, error: SourceError) -> None:
+        self._error = error
+
+    async def cash_events(
+        self, ticker: str, *, per_share_class: PerShareClass | None = None
+    ) -> tuple[CashEvent, ...]:
+        raise self._error
 
 
 def _counts(*, common: int, preferred: int = 0) -> ShareCounts:
@@ -514,6 +529,52 @@ async def test_unit_dividend_yield_composes_each_fca_component() -> None:
     indicators = repo.saved[0].indicators
     assert indicators.distributions_per_security == Decimal("0.90")
     assert indicators.dividend_yield == Decimal("0.90") / Decimal(22)
+
+
+async def test_cash_source_failures_do_not_abort_an_analyzable_ticker() -> None:
+    errors = (
+        SourceError("source failed"),
+        SourceNotFoundError("cash history not found"),
+        SourceTimeoutError("cash history timed out"),
+        SourceForbiddenError("cash history forbidden"),
+        SourceMalformedError("cash history malformed"),
+        SourceBatchValidationError("cash history quarantined"),
+    )
+
+    for error in errors:
+        repo = FakeRepo()
+        use_case = AnalyzePortfolioUseCase(
+            FakeReader(
+                {
+                    "BBAS3": _quarters(
+                        Sector.BANK, net_income=Decimal(200), equity=Decimal(8000)
+                    )
+                }
+            ),
+            FakePrice(MarketData(price=Decimal(10))),
+            repo,
+            FakeShares({2026: _counts(common=400)}),
+            classes_resolver=fake_classes_resolver,
+            cash_event_reader=FailingCashEvents(error),
+            per_share_resolver=lambda ticker: (
+                UnitComponent(1, PerShareClass.ORDINARY, ticker),
+            ),
+        )
+
+        run = await use_case.execute(["BBAS3"])
+
+        assert run.outcomes[0].status is AnalysisStatus.ANALYZED
+        assert len(repo.saved) == 1
+        indicators = repo.saved[0].indicators
+        assert indicators.roe == Decimal("0.1")
+        assert indicators.dividend_yield is None
+        assert indicators.distributions_per_security is None
+        assert indicators.null_reasons["dividend_yield"] is (
+            NullReason.MISSING_CASH_DISTRIBUTIONS
+        )
+        assert indicators.null_reasons["distributions_per_security"] is (
+            NullReason.MISSING_CASH_DISTRIBUTIONS
+        )
 
 
 async def test_analyze_compares_ttm_growth_with_the_prior_comparable_ttm() -> None:
