@@ -22,6 +22,14 @@ from smaug.analysis.domain.financials import MarketData, SessionClose, YearPrice
 from smaug.analysis.infrastructure.dividend_adjusted_price import (
     DividendAdjustedPriceProvider,
 )
+from smaug.shared.errors import (
+    SourceBatchValidationError,
+    SourceError,
+    SourceForbiddenError,
+    SourceMalformedError,
+    SourceNotFoundError,
+    SourceTimeoutError,
+)
 
 
 class FakeSessions:
@@ -55,6 +63,18 @@ class FakeEvents:
         self, ticker: str, *, per_share_class: object | None = None
     ) -> tuple[CashEvent, ...] | None:
         return self._events
+
+
+class FailingEvents:
+    """A B3 cash reader that fails before it can establish coverage."""
+
+    def __init__(self, error: SourceError) -> None:
+        self._error = error
+
+    async def cash_events(
+        self, ticker: str, *, per_share_class: object | None = None
+    ) -> tuple[CashEvent, ...]:
+        raise self._error
 
 
 def _close(day: str, price: str) -> SessionClose:
@@ -168,6 +188,29 @@ async def test_an_unmirrored_cash_history_does_not_claim_zero_distributions() ->
 
     assert prices.nominal_avg == 10
     assert prices.adjusted_avg is None
+
+
+async def test_source_failure_keeps_traded_price_and_nulls_adjusted() -> None:
+    errors = (
+        SourceError("source failed"),
+        SourceNotFoundError("cash history not found"),
+        SourceTimeoutError("cash history timed out"),
+        SourceForbiddenError("cash history forbidden"),
+        SourceMalformedError("cash history malformed"),
+        SourceBatchValidationError("cash history quarantined"),
+    )
+
+    for error in errors:
+        inner = FakeSessions([_close("2025-01-02", "10"), _close("2025-12-01", "20")])
+        provider = DividendAdjustedPriceProvider(inner, FailingEvents(error))
+
+        prices = await provider.year_prices("PETR4", 2025)
+
+        # Source failure is different from ``()``: the nominal and closing B3
+        # observations remain usable, but no total-return value is invented.
+        assert prices.nominal_avg == 15
+        assert prices.closing == Decimal(20)
+        assert prices.adjusted_avg is None
 
 
 async def test_the_live_quote_passes_through_unadjusted() -> None:

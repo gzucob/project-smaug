@@ -27,12 +27,14 @@ the two rulers coincide, which for a payer is the one thing certainly false.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 from smaug.analysis.domain.dividends import average_dividend_factor
 from smaug.analysis.domain.financials import MarketData, SessionClose, YearPrices
 from smaug.analysis.domain.ports import CashEventReader, SessionPriceProvider
 from smaug.portfolio.domain.company import UnitResolver, no_units
+from smaug.shared.errors import SourceError
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -62,7 +64,18 @@ class DividendAdjustedPriceProvider:
         prices = await self._inner.year_prices(ticker, year)
         if prices.nominal_avg is None or self._is_unit(ticker):
             return prices
-        events = await self._events.cash_events(ticker)
+        try:
+            events = await self._events.cash_events(ticker)
+        except SourceError as exc:
+            # A failed B3 cash read is not an established empty history. Keep
+            # the as-traded price usable and leave only the derived basis null.
+            logger.warning(
+                "No B3 cash events for %s %d (%s); adjusted price remains null",
+                ticker,
+                year,
+                exc,
+            )
+            return replace(prices, adjusted_avg=None)
         if events is None:
             # Missing mirror coverage is not evidence of an empty payment history.
             return prices

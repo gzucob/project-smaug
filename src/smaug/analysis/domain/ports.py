@@ -242,7 +242,12 @@ class CashEventReader(Protocol):
     async def cash_events(
         self, ticker: str, *, per_share_class: PerShareClass | None = None
     ) -> Sequence[CashEvent] | None:
-        """Every class payment, or ``None`` when its mirror is absent."""
+        """Every class payment, or ``None`` when its mirror is absent.
+
+        An empty sequence is reserved for established zero coverage. A source
+        failure may raise ``SourceError`` and must remain distinguishable from
+        that economic zero to the caller.
+        """
         ...
 
 
