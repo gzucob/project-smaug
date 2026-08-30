@@ -50,6 +50,10 @@ from smaug.ingestion.infrastructure.b3_listed_company import (
     B3CompanyResolutionError,
     B3ListedCompanyResolver,
 )
+from smaug.ingestion.infrastructure.b3_reused_roots import (
+    B3ReusedRootProof,
+    B3ReusedRootRecovery,
+)
 from smaug.ingestion.infrastructure.batch_validation import record_or_quarantine
 from smaug.shared.errors import SourceNotFoundError
 
@@ -71,7 +75,7 @@ class B3CapitalEventSource:
     """Fetch the corporate actions B3 publishes for one ticker's company."""
 
     source = "b3"
-    parser_identity = ParserIdentity("b3.capital-events.json", 1)
+    parser_identity = ParserIdentity("b3.capital-events.json", 2)
 
     def __init__(
         self,
@@ -80,6 +84,7 @@ class B3CapitalEventSource:
         ticker_to_code: Mapping[str, str] | None = None,
         base_url: str | None = None,
         validation_reporter: BatchValidationReporter | None = None,
+        reused_root_recovery: B3ReusedRootRecovery | None = None,
     ) -> None:
         self._ticker_to_code = {
             ticker.upper().strip(): code
@@ -88,6 +93,7 @@ class B3CapitalEventSource:
         self._base_url = (base_url or B3_LISTED_BASE_URL).rstrip("/")
         self._companies = B3ListedCompanyResolver(http_client, base_url=self._base_url)
         self._validation_reporter = validation_reporter
+        self._reused_root_recovery = reused_root_recovery
 
     async def fetch(self, ticker: str, module: str) -> Sequence[RawFetchResult]:
         """Every stock-dividend row B3 lists for the company behind ``ticker``.
@@ -97,18 +103,48 @@ class B3CapitalEventSource:
         as they come: which rows are one event is the reader's judgement, and the
         mirror does not make it (ADR 0016).
         """
+        proof: B3ReusedRootProof | None = None
         try:
             company = await self._companies.resolve(
                 ticker,
                 cvm_code=self._ticker_to_code.get(ticker.upper().strip()),
             )
         except B3CompanyResolutionError as exc:
-            await self._quarantine(
-                ticker[:4].upper(),
-                exc.code,
-                exc.detail,
-                evidence=exc.evidence,
-            )
+            normalized_ticker = ticker.strip().upper()
+            recovery = self._reused_root_recovery
+            if recovery is None or not recovery.supports(normalized_ticker):
+                await self._quarantine(
+                    ticker[:4].upper(),
+                    exc.code,
+                    exc.detail,
+                    evidence=exc.evidence,
+                )
+            try:
+                company = await self._companies.resolve_current(normalized_ticker)
+            except B3CompanyResolutionError as current_exc:
+                await self._quarantine(
+                    ticker[:4].upper(),
+                    current_exc.code,
+                    current_exc.detail,
+                    evidence={
+                        "predecessor_resolution": dict(exc.evidence),
+                        "current_resolution": dict(current_exc.evidence),
+                    },
+                )
+            proof_result = await recovery.prove(normalized_ticker, company)
+            if proof_result.proof is None:
+                await self._quarantine(
+                    ticker[:4].upper(),
+                    "coverage-established",
+                    "B3 reused-root predecessor cannot be proven: "
+                    f"{proof_result.reason or 'unknown reason'}",
+                    evidence={
+                        "predecessor_resolution": dict(exc.evidence),
+                        "current_company": dict(company.supplement),
+                        "recovery": dict(proof_result.evidence),
+                    },
+                )
+            proof = proof_result.proof
         root = company.requested_root
         issuing_company = company.issuing_company
         body = company.supplement
@@ -121,6 +157,14 @@ class B3CapitalEventSource:
                 evidence=body,
             )
         if not rows:
+            if proof is not None:
+                await self._quarantine(
+                    root,
+                    "coverage-established",
+                    "B3 reused-root predecessor has no attributable corporate-action "
+                    "rows in the current supplement",
+                    evidence={"reused_root": proof.as_mapping(), "supplement": body},
+                )
             # A company with no corporate action in its history is the normal
             # case, and it is an absence the mirror records rather than an empty
             # list it invents.
@@ -149,32 +193,82 @@ class B3CapitalEventSource:
                 f"B3 stockDividends row lacks {', '.join(missing)}",
                 evidence=body,
             )
-        await self._record(self._validation(root, rows=len(rows)))
 
-        code = company.cvm_code
-        return [
-            RawFetchResult(
-                module=module,
-                source="b3",
-                request={
-                    "source": "b3",
-                    "endpoint": "GetListedSupplementCompany",
-                    "issuing_company": issuing_company,
-                    "statement": module,
-                    # What tells one filed row from another: the same event is
-                    # listed once per ISIN, and one approval date can carry two
-                    # events (VIVT3's split and grupamento, 2025-03-13).
-                    "isin_code": _text(row.get("isinCode")),
-                    "approval_date": _text(row.get("approvedOn")),
-                    "event_type": _text(row.get("label")),
-                },
-                http_status=200,
-                payload=_to_payload(row, issuing_company, code),
-                cvm_code=code,
+        admitted_rows = [row for row in rows if isinstance(row, dict)]
+        recovery_evidence: dict[str, object] = {}
+        if proof is not None:
+            assert self._reused_root_recovery is not None
+            admitted_rows = []
+            excluded_rows: list[dict[str, object]] = []
+            for row_number, row in enumerate(rows, start=1):
+                if not isinstance(row, dict):
+                    continue
+                decision = await self._reused_root_recovery.capital_event(proof, row)
+                if decision.accepted:
+                    admitted_rows.append(row)
+                else:
+                    excluded_rows.append(
+                        {
+                            "row": row_number,
+                            "reason": decision.reason,
+                            "evidence": dict(decision.evidence),
+                            "raw": row,
+                        }
+                    )
+            if not admitted_rows:
+                await self._quarantine(
+                    root,
+                    "coverage-established",
+                    "B3 reused-root recovery could not attribute any corporate-action "
+                    "row to the predecessor",
+                    evidence={
+                        "reused_root": proof.as_mapping(),
+                        "excluded_rows": excluded_rows,
+                    },
+                )
+            recovery_evidence = {
+                "reused_root": proof.as_mapping(),
+                "excluded_rows": excluded_rows,
+            }
+        await self._record(
+            self._validation(
+                root,
+                rows=len(rows),
+                evidence=recovery_evidence,
             )
-            for row in rows
-            if isinstance(row, dict)
-        ]
+        )
+
+        code = proof.predecessor_cvm_code if proof is not None else company.cvm_code
+        results: list[RawFetchResult] = []
+        for row in admitted_rows:
+            request: dict[str, Any] = {
+                "source": "b3",
+                "endpoint": "GetListedSupplementCompany",
+                "issuing_company": issuing_company,
+                "statement": module,
+                # What tells one filed row from another: the same event is
+                # listed once per ISIN, and one approval date can carry two
+                # events (VIVT3's split and grupamento, 2025-03-13).
+                "isin_code": _text(row.get("isinCode")),
+                "approval_date": _text(row.get("approvedOn")),
+                "event_type": _text(row.get("label")),
+            }
+            payload = _to_payload(row, issuing_company, code)
+            if proof is not None:
+                identity = proof.as_mapping()
+                request["historical_identity"] = identity
+                payload["historical_identity"] = identity
+            results.append(
+                RawFetchResult(
+                    module=module,
+                    source="b3",
+                    request=request,
+                    http_status=200,
+                    payload=payload,
+                    cvm_code=code,
+                )
+            )
+        return results
 
     def _validation(
         self,

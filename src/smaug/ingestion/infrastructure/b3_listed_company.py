@@ -115,6 +115,34 @@ class B3ListedCompanyResolver:
             expected_code=expected_code,
         )
 
+    async def resolve_current(self, ticker: str) -> B3ListedCompany:
+        """Resolve the current supplement without imposing an old CVM key.
+
+        This is used only by a targeted reused-root repair after the normal
+        predecessor-keyed resolution has rejected a registrant mismatch.
+        """
+        requested_root = ticker.strip().upper()[:_ROOT_LENGTH]
+        current = await self._supplement(requested_root)
+        if current is None:
+            raise B3CompanyResolutionError(
+                "coverage-established",
+                f"B3 has no current supplement for {requested_root}",
+                evidence={"requested_root": requested_root},
+            )
+        published_code = _text(current.get("codeCVM"))
+        if not published_code:
+            raise B3CompanyResolutionError(
+                "response-schema",
+                "B3 current supplement lacks a CVM registrant",
+                evidence={"supplement": dict(current)},
+            )
+        return self._resolved(
+            requested_root,
+            requested_root,
+            current,
+            expected_code=published_code,
+        )
+
     async def resolve_by_cvm(
         self, cvm_code: str, *, cnpj: str | None = None
     ) -> B3ListedCompany:
@@ -213,9 +241,12 @@ class B3ListedCompanyResolver:
             cvm_code=expected_code or published_code or None,
             supplement=supplement,
             detail=detail,
-            quotation_date=_quotation_date(detail.get("dateQuotation"))
-            if detail is not None
-            else None,
+            quotation_date=(
+                _quotation_date(detail.get("dateQuotation"))
+                if detail is not None
+                else None
+            )
+            or _quotation_date(supplement.get("quotedPerSharSince")),
         )
 
     def official_codes(

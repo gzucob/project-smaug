@@ -9,10 +9,43 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Protocol, runtime_checkable
 
 from smaug.ingestion.domain.runs import ParserIdentity
 from smaug.shared.artifacts import SourceArtifact
+
+
+@dataclass(frozen=True, slots=True)
+class B3TapeObservation:
+    """One COTAHIST session carrying complete security identity evidence."""
+
+    session: date
+    isin: str
+    especi: str
+    bdi: str
+    name: str
+    code: str = ""
+
+
+class B3TapeEvidenceReader(Protocol):
+    """Read identity-bearing sessions from B3's COTAHIST series."""
+
+    async def at(self, ticker: str, session: date) -> B3TapeObservation | None:
+        """Return the identity in force on or before an event session."""
+        ...
+
+    async def latest_before(
+        self, ticker: str, session: date
+    ) -> B3TapeObservation | None:
+        """Return the last identity-bearing session before a boundary."""
+        ...
+
+    async def by_identity(
+        self, session: date, *, isin: str, security_class: str
+    ) -> B3TapeObservation | None:
+        """Find a legacy code carrying one security identity on or before a date."""
+        ...
 
 
 @dataclass(frozen=True)
