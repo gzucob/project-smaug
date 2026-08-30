@@ -1,0 +1,53 @@
+[importlinter]
+root_package = smaug
+
+[importlinter:contract:context-layers]
+name = Each bounded context follows domain, application, infrastructure layers
+type = layers
+containers =
+    smaug.analysis
+    smaug.ingestion
+    smaug.portfolio
+layers =
+    infrastructure
+    application
+    domain
+exhaustive = true
+exhaustive_ignores =
+    __pycache__
+
+[importlinter:contract:domain-no-infrastructure]
+name = Domain modules do not import infrastructure modules
+type = forbidden
+source_modules =
+    smaug.analysis.domain
+    smaug.ingestion.domain
+    smaug.portfolio.domain
+forbidden_modules =
+    smaug.analysis.infrastructure
+    smaug.ingestion.infrastructure
+    smaug.portfolio.infrastructure
+broken_contract_guidance =
+    Keep domain logic pure. Depend on a domain port or value object and wire
+    concrete infrastructure only from the composition root.
+
+[importlinter:contract:application-no-infrastructure]
+name = Application modules depend on ports, not infrastructure
+type = forbidden
+source_modules =
+    smaug.analysis.application
+    smaug.ingestion.application
+    smaug.portfolio.application
+forbidden_modules =
+    smaug.analysis.infrastructure
+    smaug.ingestion.infrastructure
+    smaug.portfolio.infrastructure
+broken_contract_guidance =
+    Move I/O behind a domain port and construct the adapter in an entrypoint.
+
+[importlinter:contract:analysis-ingestion-independence]
+name = Analysis and ingestion remain independent bounded contexts
+type = independence
+modules =
+    smaug.analysis
+    smaug.ingestion

@@ -21,6 +21,7 @@ smaug = "smaug.entrypoints.cli:main"
 
 [dependency-groups]
 dev = [
+    "import-linter>=2.14",
     "mypy>=1.14",
     "ruff>=0.9",
     "pytest>=8.3",
