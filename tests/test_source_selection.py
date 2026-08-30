@@ -143,9 +143,11 @@ def test_every_configured_parser_has_a_stable_name_and_version() -> None:
         "cvm.capital.csv": 2,
         "cvm.treasury.csv": 1,
         "cvm.capital-events.csv": 1,
-        "b3.capital-events.json": 1,
-        # Version 2 records row-level rejection and exact duplicate evidence (#272).
-        "b3.cash-dividends.json": 2,
+        # Version 2 persists the proven predecessor identity chain (#245).
+        "b3.capital-events.json": 2,
+        # Version 3 adds the same chain to the row-level cash mirror (#245),
+        # after version 2 added rejection and exact-duplicate evidence (#272).
+        "b3.cash-dividends.json": 3,
     }
 
 

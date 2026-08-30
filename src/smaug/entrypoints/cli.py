@@ -83,6 +83,7 @@ from smaug.ingestion.application.validation import (
     RunValidationReporter,
 )
 from smaug.ingestion.domain.failures import FailureOccurrence
+from smaug.ingestion.domain.ports import B3TapeObservation
 from smaug.ingestion.domain.repositories import RawIngestionRepository
 from smaug.ingestion.domain.runs import (
     IngestionRun,
@@ -107,6 +108,10 @@ from smaug.ingestion.infrastructure.b3_cash_dividends import (
 from smaug.ingestion.infrastructure.b3_listed_company import (
     B3ListedCompany,
     B3ListedCompanyResolver,
+)
+from smaug.ingestion.infrastructure.b3_reused_roots import (
+    REUSED_ROOT_TICKERS,
+    B3ReusedRootRecovery,
 )
 from smaug.ingestion.infrastructure.cvm_capital import (
     CAPITAL_EVENT_MODULE,
@@ -254,6 +259,7 @@ async def _registry_identities(
     artifact_store: SourceArtifactStore | None = None,
     fca_provenance: list[FcaSnapshotProvenance] | None = None,
     placeholder_reports: list[FcaPlaceholderReport] | None = None,
+    fca_year: int | None = None,
 ) -> dict[str, CompanyIdentity]:
     """Resolve every requested ticker via the CVM FCA registry (#212).
 
@@ -269,7 +275,7 @@ async def _registry_identities(
     """
     registry = CvmCompanyRegistry(
         http,
-        year=settings.cvm_fca_year,
+        year=fca_year or settings.cvm_fca_year,
         cache_dir=settings.cvm_cache_dir,
         artifact_store=artifact_store,
     )
@@ -501,6 +507,7 @@ async def _cvm_key_maps(
     tickers: tuple[str, ...],
     artifact_store: SourceArtifactStore,
     fca_provenance: list[FcaSnapshotProvenance] | None = None,
+    fca_year: int | None = None,
 ) -> tuple[dict[str, str], dict[str, str]]:
     """The ticker -> CD_CVM and ticker -> CNPJ maps the CVM sources need.
 
@@ -512,6 +519,7 @@ async def _cvm_key_maps(
         tickers,
         artifact_store,
         fca_provenance=fca_provenance,
+        fca_year=fca_year,
     )
     code = {t: i.cd_cvm for t, i in identities.items()}
     cnpj = {t: i.cnpj for t, i in identities.items()}
@@ -583,6 +591,59 @@ def ingest(
     except NotImplementedError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
+    raise typer.Exit(code=exit_code)
+
+
+@app.command("b3-reused-root-backfill")
+def b3_reused_root_backfill(
+    ticker: list[str] | None = typer.Option(
+        None,
+        "--ticker",
+        "-t",
+        help="Affected security to repair (repeatable; default: all three).",
+    ),
+    fca_year: int | None = typer.Option(
+        None,
+        "--fca-year",
+        help="Historical FCA snapshot year (default: configured accounting year).",
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Log every backfill call."
+    ),
+    concurrency: int = typer.Option(
+        _DEFAULT_ARCHIVE_CONCURRENCY,
+        "--concurrency",
+        min=1,
+        help="Maximum worker count; B3 calls remain serial.",
+    ),
+) -> None:
+    """Backfill only the three B3 roots proven to have changed registrants."""
+    selected = tuple(
+        dict.fromkeys(
+            code.strip().upper()
+            for code in (ticker or tuple(sorted(REUSED_ROOT_TICKERS)))
+        )
+    )
+    unsupported = tuple(code for code in selected if code not in REUSED_ROOT_TICKERS)
+    if unsupported:
+        raise typer.BadParameter(
+            "--ticker is limited to JBSS3, PETZ3 and MOAR3: " + ", ".join(unsupported)
+        )
+    settings = get_settings()
+    exit_code = _guarded(
+        _run_ingest(
+            selected,
+            document=settings.cvm_document,
+            years=(None,),
+            force=True,
+            verbose=verbose,
+            concurrency=concurrency,
+            ticker_scope=TickerScope.EXPLICIT,
+            modules=(CAPITAL_EVENT_B3_MODULE, CASH_DIVIDEND_B3_MODULE),
+            identity_year=fca_year or settings.cvm_year,
+            reused_root_recovery=True,
+        )
+    )
     raise typer.Exit(code=exit_code)
 
 
@@ -708,6 +769,7 @@ def _build_data_source(
     year: int | None = None,
     artifact_store: SourceArtifactStore | None = None,
     validation_reporter: BatchValidationReporter | None = None,
+    reused_root_recovery: B3ReusedRootRecovery | None = None,
 ) -> RoutedDataSource:
     """Build the raw source: CVM's archives, with B3's endpoints routed per module.
 
@@ -769,6 +831,7 @@ def _build_data_source(
         ticker_to_code=ticker_to_code,
         base_url=settings.b3_listed_base_url,
         validation_reporter=validation_reporter,
+        reused_root_recovery=reused_root_recovery,
     )
     # ...and the cash it paid out, which no price file carries and which the
     # third price basis is rebuilt from (ADR 0039).
@@ -777,6 +840,7 @@ def _build_data_source(
         ticker_to_code=ticker_to_code,
         base_url=settings.b3_listed_base_url,
         validation_reporter=validation_reporter,
+        reused_root_recovery=reused_root_recovery,
     )
     return RoutedDataSource(
         {
@@ -803,6 +867,8 @@ async def _run_ingest(
     modules: tuple[str, ...] | None = None,
     call_plan: dict[int, dict[str, tuple[str, ...]]] | None = None,
     retry_failure_ids: dict[tuple[str, str, int], str] | None = None,
+    identity_year: int | None = None,
+    reused_root_recovery: bool = False,
 ) -> int:
     settings = get_settings()
     tickers = tuple(dict.fromkeys(tickers))
@@ -903,6 +969,8 @@ async def _run_ingest(
                         validation_reporter=validation_reporter,
                         fca_provenance=fca_provenance,
                         modules=active_modules,
+                        identity_year=identity_year,
+                        reused_root_recovery=reused_root_recovery,
                         call_plan=(
                             call_plan.get(effective_year)
                             if call_plan is not None
@@ -986,6 +1054,8 @@ async def _ingest_one_year(
     validation_reporter: BatchValidationReporter,
     fca_provenance: list[FcaSnapshotProvenance] | None,
     modules: tuple[str, ...],
+    identity_year: int | None,
+    reused_root_recovery: bool,
     call_plan: dict[str, tuple[str, ...]] | None,
     failure_service: IngestionFailureService,
     retry_failure_ids: dict[tuple[str, str, int], str],
@@ -1009,9 +1079,17 @@ async def _ingest_one_year(
             tickers,
             artifact_store,
             fca_provenance=fca_provenance,
+            fca_year=identity_year,
         )
         wanted = tickers
 
+    recovery = None
+    if reused_root_recovery:
+        recovery = B3ReusedRootRecovery(
+            ticker_to_code=code_map,
+            ticker_to_cnpj=cnpj_map,
+            tape=_CotahistTapeAdapter(_build_archive(settings, http)),
+        )
     source = _build_data_source(
         settings,
         http,
@@ -1021,6 +1099,7 @@ async def _ingest_one_year(
         year=year,
         artifact_store=artifact_store,
         validation_reporter=validation_reporter,
+        reused_root_recovery=recovery,
     )
     artifacts: dict[str, SourceArtifact | None] = {}
     if whole_exchange and not force:
@@ -1470,6 +1549,103 @@ class _CotahistArchiveAdapter:
     async def year(self, year: int) -> Mapping[str, QuoteSeries]:
         values = await self.archive.year(year)
         return cast(Mapping[str, QuoteSeries], values)
+
+
+@dataclass(frozen=True)
+class _CotahistTapeAdapter:
+    """Expose COTAHIST identity sessions to the targeted ingestion repair."""
+
+    archive: CotahistArchive
+
+    async def at(self, ticker: str, session: date) -> B3TapeObservation | None:
+        code = ticker.strip().upper()
+        # ``lastDatePriorEx`` is a market-session date, not necessarily a date
+        # on which this illiquid security traded. One prior archive is enough to
+        # bridge a year-opening event; going farther would let an unrelated old
+        # listing become evidence for a gap.
+        for year in range(session.year, max(1986, session.year - 1) - 1, -1):
+            quotes = (await self.archive.year(year)).get(code)
+            if quotes is None:
+                continue
+            prior = tuple(
+                close for close in quotes.session_closes() if close.session <= session
+            )
+            if not prior:
+                continue
+            observed = max(prior, key=lambda close: close.session)
+            identity = quotes.identity_at(observed.session)
+            if identity is None:
+                return None
+            return B3TapeObservation(
+                session=observed.session,
+                isin=identity.isin,
+                especi=identity.especi,
+                bdi=identity.bdi,
+                name=identity.name,
+                code=code,
+            )
+        return None
+
+    async def latest_before(
+        self, ticker: str, session: date
+    ) -> B3TapeObservation | None:
+        code = ticker.strip().upper()
+        for year in range(session.year, 1985, -1):
+            quotes = (await self.archive.year(year)).get(code)
+            if quotes is None:
+                continue
+            prior = tuple(
+                close for close in quotes.session_closes() if close.session < session
+            )
+            if not prior:
+                continue
+            latest = max(prior, key=lambda close: close.session)
+            identity = quotes.identity_at(latest.session)
+            if identity is None:
+                return None
+            return B3TapeObservation(
+                session=latest.session,
+                isin=identity.isin,
+                especi=identity.especi,
+                bdi=identity.bdi,
+                name=identity.name,
+                code=code,
+            )
+        return None
+
+    async def by_identity(
+        self, session: date, *, isin: str, security_class: str
+    ) -> B3TapeObservation | None:
+        """Find a legacy COTAHIST code carrying the same security identity."""
+        for year in range(session.year, max(1986, session.year - 1) - 1, -1):
+            quotes_by_code = await self.archive.year(year)
+            for code, quotes in quotes_by_code.items():
+                prior = tuple(
+                    close
+                    for close in quotes.session_closes()
+                    if close.session <= session
+                )
+                if not prior:
+                    continue
+                observed = max(prior, key=lambda close: close.session)
+                identity = quotes.identity_at(observed.session)
+                if identity is None or identity.isin != isin:
+                    continue
+                if _tape_species_class(identity.especi) != security_class:
+                    continue
+                return B3TapeObservation(
+                    session=observed.session,
+                    isin=identity.isin,
+                    especi=identity.especi,
+                    bdi=identity.bdi,
+                    name=identity.name,
+                    code=code,
+                )
+        return None
+
+
+def _tape_species_class(value: str) -> str:
+    return value.strip().upper().split(maxsplit=1)[0] if value.strip() else ""
 
 
 def _b3_field(company: B3ListedCompany, field: str) -> str | None:
