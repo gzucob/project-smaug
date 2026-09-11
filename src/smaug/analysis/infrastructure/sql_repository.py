@@ -58,6 +58,7 @@ from smaug.portfolio.domain.share_classes import (
     EconomicRightsStatus,
     PerShareClass,
     ShareClassMapping,
+    ShareClassMappingReason,
     ShareClassMappingStatus,
     ShareKind,
     TickerCodeEvidence,
@@ -587,6 +588,11 @@ def _share_class_mappings_to_json(
             ),
             "status": mapping.status.value,
             "economic_rights": mapping.economic_rights.value,
+            "resolution_reason": (
+                None
+                if mapping.resolution_reason is None
+                else mapping.resolution_reason.value
+            ),
             "code_evidence": [
                 {
                     "symbol": evidence.symbol,
@@ -617,6 +623,11 @@ def _share_class_mappings_from_json(value: object) -> tuple[ShareClassMapping, .
             )
             status = ShareClassMappingStatus(str(raw.get("status")))
             rights = EconomicRightsStatus(str(raw.get("economic_rights")))
+            resolution_reason = (
+                None
+                if raw.get("resolution_reason") is None
+                else ShareClassMappingReason(str(raw.get("resolution_reason")))
+            )
         except (TypeError, ValueError):
             continue
         code_evidence: list[TickerCodeEvidence] = []
@@ -647,6 +658,7 @@ def _share_class_mappings_from_json(value: object) -> tuple[ShareClassMapping, .
                 per_share_class=per_share_class,
                 status=status,
                 economic_rights=rights,
+                resolution_reason=resolution_reason,
                 code_evidence=tuple(code_evidence),
                 evidence=(
                     tuple(str(item) for item in raw_evidence)

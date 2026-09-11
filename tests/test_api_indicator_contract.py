@@ -29,6 +29,13 @@ from smaug.analysis.domain.indicators import (
     indicator_names,
 )
 from smaug.entrypoints.api import _to_response
+from smaug.portfolio.domain.share_classes import (
+    PerShareClass,
+    ShareClassMapping,
+    ShareClassMappingReason,
+    ShareKind,
+    TickerCodeEvidence,
+)
 from smaug.portfolio.domain.taxonomy import Classification
 
 
@@ -149,6 +156,29 @@ def test_api_response_exposes_b3_price_provenance() -> None:
 
     assert response.price_source_code == "PETR4"
     assert response.price_source_session == date(2026, 8, 14)
+
+
+def test_api_response_exposes_share_class_resolution_reason() -> None:
+    mapping = ShareClassMapping(
+        class_id="95.123.456/0001-78:ON",
+        symbol="PETR3",
+        kind=ShareKind.COMMON,
+        per_share_class=PerShareClass.ORDINARY,
+        resolution_reason=ShareClassMappingReason.B3_CODE_PRECEDENCE,
+        code_evidence=(TickerCodeEvidence("PETR3", source="b3_get_detail"),),
+        evidence=(
+            "cvm_fca.placeholder",
+            "b3.get_detail",
+            "b3.listed_supplement",
+            "b3.cotahist",
+        ),
+    )
+
+    response = _to_response(
+        replace(_analysis(VIEW_TTM), share_class_mappings=(mapping,))
+    )
+
+    assert response.share_class_mappings[0].resolution_reason == ("b3_code_precedence")
 
 
 def test_api_response_exposes_raw_bpp_debt_evidence() -> None:

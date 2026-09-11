@@ -55,6 +55,17 @@ class ShareClassMappingStatus(StrEnum):
     NOT_YET_LISTED = "not_yet_listed"
 
 
+class ShareClassMappingReason(StrEnum):
+    """Why a class mapping was selected or kept unresolved."""
+
+    B3_CODE_PRECEDENCE = "b3_code_precedence"
+    CONFLICTING_B3_CODES = "conflicting_b3_codes"
+    CONFLICTING_FCA_CODES = "conflicting_fca_codes"
+    FCA_CODE_CLASS_CONFLICT = "fca_code_class_conflict"
+    MISSING_COMPONENT_CODE = "missing_component_code"
+    UNRESOLVED_FCA_EVIDENCE = "unresolved_fca_evidence"
+
+
 class EconomicRightsStatus(StrEnum):
     """Whether the filing evidence identifies the class's economic rights."""
 
@@ -86,6 +97,7 @@ class ShareClassMapping:
     per_share_class: PerShareClass | None
     status: ShareClassMappingStatus = ShareClassMappingStatus.RESOLVED
     economic_rights: EconomicRightsStatus = EconomicRightsStatus.RESOLVED
+    resolution_reason: ShareClassMappingReason | None = None
     code_evidence: tuple[TickerCodeEvidence, ...] = ()
     evidence: tuple[str, ...] = ()
 
@@ -100,6 +112,8 @@ def mapping_for_share_class(
     share_class: ShareClass,
     *,
     code_evidence: tuple[TickerCodeEvidence, ...] = (),
+    evidence: tuple[str, ...] = ("cvm_fca.share_class",),
+    resolution_reason: ShareClassMappingReason | None = None,
 ) -> ShareClassMapping:
     """Build resolved mapping evidence for one listed class."""
     return ShareClassMapping(
@@ -107,8 +121,9 @@ def mapping_for_share_class(
         symbol=share_class.symbol,
         kind=share_class.kind,
         per_share_class=share_class.per_share_class,
+        resolution_reason=resolution_reason,
         code_evidence=code_evidence,
-        evidence=("cvm_fca.share_class",),
+        evidence=evidence,
     )
 
 

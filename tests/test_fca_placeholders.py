@@ -16,6 +16,7 @@ from smaug.ingestion.infrastructure.b3_listed_company import (
 )
 from smaug.portfolio.domain.company import CompanyIdentity, InstrumentKind
 from smaug.portfolio.domain.fca_placeholders import (
+    OFFICIAL_B3_RECOVERY_EVIDENCE,
     FcaCodeIssue,
     FcaPlaceholderRow,
     FcaRecoveryStatus,
@@ -23,9 +24,14 @@ from smaug.portfolio.domain.fca_placeholders import (
 from smaug.portfolio.domain.share_classes import (
     PerShareClass,
     ShareClass,
+    ShareClassMapping,
+    ShareClassMappingReason,
+    ShareClassMappingStatus,
     ShareKind,
+    TickerCodeEvidence,
     UnitComponent,
     mapping_for_share_class,
+    share_class_id,
 )
 from smaug.portfolio.infrastructure.cvm_registry import CvmCompanyRegistry
 from smaug.portfolio.infrastructure.fca_placeholders import (
@@ -130,6 +136,41 @@ def _row(
     )
 
 
+def _listed_class_identity(
+    ticker: str,
+    cnpj: str,
+    *,
+    kind: ShareKind = ShareKind.COMMON,
+) -> CompanyIdentity:
+    share_class = ShareClass(ticker, kind)
+    return CompanyIdentity(
+        ticker=ticker,
+        cd_cvm="123",
+        cnpj=cnpj,
+        denom="TEST S.A.",
+        cvm_sector="Diversos",
+        situation="Ativo",
+        instrument_kind=(
+            InstrumentKind.COMMON_SHARE
+            if kind is ShareKind.COMMON
+            else InstrumentKind.PREFERRED_SHARE
+        ),
+        instrument_type=(
+            "Ações Ordinárias" if kind is ShareKind.COMMON else "Ações Preferenciais"
+        ),
+        market="Bolsa",
+        venue="B3",
+        share_classes=(share_class,),
+        share_class_mappings=(
+            mapping_for_share_class(
+                cnpj,
+                share_class,
+                code_evidence=(TickerCodeEvidence(ticker),),
+            ),
+        ),
+    )
+
+
 async def test_unit_uses_official_codes_and_cotahist_class_evidence() -> None:
     company = OfficialRegistrant(
         cvm_code="123",
@@ -186,6 +227,213 @@ async def test_unit_uses_official_codes_and_cotahist_class_evidence() -> None:
         "b3.listed_supplement",
         "b3.cotahist",
     }.issubset(unit.listing_evidence)
+
+
+async def test_proven_b3_class_overrides_unusable_fca_code_for_same_class(
+    tmp_path: Path,
+) -> None:
+    cnpj = "03.853.896/0001-40"
+    company = OfficialRegistrant(
+        cvm_code="123",
+        cnpj=cnpj,
+        issuing_company="MBRF",
+        security_codes=(OfficialSecurityCode("MBRF3", "BRMBRFACNOR0"),),
+    )
+    row = _row(
+        number=158,
+        cnpj=cnpj,
+        code="ADR",
+        kind=InstrumentKind.COMMON_SHARE,
+        per_share_class=PerShareClass.ORDINARY,
+    )
+    recovered = await FcaPlaceholderRecovery(
+        _Resolver(company),
+        _Archive({"MBRF3": _Quote(date(2026, 2, 2), isin="BRMBRFACNOR0", especi="ON")}),
+        snapshot_year=2026,
+        today=date(2026, 8, 1),
+    ).recover((row,))
+
+    async with httpx.AsyncClient() as http:
+        registry = CvmCompanyRegistry(http, year=2026, cache_dir=str(tmp_path))
+        merged, _ = registry._merge_placeholder_result(
+            {"ADR": _listed_class_identity("ADR", cnpj)},
+            recovered,
+            placeholder_rows=(row,),
+        )
+
+    mapping = merged["MBRF3"].share_class_mappings[0]
+    assert merged["MBRF3"].share_classes == (ShareClass("MBRF3", ShareKind.COMMON),)
+    assert mapping.status is ShareClassMappingStatus.RESOLVED
+    assert mapping.symbol == "MBRF3"
+    assert mapping.resolution_reason is ShareClassMappingReason.B3_CODE_PRECEDENCE
+    assert set(OFFICIAL_B3_RECOVERY_EVIDENCE).issubset(mapping.evidence)
+    assert {(item.symbol, item.source) for item in mapping.code_evidence} == {
+        ("ADR", "cvm_fca"),
+        ("MBRF3", "b3_get_detail"),
+    }
+
+
+async def test_proven_b3_unit_codes_fill_fca_components_without_codes(
+    tmp_path: Path,
+) -> None:
+    cnpj = "30.306.294/0001-45"
+    company = OfficialRegistrant(
+        cvm_code="123",
+        cnpj=cnpj,
+        issuing_company="BPAC",
+        security_codes=(
+            OfficialSecurityCode("BPAC11", "BRBPACUNT006"),
+            OfficialSecurityCode("BPAC3", "BRBPACACNOR7"),
+            OfficialSecurityCode("BPAC5", "BRBPACNPA0"),
+        ),
+    )
+    components = (
+        UnitComponent(1, PerShareClass.ORDINARY),
+        UnitComponent(2, PerShareClass.PREFERRED_A),
+    )
+    row = _row(
+        number=567,
+        cnpj=cnpj,
+        code="000000",
+        kind=InstrumentKind.UNIT,
+        components=components,
+    )
+    recovered = await FcaPlaceholderRecovery(
+        _Resolver(company),
+        _Archive(
+            {
+                "BPAC3": _Quote(date(2026, 2, 2), isin="BRBPACACNOR7", especi="ON"),
+                "BPAC5": _Quote(date(2026, 2, 2), isin="BRBPACNPA0", especi="PNA"),
+                "BPAC11": _Quote(date(2026, 2, 2), isin="BRBPACUNT006", especi="UNT"),
+            }
+        ),
+        snapshot_year=2026,
+        today=date(2026, 8, 1),
+    ).recover((row,))
+    current = CompanyIdentity(
+        ticker="000000",
+        cd_cvm="123",
+        cnpj=cnpj,
+        denom="TEST S.A.",
+        cvm_sector="Diversos",
+        situation="Ativo",
+        instrument_kind=InstrumentKind.UNIT,
+        instrument_type="Units",
+        market="Bolsa",
+        venue="B3",
+        shares_per_unit=3,
+        unit_components=components,
+        share_class_mappings=tuple(
+            ShareClassMapping(
+                class_id=share_class_id(cnpj, component.per_share_class),
+                symbol=None,
+                kind=(
+                    ShareKind.COMMON
+                    if component.per_share_class is PerShareClass.ORDINARY
+                    else ShareKind.PREFERRED
+                ),
+                per_share_class=component.per_share_class,
+                status=ShareClassMappingStatus.UNRESOLVED,
+                resolution_reason=ShareClassMappingReason.MISSING_COMPONENT_CODE,
+                evidence=("cvm_fca.ambiguous_share_class",),
+            )
+            for component in components
+        ),
+    )
+
+    async with httpx.AsyncClient() as http:
+        registry = CvmCompanyRegistry(http, year=2026, cache_dir=str(tmp_path))
+        merged, _ = registry._merge_placeholder_result(
+            {"000000": current}, recovered, placeholder_rows=(row,)
+        )
+
+    unit = merged["BPAC11"]
+    assert unit.unit_components == (
+        UnitComponent(1, PerShareClass.ORDINARY, "BPAC3"),
+        UnitComponent(2, PerShareClass.PREFERRED_A, "BPAC5"),
+    )
+    assert {item.symbol for item in unit.share_classes} == {"BPAC3", "BPAC5"}
+    assert all(
+        mapping.status is ShareClassMappingStatus.RESOLVED
+        and mapping.resolution_reason is ShareClassMappingReason.B3_CODE_PRECEDENCE
+        for mapping in unit.share_class_mappings
+    )
+
+
+async def test_valid_conflicting_fca_code_blocks_b3_precedence(tmp_path: Path) -> None:
+    cnpj = "12.000.000/0001-00"
+    company = OfficialRegistrant(
+        cvm_code="123",
+        cnpj=cnpj,
+        issuing_company="ABCD",
+        security_codes=(OfficialSecurityCode("ABCD3", "BRABCDACNOR0"),),
+    )
+    row = _row(
+        number=2,
+        cnpj=cnpj,
+        code="",
+        kind=InstrumentKind.COMMON_SHARE,
+        per_share_class=PerShareClass.ORDINARY,
+    )
+    recovered = await FcaPlaceholderRecovery(
+        _Resolver(company),
+        _Archive({"ABCD3": _Quote(date(2026, 2, 2), isin="BRABCDACNOR0", especi="ON")}),
+        snapshot_year=2026,
+        today=date(2026, 8, 1),
+    ).recover((row,))
+
+    async with httpx.AsyncClient() as http:
+        registry = CvmCompanyRegistry(http, year=2026, cache_dir=str(tmp_path))
+        merged, _ = registry._merge_placeholder_result(
+            {"ABCE3": _listed_class_identity("ABCE3", cnpj)},
+            recovered,
+            placeholder_rows=(row,),
+        )
+
+    mapping = merged["ABCD3"].share_class_mappings[0]
+    assert mapping.status is ShareClassMappingStatus.UNRESOLVED
+    assert mapping.symbol is None
+    assert mapping.resolution_reason is ShareClassMappingReason.CONFLICTING_FCA_CODES
+    assert merged["ABCD3"].share_classes == ()
+
+
+async def test_fca_code_shape_conflicting_with_filed_class_stays_unresolved(
+    tmp_path: Path,
+) -> None:
+    cnpj = "08.902.291/0001-15"
+    company = OfficialRegistrant(
+        cvm_code="123",
+        cnpj=cnpj,
+        issuing_company="CMIN",
+        security_codes=(OfficialSecurityCode("CMIN3", "BRCMINACNOR2"),),
+    )
+    row = _row(
+        number=301,
+        cnpj=cnpj,
+        code="25585",
+        kind=InstrumentKind.COMMON_SHARE,
+        per_share_class=PerShareClass.ORDINARY,
+    )
+    recovered = await FcaPlaceholderRecovery(
+        _Resolver(company),
+        _Archive({"CMIN3": _Quote(date(2026, 2, 2), isin="BRCMINACNOR2", especi="ON")}),
+        snapshot_year=2026,
+        today=date(2026, 8, 1),
+    ).recover((row,))
+
+    async with httpx.AsyncClient() as http:
+        registry = CvmCompanyRegistry(http, year=2026, cache_dir=str(tmp_path))
+        merged, _ = registry._merge_placeholder_result(
+            {"25585": _listed_class_identity("25585", cnpj)},
+            recovered,
+            placeholder_rows=(row,),
+        )
+
+    mapping = merged["CMIN3"].share_class_mappings[0]
+    assert mapping.status is ShareClassMappingStatus.UNRESOLVED
+    assert mapping.symbol is None
+    assert mapping.resolution_reason is ShareClassMappingReason.FCA_CODE_CLASS_CONFLICT
+    assert merged["CMIN3"].share_classes == ()
 
 
 async def test_non_unit_selects_the_class_matching_the_fca_label() -> None:
