@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
@@ -400,15 +400,15 @@ def _class_mappings_resolver(
         enriched: list[ShareClassMapping] = []
         for mapping in mappings:
             if mapping.symbol is None:
-                historical: dict[str, TickerCodeEvidence] = {}
+                historical: list[TickerCodeEvidence] = []
                 for code in mapping.code_evidence:
                     for code_evidence in historical_codes(code.symbol):
-                        historical[code_evidence.symbol] = code_evidence
+                        historical.append(code_evidence)
                 enriched.append(
                     replace(
                         mapping,
-                        code_evidence=(
-                            tuple(historical.values()) or mapping.code_evidence
+                        code_evidence=_merged_code_evidence(
+                            mapping.code_evidence, historical
                         ),
                     )
                 )
@@ -417,12 +417,30 @@ def _class_mappings_resolver(
             enriched.append(
                 replace(
                     mapping,
-                    code_evidence=historical_evidence or mapping.code_evidence,
+                    code_evidence=_merged_code_evidence(
+                        mapping.code_evidence, historical_evidence
+                    ),
                 )
             )
         return tuple(enriched)
 
     return resolve
+
+
+def _merged_code_evidence(
+    current: tuple[TickerCodeEvidence, ...],
+    historical: Iterable[TickerCodeEvidence],
+) -> tuple[TickerCodeEvidence, ...]:
+    """Retain B3 provenance while enriching FCA codes with filed years."""
+    merged: dict[tuple[str, str], TickerCodeEvidence] = {
+        (evidence.symbol, evidence.source): evidence for evidence in current
+    }
+    for evidence in historical:
+        key = (evidence.symbol, evidence.source)
+        previous = merged.get(key)
+        if previous is None or len(evidence.filed_years) > len(previous.filed_years):
+            merged[key] = evidence
+    return tuple(merged.values())
 
 
 def _unit_composition_resolver(
@@ -1966,6 +1984,9 @@ async def _run_doctor(
         output += "\n" + format_fca_placeholder_report(
             placeholder_reports[0], verbose=verbose
         )
+    identity_matrix = format_share_class_identity_matrix(tickers, identities)
+    if identity_matrix:
+        output += "\n" + identity_matrix
     print(f"{format_fca_snapshot(snapshot)}\n{output}")
     # The coverage gate (#169, ADR 0046): every named null is a fact about the
     # world already; an unclassified one is a mapping bug or a cause nothing has
@@ -2808,6 +2829,78 @@ def _format_placeholder_finding(finding: FcaPlaceholderFinding) -> str:
         f"candidates={candidates} observed={observed} recovered={recovered} "
         f"root={finding.official_root or '-'} window={window}{suffix}"
     )
+
+
+def format_share_class_identity_matrix(
+    tickers: Iterable[str], identities: Mapping[str, CompanyIdentity]
+) -> str:
+    """Render class decisions that need B3 precedence or remain unresolved."""
+    rows: list[str] = []
+    for ticker in dict.fromkeys(ticker.strip().upper() for ticker in tickers):
+        identity = identities.get(ticker)
+        if identity is None:
+            continue
+        mappings = tuple(
+            mapping
+            for mapping in identity.share_class_mappings
+            if mapping.resolution_reason is not None
+            or any(code.source == "b3_get_detail" for code in mapping.code_evidence)
+        )
+        if not mappings:
+            continue
+        period_end = identity.trading_ended or "current"
+        period = f"{identity.listed_since or '-'}..{period_end}"
+        components = _format_unit_components(identity)
+        for mapping in mappings:
+            per_share_class = (
+                mapping.per_share_class.value if mapping.per_share_class else "-"
+            )
+            reason = (
+                mapping.resolution_reason.value if mapping.resolution_reason else "-"
+            )
+            codes = (
+                ",".join(
+                    _format_ticker_code_evidence(code) for code in mapping.code_evidence
+                )
+                or "-"
+            )
+            evidence = ",".join(mapping.evidence) or "-"
+            rows.append(
+                f"    ticker={ticker} cd_cvm={identity.cd_cvm} cnpj={identity.cnpj} "
+                f"instrument={identity.instrument_kind.value} period={period} "
+                f"components={components} "
+                f"class={per_share_class} "
+                f"status={mapping.status.value} symbol={mapping.symbol or '-'} "
+                f"reason={reason} "
+                f"codes={codes} evidence={evidence}"
+            )
+    if not rows:
+        return ""
+    return "\n".join(
+        [
+            "",
+            "=== smaug doctor — FCA/B3 share-class identity ===",
+            *rows,
+        ]
+    )
+
+
+def _format_unit_components(identity: CompanyIdentity) -> str:
+    if not is_unit(identity):
+        return "-"
+    return (
+        "+".join(
+            f"{component.quantity}x{component.per_share_class.value}:"
+            f"{component.symbol or '<missing>'}"
+            for component in identity.unit_components
+        )
+        or "<missing>"
+    )
+
+
+def _format_ticker_code_evidence(evidence: TickerCodeEvidence) -> str:
+    years = ",".join(str(year) for year in evidence.filed_years) or "-"
+    return f"{evidence.symbol}[{evidence.source}:{years}]"
 
 
 def format_drift_summary(report: DriftReport) -> str:

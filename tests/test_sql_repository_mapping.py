@@ -50,6 +50,7 @@ from smaug.portfolio.domain.share_classes import (
     EconomicRightsStatus,
     PerShareClass,
     ShareClassMapping,
+    ShareClassMappingReason,
     ShareClassMappingStatus,
     ShareKind,
     TickerCodeEvidence,
@@ -223,6 +224,7 @@ def test_share_class_and_capital_provenance_round_trip() -> None:
                 per_share_class=PerShareClass.PREFERRED,
                 status=ShareClassMappingStatus.UNRESOLVED,
                 economic_rights=EconomicRightsStatus.UNRESOLVED,
+                resolution_reason=ShareClassMappingReason.CONFLICTING_FCA_CODES,
                 evidence=("cvm_fca.ambiguous_share_class",),
             ),
         ),
@@ -269,6 +271,7 @@ def test_share_class_and_capital_provenance_round_trip() -> None:
 
     assert row.share_class_mappings is not None
     assert row.share_class_mappings[1]["status"] == "unresolved"
+    assert row.share_class_mappings[1]["resolution_reason"] == ("conflicting_fca_codes")
     assert entity.share_class_mappings == analysis.share_class_mappings
     assert entity.class_market_values == analysis.class_market_values
     assert entity.capital_provenance == analysis.capital_provenance

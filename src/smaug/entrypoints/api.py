@@ -103,6 +103,7 @@ class ShareClassMappingResponse(BaseModel):
     per_share_class: str | None
     status: str
     economic_rights: str
+    resolution_reason: str | None
     code_evidence: list[TickerCodeEvidenceResponse]
     evidence: list[str]
 
@@ -478,6 +479,11 @@ def _mapping_response(mapping: ShareClassMapping) -> ShareClassMappingResponse:
         ),
         status=mapping.status.value,
         economic_rights=mapping.economic_rights.value,
+        resolution_reason=(
+            None
+            if mapping.resolution_reason is None
+            else mapping.resolution_reason.value
+        ),
         code_evidence=[
             TickerCodeEvidenceResponse(
                 symbol=evidence.symbol,

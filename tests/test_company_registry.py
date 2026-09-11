@@ -26,6 +26,7 @@ from smaug.portfolio.domain.provenance import FCA_SOURCE
 from smaug.portfolio.domain.share_classes import (
     EconomicRightsStatus,
     PerShareClass,
+    ShareClassMappingReason,
     ShareClassMappingStatus,
     UnitComponent,
 )
@@ -329,6 +330,7 @@ def test_same_cnpj_codes_for_one_class_preserve_unresolved_class_evidence(
     assert mapping.status is ShareClassMappingStatus.UNRESOLVED
     assert mapping.economic_rights is EconomicRightsStatus.RESOLVED
     assert mapping.symbol is None
+    assert mapping.resolution_reason is ShareClassMappingReason.CONFLICTING_FCA_CODES
     assert {item.symbol for item in mapping.code_evidence} == {"ABCD3", "ABCE3"}
 
 
@@ -448,6 +450,13 @@ async def test_all_current_fca_units_parse_textual_or_symbol_compositions(
             sum(component.quantity for component in identity.unit_components) == count
         )
         assert per_share_components(identity) == identity.unit_components
+        reasons = {
+            mapping.resolution_reason for mapping in identity.share_class_mappings
+        }
+        if ticker == "KLBN11":
+            assert reasons == {None}
+        else:
+            assert reasons == {ShareClassMappingReason.MISSING_COMPONENT_CODE}
 
 
 async def test_suffix_11_warrants_are_not_units_or_listed_equities(

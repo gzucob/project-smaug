@@ -32,6 +32,7 @@ from smaug.analysis.domain.financials import (
 from smaug.analysis.domain.indicators import Indicators, NullReason
 from smaug.analysis.domain.outcomes import AnalysisOutcome
 from smaug.entrypoints.cli import (
+    _class_mappings_resolver,
     _format_collection_log,
     format_analysis,
     format_analysis_run,
@@ -42,6 +43,7 @@ from smaug.entrypoints.cli import (
     format_ingestion_runs,
     format_ingestion_validations,
     format_report,
+    format_share_class_identity_matrix,
 )
 from smaug.ingestion.application.ingest import FetchOutcome, OutcomeStatus
 from smaug.ingestion.application.report import CompletenessReportUseCase
@@ -61,7 +63,17 @@ from smaug.ingestion.domain.validation import (
     ValidationFinding,
     ValidationRule,
 )
+from smaug.portfolio.domain.company import CompanyIdentity, InstrumentKind
 from smaug.portfolio.domain.sectors import Sector
+from smaug.portfolio.domain.share_classes import (
+    PerShareClass,
+    ShareClassMapping,
+    ShareClassMappingReason,
+    ShareClassMappingStatus,
+    ShareKind,
+    TickerCodeEvidence,
+    UnitComponent,
+)
 from smaug.portfolio.domain.taxonomy import Classification
 from tests.fakes import FakeRawIngestionRepository, fake_sector_resolver, make_snapshot
 
@@ -77,6 +89,72 @@ def test_should_render_collection_log_with_summary() -> None:
     assert "Collection log" in log
     assert "stored=1" in log
     assert "skipped=1" in log
+
+
+def test_class_mapping_resolver_preserves_b3_and_historical_fca_evidence() -> None:
+    mapping = ShareClassMapping(
+        class_id="12.000.000/0001-00:ON",
+        symbol="MBRF3",
+        kind=ShareKind.COMMON,
+        per_share_class=PerShareClass.ORDINARY,
+        resolution_reason=ShareClassMappingReason.B3_CODE_PRECEDENCE,
+        code_evidence=(TickerCodeEvidence("MBRF3", source="b3_get_detail"),),
+        evidence=("cvm_fca.placeholder", "b3.get_detail", "b3.cotahist"),
+    )
+    identity = CompanyIdentity(
+        ticker="MBRF3",
+        cd_cvm="123",
+        cnpj="12.000.000/0001-00",
+        denom="TEST S.A.",
+        cvm_sector="Diversos",
+        situation="Ativo",
+        instrument_kind=InstrumentKind.COMMON_SHARE,
+        instrument_type="Ações Ordinárias",
+        share_class_mappings=(mapping,),
+    )
+    resolver = _class_mappings_resolver(
+        {"MBRF3": identity},
+        lambda _ticker: (TickerCodeEvidence("MBRF3", (2022, 2023)),),
+    )
+
+    resolved = resolver("MBRF3")[0]
+
+    assert {(item.source, item.filed_years) for item in resolved.code_evidence} == {
+        ("b3_get_detail", ()),
+        ("cvm_fca", (2022, 2023)),
+    }
+    assert resolved.resolution_reason is ShareClassMappingReason.B3_CODE_PRECEDENCE
+
+
+def test_share_class_identity_matrix_names_unit_components_and_decision() -> None:
+    cnpj = "30.306.294/0001-45"
+    mapping = ShareClassMapping(
+        class_id=f"{cnpj}:ON",
+        symbol=None,
+        kind=ShareKind.COMMON,
+        per_share_class=PerShareClass.ORDINARY,
+        status=ShareClassMappingStatus.UNRESOLVED,
+        resolution_reason=ShareClassMappingReason.MISSING_COMPONENT_CODE,
+        evidence=("cvm_fca.ambiguous_share_class",),
+    )
+    identity = CompanyIdentity(
+        ticker="ALUP11",
+        cd_cvm="21490",
+        cnpj=cnpj,
+        denom="TEST S.A.",
+        cvm_sector="Energia Elétrica",
+        situation="Ativo",
+        instrument_kind=InstrumentKind.UNIT,
+        instrument_type="Units",
+        unit_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        share_class_mappings=(mapping,),
+    )
+
+    output = format_share_class_identity_matrix(("ALUP11",), {"ALUP11": identity})
+
+    assert "ticker=ALUP11 cd_cvm=21490" in output
+    assert "components=1xON:<missing>" in output
+    assert "status=unresolved symbol=- reason=missing_component_code" in output
 
 
 def test_should_render_persisted_run_provenance_and_incomplete_marker() -> None:

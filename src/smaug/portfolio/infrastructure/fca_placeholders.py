@@ -19,6 +19,7 @@ from typing import Protocol
 
 from smaug.portfolio.domain.company import CompanyIdentity, InstrumentKind
 from smaug.portfolio.domain.fca_placeholders import (
+    OFFICIAL_B3_RECOVERY_EVIDENCE,
     FcaPlaceholderFinding,
     FcaPlaceholderReport,
     FcaPlaceholderRow,
@@ -28,6 +29,7 @@ from smaug.portfolio.domain.fca_placeholders import (
 from smaug.portfolio.domain.share_classes import (
     PerShareClass,
     ShareClass,
+    ShareClassMappingReason,
     ShareKind,
     TickerCodeEvidence,
     UnitComponent,
@@ -100,12 +102,7 @@ class QuoteArchive(Protocol):
     async def year(self, year: int) -> Mapping[str, QuoteSeries]: ...
 
 
-_EVIDENCE = (
-    "cvm_fca.placeholder",
-    "b3.get_detail",
-    "b3.listed_supplement",
-    "b3.cotahist",
-)
+_EVIDENCE = OFFICIAL_B3_RECOVERY_EVIDENCE
 _FUNDAMENTAL = frozenset(
     {
         InstrumentKind.COMMON_SHARE,
@@ -614,6 +611,8 @@ def _identities(accepted: Sequence[_Accepted]) -> tuple[CompanyIdentity, ...]:
                         source="b3_get_detail",
                     ),
                 ),
+                evidence=_EVIDENCE,
+                resolution_reason=ShareClassMappingReason.B3_CODE_PRECEDENCE,
             )
             for share_class in classes
         )

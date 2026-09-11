@@ -20,6 +20,13 @@ from smaug.portfolio.domain.share_classes import (
     UnitComponent,
 )
 
+OFFICIAL_B3_RECOVERY_EVIDENCE = (
+    "cvm_fca.placeholder",
+    "b3.get_detail",
+    "b3.listed_supplement",
+    "b3.cotahist",
+)
+
 
 class FcaCodeIssue(StrEnum):
     """Why an FCA security row cannot authorize B3 analysis."""

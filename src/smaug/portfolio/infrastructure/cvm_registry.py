@@ -46,6 +46,7 @@ from smaug.portfolio.domain.company import (
     is_organized_market,
 )
 from smaug.portfolio.domain.fca_placeholders import (
+    OFFICIAL_B3_RECOVERY_EVIDENCE,
     FcaCodeIssue,
     FcaPlaceholderFinding,
     FcaPlaceholderReport,
@@ -59,6 +60,7 @@ from smaug.portfolio.domain.share_classes import (
     PerShareClass,
     ShareClass,
     ShareClassMapping,
+    ShareClassMappingReason,
     ShareClassMappingStatus,
     ShareKind,
     TickerCodeEvidence,
@@ -282,6 +284,11 @@ def _resolve_class_mappings(
                 )
             )
         elif len(symbols) > 1 or per_share_class in accumulator.unresolved:
+            reason = (
+                ShareClassMappingReason.CONFLICTING_FCA_CODES
+                if len(symbols) > 1
+                else ShareClassMappingReason.MISSING_COMPONENT_CODE
+            )
             mappings.append(
                 ShareClassMapping(
                     class_id=share_class_id(cnpj, per_share_class),
@@ -298,6 +305,7 @@ def _resolve_class_mappings(
                     # identity is ambiguous. A textual unit component is the
                     # same: its rights are known even when no quote is named.
                     economic_rights=EconomicRightsStatus.RESOLVED,
+                    resolution_reason=reason,
                     code_evidence=tuple(
                         TickerCodeEvidence(symbol=symbol) for symbol in symbols
                     ),
@@ -574,8 +582,8 @@ class CvmCompanyRegistry:
                 for identity in (*merged.values(), *recovered)
                 if identity.cnpj == cnpj
             )
-            classes = _merged_share_classes(members)
-            mappings = _merged_share_class_mappings(cnpj, members, classes)
+            mappings = _merged_share_class_mappings(cnpj, members)
+            classes = _resolved_share_classes(mappings)
             for ticker, identity in tuple(merged.items()):
                 if identity.cnpj == cnpj:
                     merged[ticker] = replace(
@@ -771,48 +779,19 @@ def _iso_date(value: str | None) -> date | None:
         return None
 
 
-def _merged_share_classes(
-    identities: Iterable[CompanyIdentity],
+def _resolved_share_classes(
+    mappings: Iterable[ShareClassMapping],
 ) -> tuple[ShareClass, ...]:
-    """Return one unambiguous listed class per economic class.
-
-    The normal FCA index has already performed this reduction for valid rows.
-    Placeholder recovery adds another source of current codes, so repeat the
-    same ambiguity gate over both populations instead of allowing the order of
-    the recovered rows to decide which class prices the cap.
-    """
-    symbols: dict[PerShareClass, set[str]] = {}
-    unresolved: set[PerShareClass] = set()
-    for identity in identities:
-        for share_class in identity.share_classes:
-            symbols.setdefault(share_class.per_share_class, set()).add(
-                share_class.symbol
-            )
-        for mapping in identity.share_class_mappings:
-            per_share_class = mapping.per_share_class
-            if per_share_class is None:
-                continue
-            if mapping.status is not ShareClassMappingStatus.RESOLVED:
-                unresolved.add(per_share_class)
-            if mapping.symbol:
-                symbols.setdefault(per_share_class, set()).add(mapping.symbol)
-            elif mapping.status is ShareClassMappingStatus.UNRESOLVED:
-                symbols.setdefault(per_share_class, set()).update(
-                    evidence.symbol for evidence in mapping.code_evidence
-                )
-
+    """Return only mappings whose final evidence names one listed class."""
     classes: list[ShareClass] = []
-    for per_share_class in PerShareClass:
-        candidates = symbols.get(per_share_class, set())
-        if per_share_class in unresolved or len(candidates) != 1:
+    for mapping in mappings:
+        if (
+            mapping.status is not ShareClassMappingStatus.RESOLVED
+            or mapping.symbol is None
+            or mapping.kind is None
+        ):
             continue
-        symbol = next(iter(candidates))
-        kind = (
-            ShareKind.COMMON
-            if per_share_class is PerShareClass.ORDINARY
-            else ShareKind.PREFERRED
-        )
-        classes.append(ShareClass(symbol=symbol, kind=kind))
+        classes.append(ShareClass(symbol=mapping.symbol, kind=mapping.kind))
     return tuple(classes)
 
 
@@ -834,9 +813,8 @@ def _merge_recovered_identity(
 def _merged_share_class_mappings(
     cnpj: str,
     identities: Iterable[CompanyIdentity],
-    classes: Sequence[ShareClass],
 ) -> tuple[ShareClassMapping, ...]:
-    """Merge class evidence while retaining ambiguity and source provenance."""
+    """Prefer one fully proven B3 code without discarding FCA conflicts."""
     by_class: dict[PerShareClass, list[ShareClassMapping]] = {}
     unscoped: list[ShareClassMapping] = []
     for identity in identities:
@@ -845,32 +823,26 @@ def _merged_share_class_mappings(
                 unscoped.append(mapping)
             else:
                 by_class.setdefault(mapping.per_share_class, []).append(mapping)
+        represented = {
+            (mapping.per_share_class, mapping.symbol)
+            for mapping in identity.share_class_mappings
+        }
+        for share_class in identity.share_classes:
+            if (share_class.per_share_class, share_class.symbol) not in represented:
+                by_class.setdefault(share_class.per_share_class, []).append(
+                    mapping_for_share_class(cnpj, share_class)
+                )
 
-    class_by_class = {
-        share_class.per_share_class: share_class for share_class in classes
-    }
     result: list[ShareClassMapping] = []
     for per_share_class in PerShareClass:
         entries = by_class.get(per_share_class, [])
-        share_class = class_by_class.get(per_share_class)
         if not entries:
-            if share_class is not None:
-                result.append(mapping_for_share_class(cnpj, share_class))
             continue
 
         symbols = {mapping.symbol for mapping in entries if mapping.symbol is not None}
         for mapping in entries:
             if mapping.status is ShareClassMappingStatus.UNRESOLVED:
                 symbols.update(evidence.symbol for evidence in mapping.code_evidence)
-        if share_class is not None:
-            symbols.add(share_class.symbol)
-        ambiguous = (
-            any(
-                mapping.status is not ShareClassMappingStatus.RESOLVED
-                for mapping in entries
-            )
-            or len(symbols) > 1
-        )
         code_evidence = _unique_code_evidence(
             evidence for mapping in entries for evidence in mapping.code_evidence
         )
@@ -885,15 +857,44 @@ def _merged_share_class_mappings(
             )
             else EconomicRightsStatus.RESOLVED
         )
-        kind = (
-            share_class.kind
-            if share_class is not None
-            else next(
-                (mapping.kind for mapping in entries if mapping.kind is not None),
-                None,
+        kind = _kind_for_class(per_share_class)
+        b3_symbols = {
+            mapping.symbol
+            for mapping in entries
+            if _is_proven_b3_mapping(mapping) and mapping.symbol is not None
+        }
+        reason: ShareClassMappingReason | None = None
+        selected: str | None = None
+        if len(b3_symbols) > 1:
+            reason = ShareClassMappingReason.CONFLICTING_B3_CODES
+        elif b3_symbols:
+            selected = next(iter(b3_symbols))
+            reason = _b3_fca_conflict(entries, selected, expected_kind=kind)
+            if reason is None:
+                result.append(
+                    ShareClassMapping(
+                        class_id=share_class_id(cnpj, per_share_class),
+                        symbol=selected,
+                        kind=kind,
+                        per_share_class=per_share_class,
+                        status=ShareClassMappingStatus.RESOLVED,
+                        economic_rights=rights,
+                        resolution_reason=(ShareClassMappingReason.B3_CODE_PRECEDENCE),
+                        code_evidence=code_evidence,
+                        evidence=evidence,
+                    )
+                )
+                continue
+
+        ambiguous = reason is not None or (
+            any(
+                mapping.status is not ShareClassMappingStatus.RESOLVED
+                for mapping in entries
             )
+            or len(symbols) != 1
         )
         if ambiguous:
+            reason = reason or _unresolved_reason(entries, symbols)
             result.append(
                 ShareClassMapping(
                     class_id=share_class_id(cnpj, per_share_class),
@@ -902,13 +903,14 @@ def _merged_share_class_mappings(
                     per_share_class=per_share_class,
                     status=ShareClassMappingStatus.UNRESOLVED,
                     economic_rights=rights,
+                    resolution_reason=reason,
                     code_evidence=code_evidence,
                     evidence=_unique_text((*evidence, "cvm_fca.ambiguous_share_class")),
                 )
             )
             continue
 
-        symbol = share_class.symbol if share_class is not None else next(iter(symbols))
+        symbol = next(iter(symbols))
         result.append(
             ShareClassMapping(
                 class_id=share_class_id(cnpj, per_share_class),
@@ -917,12 +919,90 @@ def _merged_share_class_mappings(
                 per_share_class=per_share_class,
                 status=ShareClassMappingStatus.RESOLVED,
                 economic_rights=rights,
+                resolution_reason=next(
+                    (
+                        mapping.resolution_reason
+                        for mapping in entries
+                        if mapping.resolution_reason is not None
+                    ),
+                    None,
+                ),
                 code_evidence=code_evidence,
                 evidence=evidence,
             )
         )
     result.extend(unscoped)
     return tuple(result)
+
+
+def _kind_for_class(per_share_class: PerShareClass) -> ShareKind:
+    return (
+        ShareKind.COMMON
+        if per_share_class is PerShareClass.ORDINARY
+        else ShareKind.PREFERRED
+    )
+
+
+def _is_proven_b3_mapping(mapping: ShareClassMapping) -> bool:
+    """Whether the mapping crossed the registrant, detail, and tape gates."""
+    if (
+        mapping.status is not ShareClassMappingStatus.RESOLVED
+        or mapping.symbol is None
+        or not set(OFFICIAL_B3_RECOVERY_EVIDENCE).issubset(mapping.evidence)
+    ):
+        return False
+    return any(
+        evidence.symbol == mapping.symbol and evidence.source == "b3_get_detail"
+        for evidence in mapping.code_evidence
+    )
+
+
+def _b3_fca_conflict(
+    entries: Sequence[ShareClassMapping],
+    b3_symbol: str,
+    *,
+    expected_kind: ShareKind,
+) -> ShareClassMappingReason | None:
+    """Return the filed conflict that prevents B3-code precedence, if any."""
+    for mapping in entries:
+        if mapping.kind is not None and mapping.kind is not expected_kind:
+            return ShareClassMappingReason.FCA_CODE_CLASS_CONFLICT
+        filed_symbols = {
+            evidence.symbol
+            for evidence in mapping.code_evidence
+            if evidence.source == "cvm_fca"
+        }
+        if "cvm_fca.share_class" in mapping.evidence and mapping.symbol is not None:
+            filed_symbols.add(mapping.symbol)
+        for symbol in filed_symbols:
+            if symbol == b3_symbol:
+                continue
+            if is_trading_code(symbol):
+                return ShareClassMappingReason.CONFLICTING_FCA_CODES
+            shaped_kind = _kind_from_suffix(symbol)
+            if shaped_kind is not None and shaped_kind is not expected_kind:
+                return ShareClassMappingReason.FCA_CODE_CLASS_CONFLICT
+    return None
+
+
+def _unresolved_reason(
+    entries: Sequence[ShareClassMapping], symbols: set[str]
+) -> ShareClassMappingReason:
+    if len(symbols) > 1:
+        return ShareClassMappingReason.CONFLICTING_FCA_CODES
+    reasons: set[ShareClassMappingReason] = set()
+    for mapping in entries:
+        reason = mapping.resolution_reason
+        if (
+            reason is not None
+            and reason is not ShareClassMappingReason.B3_CODE_PRECEDENCE
+        ):
+            reasons.add(reason)
+    if len(reasons) == 1:
+        return next(iter(reasons))
+    if not symbols:
+        return ShareClassMappingReason.MISSING_COMPONENT_CODE
+    return ShareClassMappingReason.UNRESOLVED_FCA_EVIDENCE
 
 
 def _unique_code_evidence(
