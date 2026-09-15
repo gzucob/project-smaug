@@ -959,7 +959,9 @@ def test_cagr_is_null_until_the_window_closes() -> None:
     ind = compute(history[-1], history[-2], MarketData(), history)
 
     assert ind.revenue_cagr_5y is None
-    assert ind.null_reasons["revenue_cagr_5y"] is NullReason.MISSING_PRIOR_PERIOD
+    assert ind.null_reasons["revenue_cagr_5y"] is (
+        NullReason.INSUFFICIENT_COMPARABLE_HISTORY
+    )
 
 
 def test_cagr_rejects_a_discontinuous_closed_year_window() -> None:
@@ -970,7 +972,9 @@ def test_cagr_rejects_a_discontinuous_closed_year_window() -> None:
     ind = compute(history[-1], history[-2], MarketData(), history)
 
     assert ind.revenue_cagr_5y is None
-    assert ind.null_reasons["revenue_cagr_5y"] is NullReason.MISSING_PRIOR_PERIOD
+    assert ind.null_reasons["revenue_cagr_5y"] is (
+        NullReason.INSUFFICIENT_COMPARABLE_HISTORY
+    )
 
 
 def test_cagr_refuses_a_non_positive_endpoint() -> None:

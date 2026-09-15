@@ -498,7 +498,7 @@ def _classify_cagr(
     be formed.
     """
     if not _has_consecutive_closed_years(history):
-        return NullReason.MISSING_PRIOR_PERIOD
+        return NullReason.INSUFFICIENT_COMPARABLE_HISTORY
     endpoints = (
         getattr(history[-(_CAGR_YEARS + 1)], account),
         getattr(history[-1], account),

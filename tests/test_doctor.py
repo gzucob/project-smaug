@@ -129,6 +129,12 @@ def test_every_null_reason_has_one_stable_disposition() -> None:
     )
 
 
+def test_insufficient_comparable_history_is_not_recoverable() -> None:
+    assert null_disposition(NullReason.INSUFFICIENT_COMPARABLE_HISTORY) is (
+        NullDisposition.HISTORICAL_PERIOD_DOES_NOT_EXIST
+    )
+
+
 def test_doctor_totals_use_explicit_cell_and_null_denominators() -> None:
     report = DoctorReport(
         tickers=(
