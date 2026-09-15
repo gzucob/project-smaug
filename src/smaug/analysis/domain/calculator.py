@@ -186,6 +186,7 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
         {
             "ebit_margin",
             "ebitda_margin",
+            "ebitda_cagr_5y",
             "ebit_cagr_5y",
             "price_to_ebit",
             "fcf",
@@ -201,6 +202,7 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
             "enterprise_value",
             "roic_statutory",
             "current_ratio",
+            "current_financial_investments",
             "price_to_working_capital",
         }
     )
@@ -210,6 +212,9 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
             "gross_margin",
             "ebit_margin",
             "ebitda_margin",
+            "ebitda_cagr_5y",
+            "net_debt_to_ebitda",
+            "ev_ebitda",
             # A generic statutory ROIC remains a category error for an insurer:
             # underwriting and investment liabilities are the operation, not a
             # corporate invested-capital bridge (ADR 0010/0059).
