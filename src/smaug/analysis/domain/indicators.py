@@ -69,6 +69,11 @@ class NullReason(StrEnum):
       is a fact about the world rather than a gap of ours, and it is the only
       price cause that is *deliberate*: the others are worth chasing, this one
       is not.
+    * ``INSUFFICIENT_COMPARABLE_HISTORY`` — the requested historical window
+      cannot be formed from consecutive closed exercises. For a five-year CAGR,
+      this means that fewer than six comparable annual filings exist or that the
+      sequence has a gap. The promised rate does not exist; the window is never
+      shortened or interpolated to manufacture one.
     * ``ZERO_DENOMINATOR`` — every input is present, but the ratio is undefined
       because its denominator is zero (a holding filing revenue = 0 nulls
       P/Receita and the margins; a year with ~zero earnings nulls P/E, payout).
@@ -110,6 +115,7 @@ class NullReason(StrEnum):
     MISSING_CASH_DISTRIBUTIONS = "missing_cash_distributions"
     MISSING_CASH_DISTRIBUTION_VALUE = "missing_cash_distribution_value"
     MISSING_PRIOR_PERIOD = "missing_prior_period"
+    INSUFFICIENT_COMPARABLE_HISTORY = "insufficient_comparable_history"
     ZERO_DENOMINATOR = "zero_denominator"
     NON_POSITIVE_ENDPOINT = "non_positive_endpoint"
 
@@ -172,8 +178,8 @@ NULL_DISPOSITION_BY_REASON = MappingProxyType(
         ),
         # These are source, mapping, identity, continuity, or acquisition gaps
         # that can be revisited without changing the accounting formula.  The
-        # generic missing_prior_period stays here until persisted evidence can
-        # safely distinguish its accounting/window/tape causes.
+        # Generic missing_prior_period stays here until persisted evidence can
+        # safely distinguish its one-period accounting/window causes.
         NullReason.SOURCE_ACCOUNT_UNMAPPED: NullDisposition.RECOVERABLE_GAP,
         NullReason.MISSING_PRICE: NullDisposition.RECOVERABLE_GAP,
         NullReason.PRICE_SYMBOL_NOT_FOUND: NullDisposition.RECOVERABLE_GAP,
@@ -190,6 +196,10 @@ NULL_DISPOSITION_BY_REASON = MappingProxyType(
         NullReason.MISSING_PRIOR_PERIOD: NullDisposition.RECOVERABLE_GAP,
         # The source cannot fill a period before the instrument first traded.
         NullReason.NOT_YET_LISTED: NullDisposition.HISTORICAL_PERIOD_DOES_NOT_EXIST,
+        # The labelled historical window itself cannot yet be formed.
+        NullReason.INSUFFICIENT_COMPARABLE_HISTORY: (
+            NullDisposition.HISTORICAL_PERIOD_DOES_NOT_EXIST
+        ),
     }
 )
 
