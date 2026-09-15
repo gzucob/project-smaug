@@ -28,6 +28,8 @@ import re
 import unicodedata
 from collections.abc import Callable
 
+from smaug.portfolio.domain.share_classes import PerShareClass
+
 # Ticker -> every *other* code the same registrant has filed for that ticker's
 # own share class. Unordered: which of them precedes which is a question about
 # trading sessions, not about the cadastre, and it is answered where the sessions
@@ -35,9 +37,20 @@ from collections.abc import Callable
 # codes, which have only ever been themselves.
 SiblingCodesResolver = Callable[[str], tuple[str, ...]]
 
+# CNPJ + filed year -> every plain equity class named by that year's FCA.
+# This is period evidence, not a current-registry fallback: callers use it when
+# a historical calculation may only select a generic preferred disclosure after
+# proving which preferred rights existed in that period.
+PeriodShareClassesResolver = Callable[[str, int], tuple[PerShareClass, ...]]
+
 
 def no_siblings(ticker: str) -> tuple[str, ...]:
     """The default resolver: every code stands alone."""
+    return ()
+
+
+def no_period_share_classes(_cnpj: str, _year: int) -> tuple[PerShareClass, ...]:
+    """The default resolver when no period-specific FCA history is wired."""
     return ()
 
 

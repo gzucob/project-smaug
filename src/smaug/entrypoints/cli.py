@@ -83,7 +83,7 @@ from smaug.ingestion.application.validation import (
     RunValidationReporter,
 )
 from smaug.ingestion.domain.failures import FailureOccurrence
-from smaug.ingestion.domain.ports import B3TapeObservation
+from smaug.ingestion.domain.ports import B3TapeObservation, RawDataSource
 from smaug.ingestion.domain.repositories import RawIngestionRepository
 from smaug.ingestion.domain.runs import (
     IngestionRun,
@@ -112,6 +112,12 @@ from smaug.ingestion.infrastructure.b3_listed_company import (
 from smaug.ingestion.infrastructure.b3_reused_roots import (
     REUSED_ROOT_TICKERS,
     B3ReusedRootRecovery,
+)
+from smaug.ingestion.infrastructure.capital_subclass_backfill import (
+    AUDITED_CAPITAL_SUBCLASS_TARGETS,
+    AuditedCapitalSubclassSource,
+    CapitalSubclassBackfillTarget,
+    targets_by_year,
 )
 from smaug.ingestion.infrastructure.cvm_capital import (
     CAPITAL_EVENT_MODULE,
@@ -147,6 +153,7 @@ from smaug.portfolio.domain.fca_placeholders import (
 from smaug.portfolio.domain.provenance import FCA_SOURCE, FcaSnapshotProvenance
 from smaug.portfolio.domain.sectors import Sector, sector_from_cvm
 from smaug.portfolio.domain.securities import (
+    PeriodShareClassesResolver,
     RegistrantNamesResolver,
     SiblingCodesResolver,
 )
@@ -665,6 +672,57 @@ def b3_reused_root_backfill(
     raise typer.Exit(code=exit_code)
 
 
+@app.command("capital-subclass-backfill")
+def capital_subclass_backfill(
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Log every guarded CAPITAL write."
+    ),
+) -> None:
+    """Replay only the 13 parser-v2 CAPITAL rows approved by issue #306."""
+    exit_code = _guarded(_run_capital_subclass_backfill(verbose=verbose))
+    raise typer.Exit(code=exit_code)
+
+
+async def _run_capital_subclass_backfill(*, verbose: bool) -> int:
+    """Prove the complete #303 manifest before entering any Mongo write path."""
+    settings = get_settings()
+    grouped = targets_by_year()
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        artifact_store = LocalSourceArtifactStore(http, settings.source_artifact_dir)
+        for targets in grouped.values():
+            source = _capital_subclass_source(
+                settings,
+                http,
+                targets,
+                artifact_store=artifact_store,
+            )
+            await asyncio.gather(
+                *(source.fetch(target.ticker, CAPITAL_MODULE) for target in targets)
+            )
+
+    typer.echo(
+        "Verified #303 source manifest: "
+        f"groups={len(AUDITED_CAPITAL_SUBCLASS_TARGETS)} "
+        f"years={','.join(str(year) for year in sorted(grouped))}."
+    )
+    call_plan: dict[int, dict[str, tuple[str, ...]]] = {
+        year: {target.ticker: (CAPITAL_MODULE,) for target in targets}
+        for year, targets in grouped.items()
+    }
+    return await _run_ingest(
+        tuple(
+            dict.fromkeys(target.ticker for target in AUDITED_CAPITAL_SUBCLASS_TARGETS)
+        ),
+        years=tuple(sorted(grouped)),
+        force=True,
+        verbose=verbose,
+        ticker_scope=TickerScope.EXPLICIT,
+        modules=(CAPITAL_MODULE,),
+        call_plan=call_plan,
+        capital_subclass_targets=grouped,
+    )
+
+
 def _years_to_sweep(
     year: int | None, from_year: int | None, to_year: int | None
 ) -> tuple[int | None, ...]:
@@ -788,6 +846,7 @@ def _build_data_source(
     artifact_store: SourceArtifactStore | None = None,
     validation_reporter: BatchValidationReporter | None = None,
     reused_root_recovery: B3ReusedRootRecovery | None = None,
+    capital_subclass_targets: tuple[CapitalSubclassBackfillTarget, ...] = (),
 ) -> RoutedDataSource:
     """Build the raw source: CVM's archives, with B3's endpoints routed per module.
 
@@ -808,15 +867,27 @@ def _build_data_source(
         validation_reporter=validation_reporter,
     )
     # The share counts live in a different CVM archive (FRE), keyed by CNPJ.
-    capital = CvmCapitalSource(
-        http,
-        ticker_to_cnpj,
-        year=cvm_year,
-        cache_dir=settings.cvm_cache_dir,
-        ticker_to_code=ticker_to_code,
-        artifact_store=artifact_store,
-        validation_reporter=validation_reporter,
-    )
+    capital: RawDataSource
+    if capital_subclass_targets:
+        if artifact_store is None:
+            raise ValueError("CAPITAL replay requires an artifact store")
+        capital = _capital_subclass_source(
+            settings,
+            http,
+            capital_subclass_targets,
+            artifact_store=artifact_store,
+            validation_reporter=validation_reporter,
+        )
+    else:
+        capital = CvmCapitalSource(
+            http,
+            ticker_to_cnpj,
+            year=cvm_year,
+            cache_dir=settings.cvm_cache_dir,
+            ticker_to_code=ticker_to_code,
+            artifact_store=artifact_store,
+            validation_reporter=validation_reporter,
+        )
     # ...and the statements ZIP has a composition of its own, which is the only
     # place treasury shares are filed. Also keyed by CNPJ, not by CD_CVM.
     treasury = CvmTreasurySource(
@@ -872,6 +943,32 @@ def _build_data_source(
     )
 
 
+def _capital_subclass_source(
+    settings: Settings,
+    http: httpx.AsyncClient,
+    targets: tuple[CapitalSubclassBackfillTarget, ...],
+    *,
+    artifact_store: SourceArtifactStore,
+    validation_reporter: BatchValidationReporter | None = None,
+) -> AuditedCapitalSubclassSource:
+    """Build one exact-year replay source from the immutable #303 manifest."""
+    years = {target.year for target in targets}
+    artifact_ids = {target.artifact_id for target in targets}
+    if len(years) != 1 or len(artifact_ids) != 1:
+        raise ValueError("one CAPITAL replay source requires one year and artifact")
+    source = CvmCapitalSource(
+        http,
+        {target.ticker: target.cnpj for target in targets},
+        year=next(iter(years)),
+        cache_dir=settings.cvm_cache_dir,
+        ticker_to_code={target.ticker: target.cd_cvm for target in targets},
+        artifact_store=artifact_store,
+        artifact_id=next(iter(artifact_ids)),
+        validation_reporter=validation_reporter,
+    )
+    return AuditedCapitalSubclassSource(source, targets)
+
+
 async def _run_ingest(
     tickers: tuple[str, ...],
     *,
@@ -887,6 +984,8 @@ async def _run_ingest(
     retry_failure_ids: dict[tuple[str, str, int], str] | None = None,
     identity_year: int | None = None,
     reused_root_recovery: bool = False,
+    capital_subclass_targets: Mapping[int, tuple[CapitalSubclassBackfillTarget, ...]]
+    | None = None,
 ) -> int:
     settings = get_settings()
     tickers = tuple(dict.fromkeys(tickers))
@@ -997,6 +1096,11 @@ async def _run_ingest(
                         failure_service=failure_service,
                         retry_failure_ids=retry_failure_ids,
                         concurrency=concurrency,
+                        capital_subclass_targets=(
+                            capital_subclass_targets.get(effective_year, ())
+                            if capital_subclass_targets is not None
+                            else ()
+                        ),
                     )
                 )
 
@@ -1078,6 +1182,7 @@ async def _ingest_one_year(
     failure_service: IngestionFailureService,
     retry_failure_ids: dict[tuple[str, str, int], str],
     concurrency: int,
+    capital_subclass_targets: tuple[CapitalSubclassBackfillTarget, ...],
 ) -> YearPass:
     """Collect one CVM archive year (or the single configured pass).
 
@@ -1086,7 +1191,11 @@ async def _ingest_one_year(
     """
     # Resolve the registrant keys up front: an unknown ticker is a user error
     # rejected before any statement download (#60), not a 404-skip.
-    if whole_exchange:
+    if capital_subclass_targets:
+        code_map = {target.ticker: target.cd_cvm for target in capital_subclass_targets}
+        cnpj_map = {target.ticker: target.cnpj for target in capital_subclass_targets}
+        wanted = tuple(target.ticker for target in capital_subclass_targets)
+    elif whole_exchange:
         code_map = {c.ticker: c.cd_cvm for c in companies}
         cnpj_map = {c.ticker: c.cnpj for c in companies}
         wanted = tuple(c.ticker for c in companies)
@@ -1118,6 +1227,7 @@ async def _ingest_one_year(
         artifact_store=artifact_store,
         validation_reporter=validation_reporter,
         reused_root_recovery=recovery,
+        capital_subclass_targets=capital_subclass_targets,
     )
     artifacts: dict[str, SourceArtifact | None] = {}
     if whole_exchange and not force:
@@ -1474,6 +1584,7 @@ async def _security_resolvers(
     SiblingCodesResolver,
     RegistrantNamesResolver,
     Callable[[str], tuple[TickerCodeEvidence, ...]],
+    PeriodShareClassesResolver,
 ]:
     """What the cadastre knows about a security's identity, in two answers.
 
@@ -1498,6 +1609,7 @@ async def _security_resolvers(
         await history.resolver(),
         await history.names(),
         await history.historical_codes(),
+        await history.period_share_classes(),
     )
 
 
@@ -1774,7 +1886,12 @@ async def _run_analyze(
             # that must not disagree about it: the price averages the joined
             # sessions and the base-change reader dates the actions filed under
             # the codes those sessions came from (ADR 0042).
-            siblings, names, historical_codes = await _security_resolvers(
+            (
+                siblings,
+                names,
+                historical_codes,
+                period_share_classes,
+            ) = await _security_resolvers(
                 settings,
                 http,
                 artifact_store=artifact_store,
@@ -1811,6 +1928,7 @@ async def _run_analyze(
                     issuer_resolver=_issuer_resolver(identities),
                     per_share_resolver=_per_share_resolver(identities),
                     per_share_classes_resolver=_per_share_classes_resolver(identities),
+                    period_share_classes_resolver=period_share_classes,
                     per_share_rights_reason_resolver=_per_share_rights_reason_resolver(
                         identities
                     ),

@@ -430,8 +430,9 @@ class StandardizedFinancials:
     eps_diluted: Decimal | None = None
     eps_basic_null_reason: NullReason | None = None
     eps_diluted_null_reason: NullReason | None = None
-    # Only present when the filed class leaves reconcile to one base result and
-    # can therefore support strict TTM weighted-denominator assembly.
+    # Only present when filed class evidence supports a strict TTM weighted
+    # denominator: either every class reconciles to one base result, or a
+    # period-proved generic PN result identifies this plain PNA/PNB security.
     cpc41: Cpc41Disclosure | None = None
     # The consolidated totals the controllers' figures above are sliced from —
     # minority interest included (DRE 3.11, BPP 2.03 as filed). Carried alongside
