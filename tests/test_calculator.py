@@ -246,6 +246,7 @@ def test_bank_computes_the_ratios_its_schema_supports() -> None:
     assert ind.gross_margin == Decimal("0.4")  # 1200 / 3000 — the spread
     for name in (
         "ebit_margin",
+        "ebitda_cagr_5y",
         "ebit_cagr_5y",
         "price_to_ebit",
         "fcf",
@@ -493,10 +494,11 @@ def test_bank_null_reasons_name_each_cause() -> None:
         assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
     for name in ("net_interest_margin", "efficiency_ratio", "cost_of_risk"):
         assert ind.null_reasons[name] is (NullReason.MISSING_REGULATORY_DISCLOSURE)
-    # Cause 2 — the bank chart cannot isolate a current-only investment bucket;
-    # that headline is named unmapped rather than guessed from all financial assets.
+    # The bank chart cannot isolate a current-only investment bucket because it
+    # carries no current/non-current split. The headline is therefore
+    # inapplicable, rather than a mapping gap guessed from all financial assets.
     assert ind.null_reasons["current_financial_investments"] is (
-        NullReason.SOURCE_ACCOUNT_UNMAPPED
+        NullReason.INAPPLICABLE_REGIME
     )
     # Cause 3 — upstream inputs, each named individually:
     assert ind.null_reasons["eps"] is NullReason.MISSING_CPC41_DISCLOSURE
@@ -537,16 +539,18 @@ def test_insurer_null_reasons_split_by_regime() -> None:
     assert ind.null_reasons["gross_margin"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["ebit_margin"] is NullReason.INAPPLICABLE_REGIME
     assert ind.null_reasons["ebitda_margin"] is NullReason.INAPPLICABLE_REGIME
-    # The same debt-evidence failure propagates through every dependent value;
-    # neither missing cash nor missing EBITDA may disguise the upstream cause.
+    assert ind.null_reasons["ebitda_cagr_5y"] is NullReason.INAPPLICABLE_REGIME
+    # The debt-evidence failure propagates through applicable debt values. The
+    # generic EBITDA family remains a category error for the insurance regime,
+    # regardless of whether the debt perimeter is complete.
     for name in (
         "net_debt",
-        "net_debt_to_ebitda",
         "debt_to_equity",
         "enterprise_value",
-        "ev_ebitda",
     ):
         assert ind.null_reasons[name] is NullReason.INCOMPLETE_DEBT_COVERAGE
+    for name in ("net_debt_to_ebitda", "ev_ebitda"):
+        assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
     # Statutory corporate ROIC is inapplicable outright to the insurance regime,
     # so applicability still precedes the incomplete input.
     assert ind.null_reasons["roic_statutory"] is NullReason.INAPPLICABLE_REGIME
@@ -612,10 +616,8 @@ def test_insurer_evidenced_zero_debt_can_publish_net_cash() -> None:
     assert ind.net_debt_to_ebit == Decimal(-8000) / Decimal(3000)
     assert ind.debt_to_equity == 0
     assert ind.ev_ebit == Decimal(22000) / Decimal(3000)
-    # EBITDA itself remains deliberately unmapped for this filing regime.
-    assert ind.null_reasons["net_debt_to_ebitda"] is (
-        NullReason.SOURCE_ACCOUNT_UNMAPPED
-    )
+    # Generic EBITDA is not comparable under the insurance filing regime.
+    assert ind.null_reasons["net_debt_to_ebitda"] is (NullReason.INAPPLICABLE_REGIME)
 
 
 def test_insurer_explicit_debt_uses_the_same_formula_as_a_corporate_filer() -> None:
