@@ -34,12 +34,13 @@ import httpx
 
 from smaug.portfolio.domain.securities import (
     FIRST_FCA_YEAR,
+    PeriodShareClassesResolver,
     RegistrantNamesResolver,
     SiblingCodesResolver,
     name_key,
     share_class_suffix,
 )
-from smaug.portfolio.domain.share_classes import TickerCodeEvidence
+from smaug.portfolio.domain.share_classes import PerShareClass, TickerCodeEvidence
 from smaug.portfolio.infrastructure.cvm_registry import CVM_FCA_BASE_URL
 from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.download import Sleeper, download_zip
@@ -114,6 +115,15 @@ class CvmSecurityHistory:
             return index.codes_by_ticker.get(ticker.strip().upper(), ())
 
         return codes_of
+
+    async def period_share_classes(self) -> PeriodShareClassesResolver:
+        """Return the plain equity classes each registrant filed in one FCA year."""
+        index = await self._ensure_loaded()
+
+        def classes_of(cnpj: str, year: int) -> tuple[PerShareClass, ...]:
+            return index.classes_by_period.get((cnpj, year), ())
+
+        return classes_of
 
     async def _ensure_loaded(self) -> _Index:
         cached = self._index
@@ -197,6 +207,7 @@ class _Index:
     registrant: dict[str, str]  # code -> CNPJ
     names: dict[str, frozenset[str]]  # CNPJ -> every name it has filed
     codes_by_ticker: dict[str, tuple[TickerCodeEvidence, ...]]
+    classes_by_period: dict[tuple[str, int], tuple[PerShareClass, ...]]
 
 
 def _build_index(archives: Sequence[tuple[int, Path]]) -> _Index:
@@ -205,11 +216,20 @@ def _build_index(archives: Sequence[tuple[int, Path]]) -> _Index:
     observed: dict[tuple[str, str], dict[str, set[int]]] = {}
     registrant: dict[str, str] = {}
     names: dict[str, set[str]] = {}
+    classes_by_period: dict[tuple[str, int], set[PerShareClass]] = {}
     for year, path in archives:
         for cnpj, code in _codes(year, path):
             suffix = share_class_suffix(code)
             if suffix is None:
                 continue
+            classes_by_period.setdefault((cnpj, year), set()).add(
+                {
+                    "3": PerShareClass.ORDINARY,
+                    "4": PerShareClass.PREFERRED,
+                    "5": PerShareClass.PREFERRED_A,
+                    "6": PerShareClass.PREFERRED_B,
+                }[suffix]
+            )
             grouped.setdefault((cnpj, suffix), set()).add(code)
             observed.setdefault((cnpj, suffix), {}).setdefault(code, set()).add(year)
             registrant.setdefault(code, cnpj)
@@ -238,6 +258,10 @@ def _build_index(archives: Sequence[tuple[int, Path]]) -> _Index:
         registrant=registrant,
         names={cnpj: frozenset(filed) for cnpj, filed in names.items()},
         codes_by_ticker=codes_by_ticker,
+        classes_by_period={
+            key: tuple(sorted(classes, key=lambda item: item.value))
+            for key, classes in classes_by_period.items()
+        },
     )
 
 

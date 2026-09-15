@@ -38,7 +38,7 @@ from smaug.analysis.infrastructure.succession import (
     SuccessionPriceProvider,
 )
 from smaug.portfolio.domain.securities import confirms_name, name_key
-from smaug.portfolio.domain.share_classes import TickerCodeEvidence
+from smaug.portfolio.domain.share_classes import PerShareClass, TickerCodeEvidence
 from smaug.portfolio.infrastructure.cvm_securities import CvmSecurityHistory
 
 TODAY = date(2026, 6, 1)
@@ -782,6 +782,46 @@ async def test_historical_code_evidence_keeps_the_fca_years(
         TickerCodeEvidence("ARZZ3", (2018,)),
         TickerCodeEvidence("AZZA3", (2019,)),
     )
+
+
+async def test_period_share_classes_keep_each_fca_years_economic_rights(
+    tmp_path: Path,
+) -> None:
+    cnpj = "16.590.234/0001-76"
+    _fca_archive(
+        tmp_path,
+        2018,
+        [
+            [cnpj, "TEST3", "Ações Ordinárias", "1"],
+            [cnpj, "TEST5", "Ações Preferenciais", "1"],
+        ],
+    )
+    _fca_archive(
+        tmp_path,
+        2019,
+        [
+            [cnpj, "TEST3", "Ações Ordinárias", "1"],
+            [cnpj, "TEST5", "Ações Preferenciais", "1"],
+            [cnpj, "TEST6", "Ações Preferenciais", "1"],
+        ],
+    )
+
+    async with httpx.AsyncClient() as http:
+        history = CvmSecurityHistory(
+            http, through=2019, since=2018, cache_dir=str(tmp_path)
+        )
+        classes = await history.period_share_classes()
+
+    assert classes(cnpj, 2018) == (
+        PerShareClass.ORDINARY,
+        PerShareClass.PREFERRED_A,
+    )
+    assert classes(cnpj, 2019) == (
+        PerShareClass.ORDINARY,
+        PerShareClass.PREFERRED_A,
+        PerShareClass.PREFERRED_B,
+    )
+    assert classes(cnpj, 2017) == ()
 
 
 async def test_the_names_a_registrant_filed_come_from_every_year(

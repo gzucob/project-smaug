@@ -590,6 +590,97 @@ def test_standardize_preserves_unresolved_security_class_as_its_own_blocker() ->
     assert result.eps_basic_null_reason is NullReason.UNRESOLVED_SHARE_CLASS
 
 
+def test_standardize_maps_generic_pn_to_the_only_filed_preferred_class() -> None:
+    filing = {
+        "DRE": {
+            "accounts": [
+                _acc("3.99.01.01", "ON", "1.00"),
+                _acc("3.99.01.02", "PN", "1.20"),
+                _acc("3.99.02.01", "ON", "0.90"),
+                _acc("3.99.02.02", "PN", "1.10"),
+            ]
+        }
+    }
+
+    result = standardize(
+        filing,
+        Sector.UTILITY,
+        date(2025, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.PREFERRED_A),),
+        period_share_classes=(
+            PerShareClass.ORDINARY,
+            PerShareClass.PREFERRED_A,
+        ),
+    )
+
+    assert result.eps_basic == Decimal("1.20")
+    assert result.eps_basic_null_reason is None
+    assert result.eps_diluted == Decimal("1.10")
+    assert result.eps_diluted_null_reason is None
+    assert result.cpc41 is not None
+    assert result.cpc41.basic_base_eps == Decimal("1.20")
+    # A different diluted result signals potential-share terms and stays out of
+    # the weighted-denominator path even though its class selection is valid.
+    assert result.cpc41.diluted_base_eps is None
+
+
+def test_standardize_rejects_generic_pn_for_multiple_preferred_classes() -> None:
+    filing = {
+        "DRE": {
+            "accounts": [
+                _acc("3.99.01.01", "ON", "1.00"),
+                _acc("3.99.01.02", "PN", "1.20"),
+            ]
+        }
+    }
+    period_classes = (
+        PerShareClass.ORDINARY,
+        PerShareClass.PREFERRED_A,
+        PerShareClass.PREFERRED_B,
+    )
+
+    for target in (PerShareClass.PREFERRED_A, PerShareClass.PREFERRED_B):
+        result = standardize(
+            filing,
+            Sector.INDUSTRY,
+            date(2025, 12, 31),
+            per_share_components=(UnitComponent(1, target),),
+            period_share_classes=period_classes,
+        )
+
+        assert result.eps_basic is None
+        assert result.eps_basic_null_reason is NullReason.MISSING_ECONOMIC_RIGHTS
+        assert result.cpc41 is None
+
+
+def test_standardize_maps_generic_pn_when_other_subclasses_file_same_result() -> None:
+    filing = {
+        "DRE": {
+            "accounts": [
+                _acc("3.99.01.01", "PN", "1.20"),
+                _acc("3.99.01.02", "PNB", "1.20"),
+            ]
+        }
+    }
+
+    result = standardize(
+        filing,
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.PREFERRED_A),),
+        period_share_classes=(
+            PerShareClass.ORDINARY,
+            PerShareClass.PREFERRED_A,
+            PerShareClass.PREFERRED_B,
+        ),
+    )
+
+    assert result.eps_basic == Decimal("1.20")
+    assert result.eps_basic_null_reason is None
+    assert result.cpc41 is not None
+    assert result.cpc41.basic_base_eps == Decimal("1.20")
+
+
 def test_standardize_bank_reads_its_own_chart_of_accounts() -> None:
     # The codes and labels below are the real ones in the raw mirror, from the
     # bank chart of accounts. The loan-loss provision is deducted *inside* 3.02

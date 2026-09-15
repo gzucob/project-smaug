@@ -50,6 +50,10 @@ from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
 from smaug.portfolio.domain.company import RegistrantResolver
 from smaug.portfolio.domain.sectors import Sector
+from smaug.portfolio.domain.securities import (
+    PeriodShareClassesResolver,
+    no_period_share_classes,
+)
 from smaug.portfolio.domain.share_classes import PerShareClass, UnitComponent
 
 _STATEMENTS = ("BPA", "BPP", "DRE", "DFC", "DMPL")
@@ -1753,6 +1757,7 @@ def _filed_per_share(
     prefix: str,
     components: Sequence[UnitComponent],
     *,
+    period_classes: Sequence[PerShareClass] = (),
     missing_rights_reason: NullReason = NullReason.MISSING_ECONOMIC_RIGHTS,
 ) -> tuple[Decimal | None, NullReason | None]:
     """One filed CPC 41 result for a share class or composed unit.
@@ -1773,11 +1778,56 @@ def _filed_per_share(
 
     total = Decimal(0)
     for component in components:
-        value = values.get(component.per_share_class)
+        value = _per_share_value(values, component.per_share_class, period_classes)
         if value is None:
             return None, missing_rights_reason
         total += Decimal(component.quantity) * value
     return total, None
+
+
+def _per_share_value(
+    values: Mapping[PerShareClass, Decimal],
+    target: PerShareClass,
+    period_classes: Sequence[PerShareClass],
+) -> Decimal | None:
+    """Select a generic PN value only with filed period-class proof.
+
+    An exact CPC 41 label always wins. A generic PN can stand for PNA/PNB only
+    when that FCA year names one preferred class, or when every other relevant
+    preferred subclass files the same result as PN. This is the bounded rule
+    audited in #304; it never infers rights from a ticker suffix alone.
+    """
+    exact = values.get(target)
+    if exact is not None:
+        return exact
+    return _generic_preferred_value(values, target, period_classes)
+
+
+def _generic_preferred_value(
+    values: Mapping[PerShareClass, Decimal],
+    target: PerShareClass,
+    period_classes: Sequence[PerShareClass],
+) -> Decimal | None:
+    """Return a generic PN value only when it is the audited subclass match."""
+    generic = values.get(PerShareClass.PREFERRED)
+    if generic is None or target not in {
+        PerShareClass.PREFERRED_A,
+        PerShareClass.PREFERRED_B,
+    }:
+        return None
+
+    preferred = {item for item in period_classes if item is not PerShareClass.ORDINARY}
+    if preferred == {target}:
+        return generic
+
+    other_subclasses = preferred - {target, PerShareClass.PREFERRED}
+    if (
+        PerShareClass.PREFERRED not in preferred
+        and other_subclasses
+        and all(values.get(other) == generic for other in other_subclasses)
+    ):
+        return generic
+    return None
 
 
 def _filed_per_share_values(
@@ -1816,6 +1866,7 @@ def _reconciled_cpc41(
     dre: Accounts,
     components: Sequence[UnitComponent],
     company_classes: Sequence[PerShareClass],
+    period_classes: Sequence[PerShareClass],
 ) -> Cpc41Disclosure | None:
     """Prove that a filed class result can support strict TTM assembly.
 
@@ -1831,37 +1882,61 @@ def _reconciled_cpc41(
     to basic EPS. Otherwise potential-share terms are present but unavailable in
     the structured mirror, so a diluted TTM result must remain null.
     """
-    if not components or not company_classes:
+    if not components:
         return None
 
     classes = tuple(dict.fromkeys(company_classes))
     basic_values, _basic_reason = _filed_per_share_values(dre, "3.99.01")
-    if basic_values is None or set(basic_values) != set(classes):
-        return None
-    basic_bases = {basic_values[per_share_class] for per_share_class in classes}
-    if len(basic_bases) != 1:
-        return None
-
     multiplier = sum(
         (Decimal(component.quantity) for component in components), Decimal(0)
     )
     if multiplier <= 0:
         return None
-
-    basic_base = next(iter(basic_bases))
-    diluted_base: Decimal | None = None
     diluted_values, _diluted_reason = _filed_per_share_values(dre, "3.99.02")
-    if diluted_values is not None and set(diluted_values) == set(classes):
-        diluted_bases = {diluted_values[per_share_class] for per_share_class in classes}
-        if len(diluted_bases) == 1:
-            candidate = next(iter(diluted_bases))
-            if candidate == basic_base:
-                diluted_base = candidate
+
+    if classes and basic_values is not None and set(basic_values) == set(classes):
+        basic_bases = {basic_values[per_share_class] for per_share_class in classes}
+        if len(basic_bases) == 1:
+            basic_base = next(iter(basic_bases))
+            diluted_base: Decimal | None = None
+            if diluted_values is not None and set(diluted_values) == set(classes):
+                diluted_bases = {
+                    diluted_values[per_share_class] for per_share_class in classes
+                }
+                if len(diluted_bases) == 1:
+                    candidate = next(iter(diluted_bases))
+                    if candidate == basic_base:
+                        diluted_base = candidate
+            return Cpc41Disclosure(
+                basic_base_eps=basic_base,
+                diluted_base_eps=diluted_base,
+                security_multiplier=multiplier,
+            )
+
+    # The #304 exception is deliberately narrower than general class-result
+    # reconciliation.  A plain PNA/PNB security may use the filed generic PN
+    # result when period FCA evidence proves that exact subclass assignment.
+    # Its filed EPS yields a security-equivalent weighted denominator for TTM;
+    # units and exact-but-unequal multi-class disclosures remain on the existing
+    # strict-null path.
+    if len(components) != 1 or components[0].quantity != 1 or basic_values is None:
+        return None
+    target = components[0].per_share_class
+    mapped_basic = _generic_preferred_value(basic_values, target, period_classes)
+    if mapped_basic is None:
+        return None
+    mapped_diluted = None
+    if diluted_values is not None:
+        mapped_candidate = _generic_preferred_value(
+            diluted_values, target, period_classes
+        )
+        if mapped_candidate == mapped_basic:
+            mapped_diluted = mapped_candidate
 
     return Cpc41Disclosure(
-        basic_base_eps=basic_base,
-        diluted_base_eps=diluted_base,
-        security_multiplier=multiplier,
+        basic_base_eps=mapped_basic,
+        diluted_base_eps=mapped_diluted,
+        security_multiplier=Decimal(1),
     )
 
 
@@ -1873,6 +1948,7 @@ def standardize(
     per_share_components: Sequence[UnitComponent] = (),
     per_share_accounts: Accounts | None = None,
     per_share_classes: Sequence[PerShareClass] = (),
+    period_share_classes: Sequence[PerShareClass] = (),
     per_share_rights_reason: NullReason = NullReason.MISSING_ECONOMIC_RIGHTS,
 ) -> StandardizedFinancials:
     """Build one period's ``StandardizedFinancials`` from its CVM statements.
@@ -1893,16 +1969,21 @@ def standardize(
         cpc41_accounts,
         "3.99.01",
         per_share_components,
+        period_classes=period_share_classes,
         missing_rights_reason=per_share_rights_reason,
     )
     eps_diluted, eps_diluted_reason = _filed_per_share(
         cpc41_accounts,
         "3.99.02",
         per_share_components,
+        period_classes=period_share_classes,
         missing_rights_reason=per_share_rights_reason,
     )
     cpc41_disclosure = _reconciled_cpc41(
-        cpc41_accounts, per_share_components, per_share_classes
+        cpc41_accounts,
+        per_share_components,
+        per_share_classes,
+        period_share_classes,
     )
 
     # Lines that sit at the same code under every regime.
@@ -2215,6 +2296,9 @@ class MongoFundamentalsReader:
         issuer_resolver: IssuerResolver = _no_issuer,
         per_share_resolver: PerShareResolver = _no_per_share_components,
         per_share_classes_resolver: PerShareClassesResolver = _no_per_share_classes,
+        period_share_classes_resolver: PeriodShareClassesResolver = (
+            no_period_share_classes
+        ),
         per_share_rights_reason_resolver: PerShareRightsReasonResolver = (
             _missing_economic_rights
         ),
@@ -2230,6 +2314,7 @@ class MongoFundamentalsReader:
         self._issuer = issuer_resolver
         self._per_share = per_share_resolver
         self._per_share_classes = per_share_classes_resolver
+        self._period_share_classes = period_share_classes_resolver
         self._per_share_rights_reason = per_share_rights_reason_resolver
 
     async def history(self, ticker: str) -> list[StandardizedFinancials]:
@@ -2254,6 +2339,8 @@ class MongoFundamentalsReader:
         components = self._per_share(ticker)
         company_classes = self._per_share_classes(ticker)
         rights_reason = self._per_share_rights_reason(ticker)
+        identity = self._issuer(ticker)
+        period_cnpj = (identity.cnpj or "") if identity is not None else ""
 
         by_period: dict[str, dict[str, Any]] = {}
         doc_type: dict[str, str | None] = {}
@@ -2286,6 +2373,7 @@ class MongoFundamentalsReader:
             if module == "DRE":
                 period_end = payload.get("period_end_date")
                 per_share_ref = period_end if isinstance(period_end, str) else ref
+                per_share_year = int(str(per_share_ref)[:4])
                 balance = payload.get("balance_type")
                 version = payload.get("version")
                 per_share_rank = (
@@ -2300,12 +2388,18 @@ class MongoFundamentalsReader:
                     accounts,
                     "3.99.01",
                     components,
+                    period_classes=self._period_share_classes(
+                        period_cnpj, per_share_year
+                    ),
                     missing_rights_reason=rights_reason,
                 )
                 diluted, _diluted_reason = _filed_per_share(
                     accounts,
                     "3.99.02",
                     components,
+                    period_classes=self._period_share_classes(
+                        period_cnpj, per_share_year
+                    ),
                     missing_rights_reason=rights_reason,
                 )
                 # An empty comparative is not a retrospective restatement and
@@ -2340,7 +2434,6 @@ class MongoFundamentalsReader:
             if ref in parent_dmpl:
                 modules["DMPL"] = parent_dmpl[ref]
 
-        identity = self._issuer(ticker)
         fallback_cd_cvm = self._registrant(ticker)
         loaded: list[tuple[str | None, StandardizedFinancials]] = []
         for ref, modules in sorted(by_period.items()):
@@ -2388,6 +2481,9 @@ class MongoFundamentalsReader:
                     per_share_by_period.get(ref, modules.get("DRE"))
                 ),
                 per_share_classes=company_classes,
+                period_share_classes=self._period_share_classes(
+                    cnpj or "", date.fromisoformat(ref).year
+                ),
             )
             evidence = financials.debt_evidence
             if evidence is not None:

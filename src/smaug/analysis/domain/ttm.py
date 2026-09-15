@@ -133,10 +133,11 @@ def _weighted_period(
 ) -> _WeightedPeriod | None:
     """Recover a filed period's weighted denominator without using closing shares.
 
-    ``net_income / CPC41 EPS`` is an aggregate weighted share count only after
-    the mapper has proved that every economic class has the same result. The
-    domain object carries that proof in ``cpc41``; a missing or zero result is
-    therefore a strict null rather than an estimate.
+    ``net_income / CPC41 EPS`` is a usable weighted denominator only after the
+    mapper has proved either a common issuer base or a security-equivalent base
+    for one period-identified preferred subclass. The domain object carries
+    that proof in ``cpc41``; a missing or zero result is therefore a strict null
+    rather than an estimate.
     """
     disclosure = period.cpc41
     if disclosure is None or disclosure.security_multiplier is None:

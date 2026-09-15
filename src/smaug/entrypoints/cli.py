@@ -153,6 +153,7 @@ from smaug.portfolio.domain.fca_placeholders import (
 from smaug.portfolio.domain.provenance import FCA_SOURCE, FcaSnapshotProvenance
 from smaug.portfolio.domain.sectors import Sector, sector_from_cvm
 from smaug.portfolio.domain.securities import (
+    PeriodShareClassesResolver,
     RegistrantNamesResolver,
     SiblingCodesResolver,
 )
@@ -1583,6 +1584,7 @@ async def _security_resolvers(
     SiblingCodesResolver,
     RegistrantNamesResolver,
     Callable[[str], tuple[TickerCodeEvidence, ...]],
+    PeriodShareClassesResolver,
 ]:
     """What the cadastre knows about a security's identity, in two answers.
 
@@ -1607,6 +1609,7 @@ async def _security_resolvers(
         await history.resolver(),
         await history.names(),
         await history.historical_codes(),
+        await history.period_share_classes(),
     )
 
 
@@ -1883,7 +1886,12 @@ async def _run_analyze(
             # that must not disagree about it: the price averages the joined
             # sessions and the base-change reader dates the actions filed under
             # the codes those sessions came from (ADR 0042).
-            siblings, names, historical_codes = await _security_resolvers(
+            (
+                siblings,
+                names,
+                historical_codes,
+                period_share_classes,
+            ) = await _security_resolvers(
                 settings,
                 http,
                 artifact_store=artifact_store,
@@ -1920,6 +1928,7 @@ async def _run_analyze(
                     issuer_resolver=_issuer_resolver(identities),
                     per_share_resolver=_per_share_resolver(identities),
                     per_share_classes_resolver=_per_share_classes_resolver(identities),
+                    period_share_classes_resolver=period_share_classes,
                     per_share_rights_reason_resolver=_per_share_rights_reason_resolver(
                         identities
                     ),
