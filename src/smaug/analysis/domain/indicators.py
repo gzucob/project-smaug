@@ -74,6 +74,10 @@ class NullReason(StrEnum):
       this means that fewer than six comparable annual filings exist or that the
       sequence has a gap. The promised rate does not exist; the window is never
       shortened or interpolated to manufacture one.
+    * ``PRIOR_PERIOD_OUTSIDE_SOURCE_HISTORY`` — the immediately preceding
+      comparable exercise predates CVM's structured-statement history. The
+      primary filing source cannot supply it, as distinct from a mirrored period
+      that is missing and can be reacquired.
     * ``ZERO_DENOMINATOR`` — every input is present, but the ratio is undefined
       because its denominator is zero (a holding filing revenue = 0 nulls
       P/Receita and the margins; a year with ~zero earnings nulls P/E, payout).
@@ -116,6 +120,7 @@ class NullReason(StrEnum):
     MISSING_CASH_DISTRIBUTION_VALUE = "missing_cash_distribution_value"
     MISSING_PRIOR_PERIOD = "missing_prior_period"
     INSUFFICIENT_COMPARABLE_HISTORY = "insufficient_comparable_history"
+    PRIOR_PERIOD_OUTSIDE_SOURCE_HISTORY = "prior_period_outside_source_history"
     ZERO_DENOMINATOR = "zero_denominator"
     NON_POSITIVE_ENDPOINT = "non_positive_endpoint"
 
@@ -174,6 +179,9 @@ NULL_DISPOSITION_BY_REASON = MappingProxyType(
         ),
         NullReason.MISSING_CPC41_DISCLOSURE: NullDisposition.PRIMARY_SOURCE_UNAVAILABLE,
         NullReason.MISSING_WEIGHTED_AVERAGE_SHARES: (
+            NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
+        ),
+        NullReason.PRIOR_PERIOD_OUTSIDE_SOURCE_HISTORY: (
             NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
         ),
         # These are source, mapping, identity, continuity, or acquisition gaps

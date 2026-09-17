@@ -170,6 +170,9 @@ _CLOSED_YEAR_SHARE_BASIS = "cvm_year_end_outstanding_current_base"
 _LIQUIDITY_BASIS = "cpc03_cash_and_cash_equivalents"
 _DEBT_BASIS = "cvm_bpp_explicit_interest_bearing"
 _ROIC_TAX_BASIS = "br_statutory_34pct"
+# CVM's public structured DFP/ITR series begins in 2010. A 2010 growth row
+# cannot acquire a comparable 2009 statement from the authoritative source.
+_FIRST_CVM_STRUCTURED_YEAR = 2010
 
 
 def _mapping_null_reason(
@@ -241,11 +244,12 @@ def _utc_now() -> datetime:
 
 
 def _prior_year_annual(
-    annuals: list[StandardizedFinancials], year: int
+    annuals: list[StandardizedFinancials], reference_date: date
 ) -> StandardizedFinancials | None:
-    """The closed-year DFP one year before ``year`` — closed-view YoY base."""
+    """The DFP at the exact prior fiscal endpoint — closed-view YoY base."""
+    prior_end = _prior_year_end(reference_date)
     for annual in annuals:
-        if annual.reference_date.year == year - 1:
+        if annual.reference_date == prior_end:
             return annual
     return None
 
@@ -520,6 +524,9 @@ class AnalyzePortfolioUseCase:
             distribution_start=distribution_start,
             distribution_end=distribution_end,
         )
+        prior_period_reason = await self._prior_period_reason(
+            ticker, current.reference_date, previous
+        )
         return TickerAnalysis(
             ticker=ticker,
             classification=classification,
@@ -528,7 +535,13 @@ class AnalyzePortfolioUseCase:
             # The whole closed series: a compounded rate runs over exercises, and
             # the TTM window is not one (#144), so its CAGR is the one the last
             # closed year carries.
-            indicators=compute(current, previous, market, annuals),
+            indicators=compute(
+                current,
+                previous,
+                market,
+                annuals,
+                prior_period_reason=prior_period_reason,
+            ),
             price=quote.price,
             price_source_code=quote.price_source_code,
             price_source_session=quote.price_source_session,
@@ -563,18 +576,27 @@ class AnalyzePortfolioUseCase:
     ) -> TickerAnalysis:
         """One closed fiscal year, priced on what the shares traded at that year."""
         year = annual.reference_date.year
-        previous = _prior_year_annual(annuals, year)
+        previous = _prior_year_annual(annuals, annual.reference_date)
         market, adjusted_avg = await self._market_for_year(ticker, year)
         # Only the exercises up to and including this one: a 2020 row must be
         # computed from what was knowable in 2020, or its compounded rate would
         # be built from years that had not happened yet (#144).
         elapsed = _annuals_through(annuals, year)
+        prior_period_reason = await self._prior_period_reason(
+            ticker, annual.reference_date, previous
+        )
         return TickerAnalysis(
             ticker=ticker,
             classification=classification,
             reference_date=annual.reference_date,
             computed_at=computed_at,
-            indicators=compute(annual, previous, market, elapsed),
+            indicators=compute(
+                annual,
+                previous,
+                market,
+                elapsed,
+                prior_period_reason=prior_period_reason,
+            ),
             price=market.price,
             price_source_code=market.price_source_code,
             price_source_session=market.price_source_session,
@@ -596,6 +618,27 @@ class AnalyzePortfolioUseCase:
             class_market_values=market.class_market_values,
             capital_provenance=market.capital_provenance,
         )
+
+    async def _prior_period_reason(
+        self,
+        ticker: str,
+        reference_date: date,
+        previous: StandardizedFinancials | None,
+    ) -> NullReason:
+        """Classify a missing one-period comparison from CVM/B3 evidence."""
+        if previous is not None:
+            return NullReason.MISSING_PRIOR_PERIOD
+        prior_year = reference_date.year - 1
+        if reference_date.year <= _FIRST_CVM_STRUCTURED_YEAR:
+            return NullReason.PRIOR_PERIOD_OUTSIDE_SOURCE_HISTORY
+        prices = await self._year_prices(ticker, prior_year)
+        if prices.closing is not None or await self._has_year_sessions(
+            ticker, prior_year
+        ):
+            return NullReason.MISSING_PRIOR_PERIOD
+        if await self._not_yet_traded(ticker, prior_year):
+            return NullReason.INSUFFICIENT_COMPARABLE_HISTORY
+        return NullReason.MISSING_PRIOR_PERIOD
 
     def _counts_null_reason(self, ticker: str, year: int) -> NullReason | None:
         """Read an optional class-count blocker without widening old fakes."""

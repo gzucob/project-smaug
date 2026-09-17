@@ -431,6 +431,7 @@ def _classify(
     history: Sequence[StandardizedFinancials],
     *,
     inapplicable: frozenset[str],
+    prior_period_reason: NullReason,
 ) -> NullReason:
     """Attribute one null indicator to a cause, most-upstream cause first.
 
@@ -482,10 +483,13 @@ def _classify(
             market.cash_distributions_null_reason
             or NullReason.MISSING_CASH_DISTRIBUTIONS
         )
-    if needs.prior is not None and (
-        previous is None or getattr(previous, needs.prior) is None
-    ):
-        return NullReason.MISSING_PRIOR_PERIOD
+    if needs.prior is not None:
+        if previous is None:
+            return prior_period_reason
+        if getattr(previous, needs.prior) is None:
+            if needs.prior in previous.unmapped_fields:
+                return NullReason.SOURCE_ACCOUNT_UNMAPPED
+            return NullReason.SOURCE_ACCOUNT_ABSENT
     return NullReason.ZERO_DENOMINATOR
 
 
@@ -522,6 +526,7 @@ def _null_reasons(
     previous: StandardizedFinancials | None,
     market: MarketData,
     history: Sequence[StandardizedFinancials],
+    prior_period_reason: NullReason,
 ) -> dict[str, NullReason]:
     """Name the cause of every null in ``computed`` (#30).
 
@@ -541,6 +546,7 @@ def _null_reasons(
             market,
             history,
             inapplicable=inapplicable,
+            prior_period_reason=prior_period_reason,
         )
     return reasons
 
@@ -550,6 +556,8 @@ def compute(
     previous: StandardizedFinancials | None,
     market: MarketData,
     history: Sequence[StandardizedFinancials] = (),
+    *,
+    prior_period_reason: NullReason = NullReason.MISSING_PRIOR_PERIOD,
 ) -> Indicators:
     """Compute all applicable indicators for one ticker/period.
 
@@ -715,7 +723,14 @@ def compute(
     indicators = _suppressed(indicators, _inapplicable(f))
     return replace(
         indicators,
-        null_reasons=_null_reasons(indicators, f, previous, market, history),
+        null_reasons=_null_reasons(
+            indicators,
+            f,
+            previous,
+            market,
+            history,
+            prior_period_reason,
+        ),
         source_account_evidence=f.source_account_evidence,
         cpc41_window_provenance=f.cpc41_window_provenance,
         bank_regulatory_provenance=f.bank_regulatory_provenance,
