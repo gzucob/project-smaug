@@ -189,10 +189,6 @@ class CoverageTotals:
     primary_source_unavailable: int
     recoverable_gap: int
     historical_period_does_not_exist: int
-    # ``missing_prior_period`` is a mixed family in the current persisted
-    # contract. It remains in the recoverable disposition map for compatibility
-    # but is not included in the definitive lower bound below.
-    mixed_comparability: int = 0
 
     @property
     def named_nulls(self) -> int:
@@ -209,25 +205,9 @@ class CoverageTotals:
         """Nulls that may be addressed by source or mapping work.
 
         Primary-source disclosure absence and definitive recoverable
-        acquisition/mapping gaps are both missing calculable data.  Inapplicable,
-        mathematical, and unresolved prior-period outcomes are deliberately
-        excluded from this lower-bound measure.
+        acquisition/mapping gaps are both missing calculable data. Inapplicable,
+        mathematical, and legitimate historical outcomes are excluded.
         """
-        return self.missing_or_recoverable_lower_bound
-
-    @property
-    def definitive_recoverable_gap(self) -> int:
-        """Recoverable gaps excluding unresolved prior-period family cells."""
-        return self.recoverable_gap - self.mixed_comparability
-
-    @property
-    def missing_or_recoverable_lower_bound(self) -> int:
-        """Conservative count excluding ambiguous comparability cells."""
-        return self.primary_source_unavailable + self.definitive_recoverable_gap
-
-    @property
-    def missing_or_recoverable_upper_bound(self) -> int:
-        """Upper bound treating every mixed comparability cell as recoverable."""
         return self.primary_source_unavailable + self.recoverable_gap
 
     @property
@@ -254,14 +234,6 @@ class CoverageTotals:
     @property
     def missing_or_recoverable_pct_of_nulls(self) -> float:
         return self.percentage_of_nulls(self.missing_or_recoverable)
-
-    @property
-    def missing_or_recoverable_upper_pct_of_cells(self) -> float:
-        return self.percentage_of_cells(self.missing_or_recoverable_upper_bound)
-
-    @property
-    def missing_or_recoverable_upper_pct_of_nulls(self) -> float:
-        return self.percentage_of_nulls(self.missing_or_recoverable_upper_bound)
 
     @property
     def missing_data_pct_of_cells(self) -> float:
@@ -353,7 +325,7 @@ class DoctorReport:
     def totals(self) -> CoverageTotals:
         """Aggregate cell counts grouped by the stable null disposition."""
         counts: dict[NullDisposition, int] = dict.fromkeys(NullDisposition, 0)
-        mixed = values = unclassified = total = 0
+        values = unclassified = total = 0
         for ticker in self.tickers:
             for exercise in ticker.exercises:
                 for cell in exercise.indicators:
@@ -366,8 +338,6 @@ class DoctorReport:
                         disposition = cell.disposition
                         assert disposition is not None
                         counts[disposition] += 1
-                        if cell.reason is NullReason.MISSING_PRIOR_PERIOD:
-                            mixed += 1
         nulls = total - values
         return CoverageTotals(
             total_cells=total,
@@ -383,7 +353,6 @@ class DoctorReport:
             historical_period_does_not_exist=counts[
                 NullDisposition.HISTORICAL_PERIOD_DOES_NOT_EXIST
             ],
-            mixed_comparability=mixed,
         )
 
     @property
