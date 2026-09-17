@@ -484,6 +484,9 @@ def test_doctor_summary_counts_causes_but_still_names_an_unclassified_null() -> 
     assert "requested=3 persisted=2 no-analysis=1 stale=0 legacy=0" in out
     assert "cells: total=4 values=1 nulls=3" in out
     assert "missing_or_recoverable=2 (66.7% of nulls; 50.0% of all cells)" in out
+    assert "lower_bound=" not in out
+    assert "upper_bound=" not in out
+    assert "mixed_comparability=" not in out
 
 
 def test_doctor_summary_says_so_when_every_null_is_named() -> None:

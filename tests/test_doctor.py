@@ -200,7 +200,7 @@ async def test_doctor_preserves_requested_and_storage_scope_counts() -> None:
     assert repository.scope_tickers == ("PETR4", "TAEE11")
 
 
-def test_doctor_excludes_mixed_prior_periods_from_definitive_missing_bound() -> None:
+def test_doctor_counts_final_prior_period_dispositions_without_bounds() -> None:
     report = DoctorReport(
         tickers=(
             TickerCoverage(
@@ -212,7 +212,17 @@ def test_doctor_excludes_mixed_prior_periods_from_definitive_missing_bound() -> 
                         reference_date=date(2025, 12, 31),
                         indicators=(
                             IndicatorCoverage(
-                                "growth", False, NullReason.MISSING_PRIOR_PERIOD
+                                "source_boundary",
+                                False,
+                                NullReason.PRIOR_PERIOD_OUTSIDE_SOURCE_HISTORY,
+                            ),
+                            IndicatorCoverage(
+                                "pre_listing",
+                                False,
+                                NullReason.INSUFFICIENT_COMPARABLE_HISTORY,
+                            ),
+                            IndicatorCoverage(
+                                "recoverable", False, NullReason.MISSING_PRIOR_PERIOD
                             ),
                         ),
                     ),
@@ -222,11 +232,11 @@ def test_doctor_excludes_mixed_prior_periods_from_definitive_missing_bound() -> 
     )
 
     totals = report.totals
-    assert totals.mixed_comparability == 1
-    assert totals.missing_or_recoverable == 0
-    assert totals.missing_or_recoverable_upper_bound == 1
-    assert totals.missing_or_recoverable_pct_of_nulls == 0.0
-    assert totals.missing_or_recoverable_upper_pct_of_nulls == 100.0
+    assert totals.primary_source_unavailable == 1
+    assert totals.historical_period_does_not_exist == 1
+    assert totals.recoverable_gap == 1
+    assert totals.missing_or_recoverable == 2
+    assert totals.missing_or_recoverable_pct_of_nulls == 100 * 2 / 3
 
 
 async def test_doctor_classifies_value_named_and_unclassified() -> None:
