@@ -1165,6 +1165,7 @@ async def test_a_year_before_the_tickers_first_trade_gets_no_row() -> None:
         reference_date=date(2020, 12, 31),
         sector=Sector.INSURER,
         period_start=date(2020, 1, 1),
+        revenue=Decimal(3000),
         net_income=Decimal(600),
         equity=Decimal(3600),
     )
@@ -1172,6 +1173,7 @@ async def test_a_year_before_the_tickers_first_trade_gets_no_row() -> None:
         reference_date=date(2021, 12, 31),
         sector=Sector.INSURER,
         period_start=date(2021, 1, 1),
+        revenue=Decimal(3500),
         net_income=Decimal(700),
         equity=Decimal(4000),
     )
@@ -1196,6 +1198,119 @@ async def test_a_year_before_the_tickers_first_trade_gets_no_row() -> None:
         a.reference_date.year for a in repo.saved if a.view == "closed_year"
     }
     assert closed_years == {2021}  # 2020 produced no row at all
+    reasons = repo.saved[0].indicators.null_reasons
+    assert reasons["revenue_growth"] is NullReason.INSUFFICIENT_COMPARABLE_HISTORY
+    assert reasons["net_income_growth"] is (NullReason.INSUFFICIENT_COMPARABLE_HISTORY)
+
+
+async def test_first_cvm_structured_year_names_the_source_history_boundary() -> None:
+    annual = StandardizedFinancials(
+        reference_date=date(2010, 12, 31),
+        sector=Sector.INDUSTRY,
+        period_start=date(2010, 1, 1),
+        revenue=Decimal(1000),
+        net_income=Decimal(100),
+    )
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"PETR4": []}, annuals={"PETR4": [annual]}),
+        FakePrice(
+            year_by_symbol_and_year={
+                ("PETR4", 2010): YearPrices(
+                    nominal_avg=Decimal(10), closing=Decimal(10)
+                )
+            }
+        ),
+        repo,
+        FakeShares({2010: _counts(common=800, preferred=400)}),
+        classes_resolver=fake_classes_resolver,
+    )
+
+    await use_case.execute(["PETR4"])
+
+    reasons = repo.saved[0].indicators.null_reasons
+    assert reasons["revenue_growth"] is (NullReason.PRIOR_PERIOD_OUTSIDE_SOURCE_HISTORY)
+    assert reasons["net_income_growth"] is (
+        NullReason.PRIOR_PERIOD_OUTSIDE_SOURCE_HISTORY
+    )
+
+
+async def test_missing_prior_filing_stays_recoverable_when_b3_proves_trading() -> None:
+    annual = StandardizedFinancials(
+        reference_date=date(2021, 12, 31),
+        sector=Sector.INDUSTRY,
+        period_start=date(2021, 1, 1),
+        revenue=Decimal(1000),
+        net_income=Decimal(100),
+    )
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"PETR4": []}, annuals={"PETR4": [annual]}),
+        FakePrice(
+            year_by_symbol_and_year={
+                ("PETR4", 2020): YearPrices(nominal_avg=Decimal(9), closing=Decimal(9)),
+                ("PETR4", 2021): YearPrices(
+                    nominal_avg=Decimal(10), closing=Decimal(10)
+                ),
+            }
+        ),
+        repo,
+        FakeShares({2021: _counts(common=800, preferred=400)}),
+        classes_resolver=fake_classes_resolver,
+    )
+
+    await use_case.execute(["PETR4"])
+
+    reasons = repo.saved[0].indicators.null_reasons
+    assert reasons["revenue_growth"] is NullReason.MISSING_PRIOR_PERIOD
+    assert reasons["net_income_growth"] is NullReason.MISSING_PRIOR_PERIOD
+
+
+async def test_growth_does_not_join_different_fiscal_endpoints() -> None:
+    december = StandardizedFinancials(
+        reference_date=date(2020, 12, 31),
+        sector=Sector.INDUSTRY,
+        period_start=date(2020, 1, 1),
+        revenue=Decimal(800),
+        net_income=Decimal(80),
+    )
+    march = StandardizedFinancials(
+        reference_date=date(2021, 3, 31),
+        sector=Sector.INDUSTRY,
+        period_start=date(2020, 4, 1),
+        revenue=Decimal(1000),
+        net_income=Decimal(100),
+    )
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        FakeReader({"PETR4": []}, annuals={"PETR4": [december, march]}),
+        FakePrice(
+            year_by_symbol_and_year={
+                ("PETR4", 2019): YearPrices(closing=Decimal(8)),
+                ("PETR4", 2020): YearPrices(closing=Decimal(9)),
+                ("PETR4", 2021): YearPrices(closing=Decimal(10)),
+            }
+        ),
+        repo,
+        FakeShares(
+            {
+                2020: _counts(common=800, preferred=400),
+                2021: _counts(common=800, preferred=400),
+            }
+        ),
+        classes_resolver=fake_classes_resolver,
+    )
+
+    await use_case.execute(["PETR4"])
+
+    analysis = next(
+        item for item in repo.saved if item.reference_date == date(2021, 3, 31)
+    )
+    assert analysis.indicators.revenue_growth is None
+    assert analysis.indicators.net_income_growth is None
+    assert analysis.indicators.null_reasons["revenue_growth"] is (
+        NullReason.MISSING_PRIOR_PERIOD
+    )
 
 
 async def test_only_pre_trading_filings_have_a_named_no_analysis_outcome() -> None:

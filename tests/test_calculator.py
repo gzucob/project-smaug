@@ -1007,6 +1007,39 @@ def test_cagr_needs_no_history_to_compute_the_rest() -> None:
     assert ind.roe is not None
 
 
+def test_growth_uses_the_explicit_missing_comparable_period_reason() -> None:
+    current = _closed_year(2010, revenue=Decimal(1000), net_income=Decimal(100))
+
+    ind = compute(
+        current,
+        None,
+        MarketData(),
+        prior_period_reason=NullReason.PRIOR_PERIOD_OUTSIDE_SOURCE_HISTORY,
+    )
+
+    assert ind.null_reasons["revenue_growth"] is (
+        NullReason.PRIOR_PERIOD_OUTSIDE_SOURCE_HISTORY
+    )
+    assert ind.null_reasons["net_income_growth"] is (
+        NullReason.PRIOR_PERIOD_OUTSIDE_SOURCE_HISTORY
+    )
+
+
+def test_growth_attributes_a_missing_prior_account_to_that_filing() -> None:
+    current = _closed_year(2024, revenue=Decimal(1000), net_income=Decimal(100))
+    previous = _closed_year(
+        2023,
+        revenue=None,
+        net_income=None,
+        unmapped_fields=frozenset({"net_income"}),
+    )
+
+    ind = compute(current, previous, MarketData())
+
+    assert ind.null_reasons["revenue_growth"] is NullReason.SOURCE_ACCOUNT_ABSENT
+    assert ind.null_reasons["net_income_growth"] is (NullReason.SOURCE_ACCOUNT_UNMAPPED)
+
+
 def test_balance_sheet_liabilities_exclude_the_minority_interest() -> None:
     # Minority interest is equity, not third-party capital: the liabilities side
     # subtracts the consolidated equity, not the controllers' slice (#149).
