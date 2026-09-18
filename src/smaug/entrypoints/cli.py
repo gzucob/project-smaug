@@ -2637,7 +2637,16 @@ def _format_exercise(exercise: ExerciseCoverage) -> list[str]:
         if cell.has_value:
             continue
         mark = "!!" if cell.is_unclassified else "  "
-        lines.append(f"    {mark} {cell.indicator:<26} {cell.status}")
+        alternative = cell.market_alternative
+        alternative_text = ""
+        if alternative is not None:
+            status = "available" if alternative.has_value else "unavailable"
+            alternative_provenance = ",".join(alternative.provenance)
+            alternative_text = (
+                f" | alternative={alternative.indicator} status={status} "
+                f"basis={alternative.basis} provenance={alternative_provenance}"
+            )
+        lines.append(f"    {mark} {cell.indicator:<26} {cell.status}{alternative_text}")
     provenance = exercise.cpc41_window_provenance
     if provenance is not None:
         periods = ",".join(
@@ -2759,7 +2768,7 @@ def _format_coverage_details(report: DoctorReport) -> list[str]:
     """Render scope, disposition totals, and explicit percentage denominators."""
     scope = report.coverage_scope
     totals = report.totals
-    return [
+    lines = [
         (
             "--- scope --- "
             f"requested={scope.requested_tickers} "
@@ -2801,6 +2810,52 @@ def _format_coverage_details(report: DoctorReport) -> list[str]:
             f"{totals.inapplicable_pct_of_cells:.1f}% of all cells)"
         ),
     ]
+    lines.extend(_format_market_alternative_coverage(report))
+    return lines
+
+
+def _format_market_alternative_coverage(report: DoctorReport) -> list[str]:
+    """Render strict CPC 41 null groups and the persisted market companions."""
+    coverage = report.market_alternative_coverage
+    row_denominator = coverage.basic_eps_blocked_rows
+
+    def row_percentage(count: int) -> str:
+        percentage = 100.0 * count / row_denominator if row_denominator else 0.0
+        return f"{percentage:.1f}%"
+
+    lines = [
+        "    strict CPC 41 null fields: "
+        "with_market_alternative="
+        f"{coverage.strict_null_fields_with_market_alternative} "
+        "without_market_alternative="
+        f"{coverage.strict_null_fields_without_market_alternative} "
+        "legitimate_mathematical_or_historical="
+        f"{coverage.legitimate_mathematical_or_historical_null_fields} "
+        f"total={coverage.strict_null_fields}",
+        "    basic EPS blocker rows (deduplicated; eps is an alias of eps_basic): "
+        f"total={coverage.basic_eps_blocked_rows} "
+        "with_any_market_alternative="
+        f"{coverage.basic_eps_rows_with_any_market_alternative} "
+        f"({row_percentage(coverage.basic_eps_rows_with_any_market_alternative)}); "
+        "without_market_alternative="
+        f"{coverage.basic_eps_rows_without_market_alternative} "
+        f"({row_percentage(coverage.basic_eps_rows_without_market_alternative)})",
+        "    basic EPS fields: "
+        "with_market_alternative="
+        f"{coverage.basic_eps_fields_with_market_alternative} "
+        "without_market_alternative="
+        f"{coverage.basic_eps_fields_without_market_alternative} "
+        f"total={coverage.basic_eps_null_fields}",
+    ]
+    for alternative in coverage.alternatives:
+        rows = alternative.rows
+        lines.append(
+            f"    alternative={alternative.indicator} rows={rows} "
+            f"({row_percentage(rows)} of basic EPS blocker rows) "
+            f"fields={alternative.fields} basis={alternative.basis} "
+            f"provenance={','.join(alternative.provenance)}"
+        )
+    return lines
 
 
 def _format_no_analysis_outcome(ticker: TickerCoverage) -> str | None:

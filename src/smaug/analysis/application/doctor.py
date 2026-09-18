@@ -28,6 +28,7 @@ from smaug.analysis.domain.financials import (
     DebtEvidenceSnapshot,
 )
 from smaug.analysis.domain.indicators import (
+    INDICATOR_CONTRACT,
     Indicators,
     NullDisposition,
     NullReason,
@@ -48,6 +49,48 @@ from smaug.portfolio.domain.sectors import Sector
 SectorResolver = Callable[[str], Sector]
 
 
+# These are the CPC 41 fields whose strict null can be explained by the
+# separately persisted market-convention pair.  ``eps`` is the historical
+# compatibility alias for ``eps_basic`` and is deliberately retained as a
+# separate cell in the coverage report.  Row-level summaries below deduplicate
+# that alias explicitly.
+_MARKET_ALTERNATIVE_BY_INDICATOR = {
+    "eps": "eps_basic_market",
+    "eps_basic": "eps_basic_market",
+    "pe_basic": "pe_basic_market",
+}
+_STRICT_CPC41_INDICATORS = (
+    "eps",
+    "eps_basic",
+    "eps_diluted",
+    "pe_basic",
+    "pe_diluted",
+)
+_STRICT_BASIC_EPS_NULL_REASONS = frozenset(
+    {
+        NullReason.MISSING_CPC41_DISCLOSURE,
+        NullReason.MISSING_ECONOMIC_RIGHTS,
+        NullReason.MISSING_WEIGHTED_AVERAGE_SHARES,
+    }
+)
+_LEGITIMATE_NULL_DISPOSITIONS = frozenset(
+    {
+        NullDisposition.MATHEMATICALLY_UNDEFINED,
+        NullDisposition.HISTORICAL_PERIOD_DOES_NOT_EXIST,
+    }
+)
+
+
+@dataclass(frozen=True)
+class MarketAlternative:
+    """The persisted market-convention companion to a strict indicator."""
+
+    indicator: str
+    has_value: bool
+    basis: str
+    provenance: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class IndicatorCoverage:
     """The status of one indicator in one exercise.
@@ -59,6 +102,7 @@ class IndicatorCoverage:
     indicator: str
     has_value: bool
     reason: NullReason | None
+    market_alternative: MarketAlternative | None = None
 
     @property
     def is_unclassified(self) -> bool:
@@ -270,6 +314,58 @@ class CoverageTotals:
 
 
 @dataclass(frozen=True)
+class AlternativeFieldCoverage:
+    """Coverage of one persisted market-convention alternative field."""
+
+    indicator: str
+    rows: int
+    fields: int
+    basis: str
+    provenance: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MarketAlternativeCoverage:
+    """Disjoint strict CPC 41 null groups and deduplicated basic-EPS rows.
+
+    The first three counters are indicator cells and form a partition of all
+    null cells in the strict CPC 41 family.  The row counters are a separate
+    view over persisted analysis rows: ``eps`` and ``eps_basic`` are aliases in
+    that view and therefore count once per row, while ``fields`` deliberately
+    preserves both cells for auditability.
+    """
+
+    strict_null_fields_with_market_alternative: int
+    strict_null_fields_without_market_alternative: int
+    legitimate_mathematical_or_historical_null_fields: int
+    basic_eps_blocked_rows: int
+    basic_eps_rows_with_any_market_alternative: int
+    basic_eps_rows_without_market_alternative: int
+    basic_eps_rows_with_eps_basic_market: int
+    basic_eps_rows_with_pe_basic_market: int
+    basic_eps_fields_with_market_alternative: int
+    basic_eps_fields_without_market_alternative: int
+    alternatives: tuple[AlternativeFieldCoverage, ...]
+
+    @property
+    def strict_null_fields(self) -> int:
+        """All strict CPC 41 null cells, including legitimate nulls."""
+        return (
+            self.strict_null_fields_with_market_alternative
+            + self.strict_null_fields_without_market_alternative
+            + self.legitimate_mathematical_or_historical_null_fields
+        )
+
+    @property
+    def basic_eps_null_fields(self) -> int:
+        """Basic-EPS family cells considered in the deduplicated row view."""
+        return (
+            self.basic_eps_fields_with_market_alternative
+            + self.basic_eps_fields_without_market_alternative
+        )
+
+
+@dataclass(frozen=True)
 class TickerCoverage:
     """Every persisted exercise for one ticker (TTM first, then closed years).
 
@@ -320,6 +416,11 @@ class DoctorReport:
         """The explicit population metadata used by the CLI report."""
         assert self.scope is not None
         return self.scope
+
+    @property
+    def market_alternative_coverage(self) -> MarketAlternativeCoverage:
+        """Coverage of strict CPC 41 nulls and their persisted alternatives."""
+        return _market_alternative_coverage(self.tickers)
 
     @property
     def totals(self) -> CoverageTotals:
@@ -444,8 +545,151 @@ def _coverage_of(indicators: Indicators) -> tuple[IndicatorCoverage, ...]:
     for name in indicator_names():
         has_value = getattr(indicators, name) is not None
         reason = None if has_value else indicators.null_reasons.get(name)
-        cells.append(IndicatorCoverage(name, has_value=has_value, reason=reason))
+        alternative_name = _MARKET_ALTERNATIVE_BY_INDICATOR.get(name)
+        alternative = None
+        if alternative_name is not None:
+            contract = INDICATOR_CONTRACT[alternative_name]
+            alternative = MarketAlternative(
+                indicator=alternative_name,
+                has_value=getattr(indicators, alternative_name) is not None,
+                basis=contract.basis,
+                provenance=contract.provenance,
+            )
+        cells.append(
+            IndicatorCoverage(
+                name,
+                has_value=has_value,
+                reason=reason,
+                market_alternative=alternative,
+            )
+        )
     return tuple(cells)
+
+
+def _market_alternative_for_cell(
+    cell: IndicatorCoverage,
+    cells: Mapping[str, IndicatorCoverage],
+) -> MarketAlternative | None:
+    """Resolve alternative metadata for persisted rows and direct report fixtures."""
+    if cell.market_alternative is not None:
+        return cell.market_alternative
+    alternative_name = _MARKET_ALTERNATIVE_BY_INDICATOR.get(cell.indicator)
+    if alternative_name is None:
+        return None
+    contract = INDICATOR_CONTRACT[alternative_name]
+    alternative_cell = cells.get(alternative_name)
+    return MarketAlternative(
+        indicator=alternative_name,
+        has_value=alternative_cell is not None and alternative_cell.has_value,
+        basis=contract.basis,
+        provenance=contract.provenance,
+    )
+
+
+def _alternative_has_value(
+    alternative_name: str,
+    cells: Mapping[str, IndicatorCoverage],
+) -> bool:
+    """Read an alternative value, including metadata-only direct fixtures."""
+    alternative_cell = cells.get(alternative_name)
+    if alternative_cell is not None:
+        return alternative_cell.has_value
+    return any(
+        cell.market_alternative is not None
+        and cell.market_alternative.indicator == alternative_name
+        and cell.market_alternative.has_value
+        for cell in cells.values()
+    )
+
+
+def _is_basic_eps_blocked_row(cells: Mapping[str, IndicatorCoverage]) -> bool:
+    """Identify one persisted row in the CPC 41 basic-EPS baseline."""
+    basic = cells.get("eps_basic")
+    return (
+        basic is not None
+        and not basic.has_value
+        and basic.reason in _STRICT_BASIC_EPS_NULL_REASONS
+    )
+
+
+def _market_alternative_coverage(
+    tickers: Sequence[TickerCoverage],
+) -> MarketAlternativeCoverage:
+    """Aggregate strict alternatives without counting aliases as extra rows."""
+    with_alternative = without_alternative = legitimate = 0
+    basic_rows = rows_with_any = rows_without = 0
+    rows_with_eps_market = rows_with_pe_market = 0
+    basic_fields_with = basic_fields_without = 0
+    alternative_counts: dict[str, int] = dict.fromkeys(
+        _MARKET_ALTERNATIVE_BY_INDICATOR.values(), 0
+    )
+
+    for ticker in tickers:
+        for exercise in ticker.exercises:
+            cells = {cell.indicator: cell for cell in exercise.indicators}
+            for name in _STRICT_CPC41_INDICATORS:
+                cell = cells.get(name)
+                if cell is None or cell.has_value:
+                    continue
+                alternative = _market_alternative_for_cell(cell, cells)
+                if cell.disposition in _LEGITIMATE_NULL_DISPOSITIONS:
+                    legitimate += 1
+                elif alternative is not None and alternative.has_value:
+                    with_alternative += 1
+                else:
+                    without_alternative += 1
+
+            if not _is_basic_eps_blocked_row(cells):
+                continue
+            basic_rows += 1
+            eps_market = _alternative_has_value("eps_basic_market", cells)
+            pe_market = _alternative_has_value("pe_basic_market", cells)
+            if eps_market:
+                rows_with_eps_market += 1
+            if pe_market:
+                rows_with_pe_market += 1
+            if eps_market or pe_market:
+                rows_with_any += 1
+            else:
+                rows_without += 1
+
+            for name, alternative_name in _MARKET_ALTERNATIVE_BY_INDICATOR.items():
+                cell = cells.get(name)
+                if cell is None or cell.has_value:
+                    continue
+                if _alternative_has_value(alternative_name, cells):
+                    basic_fields_with += 1
+                    alternative_counts[alternative_name] += 1
+                else:
+                    basic_fields_without += 1
+
+    alternatives = tuple(
+        AlternativeFieldCoverage(
+            indicator=name,
+            rows=(
+                rows_with_eps_market
+                if name == "eps_basic_market"
+                else rows_with_pe_market
+            ),
+            fields=alternative_counts[name],
+            basis=INDICATOR_CONTRACT[name].basis,
+            provenance=INDICATOR_CONTRACT[name].provenance,
+        )
+        for name in alternative_counts
+    )
+    return MarketAlternativeCoverage(
+        strict_null_fields_with_market_alternative=with_alternative,
+        strict_null_fields_without_market_alternative=without_alternative,
+        legitimate_mathematical_or_historical_null_fields=legitimate,
+        basic_eps_blocked_rows=basic_rows,
+        basic_eps_rows_with_any_market_alternative=rows_with_any,
+        basic_eps_rows_without_market_alternative=rows_without,
+        basic_eps_rows_with_eps_basic_market=rows_with_eps_market,
+        basic_eps_rows_with_pe_basic_market=rows_with_pe_market,
+        basic_eps_fields_with_market_alternative=basic_fields_with,
+        basic_eps_fields_without_market_alternative=basic_fields_without,
+        alternatives=alternatives,
+    )
 
 
 def _exercise_of(analysis: TickerAnalysis) -> ExerciseCoverage:
