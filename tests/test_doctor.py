@@ -182,6 +182,84 @@ def test_doctor_totals_use_explicit_cell_and_null_denominators() -> None:
     assert totals.inapplicable_pct_of_cells == 20.0
 
 
+async def test_doctor_deduplicates_alias_rows_in_market_alternative_counts() -> None:
+    strict_reasons = {
+        "eps": NullReason.MISSING_CPC41_DISCLOSURE,
+        "eps_basic": NullReason.MISSING_CPC41_DISCLOSURE,
+        "eps_diluted": NullReason.MISSING_CPC41_DISCLOSURE,
+        "pe_basic": NullReason.MISSING_CPC41_DISCLOSURE,
+        "pe_diluted": NullReason.MISSING_CPC41_DISCLOSURE,
+    }
+    with_alternative = Indicators(
+        eps_basic_market=Decimal("1"),
+        pe_basic_market=Decimal("5"),
+        null_reasons=strict_reasons,
+    )
+    without_alternative = Indicators(null_reasons=strict_reasons)
+    legitimate = Indicators(
+        eps=Decimal("1"),
+        eps_basic=Decimal("1"),
+        eps_diluted=Decimal("1"),
+        pe_diluted=Decimal("5"),
+        null_reasons={"pe_basic": NullReason.ZERO_DENOMINATOR},
+    )
+    repository = FakeRepo(
+        latest={
+            "PETR4": _analysis(
+                "PETR4",
+                view=VIEW_TTM,
+                reference_date=date(2026, 6, 30),
+                indicators=with_alternative,
+            )
+        },
+        history={
+            "PETR4": [
+                _analysis(
+                    "PETR4",
+                    view=VIEW_CLOSED_YEAR,
+                    reference_date=date(2024, 12, 31),
+                    indicators=without_alternative,
+                ),
+                _analysis(
+                    "PETR4",
+                    view=VIEW_CLOSED_YEAR,
+                    reference_date=date(2023, 12, 31),
+                    indicators=legitimate,
+                ),
+            ]
+        },
+    )
+
+    report = await DoctorUseCase(
+        repository, sector_resolver=fake_sector_resolver
+    ).execute(["PETR4"])
+
+    coverage = report.market_alternative_coverage
+    assert coverage.strict_null_fields == 11
+    assert coverage.strict_null_fields_with_market_alternative == 3
+    assert coverage.strict_null_fields_without_market_alternative == 7
+    assert coverage.legitimate_mathematical_or_historical_null_fields == 1
+    assert coverage.basic_eps_blocked_rows == 2
+    assert coverage.basic_eps_rows_with_any_market_alternative == 1
+    assert coverage.basic_eps_rows_without_market_alternative == 1
+    assert coverage.basic_eps_rows_with_eps_basic_market == 1
+    assert coverage.basic_eps_rows_with_pe_basic_market == 1
+    assert coverage.basic_eps_fields_with_market_alternative == 3
+    assert coverage.basic_eps_fields_without_market_alternative == 3
+    assert [
+        (item.indicator, item.rows, item.fields) for item in coverage.alternatives
+    ] == [
+        ("eps_basic_market", 1, 2),
+        ("pe_basic_market", 1, 1),
+    ]
+
+    cells = {cell.indicator: cell for cell in report.tickers[0].exercises[0].indicators}
+    assert cells["eps_basic"].market_alternative is not None
+    assert cells["eps_basic"].market_alternative.indicator == "eps_basic_market"
+    assert cells["eps_basic"].market_alternative.basis == ("security_market_convention")
+    assert cells["eps_basic"].market_alternative.provenance == ("cvm",)
+
+
 async def test_doctor_preserves_requested_and_storage_scope_counts() -> None:
     repository = ScopedFakeRepo()
     report = await DoctorUseCase(

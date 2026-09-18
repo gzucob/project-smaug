@@ -13,6 +13,7 @@ from smaug.analysis.application.doctor import (
     DoctorReport,
     ExerciseCoverage,
     IndicatorCoverage,
+    MarketAlternative,
     TickerCoverage,
 )
 from smaug.analysis.application.drift import AccountDrift, DriftReport, TickerDrift
@@ -322,6 +323,78 @@ def test_should_render_doctor_coverage_with_named_and_unclassified() -> None:
     assert "missing_price=1" in out  # breakdown tallies the named cause
     assert "price_source=B3:AZZA3@2026-08-14" in out
     assert "(no persisted analysis)" in out  # a ticker with nothing is still reported
+
+
+def test_doctor_formatters_render_market_alternative_basis_and_disjoint_counts() -> (
+    None
+):
+    eps_market = MarketAlternative(
+        indicator="eps_basic_market",
+        has_value=True,
+        basis="security_market_convention",
+        provenance=("cvm",),
+    )
+    pe_market = MarketAlternative(
+        indicator="pe_basic_market",
+        has_value=True,
+        basis="security_market_convention",
+        provenance=("cvm", "b3"),
+    )
+    strict_reasons = NullReason.MISSING_CPC41_DISCLOSURE
+    with_alternative = _coverage(
+        "AAAA3",
+        IndicatorCoverage("eps", False, strict_reasons, eps_market),
+        IndicatorCoverage("eps_basic", False, strict_reasons, eps_market),
+        IndicatorCoverage("eps_diluted", False, strict_reasons),
+        IndicatorCoverage("pe_basic", False, strict_reasons, pe_market),
+        IndicatorCoverage("pe_diluted", False, strict_reasons),
+    )
+    without_alternative = _coverage(
+        "BBBB3",
+        IndicatorCoverage("eps", False, strict_reasons),
+        IndicatorCoverage("eps_basic", False, strict_reasons),
+        IndicatorCoverage("eps_diluted", False, strict_reasons),
+        IndicatorCoverage("pe_basic", False, strict_reasons),
+        IndicatorCoverage("pe_diluted", False, strict_reasons),
+    )
+    legitimate = _coverage(
+        "CCCC3",
+        IndicatorCoverage("eps", True, None),
+        IndicatorCoverage("eps_basic", True, None),
+        IndicatorCoverage("eps_diluted", True, None),
+        IndicatorCoverage("pe_basic", False, NullReason.ZERO_DENOMINATOR),
+        IndicatorCoverage("pe_diluted", True, None),
+    )
+    report = DoctorReport(tickers=(with_alternative, without_alternative, legitimate))
+
+    verbose = format_doctor(report)
+    summary = format_doctor_summary(report)
+    expected_groups = (
+        "strict CPC 41 null fields: with_market_alternative=3 "
+        "without_market_alternative=7 legitimate_mathematical_or_historical=1 "
+        "total=11"
+    )
+    for output in (verbose, summary):
+        assert expected_groups in output
+        assert (
+            "basic EPS blocker rows (deduplicated; eps is an alias of eps_basic)"
+            in output
+        )
+        assert "total=2 with_any_market_alternative=1 (50.0%)" in output
+        assert "without_market_alternative=1 (50.0%)" in output
+        assert (
+            "alternative=eps_basic_market rows=1 (50.0% of basic EPS blocker rows) "
+            "fields=2 basis=security_market_convention provenance=cvm"
+        ) in output
+        assert (
+            "alternative=pe_basic_market rows=1 (50.0% of basic EPS blocker rows) "
+            "fields=1 basis=security_market_convention provenance=cvm,b3"
+        ) in output
+    assert (
+        "eps_basic                  missing_cpc41_disclosure | "
+        "alternative=eps_basic_market status=available "
+        "basis=security_market_convention provenance=cvm"
+    ) in verbose
 
 
 def test_should_render_expected_cpc41_refs_and_basis_statuses() -> None:
