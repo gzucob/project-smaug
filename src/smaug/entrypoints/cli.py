@@ -1907,6 +1907,7 @@ async def _run_analyze(
             shares_reader = MongoSharesReader(
                 mongo[settings.mongo_db]["raw_ingestions"],
                 registrant_resolver=registrant,
+                validation_collection=mongo[settings.mongo_db]["ingestion_validations"],
                 # The *candidates*, not the joined chain: a seam the price will
                 # refuse is still the session an action took effect on, and this
                 # is the reader that dates it (ADR 0043).
@@ -2439,6 +2440,8 @@ def _append_validation_reconciliation(
     if not all(field in observations for field in fields):
         return
     values = " ".join(f"{field}={observations[field]}" for field in fields)
+    if "conflicting" in observations:
+        values += f" conflicting={observations['conflicting']}"
     coverage = observations.get("coverage_established")
     lines.append(f"    reconciliation={values} coverage_established={coverage}")
 
@@ -2447,7 +2450,7 @@ def _append_validation_evidence(
     lines: list[str], evidence: Mapping[str, object]
 ) -> None:
     """Name retained row evidence without printing a potentially large payload."""
-    for key in ("rejected_rows", "deduplicated_rows"):
+    for key in ("rejected_rows", "deduplicated_rows", "conflicting_rows"):
         value = evidence.get(key)
         if isinstance(value, list):
             lines.append(f"    evidence={key} count={len(value)}")

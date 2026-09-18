@@ -665,6 +665,32 @@ class CapitalActionEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class B3CapitalEventEvidence:
+    """One B3 stock-event row retained after economic reconciliation."""
+
+    status: str
+    approval_date: str
+    kind: str
+    factor: str
+    last_date_prior: str
+    isin_code: str
+    asset_issued: str
+    remarks: str
+
+
+@dataclass(frozen=True, slots=True)
+class B3CapitalEventReconciliation:
+    """The B3 stock-event rows considered by the restatement reader."""
+
+    fetched: int = 0
+    accepted: int = 0
+    rejected: int = 0
+    deduplicated: int = 0
+    conflicting: int = 0
+    rows: tuple[B3CapitalEventEvidence, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ShareCountProvenance:
     """Evidence behind one filed, outstanding, and restated share reading."""
 
@@ -678,6 +704,7 @@ class ShareCountProvenance:
     restatement_factor: Decimal | None = None
     actions: tuple[CapitalActionEvidence, ...] = ()
     evidence: tuple[str, ...] = ()
+    b3_reconciliation: B3CapitalEventReconciliation | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -110,6 +110,83 @@ async def test_every_filed_row_is_mirrored_as_b3_publishes_it() -> None:
     assert split["isin_code"] == "BRBBASACNOR3"
 
 
+async def test_per_isin_rows_share_one_economic_identity_without_conflict() -> None:
+    class _Reporter:
+        def __init__(self) -> None:
+            self.reports: list[SourceBatchValidation] = []
+
+        async def record(self, validation: SourceBatchValidation) -> None:
+            self.reports.append(validation)
+
+    reporter = _Reporter()
+    source, http, _ = _source({"codeCVM": "1023", "stockDividends": BBAS_ROWS[:2]})
+    source._validation_reporter = reporter
+
+    async with http:
+        results = await source.fetch("BBAS3", CAPITAL_EVENT_B3_MODULE)
+
+    assert len(results) == 2
+    assert (
+        results[0].request["b3_row"]["isinCode"]
+        != results[1].request["b3_row"]["isinCode"]
+    )
+    report = reporter.reports[-1]
+    assert report.observations == {
+        "rows": 2,
+        "fetched": 2,
+        "accepted": 2,
+        "rejected": 0,
+        "deduplicated": 0,
+        "conflicting": 0,
+        "coverage_established": True,
+    }
+
+
+async def test_conflicting_amendments_are_quarantined_with_both_rows() -> None:
+    class _Reporter:
+        def __init__(self) -> None:
+            self.reports: list[SourceBatchValidation] = []
+
+        async def record(self, validation: SourceBatchValidation) -> None:
+            self.reports.append(validation)
+
+    amended = {**BBAS_ROWS[0], "lastDatePrior": "16/04/2024"}
+    reporter = _Reporter()
+    source, http, _ = _source(
+        {"codeCVM": "1023", "stockDividends": [BBAS_ROWS[0], amended]}
+    )
+    source._validation_reporter = reporter
+
+    async with http:
+        with pytest.raises(SourceBatchValidationError, match="row-reconciliation"):
+            await source.fetch("BBAS3", CAPITAL_EVENT_B3_MODULE)
+
+    report = reporter.reports[-1]
+    assert report.status.value == "quarantined"
+    assert report.observations == {
+        "rows": 2,
+        "fetched": 2,
+        "accepted": 2,
+        "rejected": 0,
+        "deduplicated": 0,
+        "conflicting": 2,
+        "coverage_established": False,
+    }
+    conflicts = report.evidence["conflicting_rows"]
+    assert isinstance(conflicts, list)
+    assert conflicts[0]["identity"] == {
+        "approval_date": "2024-02-02",
+        "event_type": "DESDOBRAMENTO",
+        "factor": "100",
+        "last_date_prior": "2024-04-15",
+        "remarks": "",
+    }
+    assert {item["last_date_prior"] for item in conflicts[0]["rows"]} == {
+        "15/04/2024",
+        "16/04/2024",
+    }
+
+
 async def test_the_row_is_keyed_on_the_registrant_the_mirror_reads_by() -> None:
     # ADR 0030: a filing is the company's, not the ticker's. A row stored without
     # the CD_CVM is invisible to every reader that resolves one.

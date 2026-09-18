@@ -16,6 +16,8 @@ from sqlalchemy.sql import Select
 from smaug.analysis.domain.entities import VIEW_TTM, TickerAnalysis
 from smaug.analysis.domain.financials import (
     AccountingRegime,
+    B3CapitalEventEvidence,
+    B3CapitalEventReconciliation,
     CapitalActionEvidence,
     CapitalComposition,
     ClassMarketValue,
@@ -263,6 +265,23 @@ def test_share_class_and_capital_provenance_round_trip() -> None:
                 ),
             ),
             evidence=("cvm_fre.issued", "cvm_dfp.treasury"),
+            b3_reconciliation=B3CapitalEventReconciliation(
+                fetched=2,
+                accepted=1,
+                deduplicated=1,
+                rows=(
+                    B3CapitalEventEvidence(
+                        status="accepted",
+                        approval_date="02/02/2024",
+                        kind="DESDOBRAMENTO",
+                        factor="100,00000000000",
+                        last_date_prior="15/04/2024",
+                        isin_code="BRBBASACNOR3",
+                        asset_issued="BRBBASACNOR3",
+                        remarks="",
+                    ),
+                ),
+            ),
         ),
     )
 
