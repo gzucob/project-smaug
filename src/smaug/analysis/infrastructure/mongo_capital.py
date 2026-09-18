@@ -28,7 +28,9 @@ Two readings of the same filing, for two different jobs:
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
@@ -44,6 +46,8 @@ from smaug.analysis.domain.capital import (
     restatement_timeline,
 )
 from smaug.analysis.domain.financials import (
+    B3CapitalEventEvidence,
+    B3CapitalEventReconciliation,
     CapitalActionEvidence,
     CapitalComposition,
     ShareCountProvenance,
@@ -69,6 +73,42 @@ class RawCollection(Protocol):
     def find(self, filter: Mapping[str, Any], /) -> Any: ...
 
 
+class ValidationCollection(Protocol):
+    """Validation lookup used to fail closed on a rejected B3 batch."""
+
+    async def find_one(
+        self,
+        filter: Mapping[str, object],
+        *,
+        sort: list[tuple[str, int]],
+    ) -> Mapping[str, object] | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _ExchangeEventRow:
+    """One valid B3 stock-event row before economic grouping."""
+
+    source_identity: str
+    approval_date: str
+    approval_date_raw: str
+    kind: str
+    factor: Decimal
+    factor_raw: str
+    last_date_prior: date
+    last_date_prior_raw: str
+    isin_code: str
+    asset_issued: str
+    remarks: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ExchangeEventReading:
+    """The safe restatement actions and their row-level provenance."""
+
+    actions: tuple[ExchangeAction, ...]
+    reconciliation: B3CapitalEventReconciliation
+
+
 def _dec(value: Any) -> Decimal | None:
     if value is None:
         return None
@@ -91,6 +131,10 @@ def _positive(value: Any) -> Decimal | None:
 
 def _upper(value: Any) -> str:
     return str(value).strip().upper() if value is not None else ""
+
+
+def _text(value: Any) -> str:
+    return str(value).strip() if value is not None else ""
 
 
 def _br_decimal(value: Any) -> Decimal | None:
@@ -254,6 +298,7 @@ class MongoSharesReader:
         *,
         registrant_resolver: RegistrantResolver = no_registrant,
         base_changes: BaseChangeReader | None = None,
+        validation_collection: ValidationCollection | None = None,
         unit_composition_resolver: Callable[[str], int | None] = _no_unit_composition,
         unit_resolver: UnitResolver = no_units,
     ) -> None:
@@ -263,6 +308,7 @@ class MongoSharesReader:
         # the very series that will be divided by it (ADR 0035). ``None`` leaves
         # the timeline exactly as ADRs 0033/0034 built it.
         self._base_changes = base_changes
+        self._validations = validation_collection
         # The FCA-derived bundle ratio (``CompanyIdentity.shares_per_unit``,
         # #212) — curated for no ticker, injected by the CLI like every other
         # registry-backed resolver.
@@ -343,6 +389,8 @@ class MongoSharesReader:
         issued = by_year[served]
         treasury = await self._composition(ticker, year)
         net = outstanding_counts(issued, treasury)
+        b3_reading = await self._exchange_event_reading(ticker)
+        declared_actions = await self._declared_actions(ticker)
         factor = await self._factor(ticker, by_year, served)
         if net is None:
             return ShareCountProvenance(
@@ -353,10 +401,10 @@ class MongoSharesReader:
                 treasury=treasury,
                 restatement_factor=factor,
                 actions=tuple(
-                    _capital_action_evidence(action)
-                    for action in await self._declared_actions(ticker)
+                    _capital_action_evidence(action) for action in declared_actions
                 ),
                 evidence=("cvm_fre.issued", "cvm_dfp.treasury_unreconciled"),
+                b3_reconciliation=b3_reading.reconciliation,
             )
         outstanding = _scaled(net, factor)
         evidence = ["cvm_fre.issued", "cvm_dfp.treasury"]
@@ -364,6 +412,8 @@ class MongoSharesReader:
             evidence.append("nearest_prior_filing")
         if factor != 1:
             evidence.append("cvm_b3.restatement_factor")
+        if b3_reading.reconciliation.conflicting:
+            evidence.append("b3.capital_event.conflict")
         return ShareCountProvenance(
             requested_year=year,
             filed_year=served,
@@ -373,10 +423,10 @@ class MongoSharesReader:
             treasury=treasury,
             restatement_factor=factor,
             actions=tuple(
-                _capital_action_evidence(action)
-                for action in await self._declared_actions(ticker)
+                _capital_action_evidence(action) for action in declared_actions
             ),
             evidence=tuple(evidence),
+            b3_reconciliation=b3_reading.reconciliation,
         )
 
     def outstanding_null_reason(self, ticker: str, year: int) -> NullReason | None:
@@ -428,25 +478,12 @@ class MongoSharesReader:
         return _scaled(net, factor)
 
     async def _exchange_actions(self, ticker: str) -> tuple[ExchangeAction, ...]:
-        """The corporate actions B3 publishes, deduplicated across ISINs.
+        """Return safe whole-base actions after reconciling B3's raw rows."""
+        return (await self._exchange_event_reading(ticker)).actions
 
-        B3 lists one row per event **per asset code**, so BBAS3's 2024 split
-        arrives three times — same date, same factor, three ISINs. They are one
-        event, and counting them three times would cube it.
-
-        Only the three actions that restate the whole share base are read. B3
-        files nine labels across the exchange, and the other six carry a factor
-        just like these do — measured over 907 rows for 217 companies:
-
-            BONIFICACAO 298 · GRUPAMENTO 263 · DESDOBRAMENTO 196   (restatements)
-            CIS RED CAP 97 · RESG TOTAL RV 31 · INCORPORACAO 13 ·
-            REST CAP ACOES 6 · CIS RED CAP QTD 2 · REST CAP C/ RED 1
-
-        A spin-off (``CIS RED CAP``) hands shareholders stock in a *different*
-        company; an ``INCORPORACAO`` merges one. Neither multiplies the base
-        being restated, so an unmapped label contributes nothing rather than
-        being guessed at.
-        """
+    async def _exchange_event_reading(self, ticker: str) -> _ExchangeEventReading:
+        """Read B3 rows without letting an amendment or duplicate change the chain."""
+        validation = await self._latest_capital_validation(ticker)
         cursor = self._collection.find(
             mirror_filter(
                 ticker,
@@ -455,32 +492,107 @@ class MongoSharesReader:
                 module=CAPITAL_EVENT_B3_MODULE,
             )
         ).sort("fetched_at", 1)
-        seen: dict[tuple[str, str, str], ExchangeAction] = {}
+
+        fetched = 0
+        rejected = 0
+        exact_duplicates = 0
+        rows: list[_ExchangeEventRow] = []
+        evidence: list[B3CapitalEventEvidence] = []
+        seen_source: set[str] = set()
         async for document in cursor:
+            fetched += 1
             payload = document.get("payload")
             if not isinstance(payload, Mapping):
+                rejected += 1
                 continue
-            kind = _upper(payload.get("event_type"))
-            factor = _br_decimal(payload.get("factor"))
-            approval = _br_date(payload.get("approval_date"))
-            last_prior = _br_date(payload.get("last_date_prior"))
-            if kind not in _EXCHANGE_RATIO or factor is None:
+            parsed = _exchange_event_row(payload)
+            if parsed is None:
+                rejected += 1
+                evidence.append(_b3_event_evidence(payload, status="rejected"))
                 continue
-            if approval is None or last_prior is None:
+            if parsed.source_identity in seen_source:
+                exact_duplicates += 1
+                evidence.append(_b3_event_evidence(payload, status="deduplicated"))
                 continue
+            seen_source.add(parsed.source_identity)
+            rows.append(parsed)
+
+        groups: dict[tuple[str, str, str], list[_ExchangeEventRow]] = {}
+        for row in rows:
+            groups.setdefault(
+                (row.approval_date, row.kind, str(row.factor.normalize())), []
+            ).append(row)
+
+        actions: list[ExchangeAction] = []
+        conflicting = 0
+        for (approval, kind, _factor), members in sorted(groups.items()):
+            amendments = {
+                (member.last_date_prior.isoformat(), member.remarks)
+                for member in members
+            }
+            if len(amendments) > 1:
+                conflicting += len(members)
+                evidence.extend(
+                    _b3_event_evidence_from_row(member, status="conflicting")
+                    for member in members
+                )
+                continue
+
+            for index, member in enumerate(members):
+                status = (
+                    "ignored"
+                    if kind not in _EXCHANGE_RATIO and index == 0
+                    else "deduplicated"
+                    if index > 0
+                    else "accepted"
+                )
+                evidence.append(_b3_event_evidence_from_row(member, status=status))
+            if kind not in _EXCHANGE_RATIO:
+                continue
+            factor = members[0].factor
             ratio = _EXCHANGE_RATIO[kind](factor)
             if ratio <= 0:
                 continue
-            key = (approval.isoformat(), kind, str(factor))
-            seen[key] = ExchangeAction(
-                # ``lastDatePrior`` is the last session on the *old* base, so the
-                # new one starts the day after — and a step applies to everything
-                # quoted strictly before its ``effective``.
-                effective=last_prior + timedelta(days=1),
-                approval_date=approval.isoformat(),
-                ratio=ratio,
+            actions.append(
+                ExchangeAction(
+                    effective=members[0].last_date_prior + timedelta(days=1),
+                    approval_date=approval,
+                    ratio=ratio,
+                )
             )
-        return tuple(seen.values())
+
+        if validation is not None:
+            evidence.extend(_validation_event_evidence(validation))
+        observations = validation.get("observations") if validation else None
+        reconciliation = B3CapitalEventReconciliation(
+            fetched=_observation_int(observations, "fetched", fetched),
+            accepted=_observation_int(observations, "accepted", len(rows)),
+            rejected=_observation_int(observations, "rejected", rejected),
+            deduplicated=_observation_int(
+                observations, "deduplicated", exact_duplicates
+            ),
+            conflicting=_observation_int(observations, "conflicting", conflicting),
+            rows=tuple(sorted(evidence, key=_b3_event_evidence_sort_key)),
+        )
+        if not _capital_validation_is_usable(validation):
+            actions = []
+        return _ExchangeEventReading(tuple(actions), reconciliation)
+
+    async def _latest_capital_validation(
+        self, ticker: str
+    ) -> Mapping[str, object] | None:
+        """Read the newest B3 capital-event batch decision for this root."""
+        if self._validations is None:
+            return None
+        root = ticker.strip().upper()[:4]
+        return await self._validations.find_one(
+            {
+                "source": "b3",
+                "module": CAPITAL_EVENT_B3_MODULE,
+                "batch": f"GetListedSupplementCompany:{root}",
+            },
+            sort=[("recorded_at", -1)],
+        )
 
     async def restatement_timeline(self, ticker: str) -> tuple[RestatementStep, ...]:
         """The dated share-base moves ``counts`` restates by — see the port.
@@ -734,3 +846,154 @@ def _capital_action_evidence(action: CorporateAction) -> CapitalActionEvidence:
         total_before=action.total_before,
         total_after=action.total_after,
     )
+
+
+def _exchange_event_row(payload: Mapping[str, Any]) -> _ExchangeEventRow | None:
+    """Parse one mirrored B3 row while keeping its source identity fields."""
+    approval_raw = _text(payload.get("approval_date") or payload.get("approvedOn"))
+    last_prior_raw = _text(
+        payload.get("last_date_prior") or payload.get("lastDatePrior")
+    )
+    kind = _upper(payload.get("event_type") or payload.get("label"))
+    factor_raw = _text(payload.get("factor"))
+    approval = _br_date(approval_raw)
+    last_prior = _br_date(last_prior_raw)
+    factor = _br_decimal(factor_raw)
+    if not kind or approval is None or last_prior is None or factor is None:
+        return None
+    if factor <= 0:
+        return None
+    return _ExchangeEventRow(
+        source_identity=_source_identity(payload),
+        approval_date=approval.isoformat(),
+        approval_date_raw=approval_raw,
+        kind=kind,
+        factor=factor,
+        factor_raw=factor_raw,
+        last_date_prior=last_prior,
+        last_date_prior_raw=last_prior_raw,
+        isin_code=_text(payload.get("isin_code") or payload.get("isinCode")),
+        asset_issued=_text(payload.get("asset_issued") or payload.get("assetIssued")),
+        remarks=_text(payload.get("remarks")),
+    )
+
+
+def _source_identity(payload: Mapping[str, Any]) -> str:
+    """Build a stable identity for an exact mirrored B3 row."""
+    return json.dumps(
+        {str(key): value for key, value in payload.items()},
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _b3_event_evidence(
+    payload: Mapping[str, Any], *, status: str
+) -> B3CapitalEventEvidence:
+    """Convert raw or normalized B3 fields into persistence-safe evidence."""
+    return B3CapitalEventEvidence(
+        status=status,
+        approval_date=_text(payload.get("approval_date") or payload.get("approvedOn")),
+        kind=_text(payload.get("event_type") or payload.get("label")),
+        factor=_text(payload.get("factor")),
+        last_date_prior=_text(
+            payload.get("last_date_prior") or payload.get("lastDatePrior")
+        ),
+        isin_code=_text(payload.get("isin_code") or payload.get("isinCode")),
+        asset_issued=_text(payload.get("asset_issued") or payload.get("assetIssued")),
+        remarks=_text(payload.get("remarks")),
+    )
+
+
+def _b3_event_evidence_from_row(
+    row: _ExchangeEventRow, *, status: str
+) -> B3CapitalEventEvidence:
+    return B3CapitalEventEvidence(
+        status=status,
+        approval_date=row.approval_date_raw,
+        kind=row.kind,
+        factor=row.factor_raw,
+        last_date_prior=row.last_date_prior_raw,
+        isin_code=row.isin_code,
+        asset_issued=row.asset_issued,
+        remarks=row.remarks,
+    )
+
+
+def _validation_event_evidence(
+    validation: Mapping[str, object],
+) -> tuple[B3CapitalEventEvidence, ...]:
+    """Keep source-side rejected, duplicate, and conflict rows in provenance."""
+    evidence = validation.get("evidence")
+    if not isinstance(evidence, Mapping):
+        return ()
+    result: list[B3CapitalEventEvidence] = []
+    for key, status in (
+        ("rejected_rows", "rejected"),
+        ("deduplicated_rows", "deduplicated"),
+    ):
+        raw_rows = evidence.get(key)
+        if not isinstance(raw_rows, list):
+            continue
+        for item in raw_rows:
+            if not isinstance(item, Mapping):
+                continue
+            raw = item.get("raw")
+            if isinstance(raw, Mapping):
+                result.append(_b3_event_evidence(raw, status=status))
+    conflicts = evidence.get("conflicting_rows")
+    if isinstance(conflicts, list):
+        for group in conflicts:
+            if not isinstance(group, Mapping):
+                continue
+            rows = group.get("rows")
+            if not isinstance(rows, list):
+                continue
+            for item in rows:
+                if not isinstance(item, Mapping):
+                    continue
+                raw = item.get("raw")
+                if isinstance(raw, Mapping):
+                    result.append(_b3_event_evidence(raw, status="conflicting"))
+    return tuple(result)
+
+
+def _b3_event_evidence_sort_key(
+    evidence: B3CapitalEventEvidence,
+) -> tuple[str, str, str, str, str, str, str]:
+    return (
+        evidence.approval_date,
+        evidence.kind,
+        evidence.factor,
+        evidence.last_date_prior,
+        evidence.isin_code,
+        evidence.asset_issued,
+        evidence.status,
+    )
+
+
+def _observation_int(observations: object, key: str, default: int) -> int:
+    if not isinstance(observations, Mapping):
+        return default
+    value = observations.get(key)
+    return value if isinstance(value, int) else default
+
+
+def _capital_validation_is_usable(validation: Mapping[str, object] | None) -> bool:
+    """Fail closed only when a durable validation decision exists."""
+    if validation is None:
+        return True
+    if validation.get("status") != "accepted":
+        return False
+    observations = validation.get("observations")
+    if not isinstance(observations, Mapping):
+        return False
+    if observations.get("coverage_established") is False:
+        return False
+    for key in ("rejected", "conflicting"):
+        value = observations.get(key)
+        if isinstance(value, int) and value > 0:
+            return False
+    return True

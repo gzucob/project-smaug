@@ -33,7 +33,9 @@ confirm that same registrant before admitting any row (ADR 0056).
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
+from decimal import Decimal, InvalidOperation
 from typing import Any, Never
 
 import httpx
@@ -68,6 +70,7 @@ _RULES = (
     ValidationRule("response-schema", 1),
     ValidationRule("coverage-established", 2),
     ValidationRule("record-count", 1),
+    ValidationRule("row-reconciliation", 1),
 )
 
 
@@ -75,7 +78,7 @@ class B3CapitalEventSource:
     """Fetch the corporate actions B3 publishes for one ticker's company."""
 
     source = "b3"
-    parser_identity = ParserIdentity("b3.capital-events.json", 2)
+    parser_identity = ParserIdentity("b3.capital-events.json", 3)
 
     def __init__(
         self,
@@ -170,31 +173,34 @@ class B3CapitalEventSource:
             # list it invents.
             await self._record(self._validation(root, rows=0))
             raise SourceNotFoundError(f"B3 lists no corporate action for {ticker}")
-        if not all(isinstance(row, dict) for row in rows):
-            await self._quarantine(
-                root,
-                "response-schema",
-                "B3 stockDividends contains a non-object row",
-                evidence=body,
-            )
-        required = {"isinCode", "approvedOn", "label"}
-        missing = next(
-            (
-                sorted(required - set(row))
-                for row in rows
-                if isinstance(row, dict) and required - set(row)
-            ),
-            None,
+        admitted_rows, rejected_rows, duplicate_rows, conflicting_rows = (
+            _reconcile_rows(rows)
         )
-        if missing is not None:
-            await self._quarantine(
-                root,
-                "response-schema",
-                f"B3 stockDividends row lacks {', '.join(missing)}",
-                evidence=body,
+        fetched = len(rows)
+        evidence: dict[str, object] = {}
+        if rejected_rows:
+            evidence["rejected_rows"] = rejected_rows
+        if duplicate_rows:
+            evidence["deduplicated_rows"] = duplicate_rows
+        if conflicting_rows:
+            evidence["conflicting_rows"] = conflicting_rows
+        findings: list[ValidationFinding] = []
+        if rejected_rows:
+            findings.append(
+                ValidationFinding(
+                    "row-reconciliation",
+                    f"B3 stock events rejected {len(rejected_rows)} row(s); "
+                    "the batch is not admitted",
+                )
             )
-
-        admitted_rows = [row for row in rows if isinstance(row, dict)]
+        if conflicting_rows:
+            findings.append(
+                ValidationFinding(
+                    "row-reconciliation",
+                    f"B3 stock events found {len(conflicting_rows)} "
+                    "conflicting economic group(s); the batch is not admitted",
+                )
+            )
         recovery_evidence: dict[str, object] = {}
         if proof is not None:
             assert self._reused_root_recovery is not None
@@ -230,11 +236,23 @@ class B3CapitalEventSource:
                 "reused_root": proof.as_mapping(),
                 "excluded_rows": excluded_rows,
             }
+        conflicting_count = 0
+        for item in conflicting_rows:
+            rows_in_group = item.get("rows")
+            if isinstance(rows_in_group, list):
+                conflicting_count += len(rows_in_group)
         await self._record(
             self._validation(
                 root,
                 rows=len(rows),
-                evidence=recovery_evidence,
+                fetched=fetched,
+                accepted=len(admitted_rows),
+                rejected=len(rejected_rows),
+                deduplicated=len(duplicate_rows),
+                conflicting=conflicting_count,
+                coverage_established=not findings,
+                findings=tuple(findings),
+                evidence={**evidence, **recovery_evidence},
             )
         )
 
@@ -246,6 +264,9 @@ class B3CapitalEventSource:
                 "endpoint": "GetListedSupplementCompany",
                 "issuing_company": issuing_company,
                 "statement": module,
+                # Keep every source field in the request discriminator: an
+                # amendment to a published row is a distinct raw fact.
+                "b3_row": dict(row),
                 # What tells one filed row from another: the same event is
                 # listed once per ISIN, and one approval date can carry two
                 # events (VIVT3's split and grupamento, 2025-03-13).
@@ -275,16 +296,38 @@ class B3CapitalEventSource:
         root: str,
         *,
         rows: int,
+        fetched: int | None = None,
+        accepted: int | None = None,
+        rejected: int = 0,
+        deduplicated: int = 0,
+        conflicting: int = 0,
+        coverage_established: bool | None = None,
         findings: tuple[ValidationFinding, ...] = (),
         evidence: Mapping[str, object] | None = None,
     ) -> SourceBatchValidation:
+        fetched_count = rows if fetched is None else fetched
+        accepted_count = (
+            rows - rejected - deduplicated if accepted is None else accepted
+        )
         return SourceBatchValidation(
             source="b3",
             batch=f"GetListedSupplementCompany:{root}",
             module=CAPITAL_EVENT_B3_MODULE,
             parser=self.parser_identity,
             rules=_RULES,
-            observations={"rows": rows, "coverage_established": not findings},
+            observations={
+                "rows": rows,
+                "fetched": fetched_count,
+                "accepted": accepted_count,
+                "rejected": rejected,
+                "deduplicated": deduplicated,
+                "conflicting": conflicting,
+                "coverage_established": (
+                    not findings
+                    if coverage_established is None
+                    else coverage_established
+                ),
+            },
             findings=findings,
             evidence=evidence or {},
         )
@@ -313,22 +356,208 @@ class B3CapitalEventSource:
 
 def _to_payload(row: Mapping[str, Any], root: str, code: str | None) -> dict[str, Any]:
     """Mirror the row as B3 publishes it — its vocabulary, its number format."""
-    return {
-        "issuing_company": root,
-        "cvm_code": code,
-        "isin_code": _text(row.get("isinCode")),
-        "asset_issued": _text(row.get("assetIssued")),
-        "event_type": _text(row.get("label")),
-        # pt-BR, and a percentage for a split/bonus but a multiplier for a
-        # grupamento. Stored as the string B3 sends: the two readings are the
-        # analysis context's problem, not the mirror's.
-        "factor": _text(row.get("factor")),
-        "approval_date": _text(row.get("approvedOn")),
-        # The last session quoted on the old base — the cut a price series needs.
-        "last_date_prior": _text(row.get("lastDatePrior")),
-        "remarks": _text(row.get("remarks")),
-    }
+    payload = {str(key): value for key, value in row.items()}
+    payload.update(
+        {
+            "issuing_company": root,
+            "cvm_code": code,
+            "isin_code": _text(row.get("isinCode")),
+            "asset_issued": _text(row.get("assetIssued")),
+            "event_type": _text(row.get("label")),
+            # pt-BR, and a percentage for a split/bonus but a multiplier for a
+            # grupamento. Stored as the string B3 sends: the two readings are the
+            # analysis context's problem, not the mirror's.
+            "factor": _text(row.get("factor")),
+            "approval_date": _text(row.get("approvedOn")),
+            # The last session quoted on the old base — the cut a price series needs.
+            "last_date_prior": _text(row.get("lastDatePrior")),
+            "remarks": _text(row.get("remarks")),
+        }
+    )
+    return payload
 
 
 def _text(value: Any) -> str:
     return str(value).strip() if value is not None else ""
+
+
+_REQUIRED_ROW_FIELDS = frozenset(
+    {"isinCode", "assetIssued", "approvedOn", "label", "factor", "lastDatePrior"}
+)
+
+
+def _reconcile_rows(
+    rows: Sequence[object],
+) -> tuple[
+    list[Mapping[str, Any]],
+    list[dict[str, object]],
+    list[dict[str, object]],
+    list[dict[str, object]],
+]:
+    """Reconcile B3 rows without collapsing the raw per-ISIN history.
+
+    The economic identity is ``(approvedOn, label, factor)``. B3 repeats that
+    identity once per ISIN, so ``isinCode`` and ``assetIssued`` are deliberately
+    not amendment fields. An amendment is identified by the same economic key
+    plus ``lastDatePrior`` and ``remarks``; two amendment identities for one
+    economic key are unsafe because they would date the price cut differently.
+    Exact source duplicates are dropped before the raw mirror is written, while
+    distinct per-ISIN rows remain accepted and are reconciled by analysis.
+    """
+    accepted: list[Mapping[str, Any]] = []
+    rejected: list[dict[str, object]] = []
+    deduplicated: list[dict[str, object]] = []
+    groups: dict[tuple[str, str, str], list[tuple[int, Mapping[str, Any]]]] = {}
+    source_identities: dict[str, int] = {}
+
+    for row_number, row in enumerate(rows, start=1):
+        finding = _row_finding(row, row_number)
+        if finding is not None:
+            rejected.append(
+                {
+                    "row": row_number,
+                    "finding": {
+                        "code": finding.code,
+                        "detail": finding.detail,
+                    },
+                    "raw": row,
+                }
+            )
+            continue
+
+        assert isinstance(row, Mapping)
+        source_identity = _source_row_identity(row)
+        first_row = source_identities.get(source_identity)
+        if first_row is not None:
+            deduplicated.append(
+                {
+                    "row": row_number,
+                    "matches": first_row,
+                    "identity": _identity_evidence(row),
+                    "source_identity": source_identity,
+                }
+            )
+            continue
+
+        source_identities[source_identity] = row_number
+        accepted.append(row)
+        groups.setdefault(_economic_identity(row), []).append((row_number, row))
+
+    conflicting: list[dict[str, object]] = []
+    for _identity, members in groups.items():
+        amendment_identities = {
+            _amendment_identity(row) for _row_number, row in members
+        }
+        if len(amendment_identities) <= 1:
+            continue
+        conflicting.append(
+            {
+                "identity": _identity_evidence(members[0][1]),
+                "amendments": [
+                    {
+                        "last_date_prior": last_date_prior,
+                        "remarks": remarks,
+                    }
+                    for last_date_prior, remarks in sorted(amendment_identities)
+                ],
+                "rows": [
+                    {
+                        "row": row_number,
+                        "isin_code": _text(row.get("isinCode")),
+                        "asset_issued": _text(row.get("assetIssued")),
+                        "last_date_prior": _text(row.get("lastDatePrior")),
+                        "remarks": _text(row.get("remarks")),
+                        "raw": row,
+                    }
+                    for row_number, row in members
+                ],
+            }
+        )
+
+    return accepted, rejected, deduplicated, conflicting
+
+
+def _row_finding(row: object, row_number: int) -> ValidationFinding | None:
+    if not isinstance(row, Mapping):
+        return ValidationFinding(
+            "response-schema",
+            f"B3 stock event row {row_number} is not an object",
+        )
+    missing = sorted(field for field in _REQUIRED_ROW_FIELDS if field not in row)
+    if missing:
+        return ValidationFinding(
+            "response-schema",
+            f"B3 stock event row {row_number} lacks {', '.join(missing)}",
+        )
+    blank = sorted(field for field in _REQUIRED_ROW_FIELDS if not _text(row[field]))
+    if blank:
+        return ValidationFinding(
+            "response-schema",
+            f"B3 stock event row {row_number} has empty {', '.join(blank)}",
+        )
+    return None
+
+
+def _economic_identity(row: Mapping[str, Any]) -> tuple[str, str, str]:
+    """Identify one economic B3 action, independent of its listed security."""
+    return (
+        _date_identity(row.get("approvedOn")),
+        _text(row.get("label")).upper(),
+        _number_identity(row.get("factor")),
+    )
+
+
+def _amendment_identity(row: Mapping[str, Any]) -> tuple[str, str]:
+    """Identify the fields whose change can move a B3 action's effective date."""
+    return (
+        _date_identity(row.get("lastDatePrior")),
+        _text(row.get("remarks")),
+    )
+
+
+def _identity_evidence(row: Mapping[str, Any]) -> dict[str, str]:
+    approval_date, kind, factor = _economic_identity(row)
+    last_date_prior, remarks = _amendment_identity(row)
+    return {
+        "approval_date": approval_date,
+        "event_type": kind,
+        "factor": factor,
+        "last_date_prior": last_date_prior,
+        "remarks": remarks,
+    }
+
+
+def _source_row_identity(row: Mapping[str, Any]) -> str:
+    """Identify an exact source row without discarding amended B3 fields."""
+    return json.dumps(
+        {str(key): value for key, value in row.items()},
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _date_identity(value: Any) -> str:
+    """Canonicalize B3's ``DD/MM/YYYY`` date while retaining bad raw values."""
+    raw = _text(value)
+    parts = raw.split("/")
+    if len(parts) != 3:
+        return raw
+    try:
+        day, month, year = (int(part) for part in parts)
+    except ValueError:
+        return raw
+    if not (1 <= month <= 12 and 1 <= day <= 31 and year > 0):
+        return raw
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def _number_identity(value: Any) -> str:
+    """Canonicalize a B3 pt-BR number without changing the mirrored spelling."""
+    raw = _text(value)
+    try:
+        parsed = Decimal(raw.replace(".", "").replace(",", "."))
+    except InvalidOperation:
+        return raw
+    return format(parsed.normalize(), "f")

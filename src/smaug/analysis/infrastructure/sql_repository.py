@@ -20,6 +20,8 @@ from smaug.analysis.domain.entities import (
 )
 from smaug.analysis.domain.financials import (
     AccountingRegime,
+    B3CapitalEventEvidence,
+    B3CapitalEventReconciliation,
     BankRegulatoryProvenance,
     CapitalActionEvidence,
     CapitalComposition,
@@ -832,6 +834,7 @@ def _capital_provenance_to_json(
 ) -> dict[str, Any] | None:
     if provenance is None:
         return None
+    b3_reconciliation = provenance.b3_reconciliation
     return {
         "requested_year": provenance.requested_year,
         "filed_year": provenance.filed_year,
@@ -875,7 +878,73 @@ def _capital_provenance_to_json(
             for action in provenance.actions
         ],
         "evidence": list(provenance.evidence),
+        "b3_reconciliation": _b3_reconciliation_to_json(b3_reconciliation),
     }
+
+
+def _b3_reconciliation_to_json(
+    reconciliation: B3CapitalEventReconciliation | None,
+) -> dict[str, Any] | None:
+    if reconciliation is None:
+        return None
+    return {
+        "fetched": reconciliation.fetched,
+        "accepted": reconciliation.accepted,
+        "rejected": reconciliation.rejected,
+        "deduplicated": reconciliation.deduplicated,
+        "conflicting": reconciliation.conflicting,
+        "rows": [
+            {
+                "status": row.status,
+                "approval_date": row.approval_date,
+                "kind": row.kind,
+                "factor": row.factor,
+                "last_date_prior": row.last_date_prior,
+                "isin_code": row.isin_code,
+                "asset_issued": row.asset_issued,
+                "remarks": row.remarks,
+            }
+            for row in reconciliation.rows
+        ],
+    }
+
+
+def _b3_reconciliation_from_json(
+    value: object,
+) -> B3CapitalEventReconciliation | None:
+    if not isinstance(value, Mapping):
+        return None
+
+    def count(key: str) -> int:
+        raw = value.get(key, 0)
+        return raw if isinstance(raw, int) else 0
+
+    raw_rows = value.get("rows", [])
+    rows: list[B3CapitalEventEvidence] = []
+    if isinstance(raw_rows, (list, tuple)):
+        for raw_row in raw_rows:
+            if not isinstance(raw_row, Mapping):
+                continue
+            rows.append(
+                B3CapitalEventEvidence(
+                    status=str(raw_row.get("status", "")),
+                    approval_date=str(raw_row.get("approval_date", "")),
+                    kind=str(raw_row.get("kind", "")),
+                    factor=str(raw_row.get("factor", "")),
+                    last_date_prior=str(raw_row.get("last_date_prior", "")),
+                    isin_code=str(raw_row.get("isin_code", "")),
+                    asset_issued=str(raw_row.get("asset_issued", "")),
+                    remarks=str(raw_row.get("remarks", "")),
+                )
+            )
+    return B3CapitalEventReconciliation(
+        fetched=count("fetched"),
+        accepted=count("accepted"),
+        rejected=count("rejected"),
+        deduplicated=count("deduplicated"),
+        conflicting=count("conflicting"),
+        rows=tuple(rows),
+    )
 
 
 def _capital_provenance_from_json(value: object) -> ShareCountProvenance | None:
@@ -926,6 +995,7 @@ def _capital_provenance_from_json(value: object) -> ShareCountProvenance | None:
             if isinstance(raw_evidence, (list, tuple))
             else ()
         ),
+        b3_reconciliation=_b3_reconciliation_from_json(value.get("b3_reconciliation")),
     )
 
 

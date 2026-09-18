@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from smaug.analysis.domain.entities import VIEW_TTM, TickerAnalysis
 from smaug.analysis.domain.financials import (
     AccountingRegime,
+    B3CapitalEventReconciliation,
     CapitalActionEvidence,
     CapitalComposition,
     ClassMarketValue,
@@ -155,6 +156,30 @@ class CapitalActionResponse(BaseModel):
     total_after: Decimal | None
 
 
+class B3CapitalEventEvidenceResponse(BaseModel):
+    """One B3 stock-event row retained for restatement audit."""
+
+    status: str
+    approval_date: str
+    kind: str
+    factor: str
+    last_date_prior: str
+    isin_code: str
+    asset_issued: str
+    remarks: str
+
+
+class B3CapitalEventReconciliationResponse(BaseModel):
+    """B3 stock-event row counts and amendment evidence."""
+
+    fetched: int
+    accepted: int
+    rejected: int
+    deduplicated: int
+    conflicting: int
+    rows: list[B3CapitalEventEvidenceResponse]
+
+
 class ShareCountProvenanceResponse(BaseModel):
     """Audit trail behind one outstanding-share reading."""
 
@@ -168,6 +193,7 @@ class ShareCountProvenanceResponse(BaseModel):
     restatement_factor: Decimal | None
     actions: list[CapitalActionResponse]
     evidence: list[str]
+    b3_reconciliation: B3CapitalEventReconciliationResponse | None
 
 
 class Cpc41AccountEvidenceResponse(BaseModel):
@@ -530,6 +556,32 @@ def _capital_provenance_response(
             total_after=action.total_after,
         )
 
+    def b3_response(
+        reconciliation: B3CapitalEventReconciliation | None,
+    ) -> B3CapitalEventReconciliationResponse | None:
+        if reconciliation is None:
+            return None
+        return B3CapitalEventReconciliationResponse(
+            fetched=reconciliation.fetched,
+            accepted=reconciliation.accepted,
+            rejected=reconciliation.rejected,
+            deduplicated=reconciliation.deduplicated,
+            conflicting=reconciliation.conflicting,
+            rows=[
+                B3CapitalEventEvidenceResponse(
+                    status=row.status,
+                    approval_date=row.approval_date,
+                    kind=row.kind,
+                    factor=row.factor,
+                    last_date_prior=row.last_date_prior,
+                    isin_code=row.isin_code,
+                    asset_issued=row.asset_issued,
+                    remarks=row.remarks,
+                )
+                for row in reconciliation.rows
+            ],
+        )
+
     return ShareCountProvenanceResponse(
         requested_year=provenance.requested_year,
         filed_year=provenance.filed_year,
@@ -541,6 +593,7 @@ def _capital_provenance_response(
         restatement_factor=provenance.restatement_factor,
         actions=[action_response(action) for action in provenance.actions],
         evidence=list(provenance.evidence),
+        b3_reconciliation=b3_response(provenance.b3_reconciliation),
     )
 
 

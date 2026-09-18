@@ -36,6 +36,27 @@ class FakeCollection:
         return FakeCursor(matched)
 
 
+class FakeValidations:
+    def __init__(self, reports: list[dict[str, Any]]) -> None:
+        self._reports = reports
+
+    async def find_one(
+        self,
+        query: dict[str, object],
+        *,
+        sort: list[tuple[str, int]],
+    ) -> dict[str, Any] | None:
+        matched = [
+            report
+            for report in self._reports
+            if all(report.get(key) == value for key, value in query.items())
+        ]
+        if not matched:
+            return None
+        key, direction = sort[0]
+        return sorted(matched, key=lambda report: report[key], reverse=direction < 0)[0]
+
+
 def _doc(
     ticker: str,
     year: int,
@@ -579,6 +600,119 @@ async def test_one_event_listed_once_per_isin_is_still_one_event() -> None:
     assert await reader.restatement_timeline("BBAS3") == (
         RestatementStep(date(2024, 4, 16), Decimal(2)),
     )
+
+
+async def test_conflicting_amendments_do_not_let_the_latest_row_win() -> None:
+    rows = [
+        _b3_event(
+            "BBAS3",
+            kind="DESDOBRAMENTO",
+            factor="100,00000000000",
+            approved="02/02/2024",
+            last_prior="15/04/2024",
+            isin="BRBBASACNOR3",
+        ),
+        _b3_event(
+            "BBAS3",
+            kind="DESDOBRAMENTO",
+            factor="100,00000000000",
+            approved="02/02/2024",
+            last_prior="16/04/2024",
+            isin="BRBBASA04OR8",
+        ),
+    ]
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc("BBAS3", 2022, 2_865_417_020),
+                _doc("BBAS3", 2023, 5_730_834_040),
+                *rows,
+            ]
+        )
+    )
+
+    timeline = await reader.restatement_timeline("BBAS3")
+
+    # The count move remains usable, but no conflicting B3 amendment is allowed
+    # to choose an effective date by fetch order.
+    assert timeline == (RestatementStep(date(2023, 1, 1), Decimal(2)),)
+
+
+async def test_capital_provenance_retains_b3_row_reconciliation() -> None:
+    row = _b3_event(
+        "BBAS3",
+        kind="DESDOBRAMENTO",
+        factor="100,00000000000",
+        approved="02/02/2024",
+        last_prior="15/04/2024",
+    )
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc("BBAS3", 2022, 2_865_417_020),
+                _doc("BBAS3", 2023, 5_730_834_040),
+                row,
+            ]
+        )
+    )
+
+    provenance = await reader.capital_provenance("BBAS3", 2023)
+
+    assert provenance is not None
+    assert provenance.b3_reconciliation is not None
+    assert provenance.b3_reconciliation.fetched == 1
+    assert provenance.b3_reconciliation.conflicting == 0
+    assert provenance.b3_reconciliation.rows[0].status == "accepted"
+    assert provenance.b3_reconciliation.rows[0].last_date_prior == "15/04/2024"
+
+
+async def test_latest_quarantined_b3_batch_hides_old_capital_event_rows() -> None:
+    event = _b3_event(
+        "BBAS3",
+        kind="DESDOBRAMENTO",
+        factor="100,00000000000",
+        approved="02/02/2024",
+        last_prior="15/04/2024",
+    )
+    validation = {
+        "source": "b3",
+        "module": "CAPITAL_EVENT_B3",
+        "batch": "GetListedSupplementCompany:BBAS",
+        "status": "quarantined",
+        "recorded_at": 2,
+        "observations": {
+            "fetched": 2,
+            "accepted": 2,
+            "rejected": 0,
+            "deduplicated": 0,
+            "conflicting": 2,
+            "coverage_established": False,
+        },
+        "evidence": {
+            "conflicting_rows": [
+                {
+                    "rows": [
+                        {"raw": {"event_type": "DESDOBRAMENTO"}},
+                        {"raw": {"event_type": "DESDOBRAMENTO"}},
+                    ]
+                }
+            ]
+        },
+    }
+    reader = MongoSharesReader(
+        FakeCollection(
+            [
+                _doc("BBAS3", 2022, 2_865_417_020),
+                _doc("BBAS3", 2023, 5_730_834_040),
+                event,
+            ]
+        ),
+        validation_collection=FakeValidations([validation]),
+    )
+
+    timeline = await reader.restatement_timeline("BBAS3")
+
+    assert timeline == (RestatementStep(date(2023, 1, 1), Decimal(2)),)
 
 
 async def test_a_spin_off_carries_a_factor_and_is_not_a_restatement() -> None:
