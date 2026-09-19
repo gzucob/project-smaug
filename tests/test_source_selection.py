@@ -138,7 +138,7 @@ def test_every_configured_parser_has_a_stable_name_and_version() -> None:
     identities = _parser_identities(Settings().cvm_modules)
 
     assert {identity.name: identity.version for identity in identities} == {
-        "cvm.statements.csv": 1,
+        "cvm.statements.csv": 2,
         # Version 2 joins FRE's capital-by-class child rows for PNA/PNB (#72).
         "cvm.capital.csv": 2,
         "cvm.treasury.csv": 1,

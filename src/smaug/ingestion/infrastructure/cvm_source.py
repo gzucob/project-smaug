@@ -45,7 +45,7 @@ import io
 import unicodedata
 import zipfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -56,6 +56,8 @@ from smaug.ingestion.domain.runs import ParserIdentity
 from smaug.ingestion.domain.validation import (
     BatchValidationReporter,
     SourceBatchValidation,
+    ValidationFinding,
+    ValidationRule,
 )
 from smaug.ingestion.infrastructure.batch_validation import (
     quarantined_archive_validation,
@@ -65,7 +67,11 @@ from smaug.ingestion.infrastructure.batch_validation import (
 )
 from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.download import Sleeper, download_zip
-from smaug.shared.errors import CvmDownloadError, SourceNotFoundError
+from smaug.shared.errors import (
+    CvmDownloadError,
+    SourceBatchValidationError,
+    SourceNotFoundError,
+)
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -107,6 +113,9 @@ _MEMBER_MODULE: dict[str, str] = {
 
 # ESCALA_MOEDA -> the multiplier ``mongo_fundamentals`` scales figures by.
 _CURRENCY_SIZE: dict[str, int] = {"MIL": 1000, "UNIDADE": 1}
+_TRANSPORT_FIELDS_RULE = ValidationRule("transport-fields", 1)
+_VALID_FIXED_FLAGS = {"S": True, "N": False}
+_MAX_TRANSPORT_EVIDENCE = 8
 
 # CVM open datasets are latin-1, semicolon-separated (like the FRE in cvm_capital).
 _ENCODING = "latin-1"
@@ -122,6 +131,132 @@ def _currency(moeda: str | None) -> str | None:
     if not moeda:
         return None
     return "BRL" if moeda.strip().upper() == "REAL" else moeda.strip()
+
+
+def _currency_size(scale: str | None) -> int | None:
+    if scale is None:
+        return None
+    return _CURRENCY_SIZE.get(scale.strip().upper())
+
+
+def _version(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value.strip())
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _fixed_flag(value: str | None) -> bool | None:
+    if value is None or not value.strip():
+        return None
+    return _VALID_FIXED_FLAGS.get(value.strip().upper())
+
+
+def _raw_value(value: str | None) -> str:
+    if value is None:
+        return "<missing>"
+    if not value:
+        return "<blank>"
+    return repr(value)
+
+
+def _transport_detail(
+    member: str,
+    row_number: int,
+    field: str,
+    value: str | None,
+    reason: str,
+) -> str:
+    return f"{member} row {row_number}: {field} {reason} ({_raw_value(value)})"
+
+
+def _transport_issue(field: str, value: str | None) -> tuple[str, str] | None:
+    if field == "ESCALA_MOEDA" and _currency_size(value) is None:
+        if value is None or not value.strip():
+            reason = "is absent"
+        else:
+            reason = "is unknown"
+        return "currency-scale", reason
+    if field == "VERSAO" and _version(value) is None:
+        if value is None or not value.strip():
+            reason = "is absent"
+        else:
+            reason = "is malformed"
+        return "statement-version", reason
+    return None
+
+
+def _transport_validation(
+    archive_path: Path, members: Sequence[str]
+) -> tuple[
+    tuple[ValidationFinding, ...],
+    dict[str, str | int | bool],
+    dict[str, object],
+]:
+    counts: dict[str, int] = {"currency-scale": 0, "statement-version": 0}
+    samples: dict[str, list[dict[str, object]]] = {
+        "currency-scale": [],
+        "statement-version": [],
+    }
+    rows = 0
+    with zipfile.ZipFile(archive_path) as archive:
+        for member in members:
+            with archive.open(member) as raw:
+                reader = csv.DictReader(
+                    io.TextIOWrapper(raw, encoding=_ENCODING), delimiter=_DELIMITER
+                )
+                for row_number, row in enumerate(reader, start=2):
+                    rows += 1
+                    for field_name in ("ESCALA_MOEDA", "VERSAO"):
+                        value = row.get(field_name)
+                        issue = _transport_issue(field_name, value)
+                        if issue is None:
+                            continue
+                        code, reason = issue
+                        counts[code] += 1
+                        if len(samples[code]) < _MAX_TRANSPORT_EVIDENCE:
+                            samples[code].append(
+                                {
+                                    "member": member,
+                                    "row": row_number,
+                                    "field": field_name,
+                                    "value": value,
+                                    "reason": reason,
+                                }
+                            )
+
+    findings = tuple(
+        ValidationFinding(
+            code,
+            f"{count} invalid row(s); examples: "
+            + "; ".join(
+                _transport_detail(
+                    str(sample["member"]),
+                    int(str(sample["row"])),
+                    str(sample["field"]),
+                    sample["value"] if isinstance(sample["value"], str) else None,
+                    str(sample["reason"]),
+                )
+                for sample in samples[code]
+            ),
+        )
+        for code, count in counts.items()
+        if count
+    )
+    observations: dict[str, str | int | bool] = {
+        "transport_rows": rows,
+        "invalid_currency_scale_rows": counts["currency-scale"],
+        "invalid_statement_version_rows": counts["statement-version"],
+    }
+    evidence: dict[str, object] = {
+        "transport_fields": {
+            code: entries for code, entries in samples.items() if entries
+        }
+    }
+    return findings, observations, evidence
 
 
 def _classify(member: str) -> tuple[str, str] | None:
@@ -146,12 +281,14 @@ def _account(row: Mapping[str, str]) -> dict[str, Any]:
     so two of them share a ``CD_CONTA`` and are told apart by this alone.
     """
     code = row.get("CD_CONTA", "")
+    fixed_raw = row.get("ST_CONTA_FIXA")
     account: dict[str, Any] = {
         "code": code,
         "name": row.get("DS_CONTA", ""),
         "quantity": row.get("VL_CONTA", ""),
         "level": code.count(".") + 1 if code else None,
-        "is_fixed": (row.get("ST_CONTA_FIXA") or "").strip().upper() == "S",
+        "is_fixed": _fixed_flag(fixed_raw),
+        "ST_CONTA_FIXA": fixed_raw,
     }
     column = row.get("COLUNA_DF")
     if column:
@@ -187,6 +324,9 @@ class _Statement:
     currency_size: int | None
     period_start: str | None
     period_end: str | None
+    # Keep the source transport values beside their normalized counterparts.
+    version_raw: str | None = None
+    currency_scale: str | None = None
     accounts: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -194,7 +334,7 @@ class CvmDataSource:
     """Fetch one statement (module) for one ticker from CVM open data."""
 
     source = "cvm"
-    parser_identity = ParserIdentity("cvm.statements.csv", 1)
+    parser_identity = ParserIdentity("cvm.statements.csv", 2)
 
     def __init__(
         self,
@@ -274,7 +414,9 @@ class CvmDataSource:
                     "balance_type": statement.balance_type,
                     "reference_date": statement.reference_date,
                     "version": statement.version,
+                    "VERSAO": statement.version_raw,
                     "ordem_exerc": statement.ordem_exerc,
+                    "ESCALA_MOEDA": statement.currency_scale,
                     "period_start": statement.period_start,
                 },
                 http_status=200,
@@ -319,7 +461,7 @@ class CvmDataSource:
     def _validate_archive(self, archive_path: Path) -> SourceBatchValidation:
         with zipfile.ZipFile(archive_path) as archive:
             members = statement_members(archive.namelist(), _classify)
-        return validate_csv_archive(
+        validation = validate_csv_archive(
             archive_path,
             source="cvm",
             batch=self._zip_name,
@@ -327,6 +469,23 @@ class CvmDataSource:
             artifact=self._artifact,
             expected_year=self._year,
             members=members,
+        )
+        findings: tuple[ValidationFinding, ...] = ()
+        observations: dict[str, str | int | bool] = {}
+        evidence: dict[str, object] = {}
+        if not any(
+            finding.code in {"archive-integrity", "csv-schema"}
+            for finding in validation.findings
+        ):
+            findings, observations, evidence = _transport_validation(
+                archive_path, tuple(member.name for member in members)
+            )
+        return replace(
+            validation,
+            rules=(*validation.rules, _TRANSPORT_FIELDS_RULE),
+            observations={**validation.observations, **observations},
+            findings=(*validation.findings, *findings),
+            evidence={**validation.evidence, **evidence},
         )
 
     async def _archive_path(self) -> Path:
@@ -411,9 +570,11 @@ class CvmDataSource:
             "statement": statement.module,
             "balance_type": statement.balance_type,
             "version": statement.version,
+            "VERSAO": statement.version_raw,
             "ordem_exerc": statement.ordem_exerc,
             "currency": statement.currency,
             "currency_size": statement.currency_size,
+            "ESCALA_MOEDA": statement.currency_scale,
             "period_start_date": statement.period_start,
             "period_end_date": statement.period_end,
             "accounts": statement.accounts,
@@ -433,13 +594,33 @@ def _read_member(
         reader = csv.DictReader(
             io.TextIOWrapper(raw, encoding=_ENCODING), delimiter=_DELIMITER
         )
-        for row in reader:
+        for row_number, row in enumerate(reader, start=2):
+            raw_scale = row.get("ESCALA_MOEDA")
+            scale = _currency_size(raw_scale)
+            if scale is None:
+                issue = _transport_issue("ESCALA_MOEDA", raw_scale)
+                assert issue is not None
+                code, reason = issue
+                raise SourceBatchValidationError(
+                    f"{code}: "
+                    + _transport_detail(
+                        member, row_number, "ESCALA_MOEDA", raw_scale, reason
+                    )
+                )
+            raw_version = row.get("VERSAO")
+            version = _version(raw_version)
+            if version is None:
+                issue = _transport_issue("VERSAO", raw_version)
+                assert issue is not None
+                code, reason = issue
+                raise SourceBatchValidationError(
+                    f"{code}: "
+                    + _transport_detail(
+                        member, row_number, "VERSAO", raw_version, reason
+                    )
+                )
             code = row.get("CD_CVM", "").lstrip("0")
             if code not in wanted:
-                continue
-            try:
-                version = int(row.get("VERSAO", ""))
-            except ValueError:
                 continue
             ordem = _fold(row.get("ORDEM_EXERC", "")).strip()
             reference_date = row.get("DT_REFER", "")
@@ -463,11 +644,11 @@ def _read_member(
                     ordem_exerc=ordem,
                     company_name=row.get("DENOM_CIA", ""),
                     currency=_currency(row.get("MOEDA")),
-                    currency_size=_CURRENCY_SIZE.get(
-                        (row.get("ESCALA_MOEDA") or "").strip().upper()
-                    ),
+                    currency_size=scale,
                     period_start=period_start or None,
                     period_end=row.get("DT_FIM_EXERC") or None,
+                    version_raw=raw_version,
+                    currency_scale=raw_scale,
                 )
                 accumulated[key] = statement
             statement.accounts.append(_account(row))
