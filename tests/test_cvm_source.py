@@ -10,6 +10,7 @@ from smaug.ingestion.domain.validation import SourceBatchValidation
 from smaug.ingestion.infrastructure.cvm_source import (
     _ENCODING,
     CvmDataSource,
+    _account,
     _classify,
     _Statement,
 )
@@ -37,16 +38,23 @@ _DMPL_HEADER = (
 def _row(
     cd_cvm: str,
     ref: str,
-    version: str,
+    version: str | None,
     conta: str,
     valor: str,
     *,
     ordem: str = "ÚLTIMO",
     ini: str | None = None,
+    escala: str | None = "MIL",
+    fixed: str | None = "S",
 ) -> str:
+    version_field = version or ""
+    scale_field = escala or ""
+    fixed_field = fixed or ""
     return (
-        f"00.0/0001-00;{ref};{version};ACME S.A.;{cd_cvm};DF Consolidado;REAL;MIL;"
-        f"{ordem};{ini or f'{ref[:4]}-01-01'};{ref};{conta};Conta {conta};{valor};S"
+        f"00.0/0001-00;{ref};{version_field};ACME S.A.;{cd_cvm};"
+        f"DF Consolidado;REAL;{scale_field};"
+        f"{ordem};{ini or f'{ref[:4]}-01-01'};{ref};{conta};Conta {conta};"
+        f"{valor};{fixed_field}"
     )
 
 
@@ -97,6 +105,8 @@ def _stmt(**overrides: object) -> _Statement:
         "company_name": "WEG S.A.",
         "currency": "BRL",
         "currency_size": 1000,
+        "version_raw": "1",
+        "currency_scale": "MIL",
         "period_start": "2021-01-01",
         "period_end": "2021-12-31",
         "accounts": [{"code": "1", "name": "Ativo Total", "quantity": "100.5"}],
@@ -112,11 +122,120 @@ def test_to_payload_mirrors_raw_accounts_without_math(tmp_path: Path) -> None:
     assert payload["reference_date"] == "2021-12-31"
     assert payload["balance_type"] == "consolidated"
     assert payload["currency_size"] == 1000
+    assert payload["VERSAO"] == "1"
+    assert payload["ESCALA_MOEDA"] == "MIL"
     assert payload["accounts"][0]["quantity"] == "100.5"  # exact, untouched
     # The discriminators the reader needs to make the selection the mirror no
     # longer makes for it (ADR 0016).
     assert payload["version"] == 1
     assert payload["ordem_exerc"] == "ULTIMO"
+
+
+def test_account_keeps_fixed_flag_and_does_not_coerce_absence_to_false() -> None:
+    assert _account({"CD_CONTA": "1", "ST_CONTA_FIXA": "S"}) == {
+        "code": "1",
+        "name": "",
+        "quantity": "",
+        "level": 1,
+        "is_fixed": True,
+        "ST_CONTA_FIXA": "S",
+    }
+    assert _account({"CD_CONTA": "1", "ST_CONTA_FIXA": "N"})["is_fixed"] is False
+    assert _account({"CD_CONTA": "1"})["is_fixed"] is None
+    malformed = _account({"CD_CONTA": "1", "ST_CONTA_FIXA": "unknown"})
+    assert malformed["is_fixed"] is None
+    assert malformed["ST_CONTA_FIXA"] == "unknown"
+
+
+def test_build_index_accepts_and_preserves_mil_and_unidade_scales(
+    tmp_path: Path,
+) -> None:
+    zpath = tmp_path / "dfp_cia_aberta_2021.zip"
+    _statement_zip(
+        zpath,
+        {
+            "dfp_cia_aberta_BPA_con_2021.csv": [
+                _row("005410", "2021-12-31", "1", "1", "100", escala="MIL"),
+                _row(
+                    "005410",
+                    "2022-12-31",
+                    "2",
+                    "1",
+                    "200",
+                    escala="UNIDADE",
+                    fixed="N",
+                ),
+            ]
+        },
+    )
+
+    index = _source(tmp_path, {"WEGE3": "5410"})._build_index(zpath)
+    by_ref = {statement.reference_date: statement for statement in index["5410"]}
+
+    assert by_ref["2021-12-31"].currency_size == 1000
+    assert by_ref["2021-12-31"].currency_scale == "MIL"
+    assert by_ref["2021-12-31"].version_raw == "1"
+    assert by_ref["2022-12-31"].currency_size == 1
+    assert by_ref["2022-12-31"].currency_scale == "UNIDADE"
+    assert by_ref["2022-12-31"].accounts[0]["is_fixed"] is False
+
+
+@pytest.mark.parametrize(
+    ("version", "escala", "finding_code"),
+    [
+        ("1", "UNKNOWN", "currency-scale"),
+        ("1", None, "currency-scale"),
+        ("not-a-version", "MIL", "statement-version"),
+        ("0", "MIL", "statement-version"),
+    ],
+)
+async def test_invalid_transport_fields_quarantine_the_archive(
+    tmp_path: Path,
+    version: str | None,
+    escala: str | None,
+    finding_code: str,
+) -> None:
+    class _Reporter:
+        def __init__(self) -> None:
+            self.reports: list[SourceBatchValidation] = []
+
+        async def record(self, validation: SourceBatchValidation) -> None:
+            self.reports.append(validation)
+
+    _statement_zip(
+        tmp_path / "dfp_cia_aberta_2021.zip",
+        {
+            "dfp_cia_aberta_BPA_con_2021.csv": [
+                _row(
+                    "005410",
+                    "2021-12-31",
+                    version,
+                    "1",
+                    "100",
+                    escala=escala,
+                )
+            ]
+        },
+    )
+    reporter = _Reporter()
+    async with httpx.AsyncClient() as http:
+        source = CvmDataSource(
+            http,
+            {"WEGE3": "5410"},
+            year=2021,
+            cache_dir=str(tmp_path),
+            document="DFP",
+            validation_reporter=reporter,
+        )
+        with pytest.raises(SourceBatchValidationError, match=finding_code):
+            await source.fetch("WEGE3", "BPA")
+
+    report = reporter.reports[0]
+    assert finding_code in {finding.code for finding in report.findings}
+    assert report.rules[-1].name == "transport-fields"
+    evidence = report.evidence["transport_fields"]
+    assert isinstance(evidence, dict)
+    assert finding_code in evidence
 
 
 async def test_dfp_document_targets_the_annual_file_and_url(tmp_path: Path) -> None:
