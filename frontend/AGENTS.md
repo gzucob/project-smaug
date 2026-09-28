@@ -95,7 +95,7 @@ not in the fonts.
   base URL is `NEXT_PUBLIC_API_BASE` (default `http://localhost:8000`). Because
   fetching is server-side there is **no CORS surface** — do not add
   client-side calls to the FastAPI base URL. The one deliberate exception is
-  the favorite-ticker toggle (`FavoriteButton`, #151, ADR 0049): a click has
+  the favorite-ticker toggle (`FavoriteButton`, #151): a click has
   nowhere else to originate from, so it calls this app's own same-origin
   `app/api/portfolio/[ticker]/route.ts`, which is what proxies to FastAPI —
   the browser itself never gains a cross-origin surface. A new mutation
@@ -121,7 +121,7 @@ not in the fonts.
 - **A delta is never sign-coloured.** An arrow states direction, which is a
   fact; green would state "good", which is the judgement the domain refuses to
   make — and a rising P/L is not the same news as a rising ROE.
-- **A screen never shows a statement slice without naming it** (ADR 0026). A
+- **A screen never shows a statement slice without naming it.** A
   bare indicator name is the controllers' slice; `roe_total` and friends are the
   consolidated group. `lib/indicators.ts` owns the pairing (`basisPair`,
   `BASIS_LABEL`) and the drill-down carries the toggle. The second basis is
@@ -129,7 +129,7 @@ not in the fonts.
   rendered text, not a tolerance, because a line that repeats "24,2%" costs
   height and says nothing.
 - **A null is never explained by the front-end.** The API sends `null_reasons`
-  (ADR 0008) naming why each indicator is null; render it through
+  naming why each indicator is null; render it through
   `lib/null-reasons.ts` and distinguish a deliberate n/d (`inapplicable_regime`,
   `zero_denominator`) from a gap of ours (missing price, unmapped account),
   which is coloured as the warning it is. The old `naSectors` field mirrored the

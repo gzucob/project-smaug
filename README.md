@@ -78,10 +78,6 @@ As fronteiras de autoridade são deliberadas:
 - Dados ausentes permanecem `null` com uma causa nomeada; o sistema não infere
   zero, dívida inexistente ou preço de outra fonte.
 
-As decisões de modelagem e proveniência estão registradas em
-[`docs/adr/`](docs/adr/). Em particular, o [ADR 0009](docs/adr/0009-read-cvm-statement-csvs-directly.md)
-documenta a remoção do `pycvm` e a leitura direta dos CSVs da CVM.
-
 ## Pré-requisitos
 
 - Python 3.13
@@ -345,19 +341,14 @@ src/smaug/
 
 frontend/          # aplicação Next.js
 alembic/           # migrações do PostgreSQL
-docs/adr/          # decisões de arquitetura e modelagem
 tests/             # testes unitários e de integração isolada
 ```
 
 ## Documentação e fonte de verdade
 
-- [`docs/ROADMAP.md`](docs/ROADMAP.md): objetivo e milestones M0–M3;
-- [`docs/adr/`](docs/adr/): decisões imutáveis de arquitetura, modelagem e
-  proveniência;
 - [`AGENTS.md`](AGENTS.md): regras de engenharia e limites do projeto;
-- [`docs/AGENTS.md`](docs/AGENTS.md): onde cada tipo de decisão deve ser
-  documentado;
 - issues do GitHub: trabalho pendente e próximos passos;
+- PRs e histórico do Git: mudanças implementadas e seu contexto;
 - `smaug doctor` e os testes: estado atual de cobertura e correção.
 
 O README explica o funcionamento e o uso do sistema. Ele não substitui os
