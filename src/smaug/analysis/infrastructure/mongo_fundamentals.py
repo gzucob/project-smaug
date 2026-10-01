@@ -56,7 +56,7 @@ from smaug.portfolio.domain.securities import (
 )
 from smaug.portfolio.domain.share_classes import PerShareClass, UnitComponent
 
-_STATEMENTS = ("BPA", "BPP", "DRE", "DFC", "DMPL")
+_STATEMENTS = ("BPA", "BPP", "DRE", "DFC", "DMPL", "DVA")
 
 # The mirror stores every filing and chooses none of them (ADR 0016), so the
 # choice is made here: the reported period rather than its comparative, the latest
@@ -376,7 +376,7 @@ def _dep_amort_accounts(dfc: Accounts) -> tuple[Mapping[str, Any], ...]:
     """Return the DFC rows accepted as D&A add-backs, without double counting."""
     selected: list[Mapping[str, Any]] = []
     selected_codes: list[str] = []
-    for account in dfc:
+    for account in sorted(dfc, key=lambda item: str(item.get("code", "")).count(".")):
         code = str(account.get("code", ""))
         if not code.startswith("6.01"):
             continue
@@ -384,8 +384,6 @@ def _dep_amort_accounts(dfc: Accounts) -> tuple[Mapping[str, Any], ...]:
             continue
         name = _fold(_without_parentheticals(str(account.get("name", ""))))
         if not any(needle in name for needle in _DEP_AMORT_NEEDLES):
-            continue
-        if _dec(account.get("quantity")) is None:
             continue
         selected.append(account)
         selected_codes.append(code)
@@ -405,11 +403,146 @@ def _dep_amort(dfc: Accounts) -> Decimal | None:
     so a parent and its breakdown are never double-counted.
     """
     selected = _dep_amort_accounts(dfc)
-    if not selected:
+    if len({str(account.get("code", "")) for account in selected}) != len(selected):
+        return None
+    values = tuple(_dec(account.get("quantity")) for account in selected)
+    if not values or any(value is None or not value.is_finite() for value in values):
         return None
     return sum(
-        (_dec(account.get("quantity")) or Decimal(0) for account in selected),
+        (value for value in values if value is not None),
         Decimal(0),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _DepAmortResolution:
+    value: Decimal | None
+    statement: str
+    found: tuple[SourceAccountRef, ...]
+    expected: tuple[str, ...]
+    formula: str | None = None
+
+
+def _resolve_dep_amort(
+    by_module: Mapping[str, Any], reference_date: date
+) -> _DepAmortResolution:
+    """Resolve the period's D&A from operating add-backs or aligned DVA facts."""
+    dfc, scale = _accounts(by_module, "DFC"), _scale(by_module, "DFC")
+    selected = _dep_amort_accounts(dfc)
+    resolution = _DepAmortResolution(
+        value=_mul(_dep_amort(dfc), scale),
+        statement="DFC",
+        found=tuple(
+            SourceAccountRef(
+                code=str(account.get("code", "")),
+                name=str(account.get("name", "")),
+                value=_mul(_dec(account.get("quantity")), scale),
+                column=_account_column(account),
+            )
+            for account in selected
+        ),
+        expected=("scope=6.01", "label~depreciacao/amortizacao/exaustao"),
+    )
+    if resolution.value is not None:
+        return resolution
+
+    # D&A still uses the DFC flow clock during TTM isolation. Only a DVA from
+    # the same filing scope and span can supply that input. Missing metadata
+    # cannot establish compatibility, even for a filed zero.
+    payloads = [by_module.get(module) for module in ("DRE", "DFC", "DVA")]
+    if not all(isinstance(payload, Mapping) for payload in payloads):
+        return resolution
+    dre, dfc_payload, dva_payload = (
+        payload for payload in payloads if isinstance(payload, Mapping)
+    )
+    for key in (
+        "cvm_code",
+        "balance_type",
+        "document_type",
+        "version",
+        "currency",
+        "period_start_date",
+        "period_end_date",
+        "reference_date",
+    ):
+        value = dre.get(key)
+        if (
+            value is None
+            or value == ""
+            or any(payload.get(key) != value for payload in (dfc_payload, dva_payload))
+        ):
+            return resolution
+    if (
+        dre.get("balance_type") not in _BALANCE_RANK
+        or _iso_date(dre.get("period_end_date")) != reference_date
+        or _iso_date(dre.get("reference_date")) != reference_date
+        or _iso_date(dre.get("period_start_date")) is None
+    ):
+        return resolution
+    start = _iso_date(dre.get("period_start_date"))
+    assert start is not None
+    size = dva_payload.get("currency_size")
+    if start > reference_date or not isinstance(size, int) or size not in {1, 1000}:
+        return resolution
+
+    dva, dva_scale = _accounts(by_module, "DVA"), _scale(by_module, "DVA")
+    direct = _account_by_code(dva, "7.04.01")
+    amount = None if direct is None else _dec(direct.get("quantity"))
+    formula = "-DVA[7.04.01]"
+    codes: tuple[str, ...] = ("7.04.01",)
+    if any(
+        sum(str(account.get("code")) == code for account in dva) > 1
+        for code in ("7.04.01", "7.04", "7.04.02")
+    ):
+        return resolution
+    if direct is not None:
+        label = _fold(str(direct.get("name", "")))
+        if not all(needle in label for needle in _DEP_AMORT_NEEDLES):
+            return resolution
+    if amount is None or not amount.is_finite():
+        # Retentions contain D&A and Other. Both filed components of this
+        # identity are required; an omitted Other line is never a zero.
+        parent = _account_by_code(dva, "7.04")
+        other = _account_by_code(dva, "7.04.02")
+        if (
+            parent is None
+            or other is None
+            or "retenc" not in _fold(str(parent.get("name", "")))
+            or _fold(str(other.get("name", ""))).strip() not in {"outras", "outros"}
+        ):
+            return resolution
+        total, remainder = _dec(parent.get("quantity")), _dec(other.get("quantity"))
+        if (
+            total is None
+            or remainder is None
+            or not total.is_finite()
+            or not remainder.is_finite()
+        ):
+            return resolution
+        amount = total - remainder
+        formula = "-(DVA[7.04] - DVA[7.04.02])"
+        codes = ("7.04", "7.04.02")
+    if amount > 0:
+        return resolution
+    return _DepAmortResolution(
+        value=-amount * dva_scale,
+        statement="DVA",
+        found=_code_refs(dva, dva_scale, *codes),
+        expected=(
+            "code=7.04.01; or complete 7.04 - 7.04.02",
+            *(
+                f"{key}={dva_payload[key]}"
+                for key in (
+                    "cvm_code",
+                    "balance_type",
+                    "document_type",
+                    "version",
+                    "period_start_date",
+                    "period_end_date",
+                )
+            ),
+        ),
+        formula=formula,
     )
 
 
@@ -651,6 +784,7 @@ def _source_account_evidence(
     financials: StandardizedFinancials,
     *,
     per_share_accounts: Accounts,
+    dep_amort_resolution: _DepAmortResolution | None = None,
 ) -> tuple[SourceAccountEvidence, ...]:
     """Inventory raw roots used by indicators and their derived blockers."""
     bpa, bpa_s = _accounts(by_module, "BPA"), _scale(by_module, "BPA")
@@ -875,24 +1009,20 @@ def _source_account_evidence(
             parent_code="6.01",
         )
     )
-    dep_refs = tuple(
-        SourceAccountRef(
-            code=str(account.get("code", "")),
-            name=str(account.get("name", "")),
-            value=_mul(_dec(account.get("quantity")), dfc_s),
-            column=_account_column(account),
-        )
-        for account in _dep_amort_accounts(dfc)
+    dep_resolution = dep_amort_resolution or _resolve_dep_amort(
+        {key: value for key, value in by_module.items() if key != "DVA"},
+        financials.reference_date,
     )
     add(
         _source_entry(
             "dep_amort",
-            "DFC",
-            ("scope=6.01", "label~depreciacao/amortizacao/exaustao"),
-            dep_refs,
+            dep_resolution.statement,
+            dep_resolution.expected,
+            dep_resolution.found,
             financials.dep_amort,
             financials.unmapped_fields,
-            parent_code="6.01",
+            parent_code="7.04" if dep_resolution.statement == "DVA" else "6.01",
+            formula=dep_resolution.formula,
         )
     )
     capex_candidates = _matching_refs(
@@ -2016,18 +2146,27 @@ def standardize(
     )
 
     regime = filed_regime or expected_regime(sector)
+    dep_resolution = (
+        _resolve_dep_amort(by_module, reference_date)
+        if regime is AccountingRegime.CORPORATE
+        else None
+    )
     if regime is AccountingRegime.BANK:
         result = _as_bank(base, bpa, bpa_s, dre, dre_s)
     elif regime is AccountingRegime.INSURANCE:
         result = _as_insurer(base, bpa, bpa_s, bpp, bpp_s, dre, dre_s)
     else:
-        result = _as_corporate(base, bpa, bpa_s, bpp, bpp_s, dre, dre_s, dfc, dfc_s)
+        assert dep_resolution is not None
+        result = _as_corporate(
+            base, bpa, bpa_s, bpp, bpp_s, dre, dre_s, dep_resolution.value
+        )
     return replace(
         result,
         source_account_evidence=_source_account_evidence(
             by_module,
             result,
             per_share_accounts=cpc41_accounts,
+            dep_amort_resolution=dep_resolution,
         ),
     )
 
@@ -2247,12 +2386,10 @@ def _as_corporate(
     bpp_s: Decimal,
     dre: Accounts,
     dre_s: Decimal,
-    dfc: Accounts,
-    dfc_s: Decimal,
+    dep_amort: Decimal | None,
 ) -> StandardizedFinancials:
     """The standard chart of accounts — and what CXSE3 files, despite its sector."""
     ebit = _mul(_by_code(dre, "3.05"), dre_s)  # before financial result/taxes
-    dep_amort = _mul(_dep_amort(dfc), dfc_s)  # cash-flow add-backs, summed
     assessment = _total_debt(bpp, bpp_s)
     total_debt = assessment.total_debt
     debt_reason = assessment.null_reason
@@ -2416,7 +2553,7 @@ class MongoFundamentalsReader:
             key = (ref, module)
             rank = (
                 _dre_rank(payload, fetched)
-                if module == "DRE"
+                if module in {"DRE", "DVA"}
                 else _rank(payload, fetched)
             )
             if key not in best or rank > best[key]:
@@ -2437,6 +2574,8 @@ class MongoFundamentalsReader:
         fallback_cd_cvm = self._registrant(ticker)
         loaded: list[tuple[str | None, StandardizedFinancials]] = []
         for ref, modules in sorted(by_period.items()):
+            if modules.keys() == {"DVA"}:
+                continue
             payloads = [
                 payload for payload in modules.values() if isinstance(payload, Mapping)
             ]

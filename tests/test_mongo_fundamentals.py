@@ -18,8 +18,10 @@ from smaug.analysis.domain.financials import (
     IssuerIdentity,
     MarketData,
     RegimeSource,
+    SourceAccountStatus,
 )
 from smaug.analysis.domain.indicators import NullReason
+from smaug.analysis.domain.ttm import build_ttm
 from smaug.analysis.infrastructure.mongo_fundamentals import (
     MongoFundamentalsReader,
     _deduplicate_accounts,
@@ -2142,3 +2144,298 @@ async def test_reader_uses_the_individual_statement_when_it_is_all_there_is() ->
 
     assert annual is not None
     assert annual.revenue == Decimal("500")
+
+
+def _dep_amort_filing(
+    end: str = "2025-12-31", start: str = "2025-01-01", amount: str = "-80"
+) -> dict[str, Any]:
+    metadata = {
+        "cvm_code": "123",
+        "balance_type": "consolidated",
+        "document_type": "DFP" if end.endswith("12-31") else "ITR",
+        "version": 1,
+        "currency": "BRL",
+        "currency_size": 1000,
+        "period_start_date": start,
+        "period_end_date": end,
+        "reference_date": end,
+        "ordem_exerc": "ULTIMO",
+    }
+    return {
+        "DRE": {
+            **metadata,
+            "accounts": [
+                _acc("3.01", "Receita de Venda de Bens e/ou Serviços", "900"),
+                _acc("3.05", "Resultado Antes do Resultado Financeiro", "200"),
+            ],
+        },
+        "DFC": {**metadata, "accounts": []},
+        "DVA": {
+            **metadata,
+            "accounts": [
+                _acc("7.04.01", "Depreciação, Amortização e Exaustão", amount)
+            ],
+        },
+    }
+
+
+@pytest.mark.parametrize("amount", ["-80", "0"])
+def test_aligned_dva_recovers_the_same_addback_with_source_lineage(amount: str) -> None:
+    financials = standardize(
+        _dep_amort_filing(amount=amount), Sector.INDUSTRY, date(2025, 12, 31)
+    )
+    assert financials.dep_amort == -Decimal(amount) * 1000
+    assert financials.ebitda == Decimal("200000") - Decimal(amount) * 1000
+    evidence = next(
+        item for item in financials.source_account_evidence if item.field == "dep_amort"
+    )
+    assert evidence.statement == "DVA"
+    assert evidence.status is SourceAccountStatus.MAPPED
+    assert evidence.formula == "-DVA[7.04.01]"
+    assert evidence.found[0].value == Decimal(amount) * 1000
+    assert "balance_type=consolidated" in evidence.expected
+    assert "period_start_date=2025-01-01" in evidence.expected
+    assert evidence.blocker is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("cvm_code", "456"),
+        ("balance_type", "individual"),
+        ("version", 2),
+        ("document_type", "ITR"),
+        ("currency", "USD"),
+        ("period_start_date", "2025-10-01"),
+        ("period_end_date", "2025-09-30"),
+        ("reference_date", "2025-09-30"),
+        ("balance_type", None),
+        ("period_start_date", "invalid"),
+    ],
+)
+def test_incompatible_or_unproved_dva_does_not_supply_an_addback(
+    field: str, value: str | int | None
+) -> None:
+    modules = _dep_amort_filing()
+    modules["DVA"][field] = value
+    financials = standardize(modules, Sector.INDUSTRY, date(2025, 12, 31))
+    assert financials.dep_amort is None
+    assert financials.ebitda is None
+
+
+@pytest.mark.parametrize("module", ["DRE", "DFC", "DVA"])
+def test_missing_statement_cannot_establish_the_dva_perimeter(module: str) -> None:
+    modules = _dep_amort_filing()
+    del modules[module]
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort is None
+
+
+@pytest.mark.parametrize("amount", ["80", "invalid", "NaN", "Infinity"])
+def test_invalid_or_opposite_sign_dva_is_not_normalized_by_absolute_value(
+    amount: str,
+) -> None:
+    assert (
+        standardize(
+            _dep_amort_filing(amount=amount), Sector.INDUSTRY, date(2025, 12, 31)
+        ).dep_amort
+        is None
+    )
+
+
+def test_dva_retentions_require_the_explicit_other_component() -> None:
+    modules = _dep_amort_filing()
+    modules["DVA"]["accounts"] = [_acc("7.04", "Retenções", "-100")]
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort is None
+    modules["DVA"]["accounts"].append(_acc("7.04.02", "Outras", "-20"))
+    financials = standardize(modules, Sector.INDUSTRY, date(2025, 12, 31))
+    assert financials.dep_amort == Decimal("80000")
+    evidence = next(
+        item for item in financials.source_account_evidence if item.field == "dep_amort"
+    )
+    assert evidence.formula == "-(DVA[7.04] - DVA[7.04.02])"
+    assert [item.code for item in evidence.found] == ["7.04", "7.04.02"]
+
+
+@pytest.mark.parametrize("amount", ["0", "60"])
+def test_existing_dfc_result_is_selected_once_even_when_dva_has_another_value(
+    amount: str,
+) -> None:
+    modules = _dep_amort_filing()
+    modules["DFC"]["accounts"] = [
+        _acc("6.01.01.01", "Depreciação e amortização", amount)
+    ]
+    financials = standardize(modules, Sector.INDUSTRY, date(2025, 12, 31))
+    assert financials.dep_amort == Decimal(amount) * 1000
+    assert (
+        next(
+            item
+            for item in financials.source_account_evidence
+            if item.field == "dep_amort"
+        ).statement
+        == "DFC"
+    )
+
+
+def test_unreadable_dfc_component_is_not_skipped_to_publish_a_partial_sum() -> None:
+    modules = _dep_amort_filing()
+    modules["DFC"]["accounts"] = [
+        _acc("6.01.01.01", "Depreciação", "60"),
+        _acc("6.01.01.02", "Amortização", "invalid"),
+    ]
+    del modules["DVA"]
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort is None
+    modules["DVA"] = _dep_amort_filing()["DVA"]
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort == 80000
+
+
+def test_parent_and_child_are_not_double_counted_in_reverse_source_order() -> None:
+    modules = _dep_amort_filing()
+    modules["DFC"]["accounts"] = [
+        _acc("6.01.01.01.01", "Depreciação", "60"),
+        _acc("6.01.01.01", "Depreciação e amortização", "80"),
+    ]
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort == 80000
+
+
+def test_dva_does_not_make_ebitda_applicable_to_banks() -> None:
+    modules = _dep_amort_filing()
+    modules["DRE"]["accounts"][0]["name"] = "Receitas de Intermediação Financeira"
+    financials = standardize(modules, Sector.BANK, date(2025, 12, 31))
+    assert financials.dep_amort is None
+    assert financials.ebitda is None
+
+
+def test_dva_addbacks_use_the_aligned_ytd_clock_during_ttm_assembly() -> None:
+    periods = [
+        standardize(
+            _dep_amort_filing(end, start, amount),
+            Sector.INDUSTRY,
+            date.fromisoformat(end),
+        )
+        for end, start, amount in (
+            ("2025-03-31", "2025-01-01", "-10"),
+            ("2025-06-30", "2025-01-01", "-30"),
+            ("2025-09-30", "2025-01-01", "-60"),
+            ("2026-03-31", "2026-01-01", "-20"),
+        )
+    ]
+    annual = standardize(
+        _dep_amort_filing(amount="-100"), Sector.INDUSTRY, date(2025, 12, 31)
+    )
+    ttm = build_ttm(periods, annual)
+    assert ttm is not None
+    assert ttm.dep_amort == Decimal("110000")  # 100 - prior Q1 10 + current Q1 20
+
+
+async def test_reader_selects_the_accumulated_consolidated_dva() -> None:
+    modules = _dep_amort_filing("2025-06-30")
+    docs = [
+        {
+            "module": module,
+            "payload": payload,
+            "fetched_at": datetime(2026, 9, 30, tzinfo=UTC),
+        }
+        for module, payload in modules.items()
+    ]
+    for override in (
+        {"balance_type": "individual", "version": 2},
+        {"period_start_date": "2025-04-01"},
+    ):
+        docs.append({**docs[-1], "payload": {**modules["DVA"], **override}})
+    reader = MongoFundamentalsReader(
+        _FakeCollection(docs), sector_resolver=lambda _: Sector.INDUSTRY
+    )
+    history = await reader.history("TEST3")
+    assert len(history) == 1
+    assert history[0].dep_amort == 80000
+
+
+async def test_dva_only_filing_does_not_create_an_analysis_period() -> None:
+    reader = MongoFundamentalsReader(
+        _FakeCollection(
+            [
+                {
+                    "module": "DVA",
+                    "payload": _dep_amort_filing()["DVA"],
+                    "fetched_at": datetime(2026, 9, 30, tzinfo=UTC),
+                }
+            ]
+        ),
+        sector_resolver=lambda _: Sector.INDUSTRY,
+    )
+    assert await reader.annuals("TEST3") == []
+
+
+@pytest.mark.parametrize("module", ["DFC", "DVA"])
+def test_conflicting_addback_cells_do_not_supply_a_value(module: str) -> None:
+    modules = _dep_amort_filing()
+    if module == "DFC":
+        del modules["DVA"]
+        modules[module]["accounts"] = [
+            _acc("6.01.01.01", "Depreciação e amortização", "80"),
+            _acc("6.01.01.01", "Depreciação e amortização", "90"),
+        ]
+    else:
+        modules[module]["accounts"].append(
+            _acc("7.04.01", "Depreciação, Amortização e Exaustão", "-90")
+        )
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort is None
+
+
+@pytest.mark.parametrize("size", [None, 0, -1, "1000"])
+def test_dva_without_a_valid_declared_scale_does_not_supply_an_addback(
+    size: int | str | None,
+) -> None:
+    modules = _dep_amort_filing()
+    modules["DVA"]["currency_size"] = size
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort is None
+
+
+def test_dva_uses_its_own_declared_scale() -> None:
+    modules = _dep_amort_filing()
+    modules["DVA"]["currency_size"] = 1
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort == 80
+
+
+def test_dva_rejects_an_aligned_but_impossible_period() -> None:
+    modules = _dep_amort_filing(start="2026-01-01")
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort is None
+
+
+def test_ttm_retains_older_dva_sources_when_the_latest_period_uses_dfc() -> None:
+    periods = [
+        standardize(
+            _dep_amort_filing(end, start, amount),
+            Sector.INDUSTRY,
+            date.fromisoformat(end),
+        )
+        for end, start, amount in (
+            ("2025-03-31", "2025-01-01", "-10"),
+            ("2025-06-30", "2025-01-01", "-30"),
+            ("2025-09-30", "2025-01-01", "-60"),
+        )
+    ]
+    current = _dep_amort_filing("2026-03-31", "2026-01-01")
+    current["DFC"]["accounts"] = [_acc("6.01.01.01", "Depreciação e amortização", "20")]
+    periods.append(standardize(current, Sector.INDUSTRY, date(2026, 3, 31)))
+    annual = standardize(
+        _dep_amort_filing(amount="-100"), Sector.INDUSTRY, date(2025, 12, 31)
+    )
+    ttm = build_ttm(periods, annual)
+    assert ttm is not None
+    assert ttm.dep_amort == Decimal("110000")
+    evidence = {item.field: item for item in ttm.source_account_evidence}
+    root = evidence["dep_amort"]
+    assert root.status is SourceAccountStatus.DERIVED
+    assert root.blocker is None
+    assert root.dependencies == (
+        "dep_amort[2025-03-31]",
+        "dep_amort[2025-06-30]",
+        "dep_amort[2025-09-30]",
+        "dep_amort[2025-12-31]",
+        "dep_amort[2026-03-31]",
+    )
+    assert evidence["dep_amort[2025-03-31]"].statement == "DVA"
+    assert evidence["dep_amort[2025-12-31]"].formula == "-DVA[7.04.01]"
+    assert evidence["dep_amort[2026-03-31]"].statement == "DFC"
+    assert "resolved_value=20000" in evidence["dep_amort[2026-03-31]"].expected

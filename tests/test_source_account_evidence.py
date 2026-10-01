@@ -381,3 +381,36 @@ def test_cpc41_window_provenance_round_trips_through_sql_and_api() -> None:
         response_provenance.selected_periods[0].diluted_disclosure_status
         is Cpc41EvidenceStatus.ABSENT
     )
+
+
+def test_dva_period_dependencies_round_trip_through_existing_sql_json() -> None:
+    period = SourceAccountEvidence(
+        field="dep_amort[2025-12-31]",
+        statement="DVA",
+        status=SourceAccountStatus.MAPPED,
+        expected=("period_start=2025-01-01", "balance_type=consolidated"),
+        found=(SourceAccountRef("7.04.01", "Depreciação", Decimal("-80000")),),
+        formula="-DVA[7.04.01]",
+    )
+    root = SourceAccountEvidence(
+        field="dep_amort",
+        statement="derived",
+        status=SourceAccountStatus.DERIVED,
+        dependencies=(period.field,),
+        formula="sum(isolate_on_dfc_span(dep_amort)); Q4 = annual - Q1 - Q2 - Q3",
+    )
+    analysis = TickerAnalysis(
+        ticker="TEST3",
+        classification=Classification("Industriais", None, None),
+        reference_date=date(2025, 12, 31),
+        computed_at=datetime(2026, 9, 30, tzinfo=UTC),
+        view=VIEW_TTM,
+        indicators=Indicators(source_account_evidence=(root, period)),
+    )
+    restored = _to_entity(_to_row(analysis))
+    assert restored.indicators.source_account_evidence == (root, period)
+    response = _to_response(restored)
+    sources = response.indicators.source_account_evidence
+    assert sources[0].dependencies == [period.field]
+    assert sources[1].statement == "DVA"
+    assert sources[1].found[0].value == Decimal("-80000")

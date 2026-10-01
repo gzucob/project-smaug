@@ -939,6 +939,64 @@ def _merge_source_account_evidence(
     return tuple(merged.values())
 
 
+def _ttm_dep_amort_sources(
+    periods: Sequence[StandardizedFinancials],
+    annual: StandardizedFinancials | None,
+    refs: Sequence[date],
+    value: Decimal | None,
+) -> tuple[SourceAccountEvidence, ...]:
+    """Keep every cumulative source needed by a TTM that uses DVA D&A."""
+    ends = {
+        year: max(ref for ref in refs if ref.year == year)
+        for year in {ref.year for ref in refs}
+    }
+    supporting = [
+        period
+        for period in periods
+        if period.reference_date.year in ends
+        and period.reference_date <= ends[period.reference_date.year]
+    ]
+    if annual is not None and annual.reference_date in refs:
+        supporting.append(annual)
+    entries: list[SourceAccountEvidence] = []
+    for period in sorted(supporting, key=lambda item: item.reference_date):
+        source = next(
+            (
+                item
+                for item in period.source_account_evidence
+                if item.field == "dep_amort"
+            ),
+            None,
+        )
+        if source is None:
+            continue
+        entries.append(
+            replace(
+                source,
+                field=f"dep_amort[{period.reference_date.isoformat()}]",
+                expected=(
+                    f"period_end={period.reference_date}",
+                    f"period_start={period.dfc_period_start}",
+                    f"resolved_value={period.dep_amort}",
+                    *source.expected,
+                ),
+            )
+        )
+    if not any(entry.statement == "DVA" for entry in entries):
+        return ()
+    root = SourceAccountEvidence(
+        field="dep_amort",
+        statement="derived",
+        status=SourceAccountStatus.DERIVED,
+        expected=tuple(f"selected_quarter={ref}" for ref in sorted(refs)),
+        formula="sum(isolate_on_dfc_span(dep_amort)); Q4 = annual - Q1 - Q2 - Q3",
+        dependencies=tuple(entry.field for entry in entries),
+        blocker=NullReason.SOURCE_ACCOUNT_ABSENT if value is None else None,
+        consumer_indicators=entries[0].consumer_indicators,
+    )
+    return (root, *entries)
+
+
 def _isolate_year(
     periods: list[StandardizedFinancials],
 ) -> tuple[dict[date, Flows], Flows]:
@@ -1105,6 +1163,13 @@ def _build_ttm(
         quarters, annual, refs
     )
     source_account_evidence = latest.source_account_evidence
+    dep_amort_sources = _ttm_dep_amort_sources(
+        quarters, annual, refs, summed["dep_amort"]
+    )
+    if dep_amort_sources:
+        source_account_evidence = _merge_source_account_evidence(
+            source_account_evidence, dep_amort_sources
+        )
     underwriting_source = _ttm_insurance_underwriting_source(quarters, annual, refs)
     if underwriting_source is not None:
         source_account_evidence = _merge_source_account_evidence(
