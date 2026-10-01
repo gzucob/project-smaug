@@ -520,3 +520,68 @@ def test_recovered_per_lot_eps_and_dependent_pe_round_trip_through_sql_api() -> 
     )
     assert pe.formula == "price / eps_basic"
     assert "price_source_session=2025-12-30" in pe.expected
+
+
+def test_cumulative_paid_distribution_lineage_survives_sql_and_api() -> None:
+    def period(end: date, amount: str | None) -> StandardizedFinancials:
+        accounts = [] if amount is None else [_acc("6.03.05", "Dividendos", amount)]
+        financials = standardize(
+            {
+                "DRE": {"accounts": [_acc("3.01", "Receita de Venda de Bens", "100")]},
+                "DFC": {
+                    "cvm_code": "123",
+                    "balance_type": "consolidated",
+                    "currency": "BRL",
+                    "currency_size": 1000,
+                    "reference_date": str(end),
+                    "period_end_date": str(end),
+                    "period_start_date": str(date(end.year, 1, 1)),
+                    "document_type": "DFP" if end.month == 12 else "ITR",
+                    "version": 1,
+                    "accounts": accounts,
+                },
+            },
+            Sector.INDUSTRY,
+            end,
+        )
+        return replace(financials, cd_cvm="123")
+
+    annual = period(date(2025, 12, 31), "-100")
+    quarters = [
+        period(date(2025, 3, 31), None),
+        period(date(2025, 6, 30), "-40"),
+        period(date(2025, 9, 30), None),
+        period(date(2026, 3, 31), None),
+        period(date(2026, 6, 30), "-30"),
+    ]
+    ttm = build_ttm(quarters, annual)
+    assert ttm is not None
+    assert ttm.dividends_paid == Decimal(90000)
+    indicators = compute(
+        replace(ttm, net_income=Decimal(100000)),
+        None,
+        MarketData(market_cap=Decimal(1000000)),
+    )
+    assert indicators.payout_cash_paid_in_period == Decimal("0.9")
+    assert indicators.company_cash_yield_paid_in_period == Decimal("0.09")
+    analysis = TickerAnalysis(
+        ticker="TEST3",
+        classification=Classification("Industriais", None, None),
+        reference_date=ttm.reference_date,
+        computed_at=datetime(2026, 10, 1, tzinfo=UTC),
+        view=VIEW_TTM,
+        indicators=indicators,
+    )
+    restored = _to_entity(_to_row(analysis))
+    assert (
+        restored.indicators.source_account_evidence
+        == indicators.source_account_evidence
+    )
+    response = _to_response(restored)
+    sources = {s.field: s for s in response.indicators.source_account_evidence}
+    root = sources["dividends_paid"]
+    assert root.formula == "prior annual - prior same-period YTD + current YTD"
+    assert len(root.dependencies) == 3
+    assert sources["dividends_paid[2025-12-31]"].found[0].value == Decimal(-100000)
+    assert "balance_type=consolidated" in sources[root.dependencies[0]].expected
+    assert response.indicators.payout_cash_paid_in_period == Decimal("0.9")

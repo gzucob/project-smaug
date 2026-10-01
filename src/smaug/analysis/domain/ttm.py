@@ -1060,6 +1060,158 @@ def _ttm_dep_amort_sources(
     return (root, *entries)
 
 
+def _distribution_source(
+    period: StandardizedFinancials, field: str
+) -> tuple[SourceAccountEvidence, dict[str, str]] | None:
+    source = next((s for s in period.source_account_evidence if s.field == field), None)
+    if source is None:
+        return None
+    facts = dict(entry.split("=", 1) for entry in source.expected if "=" in entry)
+    start = (
+        period.dfc_period_start
+        if field == "dividends_paid"
+        else period.dmpl_period_start
+    )
+    statement = "DFC" if field == "dividends_paid" else "DMPL"
+    value = getattr(period, field)
+    if (
+        period.cd_cvm is None
+        or period.filed_regime is None
+        or start != date(period.reference_date.year, 1, 1)
+        or source.statement != statement
+        or facts.get("cvm_code") != period.cd_cvm
+        or facts.get("period_start_date") != str(start)
+        or facts.get("period_end_date") != str(period.reference_date)
+        or facts.get("reference_date") != str(period.reference_date)
+        or facts.get("balance_type") not in {"individual", "consolidated"}
+        or not facts.get("currency")
+        or facts.get("currency_size") not in {"1", "1000"}
+        or value is None
+        or not value.is_finite()
+        or value < 0
+    ):
+        return None
+    return source, facts
+
+
+def _ttm_distribution_from_cumulative(
+    quarters: Sequence[StandardizedFinancials],
+    annual: StandardizedFinancials | None,
+    end: date,
+    field: str,
+) -> tuple[Decimal, tuple[SourceAccountEvidence, ...]] | None:
+    """Resolve the same TTM distribution from complete filed cumulative spans."""
+    if (
+        annual is None
+        or annual.reference_date.month != 12
+        or annual.reference_date.day != 31
+    ):
+        return None
+    selected: tuple[StandardizedFinancials, ...]
+    if annual.reference_date == end:
+        selected = (annual,)
+        formula = "annual distribution for the identical twelve-month window"
+    else:
+        current = [q for q in quarters if q.reference_date == end]
+        previous = [q for q in quarters if q.reference_date == _year_before(end)]
+        if (
+            annual.reference_date != date(end.year - 1, 12, 31)
+            or len(current) != 1
+            or len(previous) != 1
+        ):
+            return None
+        selected = (annual, previous[0], current[0])
+        formula = "prior annual - prior same-period YTD + current YTD"
+    proof = [_distribution_source(period, field) for period in selected]
+    if any(item is None for item in proof):
+        return None
+    sources = [item for item in proof if item is not None]
+    if (
+        len({period.cd_cvm for period in selected}) != 1
+        or len({period.filed_regime for period in selected}) != 1
+        or any(
+            len({facts[key] for _, facts in sources}) != 1
+            for key in ("balance_type", "currency")
+        )
+    ):
+        return None
+    values = [cast(Decimal, getattr(period, field)) for period in selected]
+    value = values[0] if len(values) == 1 else values[0] - values[1] + values[2]
+    if value < 0 or (len(values) == 3 and values[1] > values[0]):
+        return None
+    lineage = tuple(
+        replace(
+            source,
+            field=f"{field}[{period.reference_date}]",
+            expected=(f"resolved_value={getattr(period, field)}", *source.expected),
+        )
+        for period, (source, _) in zip(selected, sources, strict=True)
+    )
+    root = SourceAccountEvidence(
+        field=field,
+        statement="derived",
+        status=SourceAccountStatus.DERIVED,
+        expected=(f"period_end={end}", f"resolved_value={value}"),
+        formula=formula,
+        dependencies=tuple(source.field for source in lineage),
+        consumer_indicators=sources[0][0].consumer_indicators,
+    )
+    return value, (root, *lineage)
+
+
+def _ttm_isolated_distribution_sources(
+    quarters: Sequence[StandardizedFinancials],
+    annual: StandardizedFinancials | None,
+    refs: Sequence[date],
+    field: str,
+    value: Decimal | None,
+) -> tuple[SourceAccountEvidence, ...]:
+    ends = {
+        year: max(ref for ref in refs if ref.year == year)
+        for year in {r.year for r in refs}
+    }
+    supporting = [
+        q
+        for q in quarters
+        if q.reference_date.year in ends
+        and q.reference_date <= ends[q.reference_date.year]
+    ]
+    if annual is not None and annual.reference_date in refs:
+        supporting.append(annual)
+    lineage: list[SourceAccountEvidence] = []
+    clock = "dfc_period_start" if field == "dividends_paid" else "dmpl_period_start"
+    for period in sorted(supporting, key=lambda p: p.reference_date):
+        source = next(
+            (s for s in period.source_account_evidence if s.field == field), None
+        )
+        if source is not None:
+            lineage.append(
+                replace(
+                    source,
+                    field=f"{field}[{period.reference_date}]",
+                    expected=(
+                        f"period_end={period.reference_date}",
+                        f"period_start={getattr(period, clock)}",
+                        f"resolved_value={getattr(period, field)}",
+                        *source.expected,
+                    ),
+                )
+            )
+    if not lineage:
+        return ()
+    root = SourceAccountEvidence(
+        field=field,
+        statement="derived",
+        status=SourceAccountStatus.DERIVED,
+        expected=tuple(f"selected_quarter={ref}" for ref in sorted(refs)),
+        formula=f"sum(isolate_on_{clock}({field})); Q4 = annual - prior YTD",
+        dependencies=tuple(s.field for s in lineage),
+        blocker=NullReason.SOURCE_ACCOUNT_ABSENT if value is None else None,
+        consumer_indicators=lineage[0].consumer_indicators,
+    )
+    return (root, *lineage)
+
+
 def _isolate_year(
     periods: list[StandardizedFinancials],
 ) -> tuple[dict[date, Flows], Flows]:
@@ -1214,6 +1366,19 @@ def _build_ttm(
         # A TTM flow needs all four quarters; a gap makes it null, not understated.
         summed[name] = sum(present, Decimal(0)) if len(present) == len(values) else None
 
+    distribution_sources: list[SourceAccountEvidence] = []
+    for field in ("dividends_paid", "dividends_declared"):
+        resolved = _ttm_distribution_from_cumulative(quarters, annual, refs[0], field)
+        if resolved is not None:
+            summed[field] = resolved[0]
+            distribution_sources.extend(resolved[1])
+        else:
+            distribution_sources.extend(
+                _ttm_isolated_distribution_sources(
+                    quarters, annual, refs, field, summed[field]
+                )
+            )
+
     # The annual disclosure already resolves the weighted denominator for
     # this exact twelve-month span, including distinct class and dilution terms.
     # Use it directly when its attributable profit matches the assembled flow.
@@ -1247,7 +1412,9 @@ def _build_ttm(
     insurance_underwriting_evidence = _ttm_insurance_underwriting_evidence(
         quarters, annual, refs
     )
-    source_account_evidence = latest.source_account_evidence
+    source_account_evidence = _merge_source_account_evidence(
+        latest.source_account_evidence, tuple(distribution_sources)
+    )
     if annual_eps_fields:
         assert annual is not None
         source_account_evidence = _merge_source_account_evidence(

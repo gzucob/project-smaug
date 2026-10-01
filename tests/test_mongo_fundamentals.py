@@ -2972,3 +2972,241 @@ def test_duplicate_financial_bucket_children_cannot_prove_complete_composition()
     )
     assert f.total_debt is None
     assert f.debt_coverage_null_reason is NullReason.INCOMPLETE_DEBT_COVERAGE
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Dividendos",
+        "JCP",
+        "JSCP",
+        "Juros sobre o capital próprio",
+        "Distribuição de lucros",
+        "Dividendos distribuídos",
+        "Pgto de dividendos",
+    ],
+)
+def test_financing_distribution_aliases_feed_paid_payout_and_company_yield(
+    label: str,
+) -> None:
+    f = standardize(
+        {
+            "DFC": {
+                "currency_size": 1000,
+                "accounts": [
+                    _acc("6.03.05", label, "-30"),
+                    _acc("6.03.06", "Dividendos recebidos", "200"),
+                ],
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_paid == Decimal(30000)
+    result = compute(
+        replace(f, net_income=Decimal(100000)),
+        None,
+        MarketData(market_cap=Decimal(1000000)),
+    )
+    assert result.payout_cash_paid_in_period == Decimal("0.3")
+    assert result.company_cash_yield_paid_in_period == Decimal("0.03")
+    evidence = next(s for s in f.source_account_evidence if s.field == "dividends_paid")
+    assert [r.code for r in evidence.found] == ["6.03.05"]
+    assert evidence.found[0].value == Decimal(-30000)
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Dividendos recebidos",
+        "Dividendos a pagar",
+        "Dividendos propostos",
+        "Reversão de dividendos",
+        "Dividendos prescritos",
+        "IRRF sobre JCP",
+        "Aumento de capital próprio",
+        "Dividendos provisionados",
+        "Conversão de dividendos em AFAC",
+    ],
+)
+def test_non_cash_or_received_distribution_is_not_a_paid_proxy(label: str) -> None:
+    f = standardize(
+        {"DFC": {"accounts": [_acc("6.03.05", label, "-30")]}},
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_paid is None
+
+
+@pytest.mark.parametrize("amount", ["bad", "NaN", "Infinity"])
+def test_unreadable_paid_component_voids_the_complete_distribution(amount: str) -> None:
+    f = standardize(
+        {
+            "DFC": {
+                "accounts": [
+                    _acc("6.03.05", "Dividendos pagos", "-30"),
+                    _acc("6.03.06", "JCP", amount),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_paid is None
+    result = compute(
+        replace(f, net_income=Decimal(100)), None, MarketData(market_cap=Decimal(1000))
+    )
+    assert result.payout_cash_paid_in_period is None
+    assert (
+        result.null_reasons["payout_cash_paid_in_period"]
+        is NullReason.SOURCE_ACCOUNT_ABSENT
+    )
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_paid_parent_detail_and_minority_reconcile_once(reverse: bool) -> None:
+    accounts = [
+        _acc("6.03.05", "Dividendos e JCP pagos", "-40"),
+        _acc("6.03.05.01", "Dividendos pagos aos controladores", "-30"),
+        _acc("6.03.05.02", "Dividendos pagos aos não controladores", "-10"),
+    ]
+    if reverse:
+        accounts.reverse()
+    f = standardize(
+        {"DFC": {"accounts": accounts}}, Sector.INDUSTRY, date(2025, 12, 31)
+    )
+    assert f.dividends_paid == Decimal(30)
+
+
+@pytest.mark.parametrize("minority", ["-50", "bad", "5"])
+def test_paid_parent_with_unresolved_minority_keeps_named_null(minority: str) -> None:
+    f = standardize(
+        {
+            "DFC": {
+                "accounts": [
+                    _acc("6.03.05", "Dividendos pagos", "-40"),
+                    _acc(
+                        "6.03.05.01", "Dividendos pagos aos não controladores", minority
+                    ),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_paid is None
+
+
+def test_paid_zero_is_evidence_and_indirect_adjustment_is_not_cash() -> None:
+    f = standardize(
+        {
+            "DFC": {
+                "accounts": [
+                    _acc("6.03.05", "Dividendos", "0"),
+                    _acc("6.01.01.03", "Dividendos pagos", "-100"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_paid == Decimal(0)
+    result = compute(
+        replace(f, net_income=Decimal(100)), None, MarketData(market_cap=Decimal(1000))
+    )
+    assert result.payout_cash_paid_in_period == Decimal(0)
+    assert result.company_cash_yield_paid_in_period == Decimal(0)
+    assert result.dividend_yield is None
+
+
+def test_declared_jcp_alias_and_parent_detail_are_one_distribution() -> None:
+    f = standardize(
+        {
+            "DMPL": {
+                "accounts": [
+                    _macc("5.04.06", "JCP", "Patrimônio Líquido", "-100"),
+                    _macc(
+                        "5.04.06.01",
+                        "Juros sobre Capital Próprio",
+                        "Reserva de Lucros",
+                        "-40",
+                    ),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_declared == Decimal(100)
+    result = compute(
+        replace(f, net_income=Decimal(500)), None, MarketData(market_cap=Decimal(1000))
+    )
+    assert result.payout_declared_in_period == Decimal("0.2")
+    assert result.company_yield_declared_in_period == Decimal("0.1")
+
+
+@pytest.mark.parametrize("amount", ["bad", "NaN", "Infinity"])
+def test_unreadable_declared_component_does_not_become_a_quiet_period(
+    amount: str,
+) -> None:
+    f = standardize(
+        {
+            "DMPL": {
+                "accounts": [
+                    _macc("5.04.06", "Dividendos", "Patrimônio Líquido", "-30"),
+                    _macc("5.04.07", "JCP", "Patrimônio Líquido", amount),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_declared is None
+
+
+@pytest.mark.parametrize(
+    ("code", "label"),
+    [
+        ("6.03.05", "Pagamento de dividendos propostos e adicionais"),
+        ("6.03.05", "Pagamento de dividendos e JCP bruto de imposto de renda"),
+        ("6.02.05", "Dividendos pagos"),
+    ],
+)
+def test_explicit_payment_resolves_event_despite_proposal_or_section_label(
+    code: str, label: str
+) -> None:
+    f = standardize(
+        {"DFC": {"accounts": [_acc(code, label, "-30")]}},
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_paid == Decimal(30)
+
+
+def test_positive_receipt_does_not_void_a_separate_complete_payment() -> None:
+    f = standardize(
+        {
+            "DFC": {
+                "accounts": [
+                    _acc("6.03.04", "Dividendos pagos", "-30"),
+                    _acc(
+                        "6.03.05", "Dividendos ressarcidos pelos administradores", "20"
+                    ),
+                    _acc("6.03.06", "Dividendos", "10"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_paid == Decimal(30)
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+def test_paid_account_transport_flags_do_not_duplicate_or_hide_conflicting_amounts(
+    conflict: bool,
+) -> None:
+    a = _acc("6.03.05", "Dividendos pagos", "-30")
+    b = dict(a, is_fixed=True, quantity="-31" if conflict else "-30")
+    f = standardize({"DFC": {"accounts": [a, b]}}, Sector.INDUSTRY, date(2025, 12, 31))
+    assert f.dividends_paid == (None if conflict else Decimal(30))

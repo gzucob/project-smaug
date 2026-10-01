@@ -318,26 +318,142 @@ def _equity_total(bpp: Accounts) -> Decimal | None:
     return _by_name(bpp, "patrimonio liquido")
 
 
-def _dividends_paid(dfc: Accounts) -> Decimal | None:
-    """Dividends + interest-on-equity (JCP) paid to controlling shareholders.
+def _is_distribution_name(name: str) -> bool:
+    folded = _fold(name)
+    return (
+        "dividendo" in folded
+        or bool(re.search(r"\bj(?:s)?cp\b", folded))
+        or ("capital proprio" in folded and ("juro" in folded or "remuner" in folded))
+        or "distribuicao de lucro" in folded
+        or "lucros distribuid" in folded
+    )
 
-    Financing-section cash outflows whose label mentions a dividend or JCP
-    (``capital proprio``) and "pago", excluding the non-controlling line.
-    Returned positive (the DFC records them as negative outflows); ``None`` when
-    no such line exists, so DY degrades to null rather than zero.
+
+def _is_minority_distribution(name: str) -> bool:
+    folded = _fold(name)
+    return "nao control" in folded or "minorit" in folded
+
+
+def _is_paid_distribution(account: Mapping[str, Any]) -> bool:
+    code = str(account.get("code", ""))
+    name = _fold(str(account.get("name", "")))
+    if not _is_distribution_name(name):
+        return False
+    payment = "pag" in name or "pgto" in name
+    if any(
+        word in name
+        for word in (
+            "receb",
+            "revers",
+            "prescrit",
+            "convers",
+            "variacao",
+            "ressarc",
+            "a pagar",
+            "a serem pag",
+            "aumento de capital",
+            "exercicios seguintes",
+            "de controladas",
+            "de coligadas",
+        )
+    ):
+        return False
+    if not payment and any(
+        word in name for word in ("propost", "provis", "constitui", "destina")
+    ):
+        return False
+    if name.strip().startswith(("imposto", "tribut", "irrf", "ir ")):
+        return False
+    # Gross JCP is still a distribution. A standalone tax or an inseparable
+    # dividend-plus-tax amount does not establish that full distribution.
+    if (
+        any(word in name for word in ("imposto", "tribut", "irrf", "retido"))
+        and "bruto" not in name
+    ):
+        return False
+    if payment:
+        # Explicit cash payments can be filed in another cash-flow section.
+        # Indirect operating adjustments and subsidiary receipts stay out.
+        return code.startswith(("6.01.", "6.02.", "6.03.")) and not code.startswith(
+            "6.01.01."
+        )
+    value = _finite_account_value(account)
+    # A financing outflow identifies the paid event without a payment verb.
+    # Positive short labels describe incoming cash, not a distribution paid.
+    return code.startswith("6.03.") and (value is None or value <= 0)
+
+
+def _paid_distribution_accounts(dfc: Accounts) -> Accounts:
+    return tuple(account for account in dfc if _is_paid_distribution(account))
+
+
+def _dividends_paid(dfc: Accounts) -> Decimal | None:
+    """Resolve cash distributions to controllers without mixing paid/declared.
+
+    Explicit financing outflows may name dividends/JCP or profit distributions
+    without a payment verb. Preserve a filed zero and require every selected
+    component to be readable. A parent represents its details once; an explicit
+    minority split is subtracted from a generic parent and reconciled with any
+    controllers' detail. Unobserved amounts are never zeros.
     """
+    candidates = _paid_distribution_accounts(dfc)
+    selected: list[str] = []
     total = Decimal(0)
     found = False
-    for account in dfc:
-        name = _fold(str(account.get("name", "")))
-        if "pag" not in name or "nao control" in name:
+    for account in sorted(candidates, key=lambda a: str(a.get("code", "")).count(".")):
+        code = str(account.get("code", ""))
+        name = str(account.get("name", ""))
+        if _is_minority_distribution(name) or any(_inside(code, p) for p in selected):
             continue
-        if "dividendo" not in name and "capital proprio" not in name:
-            continue
-        value = _dec(account.get("quantity"))
-        if value is not None:
-            total += abs(value)
-            found = True
+        value = _finite_account_value(account)
+        if value is None:
+            return None
+        if any(word in _fold(name) for word in ("emprest", "debentur", "arrendamento")):
+            return None
+        # An unsigned/positive short financing label does not prove an outflow.
+        if value > 0 and not ("pag" in _fold(name) or "pgto" in _fold(name)):
+            return None
+        same_code = [a for a in candidates if str(a.get("code", "")) == code]
+        if any(
+            _finite_account_value(a) != value
+            or _is_minority_distribution(str(a.get("name", "")))
+            for a in same_code
+        ):
+            return None
+        children = [
+            a for a in candidates if str(a.get("code", "")).startswith(code + ".")
+        ]
+        minorities = [
+            a for a in children if _is_minority_distribution(str(a.get("name", "")))
+        ]
+        minorities = [
+            a
+            for a in minorities
+            if not any(
+                str(a.get("code", "")).startswith(str(b.get("code", "")) + ".")
+                for b in minorities
+                if b is not a
+            )
+        ]
+        amount = abs(value)
+        if minorities:
+            amounts = [_finite_account_value(a) for a in minorities]
+            if any(v is None or v > 0 for v in amounts):
+                return None
+            if len({str(a.get("code", "")) for a in minorities}) != len(minorities):
+                return None
+            amount -= sum((abs(v) for v in amounts if v is not None), Decimal(0))
+            if amount < 0:
+                return None
+            for child in children:
+                label = _fold(str(child.get("name", "")))
+                if "controlador" in label and not _is_minority_distribution(label):
+                    child_value = _finite_account_value(child)
+                    if child_value is None or abs(child_value) != amount:
+                        return None
+        total += amount
+        found = True
+        selected.append(code)
     return total if found else None
 
 
@@ -584,15 +700,24 @@ def _dividends_declared(dmpl: Accounts) -> Decimal | None:
         if not code.startswith(_DECLARED_PREFIX):
             continue
         name = _fold(str(account.get("name", "")))
-        if not any(needle in name for needle in _DECLARED_NEEDLES):
+        if not _is_distribution_name(name):
             continue
-        value = _dec(account.get("quantity"))
-        if value is None or value >= 0:
+        value = _finite_account_value(account)
+        if value is None:
+            return None
+        if value >= 0:
             continue
         key = (code, name)
         if key not in rows or abs(value) > abs(rows[key]):
             rows[key] = value
-    return sum((abs(value) for value in rows.values()), Decimal(0))
+    selected = [
+        (code, value)
+        for (code, _), value in rows.items()
+        if not any(
+            code.startswith(parent + ".") for parent, _ in rows if parent != code
+        )
+    ]
+    return sum((abs(value) for _, value in selected), Decimal(0))
 
 
 def _capex_accounts(dfc: Accounts) -> tuple[Mapping[str, Any], ...]:
@@ -777,6 +902,29 @@ def _root_blocker(
         if getattr(financials, dependency, None) is None:
             return NullReason.SOURCE_ACCOUNT_ABSENT
     return None
+
+
+def _distribution_period_evidence(
+    by_module: Mapping[str, Any], statement: str
+) -> tuple[str, ...]:
+    payload = by_module.get(statement)
+    if not isinstance(payload, Mapping):
+        return ()
+    return tuple(
+        f"{key}={payload[key]}"
+        for key in (
+            "cvm_code",
+            "balance_type",
+            "currency",
+            "currency_size",
+            "period_start_date",
+            "period_end_date",
+            "reference_date",
+            "document_type",
+            "version",
+        )
+        if payload.get(key) is not None
+    )
 
 
 def _source_account_evidence(
@@ -1179,47 +1327,54 @@ def _source_account_evidence(
             blocker=debt_blocker,
         )
     )
-    paid_refs = _matching_refs(
-        dfc,
-        dfc_s,
-        lambda account: (
-            "pag" in _fold(str(account.get("name", "")))
-            and "nao control" not in _fold(str(account.get("name", "")))
-            and (
-                "dividendo" in _fold(str(account.get("name", "")))
-                or "capital proprio" in _fold(str(account.get("name", "")))
-            )
-        ),
+    paid_refs = tuple(
+        SourceAccountRef(
+            str(a.get("code", "")),
+            str(a.get("name", "")),
+            _mul(_finite_account_value(a), dfc_s),
+            column=_account_column(a),
+        )
+        for a in _paid_distribution_accounts(dfc)
     )
     add(
         _source_entry(
             "dividends_paid",
             "DFC",
-            ("label~dividend/JCP", "label~pago"),
+            (
+                "financing distribution; or explicit operational payment",
+                *_distribution_period_evidence(by_module, "DFC"),
+            ),
             paid_refs,
             financials.dividends_paid,
             financials.unmapped_fields,
+            formula="sum(nonoverlapping cash distributions to controllers)",
         )
     )
 
     def is_declared_source(account: Mapping[str, Any]) -> bool:
-        value = _dec(account.get("quantity"))
-        return (
-            str(account.get("code", "")).startswith(_DECLARED_PREFIX)
-            and any(
-                needle in _fold(str(account.get("name", "")))
-                for needle in _DECLARED_NEEDLES
-            )
-            and value is not None
-            and value < 0
-        )
+        return str(account.get("code", "")).startswith(
+            _DECLARED_PREFIX
+        ) and _is_distribution_name(str(account.get("name", "")))
 
-    declared_refs = _matching_refs(dmpl, dmpl_s, is_declared_source)
+    declared_refs = tuple(
+        SourceAccountRef(
+            str(a.get("code", "")),
+            str(a.get("name", "")),
+            _mul(_finite_account_value(a), dmpl_s),
+            column=_account_column(a),
+        )
+        for a in dmpl
+        if is_declared_source(a)
+    )
     add(
         _source_entry(
             "dividends_declared",
             "DMPL",
-            ("scope=5.04", "label~dividend/JCP"),
+            (
+                "scope=5.04",
+                "label~dividend/JCP",
+                *_distribution_period_evidence(by_module, "DMPL"),
+            ),
             declared_refs,
             financials.dividends_declared,
             financials.unmapped_fields,

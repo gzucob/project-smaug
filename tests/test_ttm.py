@@ -1281,3 +1281,160 @@ def test_ttm_rejects_annual_eps_when_issuer_or_regime_differs() -> None:
         ttm = build_ttm(quarters, incompatible)
         assert ttm is not None
         assert ttm.eps_basic is None
+
+
+def _distribution_period(end: date, amount: Decimal | None) -> StandardizedFinancials:
+    start = date(end.year, 1, 1)
+    sources = tuple(
+        SourceAccountEvidence(
+            field=field,
+            statement=statement,
+            status=SourceAccountStatus.MAPPED,
+            expected=(
+                "cvm_code=123",
+                "balance_type=consolidated",
+                "currency=BRL",
+                "currency_size=1000",
+                f"period_start_date={start}",
+                f"period_end_date={end}",
+                f"reference_date={end}",
+                "version=2",
+            ),
+            found=(
+                SourceAccountRef(
+                    "6.03.05" if statement == "DFC" else "5.04.06", "Dividendos", amount
+                ),
+            ),
+        )
+        for field, statement in (
+            ("dividends_paid", "DFC"),
+            ("dividends_declared", "DMPL"),
+        )
+    )
+    return StandardizedFinancials(
+        reference_date=end,
+        sector=Sector.INDUSTRY,
+        cd_cvm="123",
+        filed_regime=AccountingRegime.CORPORATE,
+        dfc_period_start=start,
+        dmpl_period_start=start,
+        dividends_paid=amount,
+        dividends_declared=amount,
+        source_account_evidence=sources,
+    )
+
+
+def _distribution_window() -> tuple[
+    list[StandardizedFinancials], StandardizedFinancials
+]:
+    quarters = [
+        _distribution_period(date(2025, 3, 31), None),
+        _distribution_period(date(2025, 6, 30), Decimal(40)),
+        _distribution_period(date(2025, 9, 30), None),
+        _distribution_period(date(2026, 3, 31), None),
+        _distribution_period(date(2026, 6, 30), Decimal(30)),
+    ]
+    return quarters, _distribution_period(date(2025, 12, 31), Decimal(100))
+
+
+def test_ttm_distributions_use_ytd_identity_despite_unknown_intermediate_amounts() -> (
+    None
+):
+    quarters, annual = _distribution_window()
+    result = build_ttm_as_of(quarters, [annual], date(2026, 6, 30))
+    assert result is not None
+    assert result.dividends_paid == Decimal(90)
+    assert result.dividends_declared == Decimal(90)
+    for field in ("dividends_paid", "dividends_declared"):
+        root = next(s for s in result.source_account_evidence if s.field == field)
+        assert root.status is SourceAccountStatus.DERIVED
+        assert root.formula == "prior annual - prior same-period YTD + current YTD"
+        assert root.dependencies == (
+            f"{field}[2025-12-31]",
+            f"{field}[2025-06-30]",
+            f"{field}[2026-06-30]",
+        )
+        source = next(
+            s for s in result.source_account_evidence if s.field == root.dependencies[1]
+        )
+        assert source.found[0].value == Decimal(40)
+        assert "currency_size=1000" in source.expected
+
+
+def test_exact_annual_distribution_needs_no_intermediate_payment_disclosures() -> None:
+    quarters, annual = _distribution_window()
+    result = build_ttm_as_of(quarters, [annual], annual.reference_date)
+    assert result is not None
+    assert result.dividends_paid == Decimal(100)
+    assert result.dividends_declared == Decimal(100)
+
+
+def test_missing_quarter_observation_still_prevents_a_ttm_window() -> None:
+    quarters, annual = _distribution_window()
+    assert (
+        build_ttm_as_of(quarters[:-2] + quarters[-1:], [annual], date(2026, 6, 30))
+        is None
+    )
+
+
+def test_mismatched_distribution_scope_currency_or_span_does_not_recover() -> None:
+    for key, value in (
+        ("balance_type", "individual"),
+        ("currency", "USD"),
+        ("period_start_date", "2025-04-01"),
+        ("period_end_date", "2025-03-31"),
+        ("reference_date", "2024-06-30"),
+        ("cvm_code", "456"),
+        ("currency_size", "10"),
+    ):
+        quarters, annual = _distribution_window()
+        previous = quarters[1]
+        sources = tuple(
+            replace(
+                s,
+                expected=tuple(
+                    f"{key}={value}" if item.startswith(key + "=") else item
+                    for item in s.expected
+                ),
+            )
+            for s in previous.source_account_evidence
+        )
+        quarters[1] = replace(previous, source_account_evidence=sources)
+        result = build_ttm_as_of(quarters, [annual], date(2026, 6, 30))
+        assert result is not None
+        assert result.dividends_paid is None
+        assert result.dividends_declared is None
+
+
+def test_unresolved_issuer_regime_or_ytd_distribution_keeps_null() -> None:
+    for updates in (
+        {"cd_cvm": None},
+        {"cd_cvm": "456"},
+        {"filed_regime": AccountingRegime.BANK},
+        {"filed_regime": None},
+        {"dfc_period_start": date(2025, 4, 1), "dmpl_period_start": date(2025, 4, 1)},
+        {"dividends_paid": None, "dividends_declared": None},
+        {"dividends_paid": Decimal("NaN"), "dividends_declared": Decimal("NaN")},
+        {"dividends_paid": Decimal(110), "dividends_declared": Decimal(110)},
+    ):
+        quarters, annual = _distribution_window()
+        quarters[1] = replace(quarters[1], **updates)
+        result = build_ttm_as_of(quarters, [annual], date(2026, 6, 30))
+        assert result is not None
+        assert result.dividends_paid is None
+        assert result.dividends_declared is None
+
+
+def test_unresolved_distribution_lineage_keeps_every_required_filing() -> None:
+    quarters, annual = _distribution_window()
+    quarters[1] = replace(quarters[1], dividends_paid=None)
+    result = build_ttm_as_of(quarters, [annual], date(2026, 6, 30))
+    assert result is not None
+    assert result.dividends_paid is None
+    sources = {s.field: s for s in result.source_account_evidence}
+    root = sources["dividends_paid"]
+    assert root.status is SourceAccountStatus.DERIVED
+    assert root.blocker is NullReason.SOURCE_ACCOUNT_ABSENT
+    assert "dividends_paid[2025-06-30]" in root.dependencies
+    assert "resolved_value=None" in sources["dividends_paid[2025-06-30]"].expected
+    assert "dividends_paid[2025-12-31]" in root.dependencies
