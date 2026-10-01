@@ -26,6 +26,8 @@ from smaug.analysis.domain.financials import (
     AccountingRegime,
     InsuranceUnderwritingStatus,
     MarketData,
+    SourceAccountEvidence,
+    SourceAccountStatus,
     StandardizedFinancials,
     expected_regime,
 )
@@ -69,52 +71,153 @@ def _sub(a: Decimal | None, b: Decimal | None) -> Decimal | None:
     return None if a is None or b is None else a - b
 
 
-# The compounded-growth window, in years of *variation* (#144). Six closed
-# exercises are needed to span five years of change, and the count is in the
-# indicator's own name (``revenue_cagr_5y``): the two endpoints are exactly five
-# exercises apart.
+# Public CAGR names retain a maximum five-year closed-exercise window.
 _CAGR_YEARS = 5
+_CAGR_ACCOUNTS = ("revenue", "ebit", "ebitda", "net_income")
 
 
-def _has_consecutive_closed_years(
+@dataclass(frozen=True)
+class _CagrResolution:
+    value: Decimal | None = None
+    reason: NullReason | None = None
+    start: StandardizedFinancials | None = None
+    end: StandardizedFinancials | None = None
+    years: int | None = None
+
+
+def _resolve_cagr(
+    account: str,
+    current: StandardizedFinancials,
     history: Sequence[StandardizedFinancials],
-) -> bool:
-    """Whether the six-year CAGR window contains one closed exercise per year."""
-    if len(history) < _CAGR_YEARS + 1:
-        return False
-    window = history[-(_CAGR_YEARS + 1) :]
-    return all(
-        current.reference_date.year == previous.reference_date.year + 1
-        for previous, current in zip(window, window[1:], strict=False)
+) -> _CagrResolution:
+    """Anchor on the latest closed exercise and select its longest valid span."""
+    eligible = sorted(
+        (
+            period
+            for period in history
+            if period.reference_date <= current.reference_date
+        ),
+        key=lambda period: period.reference_date,
     )
+    if not eligible:
+        return _CagrResolution(reason=NullReason.INSUFFICIENT_COMPARABLE_HISTORY)
+    end = eligible[-1]
+    end_date = end.reference_date
+    end_regime = end.filed_regime or expected_regime(end.sector)
+    candidates = [
+        period
+        for period in eligible[:-1]
+        if 0 < end_date.year - period.reference_date.year <= _CAGR_YEARS
+        and (period.reference_date.month, period.reference_date.day)
+        == (end_date.month, end_date.day)
+        and (period.filed_regime or expected_regime(period.sector)) == end_regime
+        and (not period.cd_cvm or not end.cd_cvm or period.cd_cvm == end.cd_cvm)
+        and (
+            period.period_start is None
+            or end.period_start is None
+            or (
+                period.period_start.month,
+                period.period_start.day,
+                period.reference_date.year - period.period_start.year,
+            )
+            == (
+                end.period_start.month,
+                end.period_start.day,
+                end.reference_date.year - end.period_start.year,
+            )
+        )
+    ]
+    if not candidates:
+        return _CagrResolution(
+            reason=NullReason.INSUFFICIENT_COMPARABLE_HISTORY, end=end
+        )
+    end_value: Decimal | None = getattr(end, account)
+    if end_value is None or not end_value.is_finite():
+        reason = (
+            NullReason.SOURCE_ACCOUNT_UNMAPPED
+            if account in end.unmapped_fields
+            else NullReason.SOURCE_ACCOUNT_ABSENT
+        )
+        return _CagrResolution(reason=reason, end=end)
+    if end_value <= 0:
+        return _CagrResolution(reason=NullReason.NON_POSITIVE_ENDPOINT, end=end)
+    for start in candidates:
+        start_value: Decimal | None = getattr(start, account)
+        if start_value is None or not start_value.is_finite() or start_value <= 0:
+            continue
+        years = end_date.year - start.reference_date.year
+        # Retain the existing rate precision while using the actual interval.
+        rate = (float(end_value) / float(start_value)) ** (1 / years) - 1
+        return _CagrResolution(Decimal(str(rate)), start=start, end=end, years=years)
+    if any(
+        (value := getattr(period, account)) is not None and value.is_finite()
+        for period in candidates
+    ):
+        reason = NullReason.NON_POSITIVE_ENDPOINT
+    elif all(account in period.unmapped_fields for period in candidates):
+        reason = NullReason.SOURCE_ACCOUNT_UNMAPPED
+    else:
+        reason = NullReason.SOURCE_ACCOUNT_ABSENT
+    return _CagrResolution(reason=reason, end=end)
 
 
-def _cagr(series: Sequence[Decimal | None]) -> Decimal | None:
-    """Compounded annual rate between the endpoints of a closed-year series.
-
-    ``series`` is the value for each closed exercise, oldest → newest, ending at
-    the period being computed. The rate is taken over the last ``_CAGR_YEARS``
-    years of variation, so it needs ``_CAGR_YEARS + 1`` exercises: a shorter
-    history yields ``None`` rather than a rate over a quietly narrower window,
-    which would not be the number the label promises.
-
-    Only the two endpoints matter — that is what "compounded" means, and it is
-    also the reading's weakness: the path between them is invisible. Both
-    endpoints must be positive, since ``(a / b) ** (1/n)`` has no real value when
-    the ratio is negative and, for two negatives, would report a loss that
-    deepened as growth.
-    """
-    if len(series) < _CAGR_YEARS + 1:
-        return None
-    start = series[-(_CAGR_YEARS + 1)]
-    end = series[-1]
-    if start is None or end is None or start <= 0 or end <= 0:
-        return None
-    # Decimal has no fractional power, and ``**`` on Decimal rejects a non-integer
-    # exponent outright. float is acceptable precision here: this is a rate shown
-    # to one decimal place, not money being added up.
-    rate = (float(end) / float(start)) ** (1 / _CAGR_YEARS) - 1
-    return Decimal(str(rate))
+def _cagr_sources(
+    account: str, result: _CagrResolution
+) -> tuple[SourceAccountEvidence, ...]:
+    """Record the selected interval and both endpoints' existing account lineage."""
+    if result.value is None or result.start is None or result.end is None:
+        return ()
+    entries: list[SourceAccountEvidence] = []
+    roots: list[str] = []
+    for period in (result.start, result.end):
+        regime = period.filed_regime or expected_regime(period.sector)
+        by_field = {entry.field: entry for entry in period.source_account_evidence}
+        pending = [account]
+        seen: set[str] = set()
+        while pending:
+            field = pending.pop(0)
+            if field in seen:
+                continue
+            seen.add(field)
+            key = f"{field}[{period.reference_date}]"
+            source = by_field.get(
+                field,
+                SourceAccountEvidence(
+                    field=field,
+                    statement="standardized",
+                    status=SourceAccountStatus.MAPPED,
+                ),
+            )
+            entries.append(
+                replace(
+                    source,
+                    field=key,
+                    expected=(
+                        f"reference_date={period.reference_date}",
+                        f"period_start={period.period_start}",
+                        f"resolved_value={getattr(period, field, None)}",
+                        f"regime={regime}",
+                        f"cd_cvm={period.cd_cvm}",
+                        *source.expected,
+                    ),
+                    dependencies=tuple(
+                        f"{dep}[{period.reference_date}]" for dep in source.dependencies
+                    ),
+                )
+            )
+            pending.extend(source.dependencies)
+        roots.append(f"{account}[{period.reference_date}]")
+    indicator = f"{account}_cagr_5y"
+    root = SourceAccountEvidence(
+        field=indicator,
+        statement="derived",
+        status=SourceAccountStatus.DERIVED,
+        expected=(f"elapsed_years={result.years}", "maximum_years=5"),
+        formula="(end / start) ** (1 / elapsed_years) - 1",
+        dependencies=tuple(roots),
+        consumer_indicators=(indicator,),
+    )
+    return (root, *entries)
 
 
 def _add(a: Decimal | None, b: Decimal | None) -> Decimal | None:
@@ -498,26 +601,8 @@ def _classify_cagr(
     f: StandardizedFinancials,
     history: Sequence[StandardizedFinancials],
 ) -> NullReason:
-    """Attribute a null compounded rate, against the window rather than the period.
-
-    Precedence mirrors ``_classify``'s: too short a history first (the rate does
-    not exist yet for this company, whatever its accounts say), then a missing
-    endpoint, then the arithmetic dead-end — an endpoint that is not positive,
-    which is the one case where every input is present and the rate still cannot
-    be formed.
-    """
-    if not _has_consecutive_closed_years(history):
-        return NullReason.INSUFFICIENT_COMPARABLE_HISTORY
-    endpoints = (
-        getattr(history[-(_CAGR_YEARS + 1)], account),
-        getattr(history[-1], account),
-    )
-    for value in endpoints:
-        if value is None:
-            if account in f.unmapped_fields:
-                return NullReason.SOURCE_ACCOUNT_UNMAPPED
-            return NullReason.SOURCE_ACCOUNT_ABSENT
-    return NullReason.NON_POSITIVE_ENDPOINT
+    """Use the same selected window and endpoint rules as the calculation."""
+    return _resolve_cagr(account, f, history).reason or NullReason.NON_POSITIVE_ENDPOINT
 
 
 def _null_reasons(
@@ -615,15 +700,10 @@ def compute(
     prev_revenue = previous.revenue if previous is not None else None
     prev_net_income = previous.net_income if previous is not None else None
 
-    def series(account: str) -> list[Decimal | None]:
-        """One account across the closed exercises, oldest → newest."""
-        return [getattr(annual, account) for annual in history]
+    cagrs = {account: _resolve_cagr(account, f, history) for account in _CAGR_ACCOUNTS}
 
     def cagr(account: str) -> Decimal | None:
-        """Calculate a CAGR only over six consecutive closed exercises."""
-        if not _has_consecutive_closed_years(history):
-            return None
-        return _cagr(series(account))
+        return cagrs[account].value
 
     # Bank ratios only consume explicitly paired, already annualized
     # regulatory/issuer inputs
@@ -731,7 +811,20 @@ def compute(
             history,
             prior_period_reason,
         ),
-        source_account_evidence=f.source_account_evidence,
+        source_account_evidence=tuple(
+            {
+                entry.field: entry
+                for entry in (
+                    *f.source_account_evidence,
+                    *(
+                        entry
+                        for account, result in cagrs.items()
+                        if f"{account}_cagr_5y" not in _inapplicable(f)
+                        for entry in _cagr_sources(account, result)
+                    ),
+                )
+            }.values()
+        ),
         cpc41_window_provenance=f.cpc41_window_provenance,
         bank_regulatory_provenance=f.bank_regulatory_provenance,
     )

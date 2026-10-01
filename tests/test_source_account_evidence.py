@@ -414,3 +414,55 @@ def test_dva_period_dependencies_round_trip_through_existing_sql_json() -> None:
     assert sources[0].dependencies == [period.field]
     assert sources[1].statement == "DVA"
     assert sources[1].found[0].value == Decimal("-80000")
+
+
+def test_cagr_selected_interval_and_raw_endpoints_round_trip_through_sql() -> None:
+    annuals = [
+        StandardizedFinancials(
+            reference_date=date(year, 12, 31),
+            period_start=date(year, 1, 1),
+            sector=Sector.INDUSTRY,
+            revenue=Decimal(value),
+            source_account_evidence=(
+                SourceAccountEvidence(
+                    field="revenue",
+                    statement="DRE",
+                    status=SourceAccountStatus.MAPPED,
+                    found=(
+                        SourceAccountRef("3.01", "Receita de Venda", Decimal(value)),
+                    ),
+                ),
+            ),
+        )
+        for year, value in ((2021, "1000"), (2024, "2000"))
+    ]
+    indicators = compute(annuals[-1], None, MarketData(), annuals)
+    analysis = TickerAnalysis(
+        ticker="TEST3",
+        classification=Classification("Industriais", None, None),
+        reference_date=date(2024, 12, 31),
+        computed_at=datetime(2026, 9, 30, tzinfo=UTC),
+        view=VIEW_TTM,
+        indicators=indicators,
+    )
+    restored = _to_entity(_to_row(analysis))
+    assert (
+        restored.indicators.source_account_evidence
+        == indicators.source_account_evidence
+    )
+    sources = {
+        entry.field: entry for entry in restored.indicators.source_account_evidence
+    }
+    assert sources["revenue_cagr_5y"].dependencies == (
+        "revenue[2021-12-31]",
+        "revenue[2024-12-31]",
+    )
+    assert "elapsed_years=3" in sources["revenue_cagr_5y"].expected
+    assert sources["revenue[2021-12-31]"].found[0].value == Decimal(1000)
+    response = _to_response(restored)
+    root = next(
+        entry
+        for entry in response.indicators.source_account_evidence
+        if entry.field == "revenue_cagr_5y"
+    )
+    assert "elapsed_years=3" in root.expected

@@ -69,11 +69,9 @@ class NullReason(StrEnum):
       is a fact about the world rather than a gap of ours, and it is the only
       price cause that is *deliberate*: the others are worth chasing, this one
       is not.
-    * ``INSUFFICIENT_COMPARABLE_HISTORY`` — the requested historical window
-      cannot be formed from consecutive closed exercises. For a five-year CAGR,
-      this means that fewer than six comparable annual filings exist or that the
-      sequence has a gap. The promised rate does not exist; the window is never
-      shortened or interpolated to manufacture one.
+    * ``INSUFFICIENT_COMPARABLE_HISTORY`` — fewer than two comparable closed
+      exercises exist within the maximum five-year CAGR window. Intermediate
+      gaps do not prevent endpoint compounding; the actual interval is used.
     * ``PRIOR_PERIOD_OUTSIDE_SOURCE_HISTORY`` — the immediately preceding
       comparable exercise predates CVM's structured-statement history. The
       primary filing source cannot supply it, as distinct from a mirrored period
@@ -514,17 +512,11 @@ class Indicators:
     # Growth (needs a prior comparable period)
     revenue_growth: Decimal | None = None
     net_income_growth: Decimal | None = None
-    # Compounded annual growth over a *stated* window (#144). The year-on-year
-    # figures above let one atypical exercise dominate the reading — a profit
-    # that fell 40% and then grew 60% reads as a 60% grower. These take the ratio
-    # of two endpoints five exercises apart: ``(this year / five years back) **
-    # (1/5) - 1``. The window is in the name on purpose, because the reference
-    # platforms disagree on what "CAGR 5A" spans and a compounded rate over an
-    # unstated window is not a number this project publishes. Null — never
-    # silently shortened — when the closed-year series is shorter than six
-    # exercises, and null when the base endpoint is not positive
-    # (``NON_POSITIVE_BASE``). Closed exercises only: the TTM window is a moving
-    # 12 months, not one more of them.
+    # Compounded annual growth over at most five years of closed history.
+    # Select the latest closed exercise and its oldest positive comparable base
+    # within five years; use the actual elapsed years in the exponent. Missing
+    # intermediate years do not prevent endpoint compounding. A TTM remains a
+    # moving period, so its CAGR ends at the latest available closed exercise.
     revenue_cagr_5y: Decimal | None = None
     ebitda_cagr_5y: Decimal | None = None
     ebit_cagr_5y: Decimal | None = None

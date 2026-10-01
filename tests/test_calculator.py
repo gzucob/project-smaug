@@ -4,6 +4,8 @@ from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 from smaug.analysis.domain.calculator import compute
 from smaug.analysis.domain.financials import (
     AccountingRegime,
@@ -954,29 +956,21 @@ def test_cagr_compounds_between_the_endpoints_five_exercises_apart() -> None:
     assert round(float(ind.revenue_cagr_5y), 4) == 0.1487
 
 
-def test_cagr_is_null_until_the_window_closes() -> None:
-    # Five exercises span four years of variation, not five. Shortening the window
-    # in silence would make the number mean something other than its name (#144).
-    history = _rising_history([Decimal(1000)] * 5)
+def test_cagr_uses_four_elapsed_years_when_five_exercises_exist() -> None:
+    history = _rising_history([Decimal(1000)] * 4 + [Decimal(2000)])
     ind = compute(history[-1], history[-2], MarketData(), history)
-
-    assert ind.revenue_cagr_5y is None
-    assert ind.null_reasons["revenue_cagr_5y"] is (
-        NullReason.INSUFFICIENT_COMPARABLE_HISTORY
-    )
+    assert ind.revenue_cagr_5y is not None
+    assert float(ind.revenue_cagr_5y) == pytest.approx(2 ** (1 / 4) - 1)
 
 
-def test_cagr_rejects_a_discontinuous_closed_year_window() -> None:
+def test_cagr_does_not_require_intermediate_closed_exercises() -> None:
     history = [
-        _closed_year(year, revenue=Decimal(1000), net_income=Decimal(1000))
-        for year in (2019, 2020, 2022, 2023, 2024, 2025)
+        _closed_year(year, revenue=Decimal(value))
+        for year, value in ((2019, 1000), (2022, 5000), (2024, 2000))
     ]
     ind = compute(history[-1], history[-2], MarketData(), history)
-
-    assert ind.revenue_cagr_5y is None
-    assert ind.null_reasons["revenue_cagr_5y"] is (
-        NullReason.INSUFFICIENT_COMPARABLE_HISTORY
-    )
+    assert ind.revenue_cagr_5y is not None
+    assert float(ind.revenue_cagr_5y) == pytest.approx(2 ** (1 / 5) - 1)
 
 
 def test_cagr_refuses_a_non_positive_endpoint() -> None:
@@ -1059,3 +1053,111 @@ def test_balance_sheet_liabilities_exclude_the_minority_interest() -> None:
     # Decimal context's precision.
     assert ind.total_liabilities + ind.equity + Decimal(500) == ind.total_assets
     assert ind.liabilities_to_assets + ind.equity_to_assets < Decimal(1)
+
+
+@pytest.mark.parametrize("account", ["revenue", "ebit", "ebitda", "net_income"])
+@pytest.mark.parametrize("years", [1, 2, 3, 4, 5])
+def test_cagr_families_share_the_actual_elapsed_window(
+    account: str, years: int
+) -> None:
+    history = [
+        _closed_year(2024 - years, **{account: Decimal(1000)}),
+        _closed_year(2024, **{account: Decimal(2000)}),
+    ]
+    ind = compute(history[-1], None, MarketData(), history)
+    result = getattr(ind, f"{account}_cagr_5y")
+    assert result is not None
+    assert float(result) == pytest.approx(2 ** (1 / years) - 1)
+    sources = {entry.field: entry for entry in ind.source_account_evidence}
+    root = sources[f"{account}_cagr_5y"]
+    assert f"elapsed_years={years}" in root.expected
+    assert root.dependencies == (
+        f"{account}[{2024 - years}-12-31]",
+        f"{account}[2024-12-31]",
+    )
+
+
+@pytest.mark.parametrize("base", [None, Decimal(0), Decimal(-1000)])
+def test_cagr_selects_the_oldest_positive_base_inside_the_window(
+    base: Decimal | None,
+) -> None:
+    history = [
+        _closed_year(2019, revenue=base),
+        _closed_year(2021, revenue=Decimal(1000)),
+        _closed_year(2024, revenue=Decimal(2000)),
+    ]
+    ind = compute(history[-1], None, MarketData(), history)
+    assert ind.revenue_cagr_5y is not None
+    assert float(ind.revenue_cagr_5y) == pytest.approx(2 ** (1 / 3) - 1)
+
+
+@pytest.mark.parametrize(
+    ("end", "reason"),
+    [
+        (None, NullReason.SOURCE_ACCOUNT_ABSENT),
+        (Decimal(0), NullReason.NON_POSITIVE_ENDPOINT),
+        (Decimal(-1000), NullReason.NON_POSITIVE_ENDPOINT),
+    ],
+)
+def test_cagr_does_not_replace_an_invalid_latest_result_with_an_older_pair(
+    end: Decimal | None,
+    reason: NullReason,
+) -> None:
+    history = _rising_history([Decimal(1000), Decimal(2000), end])
+    ind = compute(history[-1], None, MarketData(), history)
+    assert ind.revenue_cagr_5y is None
+    assert ind.null_reasons["revenue_cagr_5y"] is reason
+
+
+@pytest.mark.parametrize("years", [0, 6])
+def test_cagr_requires_distinct_endpoints_within_five_years(years: int) -> None:
+    history = [
+        _closed_year(2024 - years, revenue=Decimal(1000)),
+        _closed_year(2024, revenue=Decimal(2000)),
+    ]
+    ind = compute(history[-1], None, MarketData(), history)
+    assert ind.revenue_cagr_5y is None
+    assert (
+        ind.null_reasons["revenue_cagr_5y"]
+        is NullReason.INSUFFICIENT_COMPARABLE_HISTORY
+    )
+
+
+def test_cagr_ignores_future_exercises_and_sorts_available_history() -> None:
+    history = [
+        _closed_year(2025, revenue=Decimal(100000)),
+        _closed_year(2024, revenue=Decimal(2000)),
+        _closed_year(2021, revenue=Decimal(1000)),
+    ]
+    ind = compute(history[1], None, MarketData(), history)
+    assert float(ind.revenue_cagr_5y) == pytest.approx(2 ** (1 / 3) - 1)
+
+
+@pytest.mark.parametrize("change", ["regime", "issuer", "span", "closing_date"])
+def test_cagr_does_not_join_incompatible_endpoints(change: str) -> None:
+    start = _closed_year(2021, revenue=Decimal(1000))
+    end = _closed_year(2024, revenue=Decimal(2000))
+    if change == "regime":
+        start = replace(start, filed_regime=AccountingRegime.BANK)
+    elif change == "issuer":
+        start = replace(start, cd_cvm="111")
+        end = replace(end, cd_cvm="222")
+    elif change == "span":
+        start = replace(start, period_start=date(2021, 4, 1))
+    else:
+        start = replace(start, reference_date=date(2021, 9, 30))
+    ind = compute(end, None, MarketData(), [start, end])
+    assert ind.revenue_cagr_5y is None
+    assert (
+        ind.null_reasons["revenue_cagr_5y"]
+        is NullReason.INSUFFICIENT_COMPARABLE_HISTORY
+    )
+
+
+def test_cagr_attributes_a_missing_base_to_its_own_mapping() -> None:
+    start = replace(
+        _closed_year(2021, revenue=None), unmapped_fields=frozenset({"revenue"})
+    )
+    end = _closed_year(2024, revenue=Decimal(2000))
+    ind = compute(end, None, MarketData(), [start, end])
+    assert ind.null_reasons["revenue_cagr_5y"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
