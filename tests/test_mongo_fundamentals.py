@@ -2439,3 +2439,245 @@ def test_ttm_retains_older_dva_sources_when_the_latest_period_uses_dfc() -> None
     assert evidence["dep_amort[2025-12-31]"].formula == "-DVA[7.04.01]"
     assert evidence["dep_amort[2026-03-31]"].statement == "DFC"
     assert "resolved_value=20000" in evidence["dep_amort[2026-03-31]"].expected
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_standardize_reconciles_generic_pn_in_a_period_proved_unit(
+    reverse: bool,
+) -> None:
+    accounts = [
+        _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "100"),
+        _acc("3.99.01.01", "ON", "2"),
+        _acc("3.99.01.02", "PN", "2"),
+        _acc("3.99.02.01", "ON", "2"),
+        _acc("3.99.02.02", "PN", "2"),
+    ]
+    if reverse:
+        accounts.reverse()
+    result = standardize(
+        {"DRE": {"accounts": accounts}},
+        Sector.UTILITY,
+        date(2025, 3, 31),
+        per_share_components=(
+            UnitComponent(1, PerShareClass.ORDINARY),
+            UnitComponent(2, PerShareClass.PREFERRED_A),
+        ),
+        per_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED_A),
+        period_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED_A),
+    )
+    assert result.eps_basic == Decimal(6)
+    assert result.cpc41 is not None
+    assert result.cpc41.basic_base_eps == Decimal(2)
+    assert result.cpc41.diluted_base_eps == Decimal(2)
+    assert result.cpc41.security_multiplier == Decimal(3)
+    source = next(e for e in result.source_account_evidence if e.field == "eps_basic")
+    assert "period_class=PNA" in source.expected
+    assert "component=2*PNA" in source.expected
+
+
+@pytest.mark.parametrize(
+    "classes", [(), (PerShareClass.ORDINARY, PerShareClass.PREFERRED)]
+)
+def test_standardize_per_lot_requires_single_period_class(
+    classes: tuple[PerShareClass, ...],
+) -> None:
+    result = standardize(
+        {
+            "DRE": {
+                "accounts": [_acc("3.99.01.01", "Lucro por lote de mil ações", "2000")]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        period_share_classes=classes,
+    )
+    assert result.eps_basic is None
+    assert result.cpc41 is None
+
+
+@pytest.mark.parametrize("value", ["2000", "-2000", "0"])
+def test_standardize_normalizes_filed_per_lot_without_currency_scaling(
+    value: str,
+) -> None:
+    result = standardize(
+        {
+            "DRE": {
+                "currency_size": 1000,
+                "accounts": [
+                    _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "100"),
+                    _acc("3.99.01.01", "Lucro por lote de mil ações", value),
+                ],
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        per_share_classes=(PerShareClass.ORDINARY,),
+        period_share_classes=(PerShareClass.ORDINARY,),
+    )
+    assert result.eps_basic == Decimal(value) / 1000
+    source = next(e for e in result.source_account_evidence if e.field == "eps_basic")
+    assert source.found[0].value == Decimal(value)
+    assert any("/ 1000" in expected for expected in source.expected)
+
+
+@pytest.mark.parametrize("invalid", ["unreadable", "NaN", "Infinity"])
+def test_standardize_rejects_unreadable_duplicate_eps(invalid: str) -> None:
+    result = standardize(
+        {
+            "DRE": {
+                "accounts": [
+                    _acc("3.99.01.01", "ON", "2"),
+                    _acc("3.99.01.02", "ON", invalid),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        per_share_classes=(PerShareClass.ORDINARY,),
+    )
+    assert result.eps_basic is None
+    assert result.eps_basic_null_reason is NullReason.MISSING_CPC41_DISCLOSURE
+    assert result.cpc41 is None
+
+
+def test_recovered_unit_ttm_eps_drives_pe_and_preserves_price_dependency() -> None:
+    quarters = []
+    for month, day, start_month in ((3, 31, 1), (6, 30, 4), (9, 30, 7), (12, 31, 10)):
+        quarters.append(
+            standardize(
+                {
+                    "DRE": {
+                        "period_start_date": f"2025-{start_month:02d}-01",
+                        "accounts": [
+                            _acc(
+                                "3.11", "Lucro/Prejuízo Consolidado do Período", "100"
+                            ),
+                            _acc("3.99.01.01", "ON", "2"),
+                            _acc("3.99.01.02", "PN", "2"),
+                        ],
+                    }
+                },
+                Sector.UTILITY,
+                date(2025, month, day),
+                per_share_components=(
+                    UnitComponent(1, PerShareClass.ORDINARY),
+                    UnitComponent(2, PerShareClass.PREFERRED_A),
+                ),
+                per_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED_A),
+                period_share_classes=(
+                    PerShareClass.ORDINARY,
+                    PerShareClass.PREFERRED_A,
+                ),
+            )
+        )
+    ttm = build_ttm(quarters, None)
+    assert ttm is not None
+    assert ttm.eps_basic == Decimal(24)
+    valid = compute(
+        ttm,
+        None,
+        MarketData(
+            price=Decimal(48),
+            price_source_code="TEST11",
+            price_source_session=date(2025, 12, 30),
+        ),
+    )
+    assert valid.eps == valid.eps_basic == Decimal(24)
+    assert valid.pe_basic == Decimal(2)
+    source = next(e for e in valid.source_account_evidence if e.field == "pe_basic")
+    assert source.dependencies == ("eps_basic", "price")
+    assert "price_source_code=TEST11" in source.expected
+    missing = compute(ttm, None, MarketData())
+    assert missing.eps_basic == Decimal(24)
+    assert missing.pe_basic is None
+    assert missing.null_reasons["pe_basic"] is NullReason.MISSING_PRICE
+
+
+def test_unit_reconciliation_does_not_drop_an_unequal_extra_filed_class() -> None:
+    result = standardize(
+        {
+            "DRE": {
+                "accounts": [
+                    _acc("3.99.01.01", "ON", "2"),
+                    _acc("3.99.01.02", "PN", "2"),
+                    _acc("3.99.01.03", "PNB", "3"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+        per_share_components=(
+            UnitComponent(1, PerShareClass.ORDINARY),
+            UnitComponent(1, PerShareClass.PREFERRED_A),
+        ),
+        per_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED_A),
+        period_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED_A),
+    )
+    assert result.eps_basic == Decimal(4)
+    assert result.cpc41 is None
+
+
+def test_per_lot_and_per_share_conflict_is_not_silently_selected() -> None:
+    result = standardize(
+        {
+            "DRE": {
+                "accounts": [
+                    _acc("3.99.01.01", "ON", "2"),
+                    _acc("3.99.01.02", "Lucro por lote de mil ações", "3000"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        period_share_classes=(PerShareClass.ORDINARY,),
+    )
+    assert result.eps_basic is None
+    assert result.eps_basic_null_reason is NullReason.MISSING_ECONOMIC_RIGHTS
+
+
+def test_ttm_reconciliation_does_not_ignore_an_unresolved_zero_class_label() -> None:
+    result = standardize(
+        {
+            "DRE": {
+                "accounts": [
+                    _acc("3.99.01.01", "ON", "2"),
+                    _acc("3.99.01.02", "PN", "2"),
+                    _acc("3.99.01.03", "PNT", "0"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 3, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        per_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED),
+    )
+    assert result.eps_basic == Decimal(2)
+    assert result.cpc41 is None
+
+
+def test_diluted_reconciliation_requires_all_filed_class_labels_resolved() -> None:
+    result = standardize(
+        {
+            "DRE": {
+                "accounts": [
+                    _acc("3.99.01.01", "ON", "2"),
+                    _acc("3.99.01.02", "PN", "2"),
+                    _acc("3.99.02.01", "ON", "2"),
+                    _acc("3.99.02.02", "PN", "2"),
+                    _acc("3.99.02.03", "PNT", "0"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 3, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        per_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED),
+    )
+    assert result.eps_diluted == Decimal(2)
+    assert result.cpc41 is not None
+    assert result.cpc41.basic_base_eps == Decimal(2)
+    assert result.cpc41.diluted_base_eps is None

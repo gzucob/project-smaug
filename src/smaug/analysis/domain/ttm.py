@@ -44,6 +44,7 @@ from smaug.analysis.domain.financials import (
     SourceAccountEvidence,
     SourceAccountStatus,
     StandardizedFinancials,
+    expected_regime,
 )
 from smaug.analysis.domain.indicators import NullReason
 
@@ -166,6 +167,68 @@ def _weighted_period(
         end=period.reference_date,
         multiplier=disclosure.security_multiplier,
     )
+
+
+def _same_annual_eps_window(
+    annual: StandardizedFinancials | None,
+    refs: Sequence[date],
+    profit: Decimal | None,
+    quarters: Sequence[StandardizedFinancials],
+) -> bool:
+    if annual is None or not refs or profit is None or profit != annual.net_income:
+        return False
+    year = annual.reference_date.year
+    regime = annual.filed_regime or expected_regime(annual.sector)
+    if any(
+        (period.filed_regime or expected_regime(period.sector)) != regime
+        or (period.cd_cvm and annual.cd_cvm and period.cd_cvm != annual.cd_cvm)
+        for period in quarters
+        if period.reference_date in refs
+    ):
+        return False
+    return (
+        annual.reference_date == date(year, 12, 31)
+        and annual.period_start == date(year, 1, 1)
+        and set(refs)
+        == {
+            date(year, 3, 31),
+            date(year, 6, 30),
+            date(year, 9, 30),
+            date(year, 12, 31),
+        }
+    )
+
+
+def _annual_eps_sources(
+    annual: StandardizedFinancials, fields: Sequence[str]
+) -> tuple[SourceAccountEvidence, ...]:
+    entries: list[SourceAccountEvidence] = []
+    for field in fields:
+        value = getattr(annual, field)
+        source = _cpc41_source_entry(annual, diluted=field == "eps_diluted")
+        dated = f"{field}[{annual.reference_date}]"
+        if source is not None:
+            entries.append(replace(source, field=dated))
+        entries.append(
+            SourceAccountEvidence(
+                field=field,
+                statement="derived",
+                status=SourceAccountStatus.DERIVED,
+                formula="filed EPS for the identical annual/TTM flow span",
+                dependencies=(dated,) if source is not None else (),
+                expected=(
+                    "resolution=filed_same_ttm_span",
+                    f"period_start={annual.period_start}",
+                    f"reference_date={annual.reference_date}",
+                    f"resolved_value={value}",
+                ),
+                consumer_indicators=(
+                    field,
+                    "pe_diluted" if field == "eps_diluted" else "pe_basic",
+                ),
+            )
+        )
+    return tuple(entries)
 
 
 def _previous_quarter_end(value: date) -> date | None:
@@ -1135,7 +1198,7 @@ def _build_ttm(
         if eps_diluted is not None
         else _cpc41_ttm_null_reason(cpc41_periods, weighted_diluted, refs, diluted=True)
     )
-    cpc41_provenance = _cpc41_window_provenance(
+    cpc41_provenance: Cpc41WindowProvenance | None = _cpc41_window_provenance(
         cpc41_periods,
         weighted_basic,
         weighted_diluted,
@@ -1151,6 +1214,28 @@ def _build_ttm(
         # A TTM flow needs all four quarters; a gap makes it null, not understated.
         summed[name] = sum(present, Decimal(0)) if len(present) == len(values) else None
 
+    # The annual disclosure already resolves the weighted denominator for
+    # this exact twelve-month span, including distinct class and dilution terms.
+    # Use it directly when its attributable profit matches the assembled flow.
+    annual_eps_fields: list[str] = []
+    if _same_annual_eps_window(annual, refs, summed["net_income"], quarters):
+        assert annual is not None
+        if annual.eps_basic is not None and annual.eps_basic.is_finite():
+            eps_basic = annual.eps_basic
+            eps_basic_reason = None
+            annual_eps_fields.append("eps_basic")
+        if annual.eps_diluted is not None and annual.eps_diluted.is_finite():
+            eps_diluted = annual.eps_diluted
+            eps_diluted_reason = None
+            annual_eps_fields.append("eps_diluted")
+        if (
+            annual_eps_fields
+            and (eps_basic is None or "eps_basic" in annual_eps_fields)
+            and (eps_diluted is None or "eps_diluted" in annual_eps_fields)
+        ):
+            # Quarter denominator diagnostics were not selected by this result.
+            cpc41_provenance = None
+
     # Stocks come from the most recent balance sheet — the latest ITR quarter, or
     # the annual DFP when no newer quarter exists (window ends on the closed year).
     latest = max(quarters, key=lambda p: p.reference_date)
@@ -1163,6 +1248,11 @@ def _build_ttm(
         quarters, annual, refs
     )
     source_account_evidence = latest.source_account_evidence
+    if annual_eps_fields:
+        assert annual is not None
+        source_account_evidence = _merge_source_account_evidence(
+            source_account_evidence, _annual_eps_sources(annual, annual_eps_fields)
+        )
     dep_amort_sources = _ttm_dep_amort_sources(
         quarters, annual, refs, summed["dep_amort"]
     )
@@ -1196,9 +1286,8 @@ def _build_ttm(
         equity_total=stock_source.equity_total,
         net_income=summed["net_income"],
         net_income_total=summed["net_income_total"],
-        # The weighted denominator is recovered only from a class-reconciled
-        # CPC 41 disclosure for every period. A missing proof remains a named
-        # null; closing shares are never substituted.
+        # Select the filed result for an identical annual span, otherwise use
+        # the reconciled share-day denominator. Missing evidence stays null.
         eps_basic=eps_basic,
         eps_diluted=eps_diluted,
         eps_basic_null_reason=eps_basic_reason,

@@ -27,6 +27,7 @@ from smaug.analysis.domain.financials import (
     InsuranceUnderwritingStatus,
     MarketData,
     SourceAccountEvidence,
+    SourceAccountRef,
     SourceAccountStatus,
     StandardizedFinancials,
     expected_regime,
@@ -218,6 +219,54 @@ def _cagr_sources(
         consumer_indicators=(indicator,),
     )
     return (root, *entries)
+
+
+def _per_share_sources(
+    f: StandardizedFinancials, market: MarketData
+) -> tuple[SourceAccountEvidence, ...]:
+    """Trace each calculable P/E to its selected EPS and B3 observation."""
+    if market.price is None:
+        return ()
+    entries: list[SourceAccountEvidence] = []
+    for kind in ("basic", "diluted"):
+        eps = getattr(f, f"eps_{kind}")
+        if eps is None or eps == 0:
+            continue
+        entries.append(
+            SourceAccountEvidence(
+                field=f"pe_{kind}",
+                statement="derived",
+                status=SourceAccountStatus.DERIVED,
+                formula=f"price / eps_{kind}",
+                dependencies=(f"eps_{kind}", "price"),
+                consumer_indicators=(f"pe_{kind}",),
+                expected=(
+                    f"price={market.price}",
+                    f"eps_{kind}={eps}",
+                    "price_source=B3/COTAHIST",
+                    f"price_source_code={market.price_source_code}",
+                    f"price_source_session={market.price_source_session}",
+                ),
+            )
+        )
+    if entries:
+        entries.append(
+            SourceAccountEvidence(
+                field="price",
+                statement="B3/COTAHIST",
+                status=SourceAccountStatus.MAPPED,
+                found=(
+                    SourceAccountRef(
+                        market.price_source_code or "price",
+                        "B3 closing price",
+                        market.price,
+                    ),
+                ),
+                expected=(f"session={market.price_source_session}",),
+                consumer_indicators=tuple(entry.field for entry in entries),
+            )
+        )
+    return tuple(entries)
 
 
 def _add(a: Decimal | None, b: Decimal | None) -> Decimal | None:
@@ -816,6 +865,7 @@ def compute(
                 entry.field: entry
                 for entry in (
                     *f.source_account_evidence,
+                    *_per_share_sources(f, market),
                     *(
                         entry
                         for account, result in cagrs.items()

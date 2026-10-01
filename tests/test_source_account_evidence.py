@@ -466,3 +466,57 @@ def test_cagr_selected_interval_and_raw_endpoints_round_trip_through_sql() -> No
         if entry.field == "revenue_cagr_5y"
     )
     assert "elapsed_years=3" in root.expected
+
+
+def test_recovered_per_lot_eps_and_dependent_pe_round_trip_through_sql_api() -> None:
+    from smaug.portfolio.domain.share_classes import PerShareClass, UnitComponent
+
+    financials = standardize(
+        {
+            "DRE": {
+                "accounts": [
+                    _acc("3.99.01.01", "Lucro por lote de mil ações", "2000"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        period_share_classes=(PerShareClass.ORDINARY,),
+    )
+    indicators = compute(
+        financials,
+        None,
+        MarketData(
+            price=Decimal(20),
+            price_source_code="TEST3",
+            price_source_session=date(2025, 12, 30),
+        ),
+    )
+    analysis = TickerAnalysis(
+        ticker="TEST3",
+        classification=Classification("Industriais", None, None),
+        reference_date=date(2025, 12, 31),
+        computed_at=datetime(2026, 9, 30, tzinfo=UTC),
+        view=VIEW_TTM,
+        indicators=indicators,
+    )
+    restored = _to_entity(_to_row(analysis))
+    assert restored.indicators.eps_basic == Decimal(2)
+    assert restored.indicators.pe_basic == Decimal(10)
+    assert (
+        restored.indicators.source_account_evidence
+        == indicators.source_account_evidence
+    )
+    sources = {
+        entry.field: entry for entry in restored.indicators.source_account_evidence
+    }
+    assert sources["eps_basic"].found[0].value == Decimal(2000)
+    assert sources["price"].found[0].value == Decimal(20)
+    assert sources["pe_basic"].dependencies == ("eps_basic", "price")
+    response = _to_response(restored)
+    pe = next(
+        e for e in response.indicators.source_account_evidence if e.field == "pe_basic"
+    )
+    assert pe.formula == "price / eps_basic"
+    assert "price_source_session=2025-12-30" in pe.expected

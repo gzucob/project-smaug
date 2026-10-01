@@ -784,6 +784,8 @@ def _source_account_evidence(
     financials: StandardizedFinancials,
     *,
     per_share_accounts: Accounts,
+    per_share_components: Sequence[UnitComponent] = (),
+    period_share_classes: Sequence[PerShareClass] = (),
     dep_amort_resolution: _DepAmortResolution | None = None,
 ) -> tuple[SourceAccountEvidence, ...]:
     """Inventory raw roots used by indicators and their derived blockers."""
@@ -980,7 +982,16 @@ def _source_account_evidence(
         _source_entry(
             "eps_basic",
             "DRE",
-            ("code=3.99.01.*", "class label required"),
+            (
+                "code=3.99.01.*",
+                "class label or period-proved single-class per-lot disclosure",
+                "reais_per_share = reais_per_1000_shares / 1000 for per-lot lines",
+                *(f"period_class={item.value}" for item in period_share_classes),
+                *(
+                    f"component={item.quantity}*{item.per_share_class.value}"
+                    for item in per_share_components
+                ),
+            ),
             cpc_refs_basic,
             financials.eps_basic,
             financials.unmapped_fields,
@@ -991,7 +1002,16 @@ def _source_account_evidence(
         _source_entry(
             "eps_diluted",
             "DRE",
-            ("code=3.99.02.*", "class label required"),
+            (
+                "code=3.99.02.*",
+                "class label or period-proved single-class per-lot disclosure",
+                "reais_per_share = reais_per_1000_shares / 1000 for per-lot lines",
+                *(f"period_class={item.value}" for item in period_share_classes),
+                *(
+                    f"component={item.quantity}*{item.per_share_class.value}"
+                    for item in per_share_components
+                ),
+            ),
             cpc_refs_diluted,
             financials.eps_diluted,
             financials.unmapped_fields,
@@ -1900,7 +1920,7 @@ def _filed_per_share(
     if not components:
         return None, missing_rights_reason
 
-    values, reason = _filed_per_share_values(dre, prefix)
+    values, reason = _filed_per_share_values(dre, prefix, period_classes=period_classes)
     if values is None:
         if missing_rights_reason is NullReason.UNRESOLVED_SHARE_CLASS:
             return None, missing_rights_reason
@@ -1961,7 +1981,7 @@ def _generic_preferred_value(
 
 
 def _filed_per_share_values(
-    dre: Accounts, prefix: str
+    dre: Accounts, prefix: str, *, period_classes: Sequence[PerShareClass] = ()
 ) -> tuple[dict[PerShareClass, Decimal] | None, NullReason | None]:
     """Read one uncomposed CPC 41 result by its class labels.
 
@@ -1976,10 +1996,21 @@ def _filed_per_share_values(
         code = str(account.get("code", ""))
         if not code.startswith(f"{prefix}.") or code.count(".") != expected_level:
             continue
-        per_share_class = _PER_SHARE_LABELS.get(_fold(str(account.get("name", ""))))
+        label = _fold(str(account.get("name", "")))
+        per_share_class = _PER_SHARE_LABELS.get(label)
+        divisor = Decimal(1)
+        # A per-lot disclosure identifies no class by itself. The period FCA
+        # must prove exactly one class before its reais-per-1,000-shares amount
+        # can be normalized into the same per-share result.
+        if label == "lucro por lote de mil acoes" and len(set(period_classes)) == 1:
+            per_share_class = period_classes[0]
+            divisor = Decimal(1000)
+        if per_share_class is None:
+            continue
         value = _dec(account.get("quantity"))
-        if per_share_class is not None and value is not None:
-            values.setdefault(per_share_class, set()).add(value)
+        if value is None or not value.is_finite():
+            return None, NullReason.MISSING_CPC41_DISCLOSURE
+        values.setdefault(per_share_class, set()).add(value / divisor)
 
     if not values:
         return None, NullReason.MISSING_CPC41_DISCLOSURE
@@ -1990,6 +2021,20 @@ def _filed_per_share_values(
             return None, NullReason.MISSING_ECONOMIC_RIGHTS
         result[per_share_class] = next(iter(candidates))
     return result, None
+
+
+def _complete_per_share_labels(
+    dre: Accounts, prefix: str, period_classes: Sequence[PerShareClass]
+) -> bool:
+    return all(
+        _fold(str(account.get("name", ""))) in _PER_SHARE_LABELS
+        or (
+            _fold(str(account.get("name", ""))) == "lucro por lote de mil acoes"
+            and len(set(period_classes)) == 1
+        )
+        for account in dre
+        if str(account.get("code", "")).startswith(f"{prefix}.")
+    )
 
 
 def _reconciled_cpc41(
@@ -2008,35 +2053,50 @@ def _reconciled_cpc41(
     a weighted average. A unit still carries the sum of its declared class
     quantities.
 
-    Diluted EPS is eligible only when its complete class disclosure is identical
-    to basic EPS. Otherwise potential-share terms are present but unavailable in
-    the structured mirror, so a diluted TTM result must remain null.
+    Share-day reconstruction of diluted EPS requires its complete class
+    disclosure to equal basic EPS because potential-share numerator adjustments
+    are unavailable in the structured mirror. A filed annual result for the
+    identical TTM span is selected directly by the TTM builder.
     """
     if not components:
         return None
 
     classes = tuple(dict.fromkeys(company_classes))
-    basic_values, _basic_reason = _filed_per_share_values(dre, "3.99.01")
+    basic_values, _basic_reason = _filed_per_share_values(
+        dre, "3.99.01", period_classes=period_classes
+    )
     multiplier = sum(
         (Decimal(component.quantity) for component in components), Decimal(0)
     )
     if multiplier <= 0:
         return None
-    diluted_values, _diluted_reason = _filed_per_share_values(dre, "3.99.02")
+    diluted_values, _diluted_reason = _filed_per_share_values(
+        dre, "3.99.02", period_classes=period_classes
+    )
 
-    if classes and basic_values is not None and set(basic_values) == set(classes):
-        basic_bases = {basic_values[per_share_class] for per_share_class in classes}
-        if len(basic_bases) == 1:
+    # Resolve equivalent labels across the complete issuer class set, using
+    # the same period FCA proof as the security result. A generic PN can then
+    # represent PNA/PNB inside a unit without demanding identical raw labels.
+    # Every filed recognized class must still agree; no unequal class is dropped.
+    complete_labels = _complete_per_share_labels(dre, "3.99.01", period_classes)
+    if classes and basic_values is not None and complete_labels:
+        basic_bases = {
+            _per_share_value(basic_values, item, period_classes) for item in classes
+        }
+        basic_bases.update(basic_values.values())
+        if len(basic_bases) == 1 and None not in basic_bases:
             basic_base = next(iter(basic_bases))
             diluted_base: Decimal | None = None
-            if diluted_values is not None and set(diluted_values) == set(classes):
+            if diluted_values is not None and _complete_per_share_labels(
+                dre, "3.99.02", period_classes
+            ):
                 diluted_bases = {
-                    diluted_values[per_share_class] for per_share_class in classes
+                    _per_share_value(diluted_values, item, period_classes)
+                    for item in classes
                 }
-                if len(diluted_bases) == 1:
-                    candidate = next(iter(diluted_bases))
-                    if candidate == basic_base:
-                        diluted_base = candidate
+                diluted_bases.update(diluted_values.values())
+                if diluted_bases == {basic_base}:
+                    diluted_base = basic_base
             return Cpc41Disclosure(
                 basic_base_eps=basic_base,
                 diluted_base_eps=diluted_base,
@@ -2166,6 +2226,8 @@ def standardize(
             by_module,
             result,
             per_share_accounts=cpc41_accounts,
+            per_share_components=per_share_components,
+            period_share_classes=period_share_classes,
             dep_amort_resolution=dep_resolution,
         ),
     )

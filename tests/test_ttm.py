@@ -1132,3 +1132,152 @@ def test_ttm_flow_is_null_when_a_quarter_lacks_the_line() -> None:
     assert ttm is not None
     assert ttm.revenue == Decimal(4000)  # revenue present in all four
     assert ttm.net_income is None  # a gap makes the TTM flow null, not understated
+
+
+def test_ttm_uses_filed_annual_eps_for_its_exact_span_with_unequal_class_rights() -> (
+    None
+):
+    quarters = [
+        _q(
+            date(2025, month, day),
+            period_start=date(2025, start, 1),
+            net_income=Decimal(100),
+        )
+        for month, day, start in ((3, 31, 1), (6, 30, 4), (9, 30, 7))
+    ]
+    annual = replace(
+        _q(date(2025, 12, 31), period_start=date(2025, 1, 1), net_income=Decimal(400)),
+        eps_basic=Decimal(8),
+        eps_diluted=Decimal(7),
+        source_account_evidence=(
+            SourceAccountEvidence(
+                field="eps_basic",
+                statement="DRE",
+                status=SourceAccountStatus.MAPPED,
+                found=(SourceAccountRef("3.99.01.02", "PN", Decimal(8)),),
+            ),
+        ),
+    )
+    assert annual.cpc41 is None  # no common issuer-class denominator
+    ttm = build_ttm(quarters, annual)
+    assert ttm is not None
+    assert ttm.eps_basic == Decimal(8)
+    assert ttm.eps_diluted == Decimal(7)
+    assert ttm.eps_basic_null_reason is None
+    assert ttm.eps_diluted_null_reason is None
+    assert ttm.cpc41_window_provenance is None  # quarter reconstruction not selected
+    sources = {e.field: e for e in ttm.source_account_evidence}
+    assert sources["eps_basic"].dependencies == ("eps_basic[2025-12-31]",)
+    assert "resolution=filed_same_ttm_span" in sources["eps_basic"].expected
+    assert sources["eps_basic[2025-12-31]"].found[0].value == Decimal(8)
+
+
+def test_ttm_preserves_explicit_annual_zero_eps_without_inventing_weighted_shares() -> (
+    None
+):
+    quarters = [
+        _q(
+            date(2025, month, day),
+            period_start=date(2025, start, 1),
+            net_income=Decimal(0),
+        )
+        for month, day, start in ((3, 31, 1), (6, 30, 4), (9, 30, 7))
+    ]
+    annual = replace(
+        _q(date(2025, 12, 31), period_start=date(2025, 1, 1), net_income=Decimal(0)),
+        eps_basic=Decimal(0),
+    )
+    ttm = build_ttm(quarters, annual)
+    assert ttm is not None
+    assert ttm.eps_basic == Decimal(0)
+    assert ttm.eps_basic_null_reason is None
+    assert ttm.eps_diluted is None
+
+
+def test_ttm_does_not_use_annual_eps_when_attributable_profit_differs() -> None:
+    quarters = [
+        _q(
+            date(2025, month, day),
+            period_start=date(2025, start, 1),
+            net_income=Decimal(100),
+        )
+        for month, day, start in ((3, 31, 1), (6, 30, 4), (9, 30, 7), (12, 31, 10))
+    ]
+    annual = replace(
+        _q(date(2025, 12, 31), period_start=date(2025, 1, 1), net_income=Decimal(450)),
+        eps_basic=Decimal(9),
+    )
+    ttm = build_ttm(quarters, annual)
+    assert ttm is not None
+    assert ttm.net_income == Decimal(400)
+    assert ttm.eps_basic is None
+
+
+def test_ttm_does_not_use_a_short_annual_disclosure_as_a_full_year_eps() -> None:
+    quarters = [
+        _q(
+            date(2025, month, day),
+            period_start=date(2025, start, 1),
+            net_income=Decimal(100),
+        )
+        for month, day, start in ((3, 31, 1), (6, 30, 4), (9, 30, 7))
+    ]
+    annual = replace(
+        _q(date(2025, 12, 31), period_start=date(2025, 12, 1), net_income=Decimal(400)),
+        eps_basic=Decimal(9),
+    )
+    ttm = build_ttm(quarters, annual)
+    assert ttm is not None
+    assert ttm.eps_basic is None
+
+
+def test_ttm_does_not_use_previous_year_filed_eps_for_a_shifted_window() -> None:
+    quarters = [
+        _q(
+            date(year, month, day),
+            period_start=date(year, start, 1),
+            net_income=Decimal(100),
+        )
+        for year, month, day, start in (
+            (2025, 3, 31, 1),
+            (2025, 6, 30, 4),
+            (2025, 9, 30, 7),
+            (2026, 3, 31, 1),
+        )
+    ]
+    annual = replace(
+        _q(date(2025, 12, 31), period_start=date(2025, 1, 1), net_income=Decimal(400)),
+        eps_basic=Decimal(8),
+    )
+    ttm = build_ttm(quarters, annual)
+    assert ttm is not None
+    assert ttm.reference_date == date(2026, 3, 31)
+    assert ttm.eps_basic is None
+
+
+def test_ttm_rejects_annual_eps_when_issuer_or_regime_differs() -> None:
+    quarters = [
+        replace(
+            _q(
+                date(2025, month, day),
+                period_start=date(2025, start, 1),
+                net_income=Decimal(100),
+            ),
+            cd_cvm="100",
+            filed_regime=AccountingRegime.CORPORATE,
+        )
+        for month, day, start in ((3, 31, 1), (6, 30, 4), (9, 30, 7))
+    ]
+    annual = replace(
+        _q(date(2025, 12, 31), period_start=date(2025, 1, 1), net_income=Decimal(400)),
+        eps_basic=Decimal(8),
+        cd_cvm="100",
+        filed_regime=AccountingRegime.CORPORATE,
+    )
+    for incompatible in (
+        replace(annual, cd_cvm="200"),
+        replace(annual, filed_regime=AccountingRegime.BANK),
+    ):
+        ttm = build_ttm(quarters, incompatible)
+        assert ttm is not None
+        assert ttm.eps_basic is None
