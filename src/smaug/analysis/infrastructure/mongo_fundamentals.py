@@ -1100,8 +1100,20 @@ def _source_account_evidence(
         _source_entry(
             "cash_equivalents",
             "BPA",
-            (f"code={cash_code}",),
-            _code_refs(bpa, bpa_s, cash_code),
+            (f"code={cash_code}",)
+            + (
+                ("or explicit current cash-and-equivalents aggregate",)
+                if regime is not AccountingRegime.BANK
+                else ()
+            ),
+            tuple(
+                SourceAccountRef(
+                    str(account.get("code", "")),
+                    str(account.get("name", "")),
+                    _mul(_finite_account_value(account), bpa_s),
+                )
+                for account in _cash_equivalent_accounts(bpa, regime)
+            ),
             financials.cash_equivalents,
             financials.unmapped_fields,
         )
@@ -1263,6 +1275,95 @@ def _sum(*values: Decimal | None) -> Decimal | None:
     return total if present else None
 
 
+def _finite_account_value(account: Mapping[str, Any]) -> Decimal | None:
+    value = _dec(account.get("quantity"))
+    return value if value is not None and value.is_finite() else None
+
+
+def _cash_equivalent_accounts(bpa: Accounts, regime: AccountingRegime) -> Accounts:
+    code = "1.01" if regime is AccountingRegime.BANK else "1.01.01"
+    canonical = _account_by_code(bpa, code)
+    if canonical is not None and _finite_account_value(canonical) is not None:
+        return (canonical,)
+    if regime is AccountingRegime.BANK:
+        return ()
+    candidates = [
+        account
+        for account in bpa
+        if str(account.get("code", "")).startswith("1.01.")
+        and re.fullmatch(
+            r"caixa e equivalentes(?: de caixa)?",
+            _fold(str(account.get("name", ""))).strip(),
+        )
+    ]
+    # A parent and its breakdown represent one amount; separate aggregates
+    # must agree before one can be selected deterministically.
+    return tuple(
+        account
+        for account in candidates
+        if not any(
+            str(account.get("code", "")).startswith(f"{other.get('code')}.")
+            for other in candidates
+            if other is not account and _finite_account_value(other) is not None
+        )
+    )
+
+
+def _cash_equivalents(
+    bpa: Accounts, scale: Decimal, regime: AccountingRegime
+) -> Decimal | None:
+    accounts = _cash_equivalent_accounts(bpa, regime)
+    values = {
+        value
+        for account in accounts
+        if (value := _finite_account_value(account)) is not None
+    }
+    if len(values) != 1:
+        return None
+    value = next(iter(values))
+    assert value is not None
+    return value * scale
+
+
+def _is_tariff_or_tax_liability(name: str) -> bool:
+    folded = _fold(name)
+    return bool(
+        re.match(r"^passivos? financeiros? (?:setori(?:al|ais)|do setor)\b", folded)
+    ) or ("contribuicao" in folded and "seguridade social" in folded)
+
+
+def _financial_bucket_components(bpp: Accounts, parent: Mapping[str, Any]) -> Accounts:
+    code = str(parent.get("code", ""))
+    value = _finite_account_value(parent)
+    children = [
+        account
+        for account in bpp
+        if str(account.get("code", "")).startswith(f"{code}.")
+        and str(account.get("code", "")).count(".") == code.count(".") + 1
+    ]
+    if (
+        value is None
+        or value < 0
+        or not children
+        or len({str(child.get("code", "")) for child in children}) != len(children)
+    ):
+        return ()
+    values = [_finite_account_value(child) for child in children]
+    if any(amount is None or amount < 0 for amount in values):
+        return ()
+    if any(
+        not (
+            _is_explicit_debt_line(str(child.get("name", "")))
+            or _is_non_debt_liability(str(child.get("name", "")))
+        )
+        for child in children
+    ):
+        return ()
+    if sum((amount for amount in values if amount is not None), Decimal(0)) != value:
+        return ()
+    return tuple(children)
+
+
 def _is_comprehensive_debt_name(name: str) -> bool:
     """Whether a BPP line declares the aggregate borrowing perimeter.
 
@@ -1300,6 +1401,8 @@ def _inside(code: str, parent: str) -> bool:
 def _debt_instrument(name: str) -> DebtInstrument:
     """Classify a liability label without treating its CVM code as universal."""
     folded = _fold(name)
+    if _is_tariff_or_tax_liability(name):
+        return DebtInstrument.OTHER
     if "ressegur" in folded:
         return DebtInstrument.REINSURANCE
     if "contrato de seguro" in folded or "contratos de seguro" in folded:
@@ -1357,6 +1460,8 @@ def _debt_instrument(name: str) -> DebtInstrument:
 def _is_ambiguous_financial_liability(name: str) -> bool:
     """A financial-liability bucket whose economic components are not named."""
     folded = _fold(name)
+    if _is_tariff_or_tax_liability(name):
+        return False
     if "passiv" not in folded or "financeir" not in folded:
         return False
     # These labels name non-debt instruments rather than an undecomposed bucket.
@@ -1366,6 +1471,8 @@ def _is_ambiguous_financial_liability(name: str) -> bool:
 def _is_explicit_debt_line(name: str) -> bool:
     """A separately filed interest-bearing liability outside the aggregates."""
     folded = _fold(name)
+    if _is_tariff_or_tax_liability(name):
+        return False
     if "provis" in folded or "cancelamento" in folded:
         return False
     return _debt_instrument(name) in frozenset(
@@ -1392,6 +1499,8 @@ def _is_explicit_debt_line(name: str) -> bool:
 def _is_non_debt_liability(name: str) -> bool:
     """Whether a relevant liability is explicitly outside financing debt."""
     folded = _fold(name)
+    if _is_tariff_or_tax_liability(name):
+        return True
     if _debt_instrument(name) in frozenset(
         {
             DebtInstrument.INSURANCE_CONTRACT,
@@ -1408,7 +1517,7 @@ def _is_non_debt_liability(name: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class _DebtAssessment:
-    """Internal result of the unchanged debt rule plus its BPP evidence."""
+    """Internal debt-perimeter result and its BPP evidence."""
 
     total_debt: Decimal | None
     null_reason: NullReason | None
@@ -1430,7 +1539,7 @@ def _debt_line(
     return DebtLineEvidence(
         code=str(account.get("code", "")),
         name=name,
-        value=_mul(_dec(account.get("quantity")), scale),
+        value=_mul(_finite_account_value(account), scale),
         role=role,
         reason=reason,
         instrument=_debt_instrument(name) if instrument is None else instrument,
@@ -1517,7 +1626,9 @@ def _total_debt(bpp: Accounts, scale: Decimal) -> _DebtAssessment:
     liabilities outside those aggregates — most often CPC 06 lease liabilities
     placed under "Outras Obrigações" — are added once at their shallowest named
     level. A non-zero generic "Passivos financeiros" bucket makes the perimeter
-    unknowable from the structured statement and therefore yields a named null.
+    unknowable unless its complete, classified components reconcile exactly
+    with the filed parent. Tariff deferrals and tax contributions are excluded
+    from borrowed financing while remaining explicit in the source evidence.
 
     Insurance-contract/reserve, reinsurance, pension and capitalization
     liabilities do not match these debt labels: they arise from the products the
@@ -1575,8 +1686,8 @@ def _total_debt(bpp: Accounts, scale: Decimal) -> _DebtAssessment:
     assert current is not None
     assert non_current is not None
     aggregate_values = (
-        _dec(current.get("quantity")),
-        _dec(non_current.get("quantity")),
+        _finite_account_value(current),
+        _finite_account_value(non_current),
     )
     missing_values = sum(value is None for value in aggregate_values)
     if missing_values:
@@ -1595,7 +1706,20 @@ def _total_debt(bpp: Accounts, scale: Decimal) -> _DebtAssessment:
             secondary_blockers=tuple(secondary),
         )
 
-    excluded = _blocked_bpp_lines(bpp, aggregate_codes, scale, aggregate_missing=False)
+    resolved_buckets = {
+        str(account.get("code", ""))
+        for account in bpp
+        if _is_ambiguous_financial_liability(str(account.get("name", "")))
+        and _financial_bucket_components(bpp, account)
+    }
+    excluded = [
+        replace(line, reason=DebtBlocker.CHILD_DETAIL_DOUBLE_COUNT)
+        if line.code in resolved_buckets
+        else line
+        for line in _blocked_bpp_lines(
+            bpp, aggregate_codes, scale, aggregate_missing=False
+        )
+    ]
     for account in bpp:
         code = str(account.get("code", ""))
         if not code.startswith(("2.01.", "2.02.")):
@@ -1604,7 +1728,9 @@ def _total_debt(bpp: Accounts, scale: Decimal) -> _DebtAssessment:
             continue
         if not _is_ambiguous_financial_liability(str(account.get("name", ""))):
             continue
-        value = _dec(account.get("quantity"))
+        if code in resolved_buckets:
+            continue
+        value = _finite_account_value(account)
         if value is None or value != 0:
             secondary.append(DebtBlocker.AMBIGUOUS_FINANCIAL_LIABILITY)
 
@@ -1620,7 +1746,7 @@ def _total_debt(bpp: Accounts, scale: Decimal) -> _DebtAssessment:
             continue
         if not _is_explicit_debt_line(str(account.get("name", ""))):
             continue
-        value = _dec(account.get("quantity"))
+        value = _finite_account_value(account)
         if value is None:
             excluded.append(
                 _debt_line(
@@ -2282,7 +2408,7 @@ def _as_bank(
         ebit=None,  # 3.05 is pre-tax profit, never EBIT (ADR 0058)
         # A bank files the CPC 03-labelled total directly at 1.01 and has no
         # current/non-current split from which to isolate broader investments.
-        cash_equivalents=_mul(_by_code(bpa, "1.01"), bpa_s),
+        cash_equivalents=_cash_equivalents(bpa, bpa_s, AccountingRegime.BANK),
         loan_loss_provision=_mul(_child_by_name(dre, "3.02", "provisao"), dre_s),
         fee_income=_mul(_child_by_name(dre, "3.04", "prestacao de servicos"), dre_s),
         personnel_expense=_mul(_child_by_name(dre, "3.04", "pessoal"), dre_s),
@@ -2424,7 +2550,7 @@ def _as_insurer(
     return replace(
         base,
         ebit=_mul(_by_code(dre, "3.07"), dre_s),  # before financial result/taxes
-        cash_equivalents=_mul(_by_code(bpa, "1.01.01"), bpa_s),
+        cash_equivalents=_cash_equivalents(bpa, bpa_s, AccountingRegime.CORPORATE),
         current_financial_investments=_mul(_by_code(bpa, "1.01.02"), bpa_s),
         current_assets=_mul(_by_code(bpa, "1.01"), bpa_s),
         current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),
@@ -2466,7 +2592,7 @@ def _as_corporate(
         # CPC 03 eligibility is the line the issuer itself classifies as cash and
         # cash equivalents. The broader 1.01.02 investments remain visible but do
         # not silently reduce net debt (ADR 0057).
-        cash_equivalents=_mul(_by_code(bpa, "1.01.01"), bpa_s),
+        cash_equivalents=_cash_equivalents(bpa, bpa_s, AccountingRegime.CORPORATE),
         current_financial_investments=_mul(_by_code(bpa, "1.01.02"), bpa_s),
         current_assets=_mul(_by_code(bpa, "1.01"), bpa_s),
         current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),

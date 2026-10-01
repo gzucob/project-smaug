@@ -1,5 +1,6 @@
 """CVM account mapping -> StandardizedFinancials (pure, no Mongo)."""
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
@@ -2681,3 +2682,293 @@ def test_diluted_reconciliation_requires_all_filed_class_labels_resolved() -> No
     assert result.cpc41 is not None
     assert result.cpc41.basic_base_eps == Decimal(2)
     assert result.cpc41.diluted_base_eps is None
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Passivo financeiro setorial",
+        "Passivos financeiros setoriais",
+        "Passivo Financeiro Setorial (Parcela A e Outros)",
+        "Passivos financeiros do setor",
+    ],
+)
+def test_tariff_deferrals_do_not_block_complete_borrowing_debt(label: str) -> None:
+    f = standardize(
+        {
+            "BPP": {
+                "accounts": [
+                    _acc("2.01.04", "Empréstimos e Financiamentos", "100"),
+                    _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+                    _acc("2.01.05.02.01", label, "400"),
+                ]
+            }
+        },
+        Sector.UTILITY,
+        date(2025, 12, 31),
+    )
+    assert f.total_debt == Decimal(300)
+    assert f.debt_coverage_null_reason is None
+    assert f.debt_evidence is not None
+    excluded = next(e for e in f.debt_evidence.excluded_lines if e.name == label)
+    assert excluded.reason is DebtBlocker.NON_DEBT_LIABILITY
+    assert excluded.value == Decimal(400)
+
+
+def test_cofins_contribution_is_not_borrowed_financing() -> None:
+    f = standardize(
+        {
+            "BPP": {
+                "accounts": [
+                    _acc("2.01.04", "Empréstimos e Financiamentos", "100"),
+                    _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+                    _acc(
+                        "2.01.03.01.03",
+                        "Contribuição para o Financiamento "
+                        "da Seguridade Social - COFINS",
+                        "15",
+                    ),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.total_debt == Decimal(300)
+    assert f.debt_evidence is not None
+    assert any(
+        e.code == "2.01.03.01.03" and e.reason is DebtBlocker.NON_DEBT_LIABILITY
+        for e in f.debt_evidence.excluded_lines
+    )
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_generic_financial_bucket_uses_only_fully_reconciled_classified_children(
+    reverse: bool,
+) -> None:
+    accounts = [
+        _acc("2.01.04", "Empréstimos e Financiamentos", "100"),
+        _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+        _acc("2.01.05.02.01", "Passivos financeiros", "25"),
+        _acc("2.01.05.02.01.01", "Passivo de Arrendamento", "20"),
+        _acc("2.01.05.02.01.01.01", "Arrendamento de imóveis", "20"),
+        _acc("2.01.05.02.01.02", "Instrumentos financeiros derivativos", "5"),
+    ]
+    if reverse:
+        accounts.reverse()
+    f = standardize(
+        {"BPP": {"accounts": accounts}}, Sector.INDUSTRY, date(2025, 12, 31)
+    )
+    assert f.total_debt == Decimal(320)
+    assert f.debt_evidence is not None
+    assert any(
+        e.code == "2.01.05.02.01" and e.reason is DebtBlocker.CHILD_DETAIL_DOUBLE_COUNT
+        for e in f.debt_evidence.excluded_lines
+    )
+    assert (
+        len(
+            [
+                e
+                for e in f.debt_evidence.used_lines
+                if e.instrument is DebtInstrument.LEASES
+            ]
+        )
+        == 1
+    )
+
+
+@pytest.mark.parametrize(
+    ("amount", "label"),
+    [
+        ("4", "Instrumentos financeiros derivativos"),
+        ("5", "Outras obrigações"),
+        ("bad", "Instrumentos financeiros derivativos"),
+        ("NaN", "Instrumentos financeiros derivativos"),
+    ],
+)
+def test_incomplete_financial_bucket_keeps_debt_and_dependent_ratios_null(
+    amount: str, label: str
+) -> None:
+    f = standardize(
+        {
+            "BPP": {
+                "accounts": [
+                    _acc("2.01.04", "Empréstimos e Financiamentos", "100"),
+                    _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+                    _acc("2.01.05.02.01", "Passivos financeiros", "25"),
+                    _acc("2.01.05.02.01.01", "Passivo de Arrendamento", "20"),
+                    _acc("2.01.05.02.01.02", label, amount),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.total_debt is None
+    f = replace(
+        f,
+        cash_equivalents=Decimal(50),
+        equity=Decimal(500),
+        equity_total=Decimal(600),
+        ebit=Decimal(100),
+        ebitda=Decimal(120),
+    )
+    result = compute(f, None, MarketData(market_cap=Decimal(1000)))
+    for field in (
+        "net_debt",
+        "enterprise_value",
+        "ev_ebit",
+        "ev_ebitda",
+        "net_debt_to_equity",
+        "debt_to_equity",
+        "roic_statutory",
+    ):
+        assert getattr(result, field) is None
+        assert result.null_reasons[field] is NullReason.INCOMPLETE_DEBT_COVERAGE
+
+
+@pytest.mark.parametrize("code", ["1.01.07", "1.01.01.09"])
+def test_cash_equivalents_recovers_equivalent_filed_current_aggregate(
+    code: str,
+) -> None:
+    f = standardize(
+        {
+            "BPA": {
+                "currency_size": 1000,
+                "accounts": [
+                    _acc(code, "Caixa e equivalentes de caixa", "20"),
+                    _acc("1.01.02", "Aplicações financeiras", "50"),
+                ],
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.cash_equivalents == Decimal(20000)
+    evidence = next(
+        e for e in f.source_account_evidence if e.field == "cash_equivalents"
+    )
+    assert evidence.found[0].code == code
+    assert evidence.found[0].value == Decimal(20000)
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Caixa restrito e equivalentes de caixa",
+        "Caixa vinculado e equivalentes de caixa",
+        "Aplicações financeiras",
+        "Depósitos judiciais (caixa e equivalentes de caixa)",
+        "Caixa e equivalentes de caixa - moeda estrangeira",
+    ],
+)
+def test_cash_recovery_does_not_assume_other_assets_are_cash_equivalents(
+    label: str,
+) -> None:
+    f = standardize(
+        {"BPA": {"accounts": [_acc("1.01.07", label, "20")]}},
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.cash_equivalents is None
+
+
+def test_cash_recovery_rejects_conflicting_complete_aggregates() -> None:
+    f = standardize(
+        {
+            "BPA": {
+                "accounts": [
+                    _acc("1.01.07", "Caixa e equivalentes de caixa", "20"),
+                    _acc("1.01.08", "Caixa e equivalentes de caixa", "30"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.cash_equivalents is None
+
+
+@pytest.mark.parametrize("amount", ["bad", "NaN", "Infinity"])
+def test_nonfinite_debt_aggregate_is_named_null(amount: str) -> None:
+    f = standardize(
+        {
+            "BPP": {
+                "accounts": [
+                    _acc("2.01.04", "Empréstimos e Financiamentos", amount),
+                    _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.total_debt is None
+    assert f.debt_coverage_null_reason is NullReason.INCOMPLETE_DEBT_COVERAGE
+
+
+@pytest.mark.parametrize("cash", ["50", "0", "400"])
+def test_recovered_foundations_feed_existing_debt_ev_and_roic_formulas(
+    cash: str,
+) -> None:
+    f = standardize(
+        {
+            "BPA": {
+                "accounts": [_acc("1.01.07", "Caixa e equivalentes de caixa", cash)]
+            },
+            "BPP": {
+                "accounts": [
+                    _acc("2.01.04", "Empréstimos e Financiamentos", "100"),
+                    _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+                    _acc("2.01.05.02", "Passivos financeiros setoriais", "40"),
+                ]
+            },
+        },
+        Sector.UTILITY,
+        date(2025, 12, 31),
+    )
+    f = replace(
+        f,
+        equity=Decimal(500),
+        equity_total=Decimal(600),
+        ebit=Decimal(100),
+        ebitda=Decimal(120),
+    )
+    result = compute(f, None, MarketData(market_cap=Decimal(1000)))
+    net_debt = Decimal(300) - Decimal(cash)
+    ev = Decimal(1100) + net_debt
+    assert result.net_debt == net_debt
+    assert result.enterprise_value == ev
+    assert result.ev_ebit == ev / Decimal(100)
+    assert result.ev_ebitda == ev / Decimal(120)
+    assert result.net_debt_to_ebitda == net_debt / Decimal(120)
+    assert result.net_debt_to_equity == net_debt / Decimal(500)
+    assert result.debt_to_equity == Decimal("0.6")
+    assert result.roic_statutory == Decimal(66) / (Decimal(600) + net_debt)
+    without_cap = compute(f, None, MarketData())
+    assert without_cap.enterprise_value is None
+    assert without_cap.ev_ebit is None
+    assert without_cap.net_debt == net_debt
+    assert without_cap.roic_statutory == result.roic_statutory
+
+
+def test_duplicate_financial_bucket_children_cannot_prove_complete_composition() -> (
+    None
+):
+    f = standardize(
+        {
+            "BPP": {
+                "accounts": [
+                    _acc("2.01.04", "Empréstimos e Financiamentos", "100"),
+                    _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+                    _acc("2.01.05.02", "Passivos financeiros", "40"),
+                    _acc("2.01.05.02.01", "Passivo de Arrendamento", "20"),
+                    _acc("2.01.05.02.01", "Passivo de Arrendamento", "20"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.total_debt is None
+    assert f.debt_coverage_null_reason is NullReason.INCOMPLETE_DEBT_COVERAGE
