@@ -33,6 +33,7 @@ from decimal import Decimal
 from itertools import pairwise
 from typing import cast
 
+from smaug.analysis.domain.bank_ratios import resolve_bank_ratios
 from smaug.analysis.domain.financials import (
     Cpc41AccountEvidence,
     Cpc41EvidenceStatus,
@@ -59,8 +60,8 @@ _DRE_FLOW_FIELDS = (
     "gross_profit",
     # Regime-specific CVM DRE lines (ADR 0015) — flows like any other income
     # line, and left signed as filed: summing preserves the sign the CVM used.
-    # These remain statement facts; ADR 0058 prevents the calculator from turning
-    # them into bank ratios without the missing average/perimeter disclosures.
+    # Complete bank ratios are resolved separately from their own CVM roots
+    # and exact stock/flow periods. These partial leaves remain statement facts.
     "loan_loss_provision",
     "fee_income",
     "personnel_expense",
@@ -1257,7 +1258,12 @@ def build_ttm(
     Returns ``None`` when fewer than four isolated quarters can be assembled (the
     window would not span 12 months), so the caller degrades instead of lying.
     """
-    return _build_ttm(quarters, annual)
+    result = _build_ttm(quarters, annual)
+    return (
+        resolve_bank_ratios(result, [*quarters, *([annual] if annual else [])])
+        if result is not None
+        else None
+    )
 
 
 def build_ttm_as_of(
@@ -1279,7 +1285,12 @@ def build_ttm_as_of(
         if eligible_annuals
         else None
     )
-    return _build_ttm(eligible_quarters, annual, required_end=end)
+    result = _build_ttm(eligible_quarters, annual, required_end=end)
+    return (
+        resolve_bank_ratios(result, [*eligible_quarters, *eligible_annuals])
+        if result is not None
+        else None
+    )
 
 
 def _year_before(value: date) -> date:
@@ -1436,7 +1447,12 @@ def _build_ttm(
 
     def bank_input(name: str) -> Decimal | None:
         """Transport only inputs covered by the persisted source contract."""
-        if bank_provenance is None or name not in bank_provenance.available_inputs:
+        if (
+            bank_provenance is None
+            or name not in bank_provenance.available_inputs
+            or bank_provenance.period_start != period_start
+            or bank_provenance.period_end != stock_source.reference_date
+        ):
             return None
         return cast(Decimal | None, getattr(latest, name))
 
@@ -1492,9 +1508,8 @@ def _build_ttm(
         # Null-cause provenance (#30) travels with the window: same filer, same
         # regime and same deliberately-skipped fields as its quarters.
         filed_regime=stock_source.filed_regime,
-        # Regulatory average/perimeter inputs cannot be reconstructed from four
-        # CVM quarters. Their named cause survives until an explicit source
-        # provides a complete TTM pair (ADR 0058).
+        # Preserve explicitly evidenced inputs; the outer window resolver
+        # separately assembles complete CVM roots and compatible stock pairs.
         bank_ratio_null_reason=latest.bank_ratio_null_reason,
         bank_interest_result_annualized=bank_input("bank_interest_result_annualized"),
         average_earning_assets=bank_input("average_earning_assets"),

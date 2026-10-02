@@ -139,7 +139,7 @@ def test_absent_and_unmapped_sources_remain_distinct() -> None:
     assert bank_evidence["dep_amort"].blocker is NullReason.SOURCE_ACCOUNT_UNMAPPED
     assert (
         bank_evidence["average_earning_assets"].blocker
-        is NullReason.MISSING_REGULATORY_DISCLOSURE
+        is NullReason.SOURCE_ACCOUNT_ABSENT
     )
 
 

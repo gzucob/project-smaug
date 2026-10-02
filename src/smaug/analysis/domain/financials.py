@@ -254,12 +254,36 @@ class Cpc41WindowProvenance:
 
 
 @dataclass(frozen=True, slots=True)
-class BankRegulatoryProvenance:
-    """Contract metadata for a bank ratio's paired regulatory inputs.
+class BankStatementInputs:
+    """Same-concept bank roots and explicit CVM filing perimeter."""
 
-    One provenance object covers inputs from one disclosure, period, perimeter,
-    averaging method, and basis. A ratio is eligible only when both of its
-    named inputs are in ``available_inputs`` and every metadata field is
+    issuer: str | None = None
+    currency: str | None = None
+    dre_scope: str | None = None
+    bpa_scope: str | None = None
+    bpa_issuer: str | None = None
+    bpa_currency: str | None = None
+    period_start: date | None = None
+    period_end: date | None = None
+    balance_end: date | None = None
+    net_interest: Decimal | None = None
+    earning_assets: Decimal | None = None
+    credit_loss: Decimal | None = None
+    credit_loss_perimeter: str | None = None
+    gross_credit: Decimal | None = None
+    gross_credit_perimeter: str | None = None
+    gross_credit_with_leases: Decimal | None = None
+    operating_expenses: Decimal | None = None
+    operating_income: Decimal | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BankRegulatoryProvenance:
+    """Contract metadata for a bank ratio's paired public inputs.
+
+    One provenance object covers one selected period, perimeter, averaging
+    method and basis, with dated source dependencies. A ratio is eligible when
+    both named inputs are in ``available_inputs`` and every metadata field is
     present. Missing and partial pairs remain distinguishable from an absent
     provider and from an incompatible scope.
     """
@@ -471,29 +495,24 @@ class StandardizedFinancials:
     # Cash-flow flows (DFC, year-to-date basis — isolated on ``dfc_period_start``).
     cfo: Decimal | None = None  # net cash from operating activities (DFC 6.01)
     capex: Decimal | None = None  # purchases of PP&E + intangibles (positive outflow)
-    # Bank-regime CVM lines retained as faithful statement facts. Signed as filed:
-    # expenses are negative. They are not enough to reconstruct the bank ratios —
-    # the structured filing has neither the issuer-defined managerial adjustments
-    # nor the required average stocks (ADR 0058).
-    loan_loss_provision: Decimal | None = None  # inside DRE 3.02 (negative)
-    fee_income: Decimal | None = None  # DRE 3.04 services rendered
-    personnel_expense: Decimal | None = None  # DRE 3.04 payroll (negative)
-    admin_expense: Decimal | None = None  # DRE 3.04 other administrative (negative)
-    loan_book: Decimal | None = None  # BPA 1.02.04, net of its own provision
-    # Regulator/issuer-aligned bank-ratio inputs (ADR 0058). These are paired,
-    # period-consistent values from one explicitly scoped public disclosure — not
-    # aliases for the CVM lines above. Expense inputs are normalized as positive
-    # magnitudes, and the two flow numerators are already annualized on the day-
-    # count basis declared by their source. ``average_*`` means the average basis
-    # declared by that source; a closing balance must never be substituted. The
-    # current CVM-only provider leaves all six null and names why via
-    # ``bank_ratio_null_reason``.
+    # Signed CVM bank statement facts; these leaves alone are not complete ratio
+    # inputs. The bank resolver uses separately evidenced full perimeters.
+    loan_loss_provision: Decimal | None = None
+    fee_income: Decimal | None = None
+    personnel_expense: Decimal | None = None
+    admin_expense: Decimal | None = None
+    loan_book: Decimal | None = None  # net accounting book, never gross exposure
+    # Paired public bank inputs with an explicit period, perimeter and average
+    # basis. CVM flows can resolve complete accounting compositions; the two
+    # stock denominators require exact compatible opening/closing observations.
+    # Net-interest and credit-loss flows are annualized on the disclosed span.
     bank_interest_result_annualized: Decimal | None = None
     average_earning_assets: Decimal | None = None
     bank_efficiency_expenses: Decimal | None = None
     bank_efficiency_income: Decimal | None = None
     credit_loss_expense_annualized: Decimal | None = None
     average_credit_portfolio: Decimal | None = None
+    bank_statement_inputs: BankStatementInputs | None = None
     bank_ratio_null_reason: NullReason | None = None
     bank_regulatory_provenance: BankRegulatoryProvenance | None = None
     # Insurance-regime underwriting lines (ADR 0061), same sign convention:

@@ -327,9 +327,17 @@ def _bank_ratio_blocker(name: str, f: StandardizedFinancials) -> NullReason | No
         return f.bank_ratio_null_reason or NullReason.MISSING_REGULATORY_DISCLOSURE
     reason = provenance.reason_for(pair)
     if reason is not None:
-        return reason
+        return (
+            NullReason.SOURCE_ACCOUNT_ABSENT
+            if provenance.source == "CVM_DRE_BPA"
+            else reason
+        )
     if any(getattr(f, field) is None for field in pair):
-        return NullReason.PARTIAL_REGULATORY_DISCLOSURE
+        return (
+            NullReason.SOURCE_ACCOUNT_ABSENT
+            if provenance.source == "CVM_DRE_BPA"
+            else NullReason.PARTIAL_REGULATORY_DISCLOSURE
+        )
     return None
 
 
