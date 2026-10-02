@@ -42,8 +42,10 @@ from smaug.analysis.domain.capital import (
     RestatementStep,
     filed_scale,
     outstanding_counts,
+    proven_outstanding_counts,
     restatement_factors,
     restatement_timeline,
+    statement_share_scale,
 )
 from smaug.analysis.domain.financials import (
     B3CapitalEventEvidence,
@@ -113,7 +115,8 @@ def _dec(value: Any) -> Decimal | None:
     if value is None:
         return None
     try:
-        return Decimal(str(value))
+        parsed = Decimal(str(value))
+        return parsed if parsed.is_finite() else None
     except (InvalidOperation, ValueError):
         return None
 
@@ -289,6 +292,52 @@ def _no_unit_composition(_ticker: str) -> int | None:
     return None
 
 
+@dataclass(frozen=True, slots=True)
+class _StatementCapital:
+    """One selected statement, with an independently resolved share scale."""
+
+    reference_date: date
+    version: int
+    issued: ShareCounts | None
+    composition: CapitalComposition | None
+    scale: Decimal | None
+    status: str
+    anchors: tuple[str, ...] = ()
+
+
+def _statement_composition(payload: Mapping[str, Any]) -> CapitalComposition:
+    return CapitalComposition(
+        issued_total=_positive(payload.get("total_shares")),
+        treasury_common=_dec(payload.get("treasury_common_shares")),
+        treasury_preferred=_dec(payload.get("treasury_preferred_shares")),
+        treasury_total=_dec(payload.get("treasury_total_shares")),
+    )
+
+
+def _statement_issued(
+    payload: Mapping[str, Any], scale: Decimal | None
+) -> ShareCounts | None:
+    values = tuple(
+        _dec(payload.get(field))
+        for field in ("common_shares", "preferred_shares", "total_shares")
+    )
+    if scale is None or any(value is None or value < 0 for value in values):
+        return None
+    common, preferred, total = values
+    assert common is not None
+    assert preferred is not None
+    assert total is not None
+    if total <= 0 or common + preferred != total:
+        return None
+    if any(value != value.to_integral_value() for value in values if value is not None):
+        return None
+    return ShareCounts(
+        common=common * scale if common > 0 else None,
+        preferred=preferred * scale if preferred > 0 else None,
+        total=total * scale,
+    )
+
+
 class MongoSharesReader:
     """Serves the outstanding share counts per fiscal year from the raw mirror."""
 
@@ -314,6 +363,7 @@ class MongoSharesReader:
         # registry-backed resolver.
         self._unit_composition = unit_composition_resolver
         self._is_unit = unit_resolver
+        self._statement_cache: dict[str, dict[int, _StatementCapital]] = {}
 
     async def outstanding(self, ticker: str, year: int) -> Decimal | None:
         filed = await self.counts(ticker, year)
@@ -341,7 +391,7 @@ class MongoSharesReader:
         if served is None:
             return None
         issued = by_year[served]
-        net = outstanding_counts(issued, await self._composition(ticker, year))
+        net = proven_outstanding_counts(issued, await self._composition(ticker, year))
         if net is None:
             logger.info(
                 "No reconciled treasury composition for %s %d; strict counts null",
@@ -387,8 +437,32 @@ class MongoSharesReader:
                 evidence=("cvm_fre.capital_absent",),
             )
         issued = by_year[served]
+        statement = None
+        if not await self._fre_by_year(ticker):
+            statement = (await self._statement_capital(ticker)).get(served)
+        source = "cvm_fre" if statement is None else "cvm_dfp"
+        source_evidence = (
+            ("cvm_fre.issued",)
+            if statement is None
+            else (
+                "cvm_dfp.issued",
+                f"reference_date={statement.reference_date.isoformat()}",
+                f"version={statement.version}",
+                f"share_scale={statement.scale}",
+                *statement.anchors,
+            )
+        )
+        if statement is not None and statement.issued is None:
+            return ShareCountProvenance(
+                requested_year=year,
+                filed_year=served,
+                source=source,
+                status=statement.status,
+                treasury=statement.composition,
+                evidence=source_evidence,
+            )
         treasury = await self._composition(ticker, year)
-        net = outstanding_counts(issued, treasury)
+        net = proven_outstanding_counts(issued, treasury)
         b3_reading = await self._exchange_event_reading(ticker)
         declared_actions = await self._declared_actions(ticker)
         factor = await self._factor(ticker, by_year, served)
@@ -397,17 +471,18 @@ class MongoSharesReader:
                 requested_year=year,
                 filed_year=served,
                 status="missing_treasury_composition",
+                source=source,
                 issued=issued,
                 treasury=treasury,
                 restatement_factor=factor,
                 actions=tuple(
                     _capital_action_evidence(action) for action in declared_actions
                 ),
-                evidence=("cvm_fre.issued", "cvm_dfp.treasury_unreconciled"),
+                evidence=(*source_evidence, "cvm_dfp.treasury_unreconciled"),
                 b3_reconciliation=b3_reading.reconciliation,
             )
         outstanding = _scaled(net, factor)
-        evidence = ["cvm_fre.issued", "cvm_dfp.treasury"]
+        evidence = [*source_evidence, "cvm_dfp.treasury"]
         if served != year:
             evidence.append("nearest_prior_filing")
         if factor != 1:
@@ -418,6 +493,7 @@ class MongoSharesReader:
             requested_year=year,
             filed_year=served,
             status="resolved",
+            source=source,
             issued=issued,
             outstanding=outstanding,
             treasury=treasury,
@@ -698,11 +774,24 @@ class MongoSharesReader:
         return tuple(action for _rank, action in best.values())
 
     async def _composition(self, ticker: str, year: int) -> CapitalComposition | None:
+        if not await self._fre_by_year(ticker):
+            statements = await self._statement_capital(ticker)
+            served = _served_year(statements, ticker, year, "statement capital")
+            return None if served is None else statements[served].composition
         compositions = await self._compositions(ticker)
         served = _served_year(compositions, ticker, year, "composition")
         return None if served is None else compositions[served]
 
     async def _by_year(self, ticker: str) -> dict[int, ShareCounts]:
+        filed = await self._fre_by_year(ticker)
+        if filed:
+            return filed
+        return {
+            year: reading.issued or ShareCounts()
+            for year, reading in (await self._statement_capital(ticker)).items()
+        }
+
+    async def _fre_by_year(self, ticker: str) -> dict[int, ShareCounts]:
         """The capital composition that supersedes the rest, per year.
 
         Two filed facts order the candidates, in this order:
@@ -754,6 +843,80 @@ class MongoSharesReader:
                 preferred_other=preferred_other,
             )
         return by_year
+
+    async def _statement_capital(self, ticker: str) -> dict[int, _StatementCapital]:
+        if ticker in self._statement_cache:
+            return self._statement_cache[ticker]
+        cursor = self._collection.find(
+            mirror_filter(ticker, self._registrant, module=TREASURY_MODULE)
+        ).sort("fetched_at", 1)
+        payloads: dict[int, Mapping[str, Any] | None] = {}
+        best: dict[int, tuple[date, int]] = {}
+        for_statement = (
+            "cnpj",
+            "common_shares",
+            "preferred_shares",
+            "total_shares",
+            "treasury_common_shares",
+            "treasury_preferred_shares",
+            "treasury_total_shares",
+        )
+        async for document in cursor:
+            payload = document.get("payload")
+            if not isinstance(payload, Mapping):
+                continue
+            try:
+                reference = date.fromisoformat(str(payload.get("reference_date")))
+            except ValueError:
+                continue
+            version = payload.get("version")
+            if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+                continue
+            year = reference.year
+            rank = (reference, version)
+            if year in best and rank < best[year]:
+                continue
+            if year in best and rank == best[year]:
+                prior = payloads[year]
+                if prior is None or any(
+                    prior.get(field) != payload.get(field) for field in for_statement
+                ):
+                    payloads[year] = None
+                continue
+            best[year] = rank
+            payloads[year] = payload
+        actions = await self._declared_actions(ticker)
+        anchors = tuple(
+            total
+            for action in actions
+            for total in (action.total_before, action.total_after)
+        )
+        anchor_evidence = tuple(
+            f"cvm_capital_event={action.approval_date}:{action.kind}:"
+            f"before={action.total_before}:after={action.total_after}"
+            for action in actions
+        )
+        readings: dict[int, _StatementCapital] = {}
+        for year, payload in payloads.items():
+            reference, version = best[year]
+            composition = None if payload is None else _statement_composition(payload)
+            total = None if composition is None else composition.issued_total
+            scale = None if total is None else statement_share_scale(total, anchors)
+            issued = None if payload is None else _statement_issued(payload, scale)
+            status = (
+                "conflicting_statement_capital"
+                if payload is None
+                else "unresolved_statement_scale"
+                if scale is None
+                else "incomplete_statement_capital"
+                if issued is None
+                else "resolved"
+            )
+            readings[year] = _StatementCapital(
+                reference, version, issued, composition, scale, status, anchor_evidence
+            )
+        self._statement_cache[ticker] = readings
+        return readings
 
     async def _compositions(self, ticker: str) -> dict[int, CapitalComposition]:
         """The statements' capital composition — the treasury side — per year.

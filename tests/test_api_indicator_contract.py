@@ -269,3 +269,13 @@ def test_api_schema_matches_selected_public_indicator_names() -> None:
     assert set(IndicatorsResponse.model_fields) - metadata == set(
         public_indicator_names()
     )
+
+
+def test_previous_equivalent_evidence_version_keeps_formula_metadata() -> None:
+    response = _to_response(
+        replace(
+            _analysis(VIEW_TTM), calculation_contract_version="equivalent_evidence_v1"
+        )
+    )
+    assert response.calculation_contract_version == "equivalent_evidence_v1"
+    assert response.indicator_contract

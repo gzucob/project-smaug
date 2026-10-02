@@ -71,6 +71,7 @@ from smaug.analysis.domain.ports import (
     PriceProvider,
     SessionPriceProvider,
     SharesReader,
+    StrictSharesReader,
 )
 from smaug.analysis.domain.ttm import build_ttm, build_ttm_as_of
 from smaug.portfolio.domain.share_classes import (
@@ -659,11 +660,17 @@ class AnalyzePortfolioUseCase:
         return await reader.capital_provenance(ticker, year)
 
     async def _counts(self, ticker: str, year: int) -> ShareCounts | None:
-        """Read class counts through the ADR 0017 fallback contract."""
+        """Use proved outstanding classes for newly calculated valuations."""
+        if hasattr(self._shares_reader, "strict_counts"):
+            reader = cast(StrictSharesReader, self._shares_reader)
+            return await reader.strict_counts(ticker, year)
         return await self._shares_reader.counts(ticker, year)
 
     async def _outstanding(self, ticker: str, year: int) -> Decimal | None:
-        """Read the closing count through the ADR 0017 fallback contract."""
+        """Use a proved outstanding closing denominator for new BVPS."""
+        if hasattr(self._shares_reader, "strict_outstanding"):
+            reader = cast(StrictSharesReader, self._shares_reader)
+            return await reader.strict_outstanding(ticker, year)
         return await self._shares_reader.outstanding(ticker, year)
 
     def _shares_null_reason(
@@ -679,7 +686,12 @@ class AnalyzePortfolioUseCase:
             return reason
         if provenance is None:
             return None
-        if provenance.status == "missing_filing":
+        if provenance.status in {
+            "missing_filing",
+            "unresolved_statement_scale",
+            "incomplete_statement_capital",
+            "conflicting_statement_capital",
+        }:
             return NullReason.MISSING_SHARE_COUNT
         if provenance.status == "missing_treasury_composition" and shares is None:
             return NullReason.MISSING_TREASURY_COMPOSITION
@@ -693,16 +705,14 @@ class AnalyzePortfolioUseCase:
         provenance: ShareCountProvenance | None,
         mappings: tuple[ShareClassMapping, ...],
     ) -> NullReason | None:
-        """Name a cap blocker without turning the issued fallback into a null.
-
-        ``SharesReader.counts`` follows ADR 0017: when treasury evidence is
-        unreadable, it serves the filed issued count as an explicit approximation.
-        That count is usable for the cap, while the provenance still records why it
-        is not a proven outstanding count. Only an actually unavailable count may
-        make ``missing_treasury_composition`` block the cap.
-        """
+        """Name unresolved capital without valuing an issued approximation."""
         reason = self._counts_null_reason(ticker, year)
-        if provenance is not None and provenance.status == "missing_filing":
+        if provenance is not None and provenance.status in {
+            "missing_filing",
+            "unresolved_statement_scale",
+            "incomplete_statement_capital",
+            "conflicting_statement_capital",
+        }:
             reason = NullReason.MISSING_SHARE_COUNT
         elif (
             counts is None

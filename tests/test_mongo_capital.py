@@ -817,3 +817,153 @@ async def test_the_tape_dates_the_move_the_filing_only_places_in_a_year() -> Non
     # One year past the last filed one, because the FRE reports an action late:
     # a span stopping at 2023 would never be offered April 2024.
     assert changes.asked == (2022, 2023, 2024)
+
+
+def _statement_capital(
+    *, scale: int = 1, version: int = 1, preferred: int = 400
+) -> list[dict[str, Any]]:
+    statement = _composition("TEST3", "2026-06-30", 1200, common=20, version=version)
+    statement["payload"].update(common_shares=800, preferred_shares=preferred)
+    event = {
+        "ticker": "TEST3",
+        "source": "cvm",
+        "module": "CAPITAL_EVENT",
+        "fetched_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "payload": {
+            "approval_date": "2020-01-01",
+            "event_type": "DESDOBRAMENTO",
+            "version": 1,
+            "total_before": 600 * scale,
+            "total_after": 1200 * scale,
+        },
+    }
+    return [statement, event]
+
+
+async def test_statement_capital_recovers_without_fre_with_filed_scale() -> None:
+    for scale in (1, 1000):
+        reader = MongoSharesReader(FakeCollection(_statement_capital(scale=scale)))
+        counts = await reader.strict_counts("TEST3", 2026)
+        assert counts == ShareCounts(
+            common=Decimal(780 * scale),
+            preferred=Decimal(400 * scale),
+            total=Decimal(1180 * scale),
+        )
+        provenance = await reader.capital_provenance("TEST3", 2026)
+        assert provenance is not None
+        assert provenance.source == "cvm_dfp"
+        assert "reference_date=2026-06-30" in provenance.evidence
+        assert "version=1" in provenance.evidence
+        assert f"share_scale={scale}" in provenance.evidence
+        assert any(
+            item.startswith("cvm_capital_event=") for item in provenance.evidence
+        )
+
+
+async def test_statement_capital_does_not_assume_units_without_scale_witness() -> None:
+    reader = MongoSharesReader(FakeCollection(_statement_capital()[:1]))
+    assert await reader.strict_counts("TEST3", 2026) is None
+    provenance = await reader.capital_provenance("TEST3", 2026)
+    assert provenance is not None
+    assert provenance.status == "unresolved_statement_scale"
+
+
+async def test_statement_capital_conflict_blocks_older_valid_statement() -> None:
+    documents = _statement_capital()
+    older = _statement_capital()[0]
+    older["payload"]["reference_date"] = "2026-03-31"
+    conflicting = _statement_capital(preferred=399)[0]
+    reader = MongoSharesReader(FakeCollection([older, *documents, conflicting]))
+    assert await reader.strict_counts("TEST3", 2026) is None
+    provenance = await reader.capital_provenance("TEST3", 2026)
+    assert provenance is not None
+    assert provenance.status == "conflicting_statement_capital"
+    amended = _statement_capital(version=2)[0]
+    reader = MongoSharesReader(FakeCollection([*documents, conflicting, amended]))
+    assert await reader.strict_outstanding("TEST3", 2026) == Decimal(1180)
+
+
+async def test_statement_capital_missing_class_and_treasury_are_distinct() -> None:
+    documents = _statement_capital()
+    del documents[0]["payload"]["preferred_shares"]
+    reader = MongoSharesReader(FakeCollection(documents))
+    assert await reader.strict_counts("TEST3", 2026) is None
+    provenance = await reader.capital_provenance("TEST3", 2026)
+    assert provenance is not None
+    assert provenance.status == "incomplete_statement_capital"
+    documents = _statement_capital()
+    del documents[0]["payload"]["treasury_preferred_shares"]
+    reader = MongoSharesReader(FakeCollection(documents))
+    assert await reader.strict_counts("TEST3", 2026) is None
+    provenance = await reader.capital_provenance("TEST3", 2026)
+    assert provenance is not None
+    assert provenance.status == "missing_treasury_composition"
+
+
+async def test_complete_fre_capital_keeps_precedence() -> None:
+    documents = _statement_capital()
+    documents.extend(
+        [
+            _doc("TEST3", 2026, 1500, common=1000, preferred=500),
+            _composition("TEST3", "2026-12-31", 1500, common=30),
+        ]
+    )
+    reader = MongoSharesReader(FakeCollection(documents))
+    assert await reader.strict_outstanding("TEST3", 2026) == Decimal(1470)
+    provenance = await reader.capital_provenance("TEST3", 2026)
+    assert provenance is not None
+    assert provenance.source == "cvm_fre"
+
+
+async def test_statement_explicit_zero_class_recovers() -> None:
+    documents = _statement_capital(preferred=0)
+    documents[0]["payload"]["common_shares"] = 1200
+    reader = MongoSharesReader(FakeCollection(documents))
+    counts = await reader.strict_counts("TEST3", 2026)
+    assert counts is not None
+    assert counts.common == Decimal(1180)
+    assert counts.preferred is None
+
+
+async def test_statement_latest_incomplete_period_does_not_serve_older_counts() -> None:
+    documents = _statement_capital()
+    newer = _statement_capital()[0]
+    newer["payload"]["reference_date"] = "2026-09-30"
+    newer["payload"]["common_shares"] = "NaN"
+    reader = MongoSharesReader(FakeCollection([*documents, newer]))
+    assert await reader.strict_counts("TEST3", 2026) is None
+    provenance = await reader.capital_provenance("TEST3", 2026)
+    assert provenance is not None
+    assert provenance.status == "incomplete_statement_capital"
+
+
+async def test_statement_unit_denominator_uses_the_observed_bundle() -> None:
+    reader = MongoSharesReader(
+        FakeCollection(_statement_capital()),
+        unit_composition_resolver=lambda _: 3,
+        unit_resolver=lambda _: True,
+    )
+    assert await reader.strict_outstanding("TEST3", 2026) == Decimal(1180) / 3
+
+
+async def test_statement_historical_counts_share_the_dated_price_base() -> None:
+    documents = _statement_capital()
+    documents[1]["payload"]["approval_date"] = "2026-04-16"
+    old = _statement_capital()[0]
+    old["payload"].update(
+        reference_date="2025-12-31",
+        common_shares=400,
+        preferred_shares=200,
+        total_shares=600,
+        treasury_common_shares=10,
+        treasury_total_shares=10,
+    )
+    changes = FakeBaseChanges([BaseChange(session=date(2026, 4, 16), ratio=Decimal(2))])
+    reader = MongoSharesReader(FakeCollection([old, *documents]), base_changes=changes)
+    timeline = await reader.restatement_timeline("TEST3")
+    assert factor_at(timeline, date(2025, 12, 31)) == Decimal(2)
+    counts = await reader.strict_counts("TEST3", 2025)
+    assert counts is not None
+    assert counts.total == Decimal(1180)
+    # Adjusted price times adjusted counts preserves as-traded capitalization.
+    assert Decimal(20) / 2 * counts.total == Decimal(20) * Decimal(590)
