@@ -1024,6 +1024,7 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         debt_evidence=_debt_evidence_to_json(analysis.debt_evidence),
         reference_date=analysis.reference_date,
         computed_at=analysis.computed_at,
+        calculation_contract_version=analysis.calculation_contract_version,
         price=analysis.price,
         price_source_code=analysis.price_source_code,
         price_source_session=analysis.price_source_session,
@@ -1130,6 +1131,9 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
         classification=Classification(row.setor, row.subsetor, row.segmento),
         reference_date=row.reference_date,
         computed_at=row.computed_at,
+        calculation_contract_version=(
+            row.calculation_contract_version or "legacy_unversioned"
+        ),
         filed_regime=(
             AccountingRegime(row.filed_regime) if row.filed_regime is not None else None
         ),
@@ -1359,7 +1363,7 @@ class SqlAlchemyAnalysisRepository:
                 TickerAnalysisRow.ticker == ticker,
                 TickerAnalysisRow.view == VIEW_TTM,
             )
-            .order_by(TickerAnalysisRow.computed_at.desc())
+            .order_by(TickerAnalysisRow.computed_at.desc(), TickerAnalysisRow.id.desc())
             .limit(1)
         )
         async with self._session_factory() as session:
@@ -1370,7 +1374,7 @@ class SqlAlchemyAnalysisRepository:
         stmt = (
             select(TickerAnalysisRow)
             .where(TickerAnalysisRow.view == VIEW_TTM)
-            .order_by(TickerAnalysisRow.computed_at.desc())
+            .order_by(TickerAnalysisRow.computed_at.desc(), TickerAnalysisRow.id.desc())
         )
         async with self._session_factory() as session:
             rows = (await session.execute(stmt)).scalars().all()
@@ -1390,7 +1394,7 @@ class SqlAlchemyAnalysisRepository:
                 TickerAnalysisRow.ticker == ticker,
                 TickerAnalysisRow.view == VIEW_CLOSED_YEAR,
             )
-            .order_by(TickerAnalysisRow.computed_at.desc())
+            .order_by(TickerAnalysisRow.computed_at.desc(), TickerAnalysisRow.id.desc())
         )
         async with self._session_factory() as session:
             rows = (await session.execute(stmt)).scalars().all()

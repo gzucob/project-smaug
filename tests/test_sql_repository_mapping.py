@@ -402,3 +402,82 @@ def test_legacy_sql_predicate_accepts_a_valid_sector_fallback() -> None:
     # A fallback regime is current when all other attribution contracts exist;
     # this predicate only rejects a missing regime source or non-fallback gap.
     assert "filed_regime IS NULL" in str(compiled)
+
+
+def test_calculation_contract_round_trips_without_rewriting_legacy_values() -> None:
+    from smaug.analysis.domain.indicators import CALCULATION_CONTRACT_VERSION
+
+    legacy = replace(
+        _analysis(),
+        indicators=Indicators(
+            eps_basic_market=Decimal("2"), pe_basic_market=Decimal("6")
+        ),
+    )
+    assert _to_entity(_to_row(legacy)) == legacy
+    current = replace(legacy, calculation_contract_version=CALCULATION_CONTRACT_VERSION)
+    assert _to_entity(_to_row(current)) == current
+    assert _to_row(current).calculation_contract_version == CALCULATION_CONTRACT_VERSION
+    assert _to_row(legacy).calculation_contract_version == "legacy_unversioned"
+
+
+class _AnalysisResult:
+    def __init__(self, rows: list[object]) -> None:
+        self.rows = rows
+
+    def scalars(self) -> "_AnalysisResult":
+        return self
+
+    def first(self) -> object | None:
+        return self.rows[0] if self.rows else None
+
+    def all(self) -> list[object]:
+        return self.rows
+
+
+class _AnalysisSession(_ScopeSession):
+    def __init__(self, rows: list[object]) -> None:
+        super().__init__()
+        self.rows = rows
+
+    async def execute(self, statement: Select[tuple[object, ...]]) -> _AnalysisResult:
+        self.statement = statement
+        return _AnalysisResult(self.rows)
+
+
+async def test_latest_reads_select_current_null_without_legacy_fallback() -> None:
+    from smaug.analysis.domain.entities import VIEW_CLOSED_YEAR
+    from smaug.analysis.domain.indicators import CALCULATION_CONTRACT_VERSION
+
+    for method in ("latest", "all_latest", "history"):
+        legacy = _analysis()
+        if method == "history":
+            legacy = replace(legacy, view=VIEW_CLOSED_YEAR)
+        current = replace(
+            legacy,
+            calculation_contract_version=CALCULATION_CONTRACT_VERSION,
+            indicators=Indicators(
+                roe=None, null_reasons={"roe": NullReason.SOURCE_ACCOUNT_ABSENT}
+            ),
+        )
+        newer_row, older_row = _to_row(current), _to_row(legacy)
+        newer_row.id, older_row.id = 2, 1
+        session = _AnalysisSession([newer_row, older_row])
+        repository = SqlAlchemyAnalysisRepository(  # type: ignore[arg-type]
+            _ScopeSessionFactory(session)
+        )
+        result = (
+            await repository.all_latest()
+            if method == "all_latest"
+            else await getattr(repository, method)(legacy.ticker)
+        )
+        selected = result[0] if isinstance(result, list) else result
+        assert selected == current
+        assert selected.indicators.roe is None
+        assert (
+            selected.indicators.null_reasons["roe"] is NullReason.SOURCE_ACCOUNT_ABSENT
+        )
+        assert session.statement is not None
+        sql = str(session.statement.compile(dialect=postgresql.dialect()))
+        assert (
+            "ORDER BY ticker_analysis.computed_at DESC, ticker_analysis.id DESC" in sql
+        )

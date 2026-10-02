@@ -7,9 +7,8 @@ import type { Analysis } from "@/lib/types";
 /**
  * One perspective of a ticker: provenance header + full indicator grid.
  *
- * `history` and `ttm` are threaded through untouched: the grid's per-indicator
- * drill-down charts the whole series, which is a property of the ticker rather
- * than of the view being displayed here.
+ * Comparisons and drill-down statistics use only rows sharing the displayed
+ * calculation contract. Historical rows remain available in the ticker history.
  */
 export function ViewPanel({
   analysis,
@@ -25,6 +24,12 @@ export function ViewPanel({
   ttm: Analysis | null;
   primary?: boolean;
 }) {
+  // A changed calculation contract is not a comparable statistical window.
+  const sameContract = (row: Analysis) =>
+    row.calculation_contract_version === analysis.calculation_contract_version;
+  const comparableHistory = history.filter(sameContract);
+  const comparableTtm = ttm && sameContract(ttm) ? ttm : null;
+  const comparableExercise = compare && sameContract(compare) ? compare : null;
   const isTtm = analysis.view === "ttm_live";
   const priceMain = toNum(analysis.price);
   const priceAdjusted = toNum(analysis.price_adjusted);
@@ -44,10 +49,10 @@ export function ViewPanel({
               {isTtm ? monthYear(analysis.reference_date) : yearOf(analysis.reference_date)}
             </span>
           </p>
-          {compare && (
+          {comparableExercise && (
             <p className="mt-1 text-xs text-ink-500">
               Variações medidas contra o exercício de{" "}
-              <span className="text-ink-400">{yearOf(compare.reference_date)}</span>
+              <span className="text-ink-400">{yearOf(comparableExercise.reference_date)}</span>
             </p>
           )}
         </div>
@@ -69,12 +74,18 @@ export function ViewPanel({
 
       <IndicatorGrid
         indicators={analysis.indicators}
-        compare={compare?.indicators ?? null}
-        compareLabel={compare ? yearOf(compare.reference_date) : null}
+        compare={comparableExercise?.indicators ?? null}
+        compareLabel={comparableExercise ? yearOf(comparableExercise.reference_date) : null}
         sector={gemKey(analysis.classification)}
-        history={history}
-        ttm={ttm}
+        history={comparableHistory}
+        ttm={comparableTtm}
       />
+
+      {comparableHistory.length < history.length && (
+        <p className="text-xs opacity-70">
+          A evolução dos indicadores inclui apenas exercícios calculados com a mesma metodologia.
+        </p>
+      )}
 
       <footer className="mt-1 text-[0.64rem] text-ink-600">
         Calculado em {dateTime(analysis.computed_at)}

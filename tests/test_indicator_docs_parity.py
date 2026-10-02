@@ -8,7 +8,8 @@ a failing test rather than a silent, user-facing lie.
 
 What is checked mechanically (the reworded-formula prose stays manual, by design
 — see the issue) is the **set** of documented indicators, against the
-``Indicators`` dataclass and the TypeScript mirror.
+public domain names and the TypeScript mirror. Retired storage fields and the
+internal EPS compatibility alias are not public indicators.
 
 Applicability is deliberately *not* checked any more. The front-end used to
 restate the calculator's regime guards in a ``naSectors`` field, and this test
@@ -22,7 +23,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from smaug.analysis.domain.indicators import indicator_names
+from smaug.analysis.domain.indicators import public_indicator_names
 
 _LIB = Path(__file__).parents[1] / "frontend" / "src" / "lib"
 _DOCS = (_LIB / "indicator-docs.ts").read_text("utf-8")
@@ -42,9 +43,9 @@ def _documented_indicators() -> set[str]:
 
 
 def test_types_mirror_lists_exactly_the_indicator_fields() -> None:
-    assert _typescript_indicator_fields() == set(indicator_names())
+    assert _typescript_indicator_fields() == set(public_indicator_names())
 
 
 def test_every_indicator_is_documented_and_no_stragglers() -> None:
     # Adding a field to Indicators without documenting it (or removing one) fails here.
-    assert _documented_indicators() == set(indicator_names())
+    assert _documented_indicators() == set(public_indicator_names())

@@ -332,7 +332,8 @@ async def test_analyze_uses_issued_fallback_when_treasury_is_unreconciled() -> N
     assert saved.capital_provenance.status == "missing_treasury_composition"
     assert saved.indicators.shares == Decimal(1200)
     assert saved.indicators.bvps == Decimal(5)
-    assert saved.indicators.eps_basic_market == Decimal(1)
+    assert saved.indicators.eps_basic_market is None
+    assert saved.calculation_contract_version == "equivalent_evidence_v1"
     assert saved.indicators.market_cap == Decimal(12000)
     assert saved.indicators.company_pe == Decimal(10)
     assert "company_pe" not in saved.indicators.null_reasons
@@ -769,6 +770,10 @@ async def test_analyze_produces_ttm_and_closed_year_views() -> None:
     assert ttm.price_basis == "b3_latest_close"
     assert ttm.price == Decimal(10)  # current nominal quote
 
+    assert all(
+        row.calculation_contract_version == "equivalent_evidence_v1"
+        for row in repo.saved
+    )
     y2025 = views[("closed_year", date(2025, 12, 31))]
     assert y2025.price_basis == "b3_year_end_close"
     assert y2025.price == Decimal(9)  # B3's last close at the fiscal cut-off

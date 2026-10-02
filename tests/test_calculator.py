@@ -92,8 +92,8 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.net_income_growth == Decimal("0.2")
     assert ind.pe_basic == Decimal(8)  # paper price 12 / filed basic EPS 1.50
     assert ind.pe_diluted == Decimal(12) / Decimal("1.40")
-    assert ind.eps_basic_market == Decimal(2)  # 1200 / 600 closing shares
-    assert ind.pe_basic_market == Decimal(6)  # 12 / estimated EPS 2
+    assert ind.eps_basic_market is None
+    assert ind.pe_basic_market is None
     assert ind.pb == Decimal("1.2")  # paper price 12 / closing BVPS 10
     assert ind.company_pe == Decimal(10)  # company cap 12000 / annual profit 1200
     assert ind.company_pb == Decimal(2)  # company cap 12000 / equity 6000
@@ -836,8 +836,8 @@ def test_market_convention_multiples_survive_a_missing_cpc41_share_input() -> No
 
     assert ind.pe_basic is None
     assert ind.null_reasons["pe_basic"] is NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
-    assert ind.eps_basic_market == Decimal(2)
-    assert ind.pe_basic_market == Decimal(6)
+    assert ind.eps_basic_market is None
+    assert ind.pe_basic_market is None
     assert ind.company_pe == Decimal(10)
     assert ind.pb == Decimal("1.2")
     assert ind.company_pb == Decimal(2)
@@ -1161,3 +1161,15 @@ def test_cagr_attributes_a_missing_base_to_its_own_mapping() -> None:
     end = _closed_year(2024, revenue=Decimal(2000))
     ind = compute(end, None, MarketData(), [start, end])
     assert ind.null_reasons["revenue_cagr_5y"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+
+
+def test_selected_indicators_exclude_retired_closing_share_alternatives() -> None:
+    from smaug.analysis.domain.indicators import indicator_names
+
+    ind = compute(
+        _nonfinancial(), None, MarketData(shares=Decimal("600"), price=Decimal("12"))
+    )
+    for name in ("eps_basic_market", "pe_basic_market"):
+        assert name not in indicator_names()
+        assert name not in ind.null_reasons
+        assert getattr(ind, name) is None

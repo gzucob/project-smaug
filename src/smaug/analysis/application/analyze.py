@@ -44,7 +44,7 @@ from smaug.analysis.domain.financials import (
     StandardizedFinancials,
     YearPrices,
 )
-from smaug.analysis.domain.indicators import NullReason
+from smaug.analysis.domain.indicators import CALCULATION_CONTRACT_VERSION, NullReason
 from smaug.analysis.domain.market_cap import capitalize
 from smaug.analysis.domain.outcomes import (
     AnalysisOutcome as AnalysisOutcome,
@@ -528,6 +528,7 @@ class AnalyzePortfolioUseCase:
             ticker, current.reference_date, previous
         )
         return TickerAnalysis(
+            calculation_contract_version=CALCULATION_CONTRACT_VERSION,
             ticker=ticker,
             classification=classification,
             reference_date=current.reference_date,
@@ -586,6 +587,7 @@ class AnalyzePortfolioUseCase:
             ticker, annual.reference_date, previous
         )
         return TickerAnalysis(
+            calculation_contract_version=CALCULATION_CONTRACT_VERSION,
             ticker=ticker,
             classification=classification,
             reference_date=annual.reference_date,

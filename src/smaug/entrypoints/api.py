@@ -43,9 +43,9 @@ from smaug.analysis.domain.financials import (
     SourceAccountStatus,
 )
 from smaug.analysis.domain.indicators import (
-    INDICATOR_CONTRACT,
-    IndicatorTier,
     NullReason,
+    indicator_contracts,
+    public_indicator_names,
 )
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
 from smaug.portfolio.application.manage_portfolio import ManagePortfolioUseCase
@@ -258,10 +258,8 @@ class IndicatorsResponse(BaseModel):
     ebit_margin: Decimal | None
     ebitda_margin: Decimal | None
     asset_turnover: Decimal | None
-    eps: Decimal | None
     eps_basic: Decimal | None
     eps_diluted: Decimal | None
-    eps_basic_market: Decimal | None
     bvps: Decimal | None
     net_debt: Decimal | None
     cash_equivalents: Decimal | None
@@ -284,7 +282,6 @@ class IndicatorsResponse(BaseModel):
     pb: Decimal | None
     company_pe: Decimal | None
     company_pb: Decimal | None
-    pe_basic_market: Decimal | None
     psr: Decimal | None
     price_to_assets: Decimal | None
     price_to_ebit: Decimal | None
@@ -327,7 +324,6 @@ class IndicatorsResponse(BaseModel):
 class IndicatorContractResponse(BaseModel):
     """Formula and provenance metadata for one market-facing indicator."""
 
-    tier: IndicatorTier
     basis: str
     numerator: str
     denominator: str
@@ -403,6 +399,7 @@ class AnalysisResponse(BaseModel):
     classification: ClassificationResponse
     reference_date: date
     computed_at: datetime
+    calculation_contract_version: str
     filed_regime: AccountingRegime | None
     regime_source: RegimeSource | None
     issuer: str | None
@@ -452,7 +449,6 @@ def _to_indicator_contract(
     period = "last_twelve_months" if analysis.view == VIEW_TTM else "closed_fiscal_year"
     return {
         key: IndicatorContractResponse(
-            tier=contract.tier,
             basis=contract.basis,
             numerator=contract.numerator,
             denominator=contract.denominator,
@@ -465,7 +461,9 @@ def _to_indicator_contract(
             share_basis=contract.share_basis,
             provenance=list(contract.provenance),
         )
-        for key, contract in INDICATOR_CONTRACT.items()
+        for key, contract in indicator_contracts(
+            analysis.calculation_contract_version
+        ).items()
     }
 
 
@@ -679,6 +677,11 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
         analysis.indicators, from_attributes=True
     ).model_copy(
         update={
+            "null_reasons": {
+                key: reason
+                for key, reason in analysis.indicators.null_reasons.items()
+                if key in public_indicator_names()
+            },
             "source_account_evidence": [
                 SourceAccountEvidenceResponse(
                     field=item.field,
@@ -743,6 +746,7 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
         ),
         reference_date=analysis.reference_date,
         computed_at=analysis.computed_at,
+        calculation_contract_version=analysis.calculation_contract_version,
         filed_regime=analysis.filed_regime,
         regime_source=analysis.regime_source,
         issuer=analysis.issuer_name,

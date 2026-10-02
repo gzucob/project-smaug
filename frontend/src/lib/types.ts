@@ -43,10 +43,8 @@ export interface Indicators {
   ebit_margin: Decimalish;
   ebitda_margin: Decimalish;
   asset_turnover: Decimalish;
-  eps: Decimalish;
   eps_basic: Decimalish;
   eps_diluted: Decimalish;
-  eps_basic_market: Decimalish;
   bvps: Decimalish;
   net_debt: Decimalish;
   cash_equivalents: Decimalish;
@@ -71,7 +69,6 @@ export interface Indicators {
   pb: Decimalish;
   company_pe: Decimalish;
   company_pb: Decimalish;
-  pe_basic_market: Decimalish;
   psr: Decimalish;
   price_to_assets: Decimalish;
   price_to_ebit: Decimalish;
@@ -114,11 +111,8 @@ export interface Indicators {
   null_reasons: Partial<Record<string, NullReason>>;
 }
 
-export type IndicatorTier = "strict" | "market_convention";
-
 /** Formula metadata published by the API for market-facing indicators. */
 export interface IndicatorContract {
-  tier: IndicatorTier;
   basis: string;
   numerator: string;
   denominator: string;
@@ -160,6 +154,7 @@ export type NullReason =
 export type IndicatorKey = Exclude<keyof Indicators, "null_reasons">;
 
 export interface Analysis {
+  calculation_contract_version: string;
   ticker: string;
   view: ViewKind | string;
   classification: Classification;
