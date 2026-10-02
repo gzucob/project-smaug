@@ -844,6 +844,8 @@ async def test_statement_capital_recovers_without_fre_with_filed_scale() -> None
     for scale in (1, 1000):
         reader = MongoSharesReader(FakeCollection(_statement_capital(scale=scale)))
         counts = await reader.strict_counts("TEST3", 2026)
+        assert await reader.counts("TEST3", 2026) == counts
+        assert await reader.outstanding("TEST3", 2026) == Decimal(1180 * scale)
         assert counts == ShareCounts(
             common=Decimal(780 * scale),
             preferred=Decimal(400 * scale),
@@ -898,6 +900,8 @@ async def test_statement_capital_missing_class_and_treasury_are_distinct() -> No
     provenance = await reader.capital_provenance("TEST3", 2026)
     assert provenance is not None
     assert provenance.status == "missing_treasury_composition"
+    assert await reader.counts("TEST3", 2026) is None
+    assert await reader.outstanding("TEST3", 2026) is None
 
 
 async def test_complete_fre_capital_keeps_precedence() -> None:
@@ -967,3 +971,45 @@ async def test_statement_historical_counts_share_the_dated_price_base() -> None:
     assert counts.total == Decimal(1180)
     # Adjusted price times adjusted counts preserves as-traded capitalization.
     assert Decimal(20) / 2 * counts.total == Decimal(20) * Decimal(590)
+
+
+async def test_existing_fre_counts_survive_an_unreadable_statement() -> None:
+    documents = _statement_capital(preferred=399)
+    documents.append(_doc("TEST3", 2026, 1200, common=800, preferred=400))
+    reader = MongoSharesReader(FakeCollection(documents))
+    assert await reader.counts("TEST3", 2026) == ShareCounts(
+        common=Decimal(780), preferred=Decimal(400), total=Decimal(1180)
+    )
+    assert await reader.outstanding("TEST3", 2026) == Decimal(1180)
+
+
+async def test_existing_fre_issued_fallback_survives_a_rejected_new_method() -> None:
+    documents = _statement_capital()
+    documents[0]["payload"]["total_shares"] = 1
+    documents.append(_doc("TEST3", 2026, 1200, common=800, preferred=400))
+    reader = MongoSharesReader(FakeCollection(documents))
+    assert await reader.strict_counts("TEST3", 2026) is None
+    assert await reader.counts("TEST3", 2026) == ShareCounts(
+        common=Decimal(800), preferred=Decimal(400), total=Decimal(1200)
+    )
+    assert await reader.outstanding("TEST3", 2026) == Decimal(1200)
+    provenance = await reader.capital_provenance("TEST3", 2026)
+    assert provenance is not None
+    assert provenance.source == "cvm_fre"
+    assert provenance.status == "missing_treasury_composition"
+
+
+async def test_existing_fre_partial_treasury_keeps_its_selected_count() -> None:
+    documents = _statement_capital()
+    del documents[0]["payload"]["treasury_preferred_shares"]
+    documents.append(_doc("TEST3", 2026, 1200, common=800, preferred=400))
+    reader = MongoSharesReader(FakeCollection(documents))
+    assert await reader.strict_counts("TEST3", 2026) is None
+    assert await reader.outstanding("TEST3", 2026) == Decimal(1180)
+    counts = await reader.counts("TEST3", 2026)
+    assert counts is not None
+    assert counts.common == Decimal(780)
+    assert counts.preferred == Decimal(400)
+    provenance = await reader.capital_provenance("TEST3", 2026)
+    assert provenance is not None
+    assert provenance.status == "resolved"

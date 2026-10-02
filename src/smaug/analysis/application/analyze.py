@@ -71,7 +71,6 @@ from smaug.analysis.domain.ports import (
     PriceProvider,
     SessionPriceProvider,
     SharesReader,
-    StrictSharesReader,
 )
 from smaug.analysis.domain.ttm import build_ttm, build_ttm_as_of
 from smaug.portfolio.domain.share_classes import (
@@ -660,17 +659,11 @@ class AnalyzePortfolioUseCase:
         return await reader.capital_provenance(ticker, year)
 
     async def _counts(self, ticker: str, year: int) -> ShareCounts | None:
-        """Use proved outstanding classes for newly calculated valuations."""
-        if hasattr(self._shares_reader, "strict_counts"):
-            reader = cast(StrictSharesReader, self._shares_reader)
-            return await reader.strict_counts(ticker, year)
+        """Preserve the selected capital method; the adapter resolves new fallback."""
         return await self._shares_reader.counts(ticker, year)
 
     async def _outstanding(self, ticker: str, year: int) -> Decimal | None:
-        """Use a proved outstanding closing denominator for new BVPS."""
-        if hasattr(self._shares_reader, "strict_outstanding"):
-            reader = cast(StrictSharesReader, self._shares_reader)
-            return await reader.strict_outstanding(ticker, year)
+        """Preserve the existing closing denominator before equivalent recovery."""
         return await self._shares_reader.outstanding(ticker, year)
 
     def _shares_null_reason(
@@ -705,7 +698,7 @@ class AnalyzePortfolioUseCase:
         provenance: ShareCountProvenance | None,
         mappings: tuple[ShareClassMapping, ...],
     ) -> NullReason | None:
-        """Name unresolved capital without valuing an issued approximation."""
+        """Name unavailable capital while retaining the existing issued fallback."""
         reason = self._counts_null_reason(ticker, year)
         if provenance is not None and provenance.status in {
             "missing_filing",

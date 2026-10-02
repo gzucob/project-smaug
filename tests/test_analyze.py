@@ -309,7 +309,7 @@ async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
     assert saved.indicators.company_pb == Decimal(2)  # 12000 / 6000
 
 
-async def test_analyze_requires_proven_treasury_for_valuation() -> None:
+async def test_analyze_preserves_issued_fallback_with_a_strict_surface() -> None:
     repo = FakeRepo()
     use_case = AnalyzePortfolioUseCase(
         FakeReader(
@@ -330,15 +330,13 @@ async def test_analyze_requires_proven_treasury_for_valuation() -> None:
     saved = repo.saved[0]
     assert saved.capital_provenance is not None
     assert saved.capital_provenance.status == "missing_treasury_composition"
-    assert saved.indicators.shares is None
-    assert saved.indicators.bvps is None
+    assert saved.indicators.shares == Decimal(1200)
+    assert saved.indicators.bvps == Decimal(5)
     assert saved.indicators.eps_basic_market is None
-    assert saved.calculation_contract_version == "equivalent_evidence_v2"
-    assert saved.indicators.market_cap is None
-    assert saved.indicators.company_pe is None
-    assert saved.indicators.null_reasons["company_pe"] == (
-        NullReason.MISSING_TREASURY_COMPOSITION
-    )
+    assert saved.calculation_contract_version == "equivalent_evidence_v3"
+    assert saved.indicators.market_cap == Decimal(12000)
+    assert saved.indicators.company_pe == Decimal(10)
+    assert "company_pe" not in saved.indicators.null_reasons
 
 
 async def test_analyze_sums_the_ttm_cap_over_the_listed_share_classes() -> None:
@@ -773,7 +771,7 @@ async def test_analyze_produces_ttm_and_closed_year_views() -> None:
     assert ttm.price == Decimal(10)  # current nominal quote
 
     assert all(
-        row.calculation_contract_version == "equivalent_evidence_v2"
+        row.calculation_contract_version == "equivalent_evidence_v3"
         for row in repo.saved
     )
     y2025 = views[("closed_year", date(2025, 12, 31))]

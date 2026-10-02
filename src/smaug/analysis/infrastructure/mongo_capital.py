@@ -462,7 +462,11 @@ class MongoSharesReader:
                 evidence=source_evidence,
             )
         treasury = await self._composition(ticker, year)
-        net = proven_outstanding_counts(issued, treasury)
+        net = (
+            outstanding_counts(issued, treasury)
+            if statement is None
+            else proven_outstanding_counts(issued, treasury)
+        )
         b3_reading = await self._exchange_event_reading(ticker)
         declared_actions = await self._declared_actions(ticker)
         factor = await self._factor(ticker, by_year, served)
@@ -529,6 +533,10 @@ class MongoSharesReader:
         The as-filed reading stays derivable: the mirror keeps every filing, and the
         factor is recomputed from it on every read, never stored.
         """
+        # Preserve the FRE method, including its documented issued fallback.
+        # A new statement root is admitted only with its own complete proof.
+        if not await self._fre_by_year(ticker):
+            return await self.strict_counts(ticker, year)
         by_year = await self._by_year(ticker)
         served = _served_year(by_year, ticker, year, "capital")
         if served is None:

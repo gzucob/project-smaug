@@ -203,10 +203,10 @@ class CapitalProvenanceReader(Protocol):
 
 
 class StrictSharesReader(Protocol):
-    """Proved outstanding counts selected by the v2 calculation contract.
+    """Optional capital proof surface, without changing the normal FRE method.
 
-    The issued approximation remains available on the legacy adapter surface.
-    New valuations opt into this proof when the adapter provides it.
+    The normal analysis path uses ``SharesReader`` and its issued fallback.
+    Statement recovery can use this proof without rejecting existing results.
     """
 
     async def strict_counts(self, ticker: str, year: int) -> ShareCounts | None: ...

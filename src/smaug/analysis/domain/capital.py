@@ -15,9 +15,9 @@ other between 2024 and 2025. So the scale is a fact to be *derived*, not assumed
 the composition files its own issued total, which is the same quantity the FRE
 reports, and the ratio between the two is the multiple.
 
-Everything here is pure. The legacy adapter can keep issued counts when treasury
-is unreadable. The v2 valuation contract requires proved outstanding counts and
-returns a named null when scale or treasury cannot be resolved.
+Everything here is pure. The existing FRE method keeps issued counts when treasury
+is unreadable and records that limitation in provenance. New statement recovery
+requires its own scale and treasury proof without narrowing the existing method.
 """
 
 from __future__ import annotations

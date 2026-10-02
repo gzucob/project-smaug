@@ -27,7 +27,8 @@ if TYPE_CHECKING:
 
 LEGACY_CALCULATION_CONTRACT = "legacy_unversioned"
 EQUIVALENT_EVIDENCE_V1 = "equivalent_evidence_v1"
-CALCULATION_CONTRACT_VERSION = "equivalent_evidence_v2"
+EQUIVALENT_EVIDENCE_V2 = "equivalent_evidence_v2"
+CALCULATION_CONTRACT_VERSION = "equivalent_evidence_v3"
 LEGACY_INDICATOR_NAMES = frozenset({"eps_basic_market", "pe_basic_market"})
 
 
@@ -480,7 +481,11 @@ INDICATOR_CONTRACT["pe_basic"] = replace(
 
 def indicator_contracts(version: str) -> dict[str, IndicatorContract]:
     """Describe the formula actually used by a persisted calculation version."""
-    if version in {CALCULATION_CONTRACT_VERSION, EQUIVALENT_EVIDENCE_V1}:
+    if version in {
+        CALCULATION_CONTRACT_VERSION,
+        EQUIVALENT_EVIDENCE_V1,
+        EQUIVALENT_EVIDENCE_V2,
+    }:
         return INDICATOR_CONTRACT
     if version == LEGACY_CALCULATION_CONTRACT:
         return {

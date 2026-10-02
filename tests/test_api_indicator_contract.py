@@ -279,3 +279,13 @@ def test_previous_equivalent_evidence_version_keeps_formula_metadata() -> None:
     )
     assert response.calculation_contract_version == "equivalent_evidence_v1"
     assert response.indicator_contract
+
+
+def test_superseded_v2_keeps_its_formula_metadata() -> None:
+    response = _to_response(
+        replace(
+            _analysis(VIEW_TTM), calculation_contract_version="equivalent_evidence_v2"
+        )
+    )
+    assert response.calculation_contract_version == "equivalent_evidence_v2"
+    assert response.indicator_contract
