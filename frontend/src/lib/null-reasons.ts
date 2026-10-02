@@ -58,7 +58,7 @@ const COPY: Record<NullReason, ReasonCopy> = {
   },
   missing_share_count: {
     short: "sem nº de ações",
-    long: "Faltou a quantidade de ações em circulação (FRE) para este período.",
+    long: "As evidências CVM não permitiram determinar a quantidade de ações em circulação para este período.",
     intentional: false,
   },
   missing_unit_composition: {
