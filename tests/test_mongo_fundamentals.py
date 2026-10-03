@@ -2544,7 +2544,7 @@ def test_standardize_rejects_unreadable_duplicate_eps(invalid: str) -> None:
     assert result.cpc41 is None
 
 
-def test_recovered_unit_ttm_eps_drives_pe_and_preserves_price_dependency() -> None:
+def test_unit_closing_capital_eps_drives_pe_and_preserves_price_dependency() -> None:
     quarters = []
     for month, day, start_month in ((3, 31, 1), (6, 30, 4), (9, 30, 7), (12, 31, 10)):
         quarters.append(
@@ -2582,17 +2582,18 @@ def test_recovered_unit_ttm_eps_drives_pe_and_preserves_price_dependency() -> No
         None,
         MarketData(
             price=Decimal(48),
+            shares=Decimal(100),  # 300 underlying shares / 3 shares per unit
             price_source_code="TEST11",
             price_source_session=date(2025, 12, 30),
         ),
     )
-    assert valid.eps == valid.eps_basic == Decimal(24)
-    assert valid.pe_basic == Decimal(2)
+    assert valid.eps == valid.eps_basic == Decimal(4)  # TTM profit 400 / 100 units
+    assert valid.pe_basic == Decimal(12)
     source = next(e for e in valid.source_account_evidence if e.field == "pe_basic")
     assert source.dependencies == ("eps_basic", "price")
     assert "price_source_code=TEST11" in source.expected
-    missing = compute(ttm, None, MarketData())
-    assert missing.eps_basic == Decimal(24)
+    missing = compute(ttm, None, MarketData(shares=Decimal(100)))
+    assert missing.eps_basic == Decimal(4)
     assert missing.pe_basic is None
     assert missing.null_reasons["pe_basic"] is NullReason.MISSING_PRICE
 

@@ -21,7 +21,11 @@ from smaug.analysis.domain.financials import (
     SourceAccountStatus,
     StandardizedFinancials,
 )
-from smaug.analysis.domain.indicators import Indicators, NullReason
+from smaug.analysis.domain.indicators import (
+    CALCULATION_CONTRACT_VERSION,
+    Indicators,
+    NullReason,
+)
 from smaug.analysis.domain.ttm import build_ttm
 from smaug.analysis.infrastructure.mongo_fundamentals import standardize
 from smaug.analysis.infrastructure.sql_repository import _to_entity, _to_row
@@ -218,7 +222,11 @@ def test_ttm_and_calculation_carry_source_lineage() -> None:
     indicators = compute(ttm, None, market=MarketData())
     # The source metadata is carried independently of whether the fixture has
     # enough market inputs to calculate the full indicator set.
-    assert indicators.source_account_evidence == (evidence,)
+    assert indicators.source_account_evidence[0] == evidence
+    basic = indicators.source_account_evidence[1]
+    assert basic.field == "eps_basic"
+    assert basic.formula == "net_income / shares"
+    assert basic.dependencies == ("net_income", "shares")
 
 
 def test_ttm_carries_valid_bank_inputs_and_provenance() -> None:
@@ -443,6 +451,7 @@ def test_cagr_selected_interval_and_raw_endpoints_round_trip_through_sql() -> No
         reference_date=date(2024, 12, 31),
         computed_at=datetime(2026, 9, 30, tzinfo=UTC),
         view=VIEW_TTM,
+        calculation_contract_version=CALCULATION_CONTRACT_VERSION,
         indicators=indicators,
     )
     restored = _to_entity(_to_row(analysis))
@@ -468,14 +477,15 @@ def test_cagr_selected_interval_and_raw_endpoints_round_trip_through_sql() -> No
     assert "elapsed_years=3" in root.expected
 
 
-def test_recovered_per_lot_eps_and_dependent_pe_round_trip_through_sql_api() -> None:
+def test_derived_basic_eps_and_dependent_pe_round_trip_through_sql_api() -> None:
     from smaug.portfolio.domain.share_classes import PerShareClass, UnitComponent
 
     financials = standardize(
         {
             "DRE": {
                 "accounts": [
-                    _acc("3.99.01.01", "Lucro por lote de mil ações", "2000"),
+                    _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "1200"),
+                    _acc("3.99.01.01", "Lucro por lote de mil ações", "3000"),
                 ]
             }
         },
@@ -489,6 +499,7 @@ def test_recovered_per_lot_eps_and_dependent_pe_round_trip_through_sql_api() -> 
         None,
         MarketData(
             price=Decimal(20),
+            shares=Decimal(600),
             price_source_code="TEST3",
             price_source_session=date(2025, 12, 30),
         ),
@@ -499,6 +510,7 @@ def test_recovered_per_lot_eps_and_dependent_pe_round_trip_through_sql_api() -> 
         reference_date=date(2025, 12, 31),
         computed_at=datetime(2026, 9, 30, tzinfo=UTC),
         view=VIEW_TTM,
+        calculation_contract_version=CALCULATION_CONTRACT_VERSION,
         indicators=indicators,
     )
     restored = _to_entity(_to_row(analysis))
@@ -511,7 +523,11 @@ def test_recovered_per_lot_eps_and_dependent_pe_round_trip_through_sql_api() -> 
     sources = {
         entry.field: entry for entry in restored.indicators.source_account_evidence
     }
-    assert sources["eps_basic"].found[0].value == Decimal(2000)
+    assert financials.eps_basic == Decimal(3)  # filed per-lot evidence is retained
+    assert sources["eps_basic"].status is SourceAccountStatus.DERIVED
+    assert sources["eps_basic"].formula == "net_income / shares"
+    assert sources["eps_basic"].dependencies == ("net_income", "shares")
+    assert "shares=600" in sources["eps_basic"].expected
     assert sources["price"].found[0].value == Decimal(20)
     assert sources["pe_basic"].dependencies == ("eps_basic", "price")
     response = _to_response(restored)

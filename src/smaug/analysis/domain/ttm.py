@@ -1342,6 +1342,9 @@ def _build_ttm(
     ):
         return None
 
+    # Legacy basic-EPS reconstruction is retained as filing diagnostics and to
+    # keep the diluted evidence path reviewable. It no longer selects the public
+    # basic EPS: compute() divides net_income by the selected closing shares.
     weighted_basic = _weighted_isolated(quarters, annual, diluted=False)
     weighted_diluted = _weighted_isolated(quarters, annual, diluted=True)
     eps_basic = _ttm_weighted_eps(weighted_basic, refs)

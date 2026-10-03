@@ -29,7 +29,7 @@ def _nonfinancial() -> StandardizedFinancials:
         equity=Decimal(6000),  # controllers'; the group's is 6600 — 600 is minority
         equity_total=Decimal(6600),
         net_income=Decimal(900),  # annualized -> 1200
-        eps_basic=Decimal("1.50"),
+        eps_basic=Decimal("1.75"),
         eps_diluted=Decimal("1.40"),
         revenue=Decimal(3000),  # annualized -> 4000
         gross_profit=Decimal(1500),
@@ -70,7 +70,7 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.ebit_margin == Decimal("0.3")  # 900 / 3000 (period ratio)
     assert ind.ebitda_margin == Decimal("0.4")
     assert ind.asset_turnover == Decimal(4000) / Decimal(12000)  # annual rev / assets
-    assert ind.eps == Decimal("1.50")  # filed CPC 41 basic result, not annualized
+    assert ind.eps == Decimal("1.50")  # period profit 900 / closing shares 600
     assert ind.eps_basic == Decimal("1.50")
     assert ind.eps_diluted == Decimal("1.40")
     assert ind.bvps == Decimal(10)  # 6000 / 600 shares
@@ -90,7 +90,7 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.current_ratio == Decimal(2)
     assert ind.revenue_growth == Decimal("0.25")
     assert ind.net_income_growth == Decimal("0.2")
-    assert ind.pe_basic == Decimal(8)  # paper price 12 / filed basic EPS 1.50
+    assert ind.pe_basic == Decimal(8)  # price 12 / (profit 900 / 600 shares)
     assert ind.pe_diluted == Decimal(12) / Decimal("1.40")
     assert ind.eps_basic_market is None
     assert ind.pe_basic_market is None
@@ -141,7 +141,7 @@ def test_total_slice_variants_pair_slice_with_slice() -> None:
     assert ind.net_margin == Decimal("0.3")  # 900 / 3000, period ratio
     assert ind.net_margin_total == Decimal("0.36")  # 1080 / 3000
     assert ind.net_income_total == Decimal(1080)  # headline: as filed
-    # CPC 41 is already filed on the controllers' class-specific slice.
+    # Basic EPS uses the selected controllers' profit and closing total.
     assert ind.eps == Decimal("1.50")
 
 
@@ -239,7 +239,7 @@ def test_bank_computes_the_ratios_its_schema_supports() -> None:
 
     assert ind.roe == Decimal("0.1")  # 800 / 8000
     assert ind.net_margin == Decimal("0.2")  # 600 / 3000
-    assert ind.pe_basic == Decimal(8)  # paper price 10 / filed EPS 1.25
+    assert ind.pe_basic == Decimal(10) / Decimal("0.75")  # 600 / 800 shares
     assert ind.pb == Decimal(1)  # paper price 10 / BVPS 10
     assert ind.company_pe == Decimal(10)  # company cap 8000 / profit 800
     assert ind.company_pb == Decimal(1)
@@ -503,7 +503,7 @@ def test_bank_null_reasons_name_each_cause() -> None:
         NullReason.INAPPLICABLE_REGIME
     )
     # Cause 3 — upstream inputs, each named individually:
-    assert ind.null_reasons["eps"] is NullReason.MISSING_CPC41_DISCLOSURE
+    assert ind.null_reasons["eps"] is NullReason.MISSING_SHARE_COUNT
     assert ind.null_reasons["eps_diluted"] is NullReason.MISSING_CPC41_DISCLOSURE
     assert ind.null_reasons["revenue_growth"] is NullReason.MISSING_PRIOR_PERIOD
     # The filing simply has no dividend line — absent, not unmapped:
@@ -811,13 +811,12 @@ def test_missing_price_nulls_the_market_multiples_with_a_named_cause() -> None:
     assert ind.null_reasons["pe_diluted"] is NullReason.MISSING_PRICE
     assert ind.null_reasons["pb"] is NullReason.MISSING_PRICE
     assert ind.null_reasons["dividend_yield"] is NullReason.MISSING_PRICE
-    assert ind.eps is not None  # filed per-share result is independent of price
+    assert ind.eps is not None  # basic EPS is independent of price
 
 
-def test_market_convention_multiples_survive_a_missing_cpc41_share_input() -> None:
-    # The strict P/E needs the issuer's CPC 41 weighted-average/class-rights
-    # result. Company P/E and both closing-equity P/B variants have independent
-    # denominators and must remain available when those filed results are absent.
+def test_basic_and_company_multiples_survive_a_missing_cpc41_share_input() -> None:
+    # Basic EPS and P/E use profit and closing shares even when filed EPS
+    # and its weighted denominator are absent. Company ratios stay independent.
     financials = replace(
         _nonfinancial(),
         eps_basic=None,
@@ -834,8 +833,10 @@ def test_market_convention_multiples_survive_a_missing_cpc41_share_input() -> No
         ),
     )
 
-    assert ind.pe_basic is None
-    assert ind.null_reasons["pe_basic"] is NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
+    assert ind.eps_basic == Decimal("1.5")
+    assert ind.pe_basic == Decimal(8)
+    assert "eps_basic" not in ind.null_reasons
+    assert "pe_basic" not in ind.null_reasons
     assert ind.eps_basic_market is None
     assert ind.pe_basic_market is None
     assert ind.company_pe == Decimal(10)
@@ -853,7 +854,10 @@ def test_missing_shares_blames_the_share_count_not_the_price() -> None:
         MarketData(price=Decimal(6), cap_null_reason=NullReason.MISSING_SHARE_COUNT),
     )
 
-    assert ind.pe_basic == Decimal(4)  # EPS is already filed per security
+    assert ind.eps_basic is None
+    assert ind.pe_basic is None
+    assert ind.null_reasons["eps_basic"] is NullReason.MISSING_SHARE_COUNT
+    assert ind.null_reasons["pe_basic"] is NullReason.MISSING_SHARE_COUNT
     assert ind.pe_diluted == Decimal(6) / Decimal("1.40")
     assert ind.company_pe is None
     assert ind.null_reasons["company_pe"] is NullReason.MISSING_SHARE_COUNT
@@ -875,7 +879,7 @@ def test_missing_unit_composition_names_each_per_security_input() -> None:
 
     assert ind.eps is None
     assert ind.bvps is None
-    assert ind.null_reasons["eps"] is NullReason.MISSING_ECONOMIC_RIGHTS
+    assert ind.null_reasons["eps"] is NullReason.MISSING_UNIT_COMPOSITION
     assert ind.null_reasons["bvps"] is NullReason.MISSING_UNIT_COMPOSITION
 
 
@@ -896,7 +900,7 @@ def test_a_sibling_class_without_a_quote_blames_the_price() -> None:
     assert ind.pe_basic == Decimal(4)
     assert ind.company_pe is None
     assert ind.null_reasons["company_pe"] is NullReason.MISSING_PRICE
-    assert ind.eps is not None  # the filed per-share side needs no quote
+    assert ind.eps is not None  # basic EPS needs no quote
 
 
 def test_zero_denominator_null_is_named() -> None:
@@ -906,7 +910,7 @@ def test_zero_denominator_null_is_named() -> None:
     ind = compute(
         zero_income,
         None,
-        MarketData(price=Decimal(12), market_cap=Decimal(12000)),
+        MarketData(price=Decimal(12), market_cap=Decimal(12000), shares=Decimal(600)),
     )
 
     assert ind.payout_cash_paid_in_period is None  # dividends / 0
@@ -915,7 +919,10 @@ def test_zero_denominator_null_is_named() -> None:
     )
     assert ind.company_pe is None
     assert ind.null_reasons["company_pe"] is NullReason.ZERO_DENOMINATOR
-    assert ind.pe_basic == Decimal(8)  # CPC 41 EPS remains its own denominator
+    assert ind.eps_basic == Decimal(0)
+    assert ind.pe_basic is None
+    assert ind.null_reasons["pe_basic"] is NullReason.ZERO_DENOMINATOR
+    assert ind.eps_diluted == Decimal("1.40")
 
 
 def _closed_year(year: int, **accounts: Decimal | None) -> StandardizedFinancials:

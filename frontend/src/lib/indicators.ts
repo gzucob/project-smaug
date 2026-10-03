@@ -92,7 +92,7 @@ export const INDICATORS: IndicatorSpec[] = [
   { key: "ebitda_margin", label: "Margem EBITDA", hint: "EBITDA / receita", group: "Rentabilidade", format: pct },
   { key: "asset_turnover", label: "Giro do ativo", hint: "Receita / ativo total — quantas vezes o ativo gira em vendas no ano", group: "Rentabilidade", format: multiple },
 
-  { key: "eps_basic", label: "LPA básico", hint: "Resultado básico por ação da classe, reconciliado com as evidências CVM", group: "Por ação", format: price },
+  { key: "eps_basic", label: "LPA básico", hint: "Lucro líquido do período / quantidade total de ações, com ajuste para units", group: "Por ação", format: price },
   { key: "eps_diluted", label: "LPA diluído", hint: "Resultado diluído por ação da classe, conforme CPC 41", group: "Por ação", format: price },
   { key: "bvps", label: "VPA", hint: "Valor patrimonial por ação (patrimônio / número de ações)", group: "Por ação", format: price },
 
@@ -114,7 +114,7 @@ export const INDICATORS: IndicatorSpec[] = [
   { key: "equity_to_assets", label: "PL/Ativo", hint: "PL dos controladores / ativo total — não é o complemento do Passivo/Ativo: o que falta entre os dois é a fatia dos minoritários", group: "Alavancagem & Liquidez", format: pct },
   { key: "current_ratio", label: "Liquidez corrente", hint: "Ativo circulante / passivo circulante", group: "Alavancagem & Liquidez", format: multiple },
 
-  { key: "pe_basic", label: "P/L básico", hint: "Preço do papel / LPA básico da classe", group: "Múltiplos de mercado", format: multiple },
+  { key: "pe_basic", label: "P/L básico", hint: "Preço do papel / lucro por ação", group: "Múltiplos de mercado", format: multiple },
   { key: "pe_diluted", label: "P/L diluído", hint: "Preço do papel / LPA diluído CPC 41 da classe", group: "Múltiplos de mercado", format: multiple },
   { key: "pb", label: "P/VP", hint: "Preço do papel / valor patrimonial por papel", group: "Múltiplos de mercado", format: multiple },
   { key: "company_pe", label: "P/L da companhia", hint: "Valor de mercado da companhia / lucro dos controladores", group: "Múltiplos de mercado", format: multiple },

@@ -28,7 +28,8 @@ if TYPE_CHECKING:
 LEGACY_CALCULATION_CONTRACT = "legacy_unversioned"
 EQUIVALENT_EVIDENCE_V1 = "equivalent_evidence_v1"
 EQUIVALENT_EVIDENCE_V2 = "equivalent_evidence_v2"
-CALCULATION_CONTRACT_VERSION = "equivalent_evidence_v3"
+EQUIVALENT_EVIDENCE_V3 = "equivalent_evidence_v3"
+CALCULATION_CONTRACT_VERSION = "closing_capital_v1"
 LEGACY_INDICATOR_NAMES = frozenset({"eps_basic_market", "pe_basic_market"})
 
 
@@ -464,29 +465,38 @@ LEGACY_INDICATOR_CONTRACT: dict[str, IndicatorContract] = {
 }
 
 
-# Historical formulas remain available to explain historical rows. New rows
-# use the selected same-concept evidence resolved by the fundamentals reader.
-INDICATOR_CONTRACT = {
+# Historical formulas remain available to explain historical rows.
+EQUIVALENT_INDICATOR_CONTRACT = {
     key: contract
     for key, contract in LEGACY_INDICATOR_CONTRACT.items()
     if key not in LEGACY_INDICATOR_NAMES
 }
-INDICATOR_CONTRACT["pe_basic"] = replace(
-    INDICATOR_CONTRACT["pe_basic"],
+EQUIVALENT_INDICATOR_CONTRACT["pe_basic"] = replace(
+    EQUIVALENT_INDICATOR_CONTRACT["pe_basic"],
     basis="security_selected_evidence",
     denominator="selected_basic_eps",
     share_basis="selected_weighted_average_class_rights",
+)
+INDICATOR_CONTRACT = dict(EQUIVALENT_INDICATOR_CONTRACT)
+INDICATOR_CONTRACT["pe_basic"] = replace(
+    INDICATOR_CONTRACT["pe_basic"],
+    tier=IndicatorTier.MARKET_CONVENTION,
+    basis="security_closing_capital",
+    denominator="net_income_per_selected_closing_share",
+    share_basis="selected_closing_total_unit_equivalent",
 )
 
 
 def indicator_contracts(version: str) -> dict[str, IndicatorContract]:
     """Describe the formula actually used by a persisted calculation version."""
+    if version == CALCULATION_CONTRACT_VERSION:
+        return INDICATOR_CONTRACT
     if version in {
-        CALCULATION_CONTRACT_VERSION,
         EQUIVALENT_EVIDENCE_V1,
         EQUIVALENT_EVIDENCE_V2,
+        EQUIVALENT_EVIDENCE_V3,
     }:
-        return INDICATOR_CONTRACT
+        return EQUIVALENT_INDICATOR_CONTRACT
     if version == LEGACY_CALCULATION_CONTRACT:
         return {
             key: contract
@@ -523,7 +533,8 @@ class Indicators:
     asset_turnover: Decimal | None = None  # revenue / total assets
     # Per share
     # ``eps`` remains an internal compatibility alias. The public basic result
-    # uses the selected CVM evidence; diluted EPS is a distinct concept.
+    # divides period net income by selected closing shares; diluted EPS remains
+    # a distinct concept using the filed evidence.
     eps: Decimal | None = None
     eps_basic: Decimal | None = None
     eps_diluted: Decimal | None = None

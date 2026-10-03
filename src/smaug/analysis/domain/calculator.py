@@ -222,14 +222,28 @@ def _cagr_sources(
 
 
 def _per_share_sources(
-    f: StandardizedFinancials, market: MarketData
+    f: StandardizedFinancials, market: MarketData, basic_eps: Decimal | None
 ) -> tuple[SourceAccountEvidence, ...]:
-    """Trace each calculable P/E to its selected EPS and B3 observation."""
+    """Trace basic EPS inputs and each calculable P/E to its B3 observation."""
+    entries: list[SourceAccountEvidence] = [
+        SourceAccountEvidence(
+            field="eps_basic",
+            statement="derived",
+            status=SourceAccountStatus.DERIVED,
+            formula="net_income / shares",
+            dependencies=("net_income", "shares"),
+            consumer_indicators=("eps", "eps_basic", "pe_basic"),
+            expected=(
+                f"net_income={f.net_income}",
+                f"shares={market.shares}",
+                "shares_basis=selected_closing_total_unit_equivalent",
+            ),
+        )
+    ]
     if market.price is None:
-        return ()
-    entries: list[SourceAccountEvidence] = []
+        return tuple(entries)
     for kind in ("basic", "diluted"):
-        eps = getattr(f, f"eps_{kind}")
+        eps = basic_eps if kind == "basic" else f.eps_diluted
         if eps is None or eps == 0:
             continue
         entries.append(
@@ -249,7 +263,10 @@ def _per_share_sources(
                 ),
             )
         )
-    if entries:
+    price_consumers = tuple(
+        entry.field for entry in entries if entry.field != "eps_basic"
+    )
+    if price_consumers:
         entries.append(
             SourceAccountEvidence(
                 field="price",
@@ -263,7 +280,7 @@ def _per_share_sources(
                     ),
                 ),
                 expected=(f"session={market.price_source_session}",),
-                consumer_indicators=tuple(entry.field for entry in entries),
+                consumer_indicators=price_consumers,
             )
         )
     return tuple(entries)
@@ -466,8 +483,8 @@ _NEEDS: dict[str, _Needs] = {
     "ebit_margin": _Needs(accounts=("ebit", "revenue")),
     "ebitda_margin": _Needs(accounts=("ebitda", "revenue")),
     "asset_turnover": _Needs(accounts=("revenue", "total_assets")),
-    "eps": _Needs(accounts=("eps_basic",)),
-    "eps_basic": _Needs(accounts=("eps_basic",)),
+    "eps": _Needs(accounts=("net_income",), shares=True),
+    "eps_basic": _Needs(accounts=("net_income",), shares=True),
     "eps_diluted": _Needs(accounts=("eps_diluted",)),
     "bvps": _Needs(accounts=("equity",), shares=True),
     "net_debt": _Needs(accounts=("total_debt", "cash_equivalents")),
@@ -488,7 +505,7 @@ _NEEDS: dict[str, _Needs] = {
     "ebitda_cagr_5y": _Needs(series="ebitda"),
     "ebit_cagr_5y": _Needs(series="ebit"),
     "net_income_cagr_5y": _Needs(series="net_income"),
-    "pe_basic": _Needs(accounts=("eps_basic",), price=True),
+    "pe_basic": _Needs(accounts=("net_income",), price=True, shares=True),
     "pe_diluted": _Needs(accounts=("eps_diluted",), price=True),
     "pb": _Needs(accounts=("equity",), price=True, shares=True),
     "company_pe": _Needs(accounts=("net_income",), cap=True),
@@ -607,12 +624,8 @@ def _classify(
         blocker = _bank_ratio_blocker(name, f)
         if blocker is not None:
             return blocker
-    if name in {"eps", "eps_basic"} and f.eps_basic_null_reason is not None:
-        return f.eps_basic_null_reason
     if name == "eps_diluted" and f.eps_diluted_null_reason is not None:
         return f.eps_diluted_null_reason
-    if name == "pe_basic" and f.eps_basic_null_reason is not None:
-        return f.eps_basic_null_reason
     if name == "pe_diluted" and f.eps_diluted_null_reason is not None:
         return f.eps_diluted_null_reason
     if needs.series is not None:
@@ -730,6 +743,13 @@ def compute(
     annual_ebit = _annualized(f.ebit, f)
     annual_ebitda = _annualized(f.ebitda, f)
 
+    # Product policy: basic EPS uses profit and the selected closing total only.
+    # The shares reader already converts the total to a per-unit denominator.
+    # Filed/class-weighted basic EPS is not a fallback or a coverage gate here.
+    # Its previous selection remains recoverable in Git (651f23d); the filed
+    # inputs and weighted-window machinery still support diluted EPS diagnostics.
+    basic_eps = _div(f.net_income, market.shares)
+
     net_debt = _net_debt(f)
     non_controlling_interests = _sub(f.equity_total, f.equity)
     # A consolidated EBIT/EBITDA belongs to the whole group. Add the part of that
@@ -776,8 +796,8 @@ def compute(
         ebit_margin=_div(f.ebit, f.revenue),
         ebitda_margin=_div(f.ebitda, f.revenue),
         asset_turnover=_div(annual_revenue, f.total_assets),
-        eps=f.eps_basic,
-        eps_basic=f.eps_basic,
+        eps=basic_eps,
+        eps_basic=basic_eps,
         eps_diluted=f.eps_diluted,
         bvps=bvps,
         net_debt=net_debt,
@@ -801,7 +821,7 @@ def compute(
         ebitda_cagr_5y=cagr("ebitda"),
         ebit_cagr_5y=cagr("ebit"),
         net_income_cagr_5y=cagr("net_income"),
-        pe_basic=_div(market.price, f.eps_basic),
+        pe_basic=_div(market.price, basic_eps),
         pe_diluted=_div(market.price, f.eps_diluted),
         pb=_div(market.price, bvps),
         company_pe=_div(cap, annual_net_income),
@@ -867,8 +887,12 @@ def compute(
             {
                 entry.field: entry
                 for entry in (
-                    *f.source_account_evidence,
-                    *_per_share_sources(f, market),
+                    *(
+                        entry
+                        for entry in f.source_account_evidence
+                        if entry.field not in {"eps", "eps_basic", "pe_basic"}
+                    ),
+                    *_per_share_sources(f, market, basic_eps),
                     *(
                         entry
                         for account, result in cagrs.items()

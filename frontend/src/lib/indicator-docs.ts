@@ -275,12 +275,12 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
 
   // ---------------------------------------------------------- por ação ---
   eps_basic: {
-    formula: "Resultado atribuível à classe ÷ média ponderada de ações em circulação",
-    what: "A participação básica de cada ação da classe no resultado consolidado atribuível aos controladores, reconciliada com as evidências CVM e os direitos econômicos da classe.",
+    formula: "Lucro líquido do período ÷ quantidade total de ações",
+    what: "O lucro líquido atribuível aos acionistas da companhia dividido pela quantidade de ações selecionada para a análise. Para units, o resultado corresponde às ações que compõem cada pacote.",
     strongIn: [
       {
-        where: "Série histórica da própria classe",
-        why: "incorpora emissões, recompras, tesouraria, direitos econômicos e ajustes retrospectivos divulgados pela companhia",
+        where: "Evolução do resultado por ação da companhia",
+        why: "relaciona o lucro do período à base de ações da análise",
       },
     ],
     weakIn: [
@@ -289,7 +289,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "a escala depende da quantidade de ações; o indicador é mais informativo em evolução e combinado ao preço",
       },
     ],
-    caveat: "O TTM fica n/d quando não existe uma média ponderada reconciliável; nunca usamos a quantidade de fechamento como substituta.",
+    caveat: "Usa o lucro dos últimos 12 meses na visão TTM e a quantidade de ações selecionada, sem reconstruir uma média ponderada. Fica n/d quando falta lucro ou quantidade de ações.",
   },
   eps_diluted: {
     formula: "Resultado ajustado ÷ média ponderada diluída de ações",
@@ -327,7 +327,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o que gera valor (marca, software, pesquisa) foi despesado, não capitalizado — o VPA subestima enormemente o negócio",
       },
     ],
-    caveat: "Usa ações em circulação no fechamento; não é uma média ponderada e não deve ser confundido com o denominador do LPA.",
+    caveat: "Usa a quantidade de ações selecionada para a análise, com ajuste da composição para units.",
   },
 
   // ------------------------------------------------------- crescimento ---
@@ -638,8 +638,8 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
 
   // ------------------------------------------------ múltiplos de mercado ---
   pe_basic: {
-    formula: "Preço do papel ÷ LPA básico da classe",
-    what: "Quantas vezes o preço do próprio papel representa sua participação básica no lucro, já considerando direitos econômicos e média ponderada da classe.",
+    formula: "Preço do papel ÷ lucro por ação",
+    what: "Quantas vezes o preço do papel representa o lucro por ação calculado com o lucro líquido do período e a quantidade total de ações. Para units, preço e lucro correspondem ao mesmo pacote de ações.",
     strongIn: [
       {
         where: "Intermediários Financeiros, Previdência e Seguros, Energia Elétrica",
@@ -1301,7 +1301,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
   },
   shares: {
     formula: "Ações emitidas − ações em tesouraria",
-    what: "Quantas ações estão em circulação no fechamento — o denominador do VPA e uma medida da escala acionária. Exclui as ações mantidas em tesouraria; o LPA usa uma média ponderada própria.",
+    what: "A quantidade de ações selecionada para a análise, usada no LPA e no VPA. Parte do total emitido e desconta a tesouraria quando ela pode ser conciliada; para units, a quantidade é expressa em pacotes equivalentes.",
     strongIn: [
       {
         where: "Qualquer subsetor",
