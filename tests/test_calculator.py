@@ -4,6 +4,8 @@ from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 from smaug.analysis.domain.calculator import compute
 from smaug.analysis.domain.financials import (
     AccountingRegime,
@@ -27,7 +29,7 @@ def _nonfinancial() -> StandardizedFinancials:
         equity=Decimal(6000),  # controllers'; the group's is 6600 — 600 is minority
         equity_total=Decimal(6600),
         net_income=Decimal(900),  # annualized -> 1200
-        eps_basic=Decimal("1.50"),
+        eps_basic=Decimal("1.75"),
         eps_diluted=Decimal("1.40"),
         revenue=Decimal(3000),  # annualized -> 4000
         gross_profit=Decimal(1500),
@@ -68,7 +70,7 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.ebit_margin == Decimal("0.3")  # 900 / 3000 (period ratio)
     assert ind.ebitda_margin == Decimal("0.4")
     assert ind.asset_turnover == Decimal(4000) / Decimal(12000)  # annual rev / assets
-    assert ind.eps == Decimal("1.50")  # filed CPC 41 basic result, not annualized
+    assert ind.eps == Decimal("1.50")  # period profit 900 / closing shares 600
     assert ind.eps_basic == Decimal("1.50")
     assert ind.eps_diluted == Decimal("1.40")
     assert ind.bvps == Decimal(10)  # 6000 / 600 shares
@@ -88,10 +90,10 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.current_ratio == Decimal(2)
     assert ind.revenue_growth == Decimal("0.25")
     assert ind.net_income_growth == Decimal("0.2")
-    assert ind.pe_basic == Decimal(8)  # paper price 12 / filed basic EPS 1.50
+    assert ind.pe_basic == Decimal(8)  # price 12 / (profit 900 / 600 shares)
     assert ind.pe_diluted == Decimal(12) / Decimal("1.40")
-    assert ind.eps_basic_market == Decimal(2)  # 1200 / 600 closing shares
-    assert ind.pe_basic_market == Decimal(6)  # 12 / estimated EPS 2
+    assert ind.eps_basic_market is None
+    assert ind.pe_basic_market is None
     assert ind.pb == Decimal("1.2")  # paper price 12 / closing BVPS 10
     assert ind.company_pe == Decimal(10)  # company cap 12000 / annual profit 1200
     assert ind.company_pb == Decimal(2)  # company cap 12000 / equity 6000
@@ -139,7 +141,7 @@ def test_total_slice_variants_pair_slice_with_slice() -> None:
     assert ind.net_margin == Decimal("0.3")  # 900 / 3000, period ratio
     assert ind.net_margin_total == Decimal("0.36")  # 1080 / 3000
     assert ind.net_income_total == Decimal(1080)  # headline: as filed
-    # CPC 41 is already filed on the controllers' class-specific slice.
+    # Basic EPS uses the selected controllers' profit and closing total.
     assert ind.eps == Decimal("1.50")
 
 
@@ -237,7 +239,7 @@ def test_bank_computes_the_ratios_its_schema_supports() -> None:
 
     assert ind.roe == Decimal("0.1")  # 800 / 8000
     assert ind.net_margin == Decimal("0.2")  # 600 / 3000
-    assert ind.pe_basic == Decimal(8)  # paper price 10 / filed EPS 1.25
+    assert ind.pe_basic == Decimal(10) / Decimal("0.75")  # 600 / 800 shares
     assert ind.pb == Decimal(1)  # paper price 10 / BVPS 10
     assert ind.company_pe == Decimal(10)  # company cap 8000 / profit 800
     assert ind.company_pb == Decimal(1)
@@ -501,7 +503,7 @@ def test_bank_null_reasons_name_each_cause() -> None:
         NullReason.INAPPLICABLE_REGIME
     )
     # Cause 3 — upstream inputs, each named individually:
-    assert ind.null_reasons["eps"] is NullReason.MISSING_CPC41_DISCLOSURE
+    assert ind.null_reasons["eps"] is NullReason.MISSING_SHARE_COUNT
     assert ind.null_reasons["eps_diluted"] is NullReason.MISSING_CPC41_DISCLOSURE
     assert ind.null_reasons["revenue_growth"] is NullReason.MISSING_PRIOR_PERIOD
     # The filing simply has no dividend line — absent, not unmapped:
@@ -809,13 +811,12 @@ def test_missing_price_nulls_the_market_multiples_with_a_named_cause() -> None:
     assert ind.null_reasons["pe_diluted"] is NullReason.MISSING_PRICE
     assert ind.null_reasons["pb"] is NullReason.MISSING_PRICE
     assert ind.null_reasons["dividend_yield"] is NullReason.MISSING_PRICE
-    assert ind.eps is not None  # filed per-share result is independent of price
+    assert ind.eps is not None  # basic EPS is independent of price
 
 
-def test_market_convention_multiples_survive_a_missing_cpc41_share_input() -> None:
-    # The strict P/E needs the issuer's CPC 41 weighted-average/class-rights
-    # result. Company P/E and both closing-equity P/B variants have independent
-    # denominators and must remain available when those filed results are absent.
+def test_basic_and_company_multiples_survive_a_missing_cpc41_share_input() -> None:
+    # Basic EPS and P/E use profit and closing shares even when filed EPS
+    # and its weighted denominator are absent. Company ratios stay independent.
     financials = replace(
         _nonfinancial(),
         eps_basic=None,
@@ -832,10 +833,12 @@ def test_market_convention_multiples_survive_a_missing_cpc41_share_input() -> No
         ),
     )
 
-    assert ind.pe_basic is None
-    assert ind.null_reasons["pe_basic"] is NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
-    assert ind.eps_basic_market == Decimal(2)
-    assert ind.pe_basic_market == Decimal(6)
+    assert ind.eps_basic == Decimal("1.5")
+    assert ind.pe_basic == Decimal(8)
+    assert "eps_basic" not in ind.null_reasons
+    assert "pe_basic" not in ind.null_reasons
+    assert ind.eps_basic_market is None
+    assert ind.pe_basic_market is None
     assert ind.company_pe == Decimal(10)
     assert ind.pb == Decimal("1.2")
     assert ind.company_pb == Decimal(2)
@@ -851,7 +854,10 @@ def test_missing_shares_blames_the_share_count_not_the_price() -> None:
         MarketData(price=Decimal(6), cap_null_reason=NullReason.MISSING_SHARE_COUNT),
     )
 
-    assert ind.pe_basic == Decimal(4)  # EPS is already filed per security
+    assert ind.eps_basic is None
+    assert ind.pe_basic is None
+    assert ind.null_reasons["eps_basic"] is NullReason.MISSING_SHARE_COUNT
+    assert ind.null_reasons["pe_basic"] is NullReason.MISSING_SHARE_COUNT
     assert ind.pe_diluted == Decimal(6) / Decimal("1.40")
     assert ind.company_pe is None
     assert ind.null_reasons["company_pe"] is NullReason.MISSING_SHARE_COUNT
@@ -873,7 +879,7 @@ def test_missing_unit_composition_names_each_per_security_input() -> None:
 
     assert ind.eps is None
     assert ind.bvps is None
-    assert ind.null_reasons["eps"] is NullReason.MISSING_ECONOMIC_RIGHTS
+    assert ind.null_reasons["eps"] is NullReason.MISSING_UNIT_COMPOSITION
     assert ind.null_reasons["bvps"] is NullReason.MISSING_UNIT_COMPOSITION
 
 
@@ -894,7 +900,7 @@ def test_a_sibling_class_without_a_quote_blames_the_price() -> None:
     assert ind.pe_basic == Decimal(4)
     assert ind.company_pe is None
     assert ind.null_reasons["company_pe"] is NullReason.MISSING_PRICE
-    assert ind.eps is not None  # the filed per-share side needs no quote
+    assert ind.eps is not None  # basic EPS needs no quote
 
 
 def test_zero_denominator_null_is_named() -> None:
@@ -904,7 +910,7 @@ def test_zero_denominator_null_is_named() -> None:
     ind = compute(
         zero_income,
         None,
-        MarketData(price=Decimal(12), market_cap=Decimal(12000)),
+        MarketData(price=Decimal(12), market_cap=Decimal(12000), shares=Decimal(600)),
     )
 
     assert ind.payout_cash_paid_in_period is None  # dividends / 0
@@ -913,7 +919,10 @@ def test_zero_denominator_null_is_named() -> None:
     )
     assert ind.company_pe is None
     assert ind.null_reasons["company_pe"] is NullReason.ZERO_DENOMINATOR
-    assert ind.pe_basic == Decimal(8)  # CPC 41 EPS remains its own denominator
+    assert ind.eps_basic == Decimal(0)
+    assert ind.pe_basic is None
+    assert ind.null_reasons["pe_basic"] is NullReason.ZERO_DENOMINATOR
+    assert ind.eps_diluted == Decimal("1.40")
 
 
 def _closed_year(year: int, **accounts: Decimal | None) -> StandardizedFinancials:
@@ -954,29 +963,21 @@ def test_cagr_compounds_between_the_endpoints_five_exercises_apart() -> None:
     assert round(float(ind.revenue_cagr_5y), 4) == 0.1487
 
 
-def test_cagr_is_null_until_the_window_closes() -> None:
-    # Five exercises span four years of variation, not five. Shortening the window
-    # in silence would make the number mean something other than its name (#144).
-    history = _rising_history([Decimal(1000)] * 5)
+def test_cagr_uses_four_elapsed_years_when_five_exercises_exist() -> None:
+    history = _rising_history([Decimal(1000)] * 4 + [Decimal(2000)])
     ind = compute(history[-1], history[-2], MarketData(), history)
-
-    assert ind.revenue_cagr_5y is None
-    assert ind.null_reasons["revenue_cagr_5y"] is (
-        NullReason.INSUFFICIENT_COMPARABLE_HISTORY
-    )
+    assert ind.revenue_cagr_5y is not None
+    assert float(ind.revenue_cagr_5y) == pytest.approx(2 ** (1 / 4) - 1)
 
 
-def test_cagr_rejects_a_discontinuous_closed_year_window() -> None:
+def test_cagr_does_not_require_intermediate_closed_exercises() -> None:
     history = [
-        _closed_year(year, revenue=Decimal(1000), net_income=Decimal(1000))
-        for year in (2019, 2020, 2022, 2023, 2024, 2025)
+        _closed_year(year, revenue=Decimal(value))
+        for year, value in ((2019, 1000), (2022, 5000), (2024, 2000))
     ]
     ind = compute(history[-1], history[-2], MarketData(), history)
-
-    assert ind.revenue_cagr_5y is None
-    assert ind.null_reasons["revenue_cagr_5y"] is (
-        NullReason.INSUFFICIENT_COMPARABLE_HISTORY
-    )
+    assert ind.revenue_cagr_5y is not None
+    assert float(ind.revenue_cagr_5y) == pytest.approx(2 ** (1 / 5) - 1)
 
 
 def test_cagr_refuses_a_non_positive_endpoint() -> None:
@@ -1059,3 +1060,123 @@ def test_balance_sheet_liabilities_exclude_the_minority_interest() -> None:
     # Decimal context's precision.
     assert ind.total_liabilities + ind.equity + Decimal(500) == ind.total_assets
     assert ind.liabilities_to_assets + ind.equity_to_assets < Decimal(1)
+
+
+@pytest.mark.parametrize("account", ["revenue", "ebit", "ebitda", "net_income"])
+@pytest.mark.parametrize("years", [1, 2, 3, 4, 5])
+def test_cagr_families_share_the_actual_elapsed_window(
+    account: str, years: int
+) -> None:
+    history = [
+        _closed_year(2024 - years, **{account: Decimal(1000)}),
+        _closed_year(2024, **{account: Decimal(2000)}),
+    ]
+    ind = compute(history[-1], None, MarketData(), history)
+    result = getattr(ind, f"{account}_cagr_5y")
+    assert result is not None
+    assert float(result) == pytest.approx(2 ** (1 / years) - 1)
+    sources = {entry.field: entry for entry in ind.source_account_evidence}
+    root = sources[f"{account}_cagr_5y"]
+    assert f"elapsed_years={years}" in root.expected
+    assert root.dependencies == (
+        f"{account}[{2024 - years}-12-31]",
+        f"{account}[2024-12-31]",
+    )
+
+
+@pytest.mark.parametrize("base", [None, Decimal(0), Decimal(-1000)])
+def test_cagr_selects_the_oldest_positive_base_inside_the_window(
+    base: Decimal | None,
+) -> None:
+    history = [
+        _closed_year(2019, revenue=base),
+        _closed_year(2021, revenue=Decimal(1000)),
+        _closed_year(2024, revenue=Decimal(2000)),
+    ]
+    ind = compute(history[-1], None, MarketData(), history)
+    assert ind.revenue_cagr_5y is not None
+    assert float(ind.revenue_cagr_5y) == pytest.approx(2 ** (1 / 3) - 1)
+
+
+@pytest.mark.parametrize(
+    ("end", "reason"),
+    [
+        (None, NullReason.SOURCE_ACCOUNT_ABSENT),
+        (Decimal(0), NullReason.NON_POSITIVE_ENDPOINT),
+        (Decimal(-1000), NullReason.NON_POSITIVE_ENDPOINT),
+    ],
+)
+def test_cagr_does_not_replace_an_invalid_latest_result_with_an_older_pair(
+    end: Decimal | None,
+    reason: NullReason,
+) -> None:
+    history = _rising_history([Decimal(1000), Decimal(2000), end])
+    ind = compute(history[-1], None, MarketData(), history)
+    assert ind.revenue_cagr_5y is None
+    assert ind.null_reasons["revenue_cagr_5y"] is reason
+
+
+@pytest.mark.parametrize("years", [0, 6])
+def test_cagr_requires_distinct_endpoints_within_five_years(years: int) -> None:
+    history = [
+        _closed_year(2024 - years, revenue=Decimal(1000)),
+        _closed_year(2024, revenue=Decimal(2000)),
+    ]
+    ind = compute(history[-1], None, MarketData(), history)
+    assert ind.revenue_cagr_5y is None
+    assert (
+        ind.null_reasons["revenue_cagr_5y"]
+        is NullReason.INSUFFICIENT_COMPARABLE_HISTORY
+    )
+
+
+def test_cagr_ignores_future_exercises_and_sorts_available_history() -> None:
+    history = [
+        _closed_year(2025, revenue=Decimal(100000)),
+        _closed_year(2024, revenue=Decimal(2000)),
+        _closed_year(2021, revenue=Decimal(1000)),
+    ]
+    ind = compute(history[1], None, MarketData(), history)
+    assert float(ind.revenue_cagr_5y) == pytest.approx(2 ** (1 / 3) - 1)
+
+
+@pytest.mark.parametrize("change", ["regime", "issuer", "span", "closing_date"])
+def test_cagr_does_not_join_incompatible_endpoints(change: str) -> None:
+    start = _closed_year(2021, revenue=Decimal(1000))
+    end = _closed_year(2024, revenue=Decimal(2000))
+    if change == "regime":
+        start = replace(start, filed_regime=AccountingRegime.BANK)
+    elif change == "issuer":
+        start = replace(start, cd_cvm="111")
+        end = replace(end, cd_cvm="222")
+    elif change == "span":
+        start = replace(start, period_start=date(2021, 4, 1))
+    else:
+        start = replace(start, reference_date=date(2021, 9, 30))
+    ind = compute(end, None, MarketData(), [start, end])
+    assert ind.revenue_cagr_5y is None
+    assert (
+        ind.null_reasons["revenue_cagr_5y"]
+        is NullReason.INSUFFICIENT_COMPARABLE_HISTORY
+    )
+
+
+def test_cagr_attributes_a_missing_base_to_its_own_mapping() -> None:
+    start = replace(
+        _closed_year(2021, revenue=None), unmapped_fields=frozenset({"revenue"})
+    )
+    end = _closed_year(2024, revenue=Decimal(2000))
+    ind = compute(end, None, MarketData(), [start, end])
+    assert ind.null_reasons["revenue_cagr_5y"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+
+
+def test_selected_indicators_exclude_retired_closing_share_alternatives() -> None:
+    from smaug.analysis.domain.indicators import indicator_names
+
+    ind = compute(
+        _nonfinancial(), None, MarketData(shares=Decimal("600"), price=Decimal("12"))
+    )
+    for name in ("eps_basic_market", "pe_basic_market"):
+        assert name not in indicator_names()
+        assert name not in ind.null_reasons
+        assert getattr(ind, name) is None

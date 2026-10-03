@@ -15,9 +15,9 @@ other between 2024 and 2025. So the scale is a fact to be *derived*, not assumed
 the composition files its own issued total, which is the same quantity the FRE
 reports, and the ratio between the two is the multiple.
 
-Everything here is pure: a filing that cannot be read yields ``None`` and the
-caller keeps the issued count, rather than a treasury figure guessed at the wrong
-scale — which, at 1000x, would be a far larger error than the one it corrects.
+Everything here is pure. The existing FRE method keeps issued counts when treasury
+is unreadable and records that limitation in provenance. New statement recovery
+requires its own scale and treasury proof without narrowing the existing method.
 """
 
 from __future__ import annotations
@@ -117,6 +117,61 @@ def outstanding_counts(
     ):
         return None
     return net
+
+
+def proven_outstanding_counts(
+    issued: ShareCounts, composition: CapitalComposition | None
+) -> ShareCounts | None:
+    """Net only a complete, finite and reconciled treasury composition."""
+    if composition is None:
+        return None
+    treasury = (
+        composition.treasury_common,
+        composition.treasury_preferred,
+        composition.treasury_total,
+    )
+    if any(value is None or not value.is_finite() for value in treasury):
+        return None
+    common, preferred, total = treasury
+    assert common is not None
+    assert preferred is not None
+    assert total is not None
+    if abs(common) + abs(preferred) != abs(total):
+        return None
+    if any(
+        value is not None and not value.is_finite()
+        for value in (
+            issued.common,
+            issued.preferred,
+            issued.total,
+            issued.preferred_a,
+            issued.preferred_b,
+            issued.preferred_other,
+            composition.issued_total,
+        )
+    ):
+        return None
+    if (issued.common is None and common != 0) or (
+        issued.preferred is None and preferred != 0
+    ):
+        return None
+    return outstanding_counts(issued, composition)
+
+
+def statement_share_scale(
+    total: Decimal, filed_anchors: Sequence[Decimal]
+) -> Decimal | None:
+    """Resolve units/thousands only when independent CVM counts agree on scale."""
+    if not total.is_finite() or total <= 0:
+        return None
+    scales = {
+        scale
+        for anchor in filed_anchors
+        if anchor.is_finite()
+        and anchor > 0
+        and (scale := filed_scale(anchor, total)) is not None
+    }
+    return next(iter(scales)) if len(scales) == 1 else None
 
 
 def _net(

@@ -1,4 +1,4 @@
-"""The read API publishes the basis behind strict and convention metrics."""
+"""The read API preserves current and historical indicator calculation contracts."""
 
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -23,12 +23,15 @@ from smaug.analysis.domain.financials import (
     RegimeSource,
 )
 from smaug.analysis.domain.indicators import (
+    CALCULATION_CONTRACT_VERSION,
     INDICATOR_CONTRACT,
+    LEGACY_CALCULATION_CONTRACT,
     Indicators,
-    IndicatorTier,
+    NullReason,
     indicator_names,
+    public_indicator_names,
 )
-from smaug.entrypoints.api import _to_response
+from smaug.entrypoints.api import IndicatorsResponse, _to_response
 from smaug.portfolio.domain.share_classes import (
     PerShareClass,
     ShareClassMapping,
@@ -48,6 +51,7 @@ def _analysis(view: AnalysisView) -> TickerAnalysis:
         reference_date=date(2025, 12, 31),
         computed_at=datetime(2026, 8, 15, tzinfo=UTC),
         view=view,
+        calculation_contract_version=CALCULATION_CONTRACT_VERSION,
         price=Decimal("38"),
         price_source_code="PETR4",
         price_source_session=date(2026, 8, 14),
@@ -95,27 +99,21 @@ def _analysis(view: AnalysisView) -> TickerAnalysis:
     )
 
 
-def test_api_contract_distinguishes_strict_and_market_convention_bases() -> None:
+def test_api_contract_exposes_one_selected_result_per_concept() -> None:
     response = _to_response(_analysis(VIEW_TTM))
 
-    strict_pe = response.indicator_contract["pe_basic"]
-    assert strict_pe.tier is IndicatorTier.STRICT
-    assert strict_pe.basis == "security_cpc41"
-    assert strict_pe.numerator == "security_price"
-    assert strict_pe.denominator == "cpc41_basic_eps"
-    assert strict_pe.reference_period == "last_twelve_months"
-    assert strict_pe.share_basis == "cpc41_weighted_average_class_rights"
-    assert strict_pe.provenance == ["cvm", "b3"]
+    selected_pe = response.indicator_contract["pe_basic"]
+    assert selected_pe.basis == "security_closing_capital"
+    assert selected_pe.numerator == "security_price"
+    assert selected_pe.denominator == "net_income_per_selected_closing_share"
+    assert selected_pe.reference_period == "last_twelve_months"
+    assert selected_pe.share_basis == "selected_closing_total_unit_equivalent"
+    assert selected_pe.provenance == ["cvm", "b3"]
 
-    market_pe = response.indicator_contract["pe_basic_market"]
-    assert market_pe.tier is IndicatorTier.MARKET_CONVENTION
-    assert market_pe.basis == "security_market_convention"
-    assert market_pe.numerator == "security_price"
-    assert market_pe.denominator == "market_convention_basic_eps"
-    assert market_pe.share_basis == "analysis.share_count_basis"
+    assert "pe_basic_market" not in response.indicator_contract
+    assert "eps_basic_market" not in response.indicator_contract
 
     company_pe = response.indicator_contract["company_pe"]
-    assert company_pe.tier is IndicatorTier.MARKET_CONVENTION
     assert company_pe.basis == "company_market_convention"
     assert company_pe.numerator == "market_capitalization"
     assert company_pe.denominator == "attributable_net_income"
@@ -216,3 +214,86 @@ def test_api_marks_rows_without_debt_evidence_as_legacy() -> None:
 
     assert response.debt_evidence is None
     assert response.debt_evidence_snapshot is DebtEvidenceSnapshot.LEGACY
+
+
+def test_legacy_values_are_preserved_without_promoting_market_alternatives() -> None:
+    row = replace(
+        _analysis(VIEW_TTM),
+        calculation_contract_version=LEGACY_CALCULATION_CONTRACT,
+        indicators=Indicators(
+            eps_basic_market=Decimal("2"),
+            pe_basic_market=Decimal("6"),
+            null_reasons={
+                "eps_basic": NullReason.MISSING_WEIGHTED_AVERAGE_SHARES,
+                "eps_basic_market": NullReason.MISSING_SHARE_COUNT,
+            },
+        ),
+    )
+    response = _to_response(row)
+    wire = response.model_dump(mode="json")
+    assert response.calculation_contract_version == LEGACY_CALCULATION_CONTRACT
+    assert response.indicators.eps_basic is None
+    assert response.indicators.pe_basic is None
+    assert response.indicator_contract["pe_basic"].denominator == "cpc41_basic_eps"
+    assert response.indicator_contract["pe_basic"].share_basis == (
+        "cpc41_weighted_average_class_rights"
+    )
+    assert "eps" not in wire["indicators"]
+    assert "eps_basic_market" not in wire["indicators"]
+    assert "pe_basic_market" not in wire["indicators"]
+    assert "eps" not in wire["indicators"]
+    assert "eps_basic_market" not in wire["indicators"]["null_reasons"]
+    assert wire["indicators"]["null_reasons"]["eps_basic"] == (
+        "missing_weighted_average_shares"
+    )
+    assert all(
+        "tier" not in contract for contract in wire["indicator_contract"].values()
+    )
+    assert row.indicators.eps_basic_market == Decimal("2")
+
+
+def test_unknown_version_does_not_claim_a_current_formula() -> None:
+    response = _to_response(
+        replace(_analysis(VIEW_TTM), calculation_contract_version="future")
+    )
+    assert response.indicator_contract == {}
+
+
+def test_api_schema_matches_selected_public_indicator_names() -> None:
+    metadata = {
+        "null_reasons",
+        "source_account_evidence",
+        "cpc41_window_provenance",
+        "bank_regulatory_provenance",
+    }
+    assert set(IndicatorsResponse.model_fields) - metadata == set(
+        public_indicator_names()
+    )
+
+
+def test_previous_equivalent_evidence_version_keeps_formula_metadata() -> None:
+    response = _to_response(
+        replace(
+            _analysis(VIEW_TTM), calculation_contract_version="equivalent_evidence_v1"
+        )
+    )
+    assert response.calculation_contract_version == "equivalent_evidence_v1"
+    assert response.indicator_contract
+    assert response.indicator_contract["pe_basic"].basis == "security_selected_evidence"
+    assert response.indicator_contract["pe_basic"].denominator == "selected_basic_eps"
+    assert response.indicator_contract["pe_basic"].share_basis == (
+        "selected_weighted_average_class_rights"
+    )
+
+
+def test_superseded_capital_versions_keep_their_formula_metadata() -> None:
+    for version in ("equivalent_evidence_v2", "equivalent_evidence_v3"):
+        response = _to_response(
+            replace(_analysis(VIEW_TTM), calculation_contract_version=version)
+        )
+        assert response.calculation_contract_version == version
+        assert response.indicator_contract
+        contract = response.indicator_contract["pe_basic"]
+        assert contract.basis == "security_selected_evidence"
+        assert contract.denominator == "selected_basic_eps"
+        assert contract.share_basis == "selected_weighted_average_class_rights"

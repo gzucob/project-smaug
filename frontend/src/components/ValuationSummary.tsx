@@ -5,16 +5,15 @@ import { reasonCopy } from "@/lib/null-reasons";
 type ValuationCard = {
   key: Extract<IndicatorKey, "pe_basic" | "pe_diluted" | "pb" | "company_pe" | "company_pb">;
   label: string;
-  fallbackKey?: Extract<IndicatorKey, "pe_basic_market">;
 };
 
-const STRICT_CARDS: ValuationCard[] = [
-  { key: "pe_basic", label: "P/L básico", fallbackKey: "pe_basic_market" },
+const SECURITY_CARDS: ValuationCard[] = [
+  { key: "pe_basic", label: "P/L básico" },
   { key: "pe_diluted", label: "P/L diluído" },
   { key: "pb", label: "P/VP" },
 ];
 
-const MARKET_CARDS: ValuationCard[] = [
+const COMPANY_CARDS: ValuationCard[] = [
   { key: "company_pe", label: "P/L da companhia" },
   { key: "company_pb", label: "P/VP da companhia" },
 ];
@@ -22,6 +21,7 @@ const MARKET_CARDS: ValuationCard[] = [
 const TOKEN_LABEL: Record<string, string> = {
   security_price: "preço do papel",
   market_capitalization: "valor de mercado da companhia",
+  selected_basic_eps: "LPA básico",
   cpc41_basic_eps: "LPA básico CPC 41",
   cpc41_diluted_eps: "LPA diluído CPC 41",
   annualized_attributable_net_income: "lucro atribuível anualizado",
@@ -33,13 +33,15 @@ const TOKEN_LABEL: Record<string, string> = {
 };
 
 const BASIS_LABEL: Record<string, string> = {
+  security_selected_evidence: "papel individual",
   security_cpc41: "papel individual com resultado CPC 41",
-  security_market_convention: "papel individual em convenção de mercado",
+  security_market_convention: "papel individual",
   security_closing: "papel individual em base de fechamento",
-  company_market_convention: "companhia inteira em convenção de mercado",
+  company_market_convention: "companhia inteira",
 };
 
 const SHARE_BASIS_LABEL: Record<string, string> = {
+  selected_weighted_average_class_rights: "média ponderada da classe e direitos",
   cpc41_weighted_average_class_rights: "média ponderada da classe e direitos CPC 41",
   listed_classes_outstanding: "classes listadas e ações em circulação",
 };
@@ -75,16 +77,16 @@ export function ValuationSummary({ analysis }: { analysis: Analysis }) {
 
       <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
         <ValuationGroup
-          title="Base estrita"
+          title="Dados por ação"
           subtitle="P/L por papel e P/VP por ação"
-          cards={STRICT_CARDS}
+          cards={SECURITY_CARDS}
           analysis={analysis}
           accent="var(--color-gem-azure)"
         />
         <ValuationGroup
-          title="Convenção de mercado"
+          title="Visão da empresa"
           subtitle="Capitalização ÷ resultado ou patrimônio da companhia"
-          cards={MARKET_CARDS}
+          cards={COMPANY_CARDS}
           analysis={analysis}
           accent="var(--color-gold-400)"
         />
@@ -130,24 +132,10 @@ function ValuationGroup({
 }
 
 function ValuationMetric({ card, analysis }: { card: ValuationCard; analysis: Analysis }) {
-  const strictValue = analysis.indicators[card.key];
-  const fallbackValue = card.fallbackKey ? analysis.indicators[card.fallbackKey] : null;
-  const fallbackActive =
-    card.fallbackKey !== undefined &&
-    strictValue === null &&
-    fallbackValue !== null;
-  const displayKey = fallbackActive && card.fallbackKey ? card.fallbackKey : card.key;
-  const displayValue = fallbackActive ? fallbackValue : strictValue;
-  const contract = analysis.indicator_contract?.[displayKey];
+  const displayValue = analysis.indicators[card.key];
+  const contract = analysis.indicator_contract?.[card.key];
   const reason = analysis.indicators.null_reasons[card.key];
-  const reasonLabel = reason ? reasonCopy(reason)?.short : null;
-  const tierLabel = fallbackActive
-    ? "estimado"
-    : contract
-    ? contract.tier === "strict"
-      ? "estrito"
-      : "convenção"
-    : "sem contrato";
+  const reasonLabel = displayValue === null && reason ? reasonCopy(reason)?.short : null;
 
   return (
     <article className="rounded-xl border border-gold-500/8 bg-vault-950/45 p-3">
@@ -155,21 +143,10 @@ function ValuationMetric({ card, analysis }: { card: ValuationCard; analysis: An
         <h4 className="text-[0.68rem] font-medium uppercase tracking-wide text-ink-500">
           {card.label}
         </h4>
-        <span className="text-[0.58rem] uppercase tracking-wide text-ink-600">
-          {tierLabel}
-        </span>
       </div>
       <div className="nums mt-1 text-xl font-semibold text-ink-50">
         {multiple(displayValue)}
       </div>
-      {fallbackActive && (
-        <div
-          className="mt-0.5 text-[0.6rem] text-gold-500"
-          title="O valor estrito ficou indisponível; este número usa lucro atribuível dividido pelas ações de fechamento."
-        >
-          fora do CPC 41 · fallback de mercado
-        </div>
-      )}
       {reasonLabel && <div className="mt-0.5 text-[0.6rem] text-gold-600">{reasonLabel}</div>}
       {contract && <ContractLine contract={contract} analysis={analysis} />}
     </article>

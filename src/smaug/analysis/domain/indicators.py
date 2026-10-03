@@ -11,7 +11,7 @@ the presentation layer decides formatting.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from decimal import Decimal
 from enum import StrEnum
 from types import MappingProxyType
@@ -23,6 +23,14 @@ if TYPE_CHECKING:
         Cpc41WindowProvenance,
         SourceAccountEvidence,
     )
+
+
+LEGACY_CALCULATION_CONTRACT = "legacy_unversioned"
+EQUIVALENT_EVIDENCE_V1 = "equivalent_evidence_v1"
+EQUIVALENT_EVIDENCE_V2 = "equivalent_evidence_v2"
+EQUIVALENT_EVIDENCE_V3 = "equivalent_evidence_v3"
+CALCULATION_CONTRACT_VERSION = "closing_capital_v1"
+LEGACY_INDICATOR_NAMES = frozenset({"eps_basic_market", "pe_basic_market"})
 
 
 class NullReason(StrEnum):
@@ -69,11 +77,9 @@ class NullReason(StrEnum):
       is a fact about the world rather than a gap of ours, and it is the only
       price cause that is *deliberate*: the others are worth chasing, this one
       is not.
-    * ``INSUFFICIENT_COMPARABLE_HISTORY`` — the requested historical window
-      cannot be formed from consecutive closed exercises. For a five-year CAGR,
-      this means that fewer than six comparable annual filings exist or that the
-      sequence has a gap. The promised rate does not exist; the window is never
-      shortened or interpolated to manufacture one.
+    * ``INSUFFICIENT_COMPARABLE_HISTORY`` — fewer than two comparable closed
+      exercises exist within the maximum five-year CAGR window. Intermediate
+      gaps do not prevent endpoint compounding; the actual interval is used.
     * ``PRIOR_PERIOD_OUTSIDE_SOURCE_HISTORY`` — the immediately preceding
       comparable exercise predates CVM's structured-statement history. The
       primary filing source cannot supply it, as distinct from a mirrored period
@@ -253,11 +259,9 @@ class IndicatorContract:
     provenance: tuple[str, ...]
 
 
-# The market-facing family needs a basis beyond a bare number. In particular,
-# ``company_pe``/``company_pb`` are useful market conventions, while the
-# per-security P/E fields retain the strict CPC 41 contract. The codes are stable
-# API vocabulary; the front-end localizes them for readers.
-INDICATOR_CONTRACT: dict[str, IndicatorContract] = {
+# Formula metadata from calculations predating explicit versioning. It remains
+# available for historical provenance and CLI audits, never as a second result.
+LEGACY_INDICATOR_CONTRACT: dict[str, IndicatorContract] = {
     "pe_basic": IndicatorContract(
         tier=IndicatorTier.STRICT,
         basis="security_cpc41",
@@ -461,6 +465,48 @@ INDICATOR_CONTRACT: dict[str, IndicatorContract] = {
 }
 
 
+# Historical formulas remain available to explain historical rows.
+EQUIVALENT_INDICATOR_CONTRACT = {
+    key: contract
+    for key, contract in LEGACY_INDICATOR_CONTRACT.items()
+    if key not in LEGACY_INDICATOR_NAMES
+}
+EQUIVALENT_INDICATOR_CONTRACT["pe_basic"] = replace(
+    EQUIVALENT_INDICATOR_CONTRACT["pe_basic"],
+    basis="security_selected_evidence",
+    denominator="selected_basic_eps",
+    share_basis="selected_weighted_average_class_rights",
+)
+INDICATOR_CONTRACT = dict(EQUIVALENT_INDICATOR_CONTRACT)
+INDICATOR_CONTRACT["pe_basic"] = replace(
+    INDICATOR_CONTRACT["pe_basic"],
+    tier=IndicatorTier.MARKET_CONVENTION,
+    basis="security_closing_capital",
+    denominator="net_income_per_selected_closing_share",
+    share_basis="selected_closing_total_unit_equivalent",
+)
+
+
+def indicator_contracts(version: str) -> dict[str, IndicatorContract]:
+    """Describe the formula actually used by a persisted calculation version."""
+    if version == CALCULATION_CONTRACT_VERSION:
+        return INDICATOR_CONTRACT
+    if version in {
+        EQUIVALENT_EVIDENCE_V1,
+        EQUIVALENT_EVIDENCE_V2,
+        EQUIVALENT_EVIDENCE_V3,
+    }:
+        return EQUIVALENT_INDICATOR_CONTRACT
+    if version == LEGACY_CALCULATION_CONTRACT:
+        return {
+            key: contract
+            for key, contract in LEGACY_INDICATOR_CONTRACT.items()
+            if key not in LEGACY_INDICATOR_NAMES
+        }
+    # An unknown version has no verified formula metadata in this revision.
+    return {}
+
+
 @dataclass(frozen=True)
 class Indicators:
     """Fundamental + market indicators for one ticker at one point in time."""
@@ -486,15 +532,13 @@ class Indicators:
     ebitda_margin: Decimal | None = None
     asset_turnover: Decimal | None = None  # revenue / total assets
     # Per share
-    # ``eps`` remains the compatibility alias for the filed basic value. New
-    # consumers use the explicit fields so a P/E can state which CPC 41 basis it
-    # selected rather than silently mixing basic and diluted denominators.
+    # ``eps`` remains an internal compatibility alias. The public basic result
+    # divides period net income by selected closing shares; diluted EPS remains
+    # a distinct concept using the filed evidence.
     eps: Decimal | None = None
     eps_basic: Decimal | None = None
     eps_diluted: Decimal | None = None
-    # Market convention fallback: attributable earnings divided by closing
-    # outstanding shares. It remains separate from the CPC 41 fields; callers
-    # choose it only when the strict result is unavailable.
+    # Retired closing-share alternative retained only for historical reads.
     eps_basic_market: Decimal | None = None
     bvps: Decimal | None = None  # VPA — book value per share
     # Leverage / liquidity
@@ -514,22 +558,16 @@ class Indicators:
     # Growth (needs a prior comparable period)
     revenue_growth: Decimal | None = None
     net_income_growth: Decimal | None = None
-    # Compounded annual growth over a *stated* window (#144). The year-on-year
-    # figures above let one atypical exercise dominate the reading — a profit
-    # that fell 40% and then grew 60% reads as a 60% grower. These take the ratio
-    # of two endpoints five exercises apart: ``(this year / five years back) **
-    # (1/5) - 1``. The window is in the name on purpose, because the reference
-    # platforms disagree on what "CAGR 5A" spans and a compounded rate over an
-    # unstated window is not a number this project publishes. Null — never
-    # silently shortened — when the closed-year series is shorter than six
-    # exercises, and null when the base endpoint is not positive
-    # (``NON_POSITIVE_BASE``). Closed exercises only: the TTM window is a moving
-    # 12 months, not one more of them.
+    # Compounded annual growth over at most five years of closed history.
+    # Select the latest closed exercise and its oldest positive comparable base
+    # within five years; use the actual elapsed years in the exponent. Missing
+    # intermediate years do not prevent endpoint compounding. A TTM remains a
+    # moving period, so its CAGR ends at the latest available closed exercise.
     revenue_cagr_5y: Decimal | None = None
     ebitda_cagr_5y: Decimal | None = None
     ebit_cagr_5y: Decimal | None = None
     net_income_cagr_5y: Decimal | None = None
-    # Per-security valuation multiples. P/E names its CPC 41 denominator; P/B
+    # Per-security valuation multiples. P/E uses the selected EPS; P/B
     # uses the security's own price and the documented closing BVPS allocation.
     pe_basic: Decimal | None = None
     pe_diluted: Decimal | None = None
@@ -538,7 +576,7 @@ class Indicators:
     # classes share these because both numerator and denominator cover the firm.
     company_pe: Decimal | None = None
     company_pb: Decimal | None = None
-    # Per-security market-convention multiple, paired with ``eps_basic_market``.
+    # Retired multiple paired with the historical ``eps_basic_market``.
     pe_basic_market: Decimal | None = None
     psr: Decimal | None = None  # P/Receita — price / sales
     price_to_assets: Decimal | None = None
@@ -631,5 +669,11 @@ def indicator_names() -> tuple[str, ...]:
             "source_account_evidence",
             "cpc41_window_provenance",
             "bank_regulatory_provenance",
+            *LEGACY_INDICATOR_NAMES,
         }
     )
+
+
+def public_indicator_names() -> tuple[str, ...]:
+    """Selected public indicators, excluding the retained EPS compatibility alias."""
+    return tuple(name for name in indicator_names() if name != "eps")

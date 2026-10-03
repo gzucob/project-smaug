@@ -36,6 +36,9 @@ class TickerAnalysisRow(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     ticker: Mapped[str] = mapped_column(String(12), index=True)
+    calculation_contract_version: Mapped[str] = mapped_column(
+        String(48), default="legacy_unversioned", server_default="legacy_unversioned"
+    )
     view: Mapped[str] = mapped_column(String(16), index=True)  # ttm_live | closed_year
     # B3 economic taxonomy (ADR 0024). ``setor`` is always present (B3 snapshot or
     # the CVM single-level fallback); ``subsetor``/``segmento`` are NULL under the

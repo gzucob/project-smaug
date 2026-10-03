@@ -246,3 +246,48 @@ def test_a_composition_split_needs_a_unique_match() -> None:
     assert _composition_split(series, Decimal(2_000)) is None
     # A single clean x2 landing on the target resolves.
     assert _composition_split([Decimal(1_000), Decimal(2_000)], Decimal(2_000)) == 2
+
+
+def test_proven_counts_require_explicit_reconciled_treasury() -> None:
+    from smaug.analysis.domain.capital import proven_outstanding_counts
+
+    issued = _issued(800, 400, 1200)
+    assert proven_outstanding_counts(issued, _filed(1200)) == issued
+    assert proven_outstanding_counts(issued, _filed(1200, common=20)) == (
+        _issued(780, 400, 1180)
+    )
+    assert proven_outstanding_counts(issued, None) is None
+    assert (
+        proven_outstanding_counts(
+            issued, CapitalComposition(issued_total=Decimal(1200))
+        )
+        is None
+    )
+    assert proven_outstanding_counts(issued, _filed(1200, common=20, total=30)) is None
+    assert (
+        proven_outstanding_counts(
+            issued,
+            CapitalComposition(
+                issued_total=Decimal(1200),
+                treasury_common=Decimal("NaN"),
+                treasury_preferred=Decimal(0),
+                treasury_total=Decimal(0),
+            ),
+        )
+        is None
+    )
+
+
+def test_statement_scale_requires_unambiguous_independent_counts() -> None:
+    from smaug.analysis.domain.capital import statement_share_scale
+
+    assert statement_share_scale(Decimal(1200), [Decimal(1500)]) == Decimal(1)
+    assert statement_share_scale(Decimal(1200), [Decimal(1_500_000)]) == Decimal(1000)
+    assert statement_share_scale(Decimal(1200), []) is None
+    assert (
+        statement_share_scale(Decimal(1200), [Decimal(1500), Decimal(1_500_000)])
+        is None
+    )
+    assert statement_share_scale(Decimal("NaN"), [Decimal(1500)]) is None
+    assert statement_share_scale(Decimal(1200), [Decimal("Infinity")]) is None
+    assert statement_share_scale(Decimal(0), [Decimal(1500)]) is None

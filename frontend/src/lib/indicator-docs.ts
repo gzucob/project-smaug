@@ -274,34 +274,13 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
   },
 
   // ---------------------------------------------------------- por ação ---
-  eps: {
-    formula: "Alias compatível do LPA básico divulgado conforme CPC 41",
-    what: "A fatia básica do resultado que cabe à classe do papel. Novos consumidores devem usar o campo LPA básico explicitamente.",
-    strongIn: [
-      {
-        where: "Qualquer subsetor, na série histórica da própria empresa",
-        why: "o LPA crescente ao longo dos anos é o sinal de que o lucro cresce mais rápido do que a diluição",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Comparação entre empresas diferentes",
-        why: "depende inteiramente de quantas ações existem — um LPA de R$ 10 não é melhor que um de R$ 1",
-      },
-      {
-        where: "Construção Civil, Saúde",
-        why: "emissões frequentes diluem o LPA mesmo com o lucro total subindo",
-      },
-    ],
-    caveat: "Campo mantido por compatibilidade; usa exatamente o mesmo valor de LPA básico.",
-  },
   eps_basic: {
-    formula: "Resultado atribuível à classe ÷ média ponderada de ações em circulação",
-    what: "A participação básica de cada ação da classe no resultado consolidado atribuível aos controladores, como divulgada pela companhia segundo o CPC 41.",
+    formula: "Lucro líquido do período ÷ quantidade total de ações",
+    what: "O lucro líquido atribuível aos acionistas da companhia dividido pela quantidade de ações selecionada para a análise. Para units, o resultado corresponde às ações que compõem cada pacote.",
     strongIn: [
       {
-        where: "Série histórica da própria classe",
-        why: "incorpora emissões, recompras, tesouraria, direitos econômicos e ajustes retrospectivos divulgados pela companhia",
+        where: "Evolução do resultado por ação da companhia",
+        why: "relaciona o lucro do período à base de ações da análise",
       },
     ],
     weakIn: [
@@ -310,28 +289,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "a escala depende da quantidade de ações; o indicador é mais informativo em evolução e combinado ao preço",
       },
     ],
-    caveat: "O TTM fica n/d quando não existe uma média ponderada reconciliável; nunca usamos a quantidade de fechamento como substituta.",
-  },
-  eps_basic_market: {
-    formula: "Lucro atribuível anualizado ÷ ações em circulação no fechamento",
-    what: "Estimativa de LPA por convenção de mercado, usada como fallback quando o LPA CPC 41 não pode ser reconciliado no período.",
-    strongIn: [
-      {
-        where: "Leitura rápida de uma companhia com divulgação CPC 41 incompleta para o TTM",
-        why: "mantém o indicador disponível usando apenas o lucro e a quantidade de ações de fechamento publicados",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Empresas com direitos econômicos diferentes entre classes",
-        why: "o lucro total é distribuído sobre as ações de fechamento sem provar a atribuição CPC 41 de cada classe",
-      },
-      {
-        where: "Empresas com muitas emissões ou recompras durante o período",
-        why: "a quantidade de fechamento não representa a média ponderada ao longo dos meses",
-      },
-    ],
-    caveat: "Não é LPA CPC 41. O valor é identificado como estimativa e usa a base de ações de fechamento da CVM; nunca substitui o campo estrito quando este existe.",
+    caveat: "Usa o lucro dos últimos 12 meses na visão TTM e a quantidade de ações selecionada, sem reconstruir uma média ponderada. Fica n/d quando falta lucro ou quantidade de ações.",
   },
   eps_diluted: {
     formula: "Resultado ajustado ÷ média ponderada diluída de ações",
@@ -369,7 +327,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o que gera valor (marca, software, pesquisa) foi despesado, não capitalizado — o VPA subestima enormemente o negócio",
       },
     ],
-    caveat: "Usa ações em circulação no fechamento; não é uma média ponderada e não deve ser confundido com o denominador do LPA.",
+    caveat: "Usa a quantidade de ações selecionada para a análise, com ajuste da composição para units.",
   },
 
   // ------------------------------------------------------- crescimento ---
@@ -680,8 +638,8 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
 
   // ------------------------------------------------ múltiplos de mercado ---
   pe_basic: {
-    formula: "Preço do papel ÷ LPA básico CPC 41 da classe",
-    what: "Quantas vezes o preço do próprio papel representa sua participação básica no lucro, já considerando direitos econômicos e média ponderada da classe.",
+    formula: "Preço do papel ÷ lucro por ação",
+    what: "Quantas vezes o preço do papel representa o lucro por ação calculado com o lucro líquido do período e a quantidade total de ações. Para units, preço e lucro correspondem ao mesmo pacote de ações.",
     strongIn: [
       {
         where: "Intermediários Financeiros, Previdência e Seguros, Energia Elétrica",
@@ -698,27 +656,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o múltiplo fica negativo e perde sentido — Smaug o exibe assim mesmo, sem escondê-lo",
       },
     ],
-  },
-  pe_basic_market: {
-    formula: "Preço do papel ÷ LPA básico estimado por ações de fechamento",
-    what: "P/L do papel em convenção de mercado, usado somente como fallback quando o P/L CPC 41 não pode ser calculado.",
-    strongIn: [
-      {
-        where: "Comparação operacional entre papéis de uma empresa",
-        why: "preserva o preço de cada ticker mesmo quando o denominador CPC 41 do TTM está incompleto",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Classes ON e PN com direitos econômicos diferentes",
-        why: "o denominador reparte o lucro atribuível sobre a base de fechamento e não prova o resultado específico da classe",
-      },
-      {
-        where: "Períodos com forte mudança na quantidade de ações",
-        why: "a base de fechamento pode divergir materialmente da média ponderada CPC 41",
-      },
-    ],
-    caveat: "O aviso 'fora do CPC 41' acompanha o valor. A estimativa usa somente CVM/B3 e não substitui o P/L básico estrito, que continua separado.",
   },
   pe_diluted: {
     formula: "Preço do papel ÷ LPA diluído CPC 41 da classe",
@@ -1364,7 +1301,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
   },
   shares: {
     formula: "Ações emitidas − ações em tesouraria",
-    what: "Quantas ações estão em circulação no fechamento — o denominador do VPA e uma medida da escala acionária. Exclui as ações mantidas em tesouraria; o LPA usa uma média ponderada própria.",
+    what: "A quantidade de ações selecionada para a análise, usada no LPA e no VPA. Parte do total emitido e desconta a tesouraria quando ela pode ser conciliada; para units, a quantidade é expressa em pacotes equivalentes.",
     strongIn: [
       {
         where: "Qualquer subsetor",

@@ -19,7 +19,7 @@ from smaug.analysis.domain.financials import (
     StandardizedFinancials,
     YearPrices,
 )
-from smaug.analysis.domain.indicators import NullReason
+from smaug.analysis.domain.indicators import CALCULATION_CONTRACT_VERSION, NullReason
 from smaug.analysis.domain.outcomes import AnalysisOutcome
 from smaug.portfolio.domain.sectors import Sector
 from smaug.portfolio.domain.share_classes import (
@@ -309,7 +309,7 @@ async def test_analyze_builds_ttm_and_prices_on_current_nominal() -> None:
     assert saved.indicators.company_pb == Decimal(2)  # 12000 / 6000
 
 
-async def test_analyze_uses_issued_fallback_when_treasury_is_unreconciled() -> None:
+async def test_analyze_preserves_issued_fallback_with_a_strict_surface() -> None:
     repo = FakeRepo()
     use_case = AnalyzePortfolioUseCase(
         FakeReader(
@@ -332,7 +332,8 @@ async def test_analyze_uses_issued_fallback_when_treasury_is_unreconciled() -> N
     assert saved.capital_provenance.status == "missing_treasury_composition"
     assert saved.indicators.shares == Decimal(1200)
     assert saved.indicators.bvps == Decimal(5)
-    assert saved.indicators.eps_basic_market == Decimal(1)
+    assert saved.indicators.eps_basic_market is None
+    assert saved.calculation_contract_version == CALCULATION_CONTRACT_VERSION
     assert saved.indicators.market_cap == Decimal(12000)
     assert saved.indicators.company_pe == Decimal(10)
     assert "company_pe" not in saved.indicators.null_reasons
@@ -372,16 +373,16 @@ async def test_analyze_sums_the_ttm_cap_over_the_listed_share_classes() -> None:
         ("PETR3", Decimal("9600")),
         ("PETR4", Decimal("4000")),
     ]
-    assert saved.indicators.eps is None
-    assert saved.indicators.null_reasons["eps"] is (NullReason.MISSING_CPC41_DISCLOSURE)
+    assert saved.indicators.eps == Decimal(1)
+    assert "eps" not in saved.indicators.null_reasons
 
 
 async def test_analyze_capitalizes_a_unit_from_its_underlying_classes() -> None:
     # A unit's quote prices a bundle, so there is no share count to multiply it by
     # and the single-quote cap left SAPR11 with every multiple null. Summing the
     # underlying classes (SAPR3 ON + SAPR4 PN) capitalizes the company without
-    # modelling the bundle at all (ADR 0014). This TTM still lacks a reconciled
-    # weighted denominator, so CPC 41 stays null with that specific cause.
+    # modelling the bundle at all (ADR 0014). The share-reader fake supplies
+    # no unit-equivalent count, so basic EPS retains a named share-count null.
     repo = FakeRepo()
     use_case = AnalyzePortfolioUseCase(
         FakeReader(
@@ -411,7 +412,7 @@ async def test_analyze_capitalizes_a_unit_from_its_underlying_classes() -> None:
     assert saved.indicators.company_pe == Decimal(11)
     assert saved.indicators.company_pb == Decimal(2)  # 11000 / 5500
     assert saved.indicators.eps is None
-    assert saved.indicators.null_reasons["eps"] is (NullReason.MISSING_CPC41_DISCLOSURE)
+    assert saved.indicators.null_reasons["eps"] is NullReason.MISSING_SHARE_COUNT
 
 
 async def test_sibling_classes_keep_company_scope_but_get_own_multiples() -> None:
@@ -476,8 +477,11 @@ async def test_sibling_classes_keep_company_scope_but_get_own_multiples() -> Non
 
     petr3 = by_ticker["PETR3"].indicators
     petr4 = by_ticker["PETR4"].indicators
-    assert petr3.pe_basic == Decimal(8)
-    assert petr4.pe_basic == Decimal(10) / Decimal("1.40")
+    assert petr3.eps_basic == petr4.eps_basic == Decimal(1)
+    assert petr3.pe_basic == Decimal(12)
+    assert petr4.pe_basic == Decimal(10)
+    assert petr3.eps_diluted == Decimal("1.45")
+    assert petr4.eps_diluted == Decimal("1.35")
     assert petr3.pb == Decimal(12) / (Decimal(6800) / Decimal(1200))
     assert petr4.pb == Decimal(10) / (Decimal(6800) / Decimal(1200))
     assert petr3.dividend_yield == Decimal("0.50") / Decimal(12)
@@ -769,6 +773,10 @@ async def test_analyze_produces_ttm_and_closed_year_views() -> None:
     assert ttm.price_basis == "b3_latest_close"
     assert ttm.price == Decimal(10)  # current nominal quote
 
+    assert all(
+        row.calculation_contract_version == CALCULATION_CONTRACT_VERSION
+        for row in repo.saved
+    )
     y2025 = views[("closed_year", date(2025, 12, 31))]
     assert y2025.price_basis == "b3_year_end_close"
     assert y2025.price == Decimal(9)  # B3's last close at the fiscal cut-off
@@ -931,10 +939,10 @@ async def test_analyze_skips_ticker_without_fundamentals() -> None:
     assert (await use_case.execute(["PETR4"])).analyses == []
 
 
-async def test_analyze_keeps_cpc41_eps_separate_from_closing_share_counts() -> None:
+async def test_analyze_uses_closing_counts_for_basic_eps_and_keeps_diluted() -> None:
     # CVM filed 600 closing shares for 2024 and 300 for the TTM year. Those
-    # counts still drive BVPS, but never substitute for CPC 41's weighted EPS
-    # denominator. The closed DFP carries its own filed result.
+    # counts drive both basic EPS and BVPS. The closed DFP's filed diluted
+    # result remains independent of the basic calculation.
     quarters = _quarters(
         Sector.COMMODITY, net_income=Decimal(300), equity=Decimal(6000)
     )
@@ -972,12 +980,12 @@ async def test_analyze_keeps_cpc41_eps_separate_from_closing_share_counts() -> N
     views = {(a.view, a.reference_date): a for a in out}
 
     ttm = views[("ttm_live", date(2026, 3, 31))]
-    assert ttm.indicators.eps is None
-    assert ttm.indicators.null_reasons["eps"] is (NullReason.MISSING_CPC41_DISCLOSURE)
+    assert ttm.indicators.eps == Decimal(4)  # 4 quarters × 300 / 300 shares
+    assert "eps" not in ttm.indicators.null_reasons
     assert ttm.indicators.bvps == Decimal(20)  # 6000 / 300
 
     y2024 = views[("closed_year", date(2024, 12, 31))]
-    assert y2024.indicators.eps == Decimal("1.125")
+    assert y2024.indicators.eps == Decimal(1)  # 600 / 600 shares
     assert y2024.indicators.eps_diluted == Decimal("1.100")
     assert y2024.indicators.bvps == Decimal(6)  # 3600 / 600
 
@@ -1012,13 +1020,13 @@ async def test_analyze_refuses_the_quotes_own_cap_and_share_count() -> None:
     ind = repo.saved[0].indicators
     assert ind.eps is None
     assert ind.company_pe is None  # the quote's own 12000 is not borrowed
-    assert ind.null_reasons["eps"] is NullReason.MISSING_CPC41_DISCLOSURE
+    assert ind.null_reasons["eps"] is NullReason.MISSING_SHARE_COUNT
     assert ind.null_reasons["company_pe"] is NullReason.MISSING_SHARE_COUNT
 
 
 async def test_analyze_keeps_bvps_when_price_is_missing() -> None:
-    # BVPS needs only the closing share count. TTM EPS independently remains
-    # unavailable because four class disclosures cannot be added.
+    # Basic EPS and BVPS require no quote. Only the price-dependent
+    # multiples inherit the B3 source failure.
     repo = FakeRepo()
     use_case = AnalyzePortfolioUseCase(
         FakeReader(
@@ -1037,12 +1045,12 @@ async def test_analyze_keeps_bvps_when_price_is_missing() -> None:
     await use_case.execute(["BBAS3"])
 
     saved = repo.saved[0]
-    assert saved.indicators.eps is None
-    assert saved.indicators.null_reasons["eps"] is (NullReason.MISSING_CPC41_DISCLOSURE)
+    assert saved.indicators.eps == Decimal(2)  # 4 quarters × 200 / 400 shares
+    assert "eps" not in saved.indicators.null_reasons
     assert saved.indicators.bvps == Decimal(20)  # 8000 / 400
-    assert saved.indicators.pe_basic is None  # still no price and no TTM CPC 41 EPS
+    assert saved.indicators.pe_basic is None  # no B3 price
     assert saved.indicators.null_reasons["pe_basic"] is (
-        NullReason.MISSING_CPC41_DISCLOSURE
+        NullReason.PRICE_SOURCE_UNAVAILABLE
     )
     assert saved.indicators.company_pe is None
     assert saved.indicators.null_reasons["company_pe"] is (

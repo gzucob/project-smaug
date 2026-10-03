@@ -23,7 +23,6 @@ import {
   deltaText,
   formatKindOf,
   groupColor,
-  marketFallbackOf,
   specByKey,
   specsByGroup,
 } from "@/lib/indicators";
@@ -138,20 +137,14 @@ function IndicatorCell({
   accent: string;
   onOpen: () => void;
 }) {
-  const strictRaw = indicators[spec.key];
-  const fallbackKey = marketFallbackOf(spec.key);
-  const fallbackRaw = fallbackKey ? indicators[fallbackKey] : null;
-  const fallbackActive =
-    toNum(strictRaw) === null && toNum(fallbackRaw) !== null;
-  const raw = fallbackActive ? fallbackRaw : strictRaw;
+  const raw = indicators[spec.key];
   const text = spec.format(raw);
   const missing = toNum(raw) === null;
 
   // The API says *why* a null is null; the cell used to render every one of
   // them as a bare "n/d", which reads as "not applicable" even when the honest
   // answer is "we did not compute it" (#54).
-  const strictMissing = toNum(strictRaw) === null;
-  const reason = strictMissing ? reasonCopy(indicators.null_reasons?.[spec.key]) : null;
+  const reason = missing ? reasonCopy(indicators.null_reasons?.[spec.key]) : null;
 
   // The consolidated slice (ADR 0026) shows up only when it would actually read
   // differently. The test is the rendered text, not a tolerance: if both bases
@@ -166,9 +159,7 @@ function IndicatorCell({
   // `lib/indicators.ts`.
   const valueColor = missing
     ? "var(--color-ink-600)"
-    : fallbackActive
-      ? "var(--color-gold-300)"
-      : "var(--color-ink-50)";
+    : "var(--color-ink-50)";
 
   return (
     <div
@@ -200,21 +191,13 @@ function IndicatorCell({
       <div className="nums mt-1 text-lg font-semibold leading-tight" style={{ color: valueColor }}>
         {text}
       </div>
-      {fallbackActive && (
-        <div
-          className="text-[0.6rem] text-gold-500"
-          title="O valor exibido é uma estimativa de mercado porque o valor CPC 41 desta janela não pôde ser reconciliado."
-        >
-          estimado · fora do CPC 41
-        </div>
-      )}
       {reason && (
         <div
           className="text-[0.6rem]"
           style={{ color: reason.intentional ? "var(--color-ink-600)" : "var(--color-gold-600)" }}
           title={reason.long}
         >
-          {fallbackActive ? `CPC 41: ${reason.short}` : reason.short}
+          {reason.short}
         </div>
       )}
 

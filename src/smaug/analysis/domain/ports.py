@@ -203,10 +203,10 @@ class CapitalProvenanceReader(Protocol):
 
 
 class StrictSharesReader(Protocol):
-    """Optional explicit surface that refuses issued-count fallbacks.
+    """Optional capital proof surface, without changing the normal FRE method.
 
-    The normal analysis path uses ``SharesReader`` and its ADR 0017 fallback;
-    callers that need a no-approximation reading may opt into this surface.
+    The normal analysis path uses ``SharesReader`` and its issued fallback.
+    Statement recovery can use this proof without rejecting existing results.
     """
 
     async def strict_counts(self, ticker: str, year: int) -> ShareCounts | None: ...
