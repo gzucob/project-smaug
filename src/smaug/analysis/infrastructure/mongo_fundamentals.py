@@ -26,12 +26,10 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
-from smaug.analysis.domain.bank_ratios import resolve_bank_ratios
 from smaug.analysis.domain.financials import (
     AccountingRegime,
-    BankStatementInputs,
     Cpc41Disclosure,
     DebtBlocker,
     DebtCoverageEvidence,
@@ -39,8 +37,6 @@ from smaug.analysis.domain.financials import (
     DebtInstrument,
     DebtLineEvidence,
     DebtLineRole,
-    InsuranceUnderwritingEvidence,
-    InsuranceUnderwritingStatus,
     IssuerIdentity,
     SourceAccountEvidence,
     SourceAccountRef,
@@ -747,24 +743,6 @@ _SOURCE_CONSUMERS: dict[str, tuple[str, ...]] = {
     ),
     "dividends_paid": ("payout_cash_paid_in_period",),
     "current_financial_investments": ("current_financial_investments",),
-    "bank_net_interest": ("net_interest_margin",),
-    "bank_earning_assets": ("net_interest_margin",),
-    "bank_operating_expenses": ("efficiency_ratio",),
-    "bank_operating_income": ("efficiency_ratio",),
-    "bank_credit_loss": ("cost_of_risk",),
-    "bank_gross_credit": ("cost_of_risk",),
-    "bank_gross_credit_with_leases": ("cost_of_risk",),
-    "bank_interest_result_annualized": ("net_interest_margin",),
-    "average_earning_assets": ("net_interest_margin",),
-    "bank_efficiency_expenses": ("efficiency_ratio",),
-    "bank_efficiency_income": ("efficiency_ratio",),
-    "credit_loss_expense_annualized": ("cost_of_risk",),
-    "average_credit_portfolio": ("cost_of_risk",),
-    "insurance_underwriting_activity": ("loss_ratio", "combined_ratio"),
-    "earned_premium": ("loss_ratio", "combined_ratio"),
-    "claims_incurred": ("loss_ratio", "combined_ratio"),
-    "acquisition_costs": ("combined_ratio",),
-    "insurance_admin_expenses": ("combined_ratio",),
 }
 
 
@@ -1022,66 +1000,6 @@ def _source_account_evidence(
             financials.unmapped_fields,
         )
     )
-    if regime is AccountingRegime.INSURANCE:
-        underwriting = financials.insurance_underwriting_evidence
-        aggregate_refs: tuple[SourceAccountRef, ...] = ()
-        activity_blocker: NullReason | None = None
-        if underwriting is not None:
-            aggregate_refs = tuple(
-                ref
-                for ref in (
-                    underwriting.revenue_aggregate,
-                    underwriting.expense_aggregate,
-                )
-                if ref is not None
-            )
-            if underwriting.status is InsuranceUnderwritingStatus.ZERO_ACTIVITY:
-                activity_blocker = NullReason.INAPPLICABLE_REGIME
-        add(
-            _source_entry(
-                "insurance_underwriting_activity",
-                "DRE",
-                ("code=3.01", "code=3.02", "both explicit zero => no activity"),
-                aggregate_refs,
-                None,
-                financials.unmapped_fields,
-                formula="3.01 == 0 and 3.02 == 0",
-                blocker=activity_blocker,
-                derived=True,
-            )
-        )
-        for field, codes, value in (
-            (
-                "earned_premium",
-                ("3.01.01.01", "3.01.02.01"),
-                financials.earned_premium,
-            ),
-            (
-                "claims_incurred",
-                ("3.02.01.01", "3.02.02.01"),
-                financials.claims_incurred,
-            ),
-            (
-                "acquisition_costs",
-                ("3.02.01.02", "3.02.02.02"),
-                financials.acquisition_costs,
-            ),
-            (
-                "insurance_admin_expenses",
-                ("3.04",),
-                financials.insurance_admin_expenses,
-            ),
-        ):
-            add(
-                _source_entry(
-                    field,
-                    "DRE",
-                    tuple(f"code={code}" for code in codes),
-                    _code_refs(dre, dre_s, *codes),
-                    value,
-                    financials.unmapped_fields,
-                )
-            )
     cpc_refs_basic = _matching_refs(
         per_share_accounts,
         Decimal(1),
@@ -1330,28 +1248,6 @@ def _source_account_evidence(
             formula="sum(nonoverlapping cash distributions to controllers)",
         )
     )
-
-    if regime is AccountingRegime.BANK:
-        for field, expected in (
-            ("bank_interest_result_annualized", "same-span interest result"),
-            ("average_earning_assets", "average earning assets"),
-            ("bank_efficiency_expenses", "full efficiency expenses"),
-            ("bank_efficiency_income", "full efficiency income"),
-            ("credit_loss_expense_annualized", "annualized credit loss"),
-            ("average_credit_portfolio", "average credit portfolio"),
-        ):
-            add(
-                _source_entry(
-                    field,
-                    "CVM_DERIVED",
-                    (expected, "same-period paired perimeter"),
-                    (),
-                    getattr(financials, field),
-                    financials.unmapped_fields,
-                    blocker=NullReason.SOURCE_ACCOUNT_ABSENT,
-                    derived=True,
-                )
-            )
 
     # Keep future mapper fields visible even before a selector is added. This
     # prevents a new deliberately skipped field from losing its provenance.
@@ -2458,16 +2354,9 @@ def standardize(
         result = _as_corporate(
             base, bpa, bpa_s, bpp, bpp_s, dre, dre_s, dep_resolution.value
         )
-    bank_inputs, bank_sources = (
-        _bank_statement_roots(by_module, reference_date)
-        if regime is AccountingRegime.BANK
-        else (None, ())
-    )
     return replace(
         result,
-        bank_statement_inputs=bank_inputs,
-        source_account_evidence=bank_sources
-        + _source_account_evidence(
+        source_account_evidence=_source_account_evidence(
             by_module,
             result,
             per_share_accounts=cpc41_accounts,
@@ -2476,429 +2365,6 @@ def standardize(
             dep_amort_resolution=dep_resolution,
         ),
     )
-
-
-def _bank_statement_roots(
-    by_module: Mapping[str, Any], reference_date: date
-) -> tuple[BankStatementInputs, tuple[SourceAccountEvidence, ...]]:
-    """Select complete CVM bank perimeters without managerial substitutes."""
-    dre = _accounts_of(by_module.get("DRE"))
-    bpa = _accounts_of(by_module.get("BPA"))
-    ds, bs = _scale(by_module, "DRE"), _scale(by_module, "BPA")
-    sources: list[SourceAccountEvidence] = []
-
-    def unique(accounts: Accounts) -> dict[str, Mapping[str, Any]] | None:
-        selected: dict[str, Mapping[str, Any]] = {}
-        for a in accounts:
-            code = str(a.get("code", ""))
-            if code in selected and (
-                _finite_account_value(a) != _finite_account_value(selected[code])
-                or _fold(str(a.get("name", "")))
-                != _fold(str(selected[code].get("name", "")))
-            ):
-                return None
-            selected[code] = a
-        return selected
-
-    def complete(parent: str) -> list[Mapping[str, Any]] | None:
-        if d is None or parent not in d:
-            return None
-        children = [
-            a
-            for c, a in d.items()
-            if c.startswith(parent + ".") and c.count(".") == parent.count(".") + 1
-        ]
-        values = [_finite_account_value(a) for a in children]
-        total = _finite_account_value(d[parent])
-        if not children or total is None or any(v is None for v in values):
-            return None
-        return (
-            children
-            if sum((v for v in values if v is not None), Decimal(0)) == total
-            else None
-        )
-
-    def loss(a: Mapping[str, Any]) -> bool:
-        n = _fold(str(a.get("name", "")))
-        return any(w in n for w in ("provis", "perda", "impairment")) and any(
-            w in n
-            for w in ("credito", "emprest", "clientes", "financeir", "arrendamento")
-        )
-
-    def add(
-        root: str,
-        statement: str,
-        rows: Sequence[Mapping[str, Any]],
-        value: Decimal | None,
-        formula: str,
-    ) -> None:
-        scale = ds if statement == "DRE" else bs
-        sources.append(
-            _source_entry(
-                "bank_" + root,
-                statement,
-                _statement_period_evidence(by_module, statement),
-                tuple(
-                    SourceAccountRef(
-                        str(a.get("code", "")),
-                        str(a.get("name", "")),
-                        _mul(_finite_account_value(a), scale),
-                    )
-                    for a in rows
-                ),
-                value,
-                frozenset(),
-                formula=formula,
-            )
-        )
-
-    d, b = unique(dre), unique(bpa)
-    revenue_rows, funding_rows, other_rows = (
-        complete(c) for c in ("3.01", "3.02", "3.04")
-    )
-    net_interest = credit_loss = operating_income = operating_expenses = None
-    interest_rows = [
-        a
-        for a in dre
-        if str(a.get("code", "")).startswith(("3.01.", "3.02."))
-        and str(a.get("code", "")).count(".") == 2
-        and "juros" in _fold(str(a.get("name", "")))
-    ]
-    # Explicit interest totals, not gross intermediation/trading income.
-    incoming = [a for a in interest_rows if str(a["code"]).startswith("3.01.")]
-    outgoing = [a for a in interest_rows if str(a["code"]).startswith("3.02.")]
-    if d is not None and len(incoming) == len(outgoing) == 1:
-        vals = [_finite_account_value(a) for a in (incoming[0], outgoing[0])]
-        if (
-            vals[0] is not None
-            and vals[1] is not None
-            and vals[0] >= 0
-            and vals[1] <= 0
-        ):
-            net_interest = (vals[0] + vals[1]) * ds
-    add(
-        "net_interest",
-        "DRE",
-        interest_rows,
-        net_interest,
-        "filed interest income + signed interest expense",
-    )
-    loss_rows = [
-        a
-        for a in dre
-        if str(a.get("code", "")).count(".") == 2
-        and str(a.get("code", "")).startswith(("3.02.", "3.04."))
-        and loss(a)
-    ]
-    loan_losses: list[Mapping[str, Any]] = []
-    credit_perimeter: str | None = None
-
-    def credit_components(a: Mapping[str, Any]) -> bool:
-        n = _fold(str(a.get("name", "")))
-        if any(
-            w in n for w in ("outros ativos", "demais ativos", "garantias", "titulos")
-        ):
-            return _finite_account_value(a) is not None
-        if any(
-            w in n
-            for w in (
-                "operacoes de credito",
-                "emprest",
-                "clientes",
-                "creditos de liquidacao",
-            )
-        ):
-            loan_losses.append(a)
-            return _finite_account_value(a) is not None
-        detail = complete(str(a.get("code", "")))
-        if detail is not None:
-            return all(credit_components(x) for x in detail)
-        return _finite_account_value(a) == 0
-
-    # Broad credit-risk losses include securities/guarantees. Reconciled details
-    # can isolate customer loans, including leases only on a matching perimeter.
-    if d is not None and all(credit_components(a) for a in loss_rows) and loan_losses:
-        credit_perimeter = (
-            "customer_loans_and_leases"
-            if any("arrendamento" in _fold(str(a.get("name", ""))) for a in loan_losses)
-            else "customer_loans"
-        )
-        credit_loss = (
-            -sum(
-                (cast(Decimal, _finite_account_value(a)) for a in loan_losses),
-                Decimal(0),
-            )
-            * ds
-        )
-    loss_evidence = [
-        a
-        for a in dre
-        if any(
-            str(a.get("code", "")) == str(root.get("code", ""))
-            or str(a.get("code", "")).startswith(str(root.get("code", "")) + ".")
-            for root in loss_rows
-        )
-    ]
-    add(
-        "credit_loss",
-        "DRE",
-        loss_evidence,
-        credit_loss,
-        "-sum("
-        + ",".join(str(a["code"]) for a in loan_losses)
-        + "); "
-        + str(credit_perimeter),
-    )
-    income_rows: list[Mapping[str, Any]] = []
-    expense_rows: list[Mapping[str, Any]] = []
-    if revenue_rows is not None and funding_rows is not None and other_rows is not None:
-
-        def split_other(a: Mapping[str, Any], inherited: str | None = None) -> bool:
-            if loss(a):
-                return True
-            n = _fold(str(a.get("name", "")))
-            role = inherited
-            if "despesa" in n and "receita" not in n:
-                role = "expense"
-            elif ("receita" in n and "despesa" not in n) or "equivalencia" in n:
-                role = "income"
-            prefix = str(a.get("code", "")) + "."
-            nested_loss = any(
-                str(x.get("code", "")).startswith(prefix)
-                and loss(x)
-                and _finite_account_value(x) != 0
-                for x in dre
-            )
-            if nested_loss or role is None:
-                detail = complete(str(a.get("code", "")))
-                if detail is not None:
-                    return all(split_other(x, role) for x in detail)
-                if nested_loss:
-                    return False
-            if role == "expense":
-                expense_rows.append(a)
-            elif role == "income":
-                income_rows.append(a)
-            elif _finite_account_value(a) != 0:
-                return False
-            return True
-
-        known = all(split_other(a) for a in other_rows)
-        intermediation = _finite_account_value(d["3.03"]) if d and "3.03" in d else None
-        totals = [_finite_account_value(d[c]) for c in ("3.01", "3.02")] if d else []
-        if (
-            known
-            and intermediation is not None
-            and all(v is not None for v in totals)
-            and sum((v for v in totals if v is not None), Decimal(0)) == intermediation
-        ):
-            removed = sum(
-                (
-                    cast(Decimal, _finite_account_value(a))
-                    for a in funding_rows
-                    if loss(a)
-                ),
-                Decimal(0),
-            )
-            operating_income = (
-                intermediation
-                - removed
-                + sum(
-                    (cast(Decimal, _finite_account_value(a)) for a in income_rows),
-                    Decimal(0),
-                )
-            ) * ds
-            operating_expenses = (
-                -sum(
-                    (cast(Decimal, _finite_account_value(a)) for a in expense_rows),
-                    Decimal(0),
-                )
-                * ds
-            )
-    full_dre = [
-        a
-        for a in dre
-        if str(a.get("code", "")).startswith(("3.01", "3.02", "3.03", "3.04"))
-    ]
-    add(
-        "operating_income",
-        "DRE",
-        full_dre,
-        operating_income,
-        "sum(3.03) - sum("
-        + ",".join(str(a["code"]) for a in (funding_rows or []) if loss(a))
-        + ") + sum("
-        + ",".join(str(a["code"]) for a in income_rows)
-        + ")",
-    )
-    add(
-        "operating_expenses",
-        "DRE",
-        full_dre,
-        operating_expenses,
-        "-sum(" + ",".join(str(a["code"]) for a in expense_rows) + ")",
-    )
-    gross_credit = earning_assets = None
-    gross_rows = [
-        a
-        for a in bpa
-        if "brut" in _fold(str(a.get("name", "")))
-        and any(
-            w in _fold(str(a.get("name", "")))
-            for w in (
-                "carteira de credito",
-                "operacoes de credito",
-                "emprestimos a clientes",
-            )
-        )
-    ]
-    # A standalone gross total is conclusive. A loan amount accompanied by an
-    # explicitly deducted nonzero provision is also gross; an absent/zero
-    # provision cannot rule out an already-net loan disclosure.
-    candidates = gross_rows[:]
-    if b is not None and not candidates:
-        for c, a in b.items():
-            n = _fold(str(a.get("name", "")))
-            if "operacoes de credito" not in n or any(
-                w in n for w in ("provis", "liquid", "outros")
-            ):
-                continue
-            parent = c.rsplit(".", 1)[0]
-            allowances = [
-                x
-                for k, x in b.items()
-                if k.startswith(parent + ".")
-                and k.count(".") == c.count(".")
-                and loss(x)
-                and "arrendamento" not in _fold(str(x.get("name", "")))
-            ]
-            if len(allowances) == 1 and (
-                _finite_account_value(allowances[0]) is not None
-                and cast(Decimal, _finite_account_value(allowances[0])) < 0
-            ):
-                candidates.append(a)
-                gross_rows.extend([a, *allowances])
-    gross_perimeter: str | None = None
-    gross_with_leases = None
-    loan_rows = gross_rows[:]
-    combined_codes: list[str] = []
-    if b is not None and len(candidates) == 1:
-        value = _finite_account_value(candidates[0])
-        if value is not None and value >= 0:
-            gross_credit = value * bs
-            gross_perimeter = (
-                "customer_loans_and_leases"
-                if "arrendamento" in _fold(str(candidates[0].get("name", "")))
-                else "customer_loans"
-            )
-            parent = str(candidates[0]["code"]).rsplit(".", 1)[0]
-            leases = [
-                a
-                for c, a in b.items()
-                if c.startswith(parent + ".")
-                and c.count(".") == str(candidates[0]["code"]).count(".")
-                and "operacoes de arrendamento" in _fold(str(a.get("name", "")))
-                and not loss(a)
-            ]
-            allowances = [
-                a
-                for c, a in b.items()
-                if c.startswith(parent + ".")
-                and c.count(".") == str(candidates[0]["code"]).count(".")
-                and "arrendamento" in _fold(str(a.get("name", "")))
-                and loss(a)
-            ]
-            if (
-                gross_perimeter == "customer_loans"
-                and len(leases) == len(allowances) == 1
-            ):
-                lv, pv = (_finite_account_value(a) for a in (leases[0], allowances[0]))
-                if (
-                    lv is not None
-                    and pv is not None
-                    and ((lv == pv == 0) or (lv > 0 and -lv <= pv < 0))
-                ):
-                    gross_with_leases = gross_credit + lv * bs
-                    combined_codes = [
-                        str(candidates[0]["code"]),
-                        str(leases[0]["code"]),
-                    ]
-                    gross_rows.extend([*leases, *allowances])
-    if gross_perimeter == "customer_loans_and_leases":
-        gross_with_leases = gross_credit
-        combined_codes = [str(candidates[0]["code"])]
-    add(
-        "gross_credit_with_leases",
-        "BPA",
-        gross_rows,
-        gross_with_leases,
-        "sum(" + ",".join(combined_codes) + ")",
-    )
-    add(
-        "gross_credit",
-        "BPA",
-        loan_rows,
-        gross_credit,
-        "sum("
-        + ",".join(str(a["code"]) for a in candidates)
-        + "); "
-        + str(gross_perimeter),
-    )
-    earning_rows = [
-        a
-        for a in bpa
-        if _fold(str(a.get("name", ""))).strip()
-        in {
-            "ativos remunerados",
-            "ativos rentaveis",
-            "ativos geradores de juros",
-            "total dos ativos remunerados",
-            "ativos financeiros remunerados",
-        }
-    ]
-    if b is not None and len(earning_rows) == 1:
-        value = _finite_account_value(earning_rows[0])
-        if value is not None and value >= 0:
-            earning_assets = value * bs
-    add(
-        "earning_assets",
-        "BPA",
-        earning_rows,
-        earning_assets,
-        "explicit complete interest-earning assets, not total/financial assets",
-    )
-    dp, bp = by_module.get("DRE", {}), by_module.get("BPA", {})
-    dp = dp if isinstance(dp, Mapping) else {}
-    bp = bp if isinstance(bp, Mapping) else {}
-    inputs = BankStatementInputs(
-        issuer=str(dp["cvm_code"]) if dp.get("cvm_code") else None,
-        currency=(
-            str(dp["currency"])
-            if dp.get("currency") and dp.get("currency_size") in {1, 1000}
-            else None
-        ),
-        bpa_issuer=str(bp["cvm_code"]) if bp.get("cvm_code") else None,
-        bpa_currency=(
-            str(bp["currency"])
-            if bp.get("currency") and bp.get("currency_size") in {1, 1000}
-            else None
-        ),
-        dre_scope=dp.get("balance_type"),
-        bpa_scope=bp.get("balance_type"),
-        period_start=_iso_date(dp.get("period_start_date")),
-        period_end=_iso_date(dp.get("period_end_date")),
-        balance_end=_iso_date(bp.get("period_end_date")),
-        net_interest=net_interest,
-        earning_assets=earning_assets,
-        credit_loss=credit_loss,
-        credit_loss_perimeter=credit_perimeter,
-        gross_credit=gross_credit,
-        gross_credit_perimeter=gross_perimeter,
-        gross_credit_with_leases=gross_with_leases,
-        operating_expenses=operating_expenses,
-        operating_income=operating_income,
-    )
-    return inputs, tuple(sources)
 
 
 def _as_bank(
@@ -2956,7 +2422,6 @@ def _as_bank(
         personnel_expense=_mul(_child_by_name(dre, "3.04", "pessoal"), dre_s),
         admin_expense=_mul(_child_by_name(dre, "3.04", "administrativas"), dre_s),
         loan_book=_loan_book(bpa, bpa_s),
-        bank_ratio_null_reason=NullReason.MISSING_REGULATORY_DISCLOSURE,
         unmapped_fields=_BANK_UNMAPPED_FIELDS,
         debt_evidence=evidence,
     )
@@ -2997,60 +2462,6 @@ def _loan_book(bpa: Accounts, scale: Decimal) -> Decimal | None:
     return None
 
 
-def _insurance_underwriting_evidence(
-    dre: Accounts, scale: Decimal
-) -> InsuranceUnderwritingEvidence:
-    """Prove insurance activity from the filing's complete DRE aggregates.
-
-    The legacy component leaves are required to calculate the ratios, but their
-    absence alone cannot distinguish a non-underwriting holding from an IFRS 17
-    insurer whose filing only exposes broad aggregates. The top-level 3.01 and
-    3.02 rows are the explicit consolidated perimeter: two parsed zeros prove
-    zero underwriting activity; any other complete pair proves that activity
-    exists; an absent or unreadable side leaves the status unknown.
-    """
-    revenue_account = _account_by_code(dre, "3.01")
-    expense_account = _account_by_code(dre, "3.02")
-    revenue_value = (
-        None
-        if revenue_account is None
-        else _mul(_dec(revenue_account.get("quantity")), scale)
-    )
-    expense_value = (
-        None
-        if expense_account is None
-        else _mul(_dec(expense_account.get("quantity")), scale)
-    )
-    if revenue_value is None or expense_value is None:
-        status = InsuranceUnderwritingStatus.UNKNOWN
-    elif revenue_value == 0 and expense_value == 0:
-        status = InsuranceUnderwritingStatus.ZERO_ACTIVITY
-    else:
-        status = InsuranceUnderwritingStatus.ACTIVE
-
-    return InsuranceUnderwritingEvidence(
-        status=status,
-        revenue_aggregate=(
-            None
-            if revenue_account is None
-            else SourceAccountRef(
-                code="3.01",
-                name=str(revenue_account.get("name", "")),
-                value=revenue_value,
-            )
-        ),
-        expense_aggregate=(
-            None
-            if expense_account is None
-            else SourceAccountRef(
-                code="3.02",
-                name=str(expense_account.get("name", "")),
-                value=expense_value,
-            )
-        ),
-    )
-
-
 def _as_insurer(
     base: StandardizedFinancials,
     bpa: Accounts,
@@ -3071,24 +2482,6 @@ def _as_insurer(
     assessment = _total_debt(bpp, bpp_s)
     total_debt = assessment.total_debt
     debt_reason = assessment.null_reason
-    underwriting_evidence = _insurance_underwriting_evidence(dre, dre_s)
-    # Through 2022 the structured insurer DRE separates earned premiums, claims
-    # and acquisition costs under the insurance and reinsurance branches. IFRS 17
-    # replaced those leaves with broader service/reinsurance aggregates in 2023.
-    # Those aggregates do not preserve the components required by the loss and
-    # combined ratios, so absence of the legacy leaves stays a named null (ADR 0061).
-    earned_premium = _sum(
-        _by_code(dre, "3.01.01.01"),
-        _by_code(dre, "3.01.02.01"),
-    )
-    claims_incurred = _sum(
-        _by_code(dre, "3.02.01.01"),
-        _by_code(dre, "3.02.02.01"),
-    )
-    acquisition_costs = _sum(
-        _by_code(dre, "3.02.01.02"),
-        _by_code(dre, "3.02.02.02"),
-    )
     return replace(
         base,
         ebit=_mul(_by_code(dre, "3.07"), dre_s),  # before financial result/taxes
@@ -3100,11 +2493,6 @@ def _as_insurer(
         total_debt=total_debt,
         debt_coverage_null_reason=debt_reason,
         debt_evidence=_debt_evidence(base, AccountingRegime.INSURANCE, assessment),
-        earned_premium=_mul(earned_premium, dre_s),
-        claims_incurred=_mul(claims_incurred, dre_s),
-        acquisition_costs=_mul(acquisition_costs, dre_s),
-        insurance_admin_expenses=_mul(_by_code(dre, "3.04"), dre_s),
-        insurance_underwriting_evidence=underwriting_evidence,
         unmapped_fields=_FINANCIAL_UNMAPPED_FIELDS,
     )
 
@@ -3387,8 +2775,7 @@ class MongoFundamentalsReader:
                     ),
                 )
             )
-        history = [p for _, p in loaded]
-        return [(tag, resolve_bank_ratios(f, history)) for tag, f in loaded]
+        return loaded
 
 
 def _ordem(payload: Mapping[str, Any]) -> str:

@@ -9,9 +9,6 @@ import pytest
 from smaug.analysis.domain.calculator import compute
 from smaug.analysis.domain.financials import (
     AccountingRegime,
-    BankRegulatoryProvenance,
-    InsuranceUnderwritingEvidence,
-    InsuranceUnderwritingStatus,
     MarketData,
     StandardizedFinancials,
 )
@@ -177,27 +174,6 @@ _FINANCIAL_UNMAPPED = frozenset({"dep_amort", "ebitda"})
 _BANK_UNMAPPED = _FINANCIAL_UNMAPPED | frozenset({"current_financial_investments"})
 
 
-def _bank_regulatory_provenance() -> BankRegulatoryProvenance:
-    return BankRegulatoryProvenance(
-        source="issuer_public_performance_analysis",
-        period_start=date(2024, 1, 1),
-        period_end=date(2024, 12, 31),
-        perimeter="consolidated",
-        averaging_method="arithmetic_mean_month_end",
-        basis="issuer_defined_annualized_disclosure",
-        available_inputs=frozenset(
-            {
-                "bank_interest_result_annualized",
-                "average_earning_assets",
-                "bank_efficiency_expenses",
-                "bank_efficiency_income",
-                "credit_loss_expense_annualized",
-                "average_credit_portfolio",
-            }
-        ),
-    )
-
-
 def _mapped_bank() -> StandardizedFinancials:
     """A bank as the CVM mapper actually builds it (ADR 0058).
 
@@ -221,7 +197,6 @@ def _mapped_bank() -> StandardizedFinancials:
         cfo=Decimal(450),  # annualized -> 600
         capex=Decimal(150),  # annualized -> 200
         filed_regime=AccountingRegime.BANK,
-        bank_ratio_null_reason=NullReason.MISSING_REGULATORY_DISCLOSURE,
         unmapped_fields=_BANK_UNMAPPED,
     )
 
@@ -264,190 +239,6 @@ def test_bank_computes_the_ratios_its_schema_supports() -> None:
     assert ind.revenue_growth is None
 
 
-def test_bbas3_ratios_reconcile_to_the_2024_issuer_disclosure() -> None:
-    # Banco do Brasil 4T24, tables 21/26/37/48. The source explicitly defines
-    # spread as MFB / average earning assets (monthly closing-balance mean),
-    # efficiency as full administrative expense / full operating income, and
-    # credit risk expense against the average credit portfolio.
-    # https://ri.bb.com.br/informacoes-financeiras/central-de-resultados/
-    bank = replace(
-        _mapped_bank(),
-        reference_date=date(2024, 12, 31),
-        bank_interest_result_annualized=Decimal(103_944),
-        average_earning_assets=Decimal(2_137_682),
-        bank_efficiency_expenses=Decimal(36_998),
-        bank_efficiency_income=Decimal(144_688),
-        credit_loss_expense_annualized=Decimal(41_422),
-        average_credit_portfolio=Decimal(1_020_119),
-        bank_ratio_null_reason=None,
-        bank_regulatory_provenance=_bank_regulatory_provenance(),
-    )
-
-    ind = compute(bank, None, MarketData(market_cap=Decimal(8000)))
-
-    assert ind.net_interest_margin == Decimal(103_944) / Decimal(2_137_682)
-    assert ind.efficiency_ratio == Decimal(36_998) / Decimal(144_688)
-    assert ind.cost_of_risk == Decimal(41_422) / Decimal(1_020_119)
-    assert ind.net_interest_margin.quantize(Decimal("0.001")) == Decimal("0.049")
-    assert ind.efficiency_ratio.quantize(Decimal("0.001")) == Decimal("0.256")
-    assert ind.cost_of_risk.quantize(Decimal("0.001")) == Decimal("0.041")
-
-
-def test_bbdc4_ratios_reconcile_to_the_4t24_issuer_disclosure() -> None:
-    # Bradesco 4T24. The paired values are normalized to the annualized bases the
-    # issuer publishes: 8.4% client margin, 53.2% quarterly IEO and 3.0% credit
-    # cost. The efficiency denominator includes margin, services, insurance,
-    # associates and taxes exactly as the report's footnote defines it.
-    # https://pessoajuridica.bradesco/assets/classic/pdf/
-    # bradesco-4T24-apresentacao-de-resultados-imprensa.pdf
-    average_earning_assets = Decimal(790_286)
-    average_credit_portfolio = Decimal("994666.6666666666666666666667")
-    bank = replace(
-        _mapped_bank(),
-        reference_date=date(2024, 12, 31),
-        period_start=date(2024, 10, 1),
-        bank_interest_result_annualized=(average_earning_assets * Decimal("0.084")),
-        average_earning_assets=average_earning_assets,
-        bank_efficiency_expenses=Decimal(16_418),
-        bank_efficiency_income=(
-            Decimal(16_995)
-            + Decimal(10_262)
-            + Decimal(5_531)
-            + Decimal(90)
-            - Decimal(2_031)
-        ),
-        credit_loss_expense_annualized=Decimal(29_840),
-        average_credit_portfolio=average_credit_portfolio,
-        bank_ratio_null_reason=None,
-        bank_regulatory_provenance=_bank_regulatory_provenance(),
-    )
-
-    ind = compute(bank, None, MarketData(market_cap=Decimal(8000)))
-
-    assert ind.net_interest_margin == Decimal("0.084")
-    assert ind.efficiency_ratio is not None
-    assert ind.efficiency_ratio.quantize(Decimal("0.001")) == Decimal("0.532")
-    assert ind.cost_of_risk is not None
-    assert ind.cost_of_risk.quantize(Decimal("0.001")) == Decimal("0.030")
-
-
-def test_the_bank_ratios_are_inapplicable_to_everyone_else() -> None:
-    # A company that sells goods has no spread, no loan book and no payroll measured
-    # against a spread. The null is a verdict of the regime, not a missing input.
-    ind = compute(_nonfinancial(), None, MarketData(market_cap=Decimal(12000)))
-
-    for name in ("net_interest_margin", "efficiency_ratio", "cost_of_risk"):
-        assert getattr(ind, name) is None
-        assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
-
-
-def _irbr3_2022() -> StandardizedFinancials:
-    """IRB's official CVM DFP 2022 underwriting inputs (R$ thousand)."""
-    return StandardizedFinancials(
-        reference_date=date(2022, 12, 31),
-        sector=Sector.INSURER,
-        filed_regime=AccountingRegime.INSURANCE,
-        earned_premium=Decimal(7_021_200),
-        claims_incurred=Decimal(-6_911_514),
-        acquisition_costs=Decimal(-255_606),
-        insurance_admin_expenses=Decimal(-421_237),
-    )
-
-
-def test_irbr3_underwriting_ratios_reconcile_to_the_2022_cvm_filing() -> None:
-    ind = compute(_irbr3_2022(), None, MarketData())
-
-    assert ind.loss_ratio == Decimal(6_911_514) / Decimal(7_021_200)
-    assert ind.combined_ratio == (
-        Decimal(6_911_514) + Decimal(255_606) + Decimal(421_237)
-    ) / Decimal(7_021_200)
-    assert ind.loss_ratio.quantize(Decimal("0.001")) == Decimal("0.984")
-    assert ind.combined_ratio.quantize(Decimal("0.001")) == Decimal("1.081")
-
-
-def test_insurer_ratios_name_missing_components_and_zero_premium() -> None:
-    missing = compute(
-        replace(_irbr3_2022(), acquisition_costs=None), None, MarketData()
-    )
-    zero_premium = compute(
-        replace(_irbr3_2022(), earned_premium=Decimal(0)), None, MarketData()
-    )
-
-    assert missing.loss_ratio is not None
-    assert missing.combined_ratio is None
-    assert missing.null_reasons["combined_ratio"] is NullReason.SOURCE_ACCOUNT_ABSENT
-    assert zero_premium.loss_ratio is None
-    assert zero_premium.combined_ratio is None
-    assert zero_premium.null_reasons["loss_ratio"] is NullReason.ZERO_DENOMINATOR
-    assert zero_premium.null_reasons["combined_ratio"] is NullReason.ZERO_DENOMINATOR
-
-
-def test_zero_activity_only_suppresses_underwriting_ratios() -> None:
-    financials = StandardizedFinancials(
-        reference_date=date(2025, 12, 31),
-        sector=Sector.INSURER,
-        filed_regime=AccountingRegime.INSURANCE,
-        revenue=Decimal(1000),
-        net_income=Decimal(100),
-        equity=Decimal(1000),
-        insurance_underwriting_evidence=InsuranceUnderwritingEvidence(
-            status=InsuranceUnderwritingStatus.ZERO_ACTIVITY
-        ),
-    )
-
-    ind = compute(financials, None, MarketData())
-
-    for name in ("loss_ratio", "combined_ratio"):
-        assert getattr(ind, name) is None
-        assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
-    # The aggregate proof is scoped to insurer-only ratios. It must not hide a
-    # generic ratio that the insurance chart still supports.
-    assert ind.net_margin == Decimal("0.1")
-    assert "net_margin" not in ind.null_reasons
-
-
-def test_active_ifrs17_insurer_without_legacy_components_stays_source_absent() -> None:
-    financials = StandardizedFinancials(
-        reference_date=date(2025, 12, 31),
-        sector=Sector.INSURER,
-        filed_regime=AccountingRegime.INSURANCE,
-        revenue=Decimal(1000),
-        net_income=Decimal(100),
-        equity=Decimal(1000),
-        insurance_underwriting_evidence=InsuranceUnderwritingEvidence(
-            status=InsuranceUnderwritingStatus.ACTIVE
-        ),
-    )
-
-    ind = compute(financials, None, MarketData())
-
-    assert ind.loss_ratio is None
-    assert ind.combined_ratio is None
-    assert ind.null_reasons["loss_ratio"] is NullReason.SOURCE_ACCOUNT_ABSENT
-    assert ind.null_reasons["combined_ratio"] is NullReason.SOURCE_ACCOUNT_ABSENT
-    assert ind.net_margin == Decimal("0.1")
-
-
-def test_insurer_expense_reversal_reduces_the_combined_ratio() -> None:
-    reversal = compute(
-        replace(_irbr3_2022(), insurance_admin_expenses=Decimal(421_237)),
-        None,
-        MarketData(),
-    )
-
-    assert reversal.combined_ratio == (
-        Decimal(6_911_514) + Decimal(255_606) - Decimal(421_237)
-    ) / Decimal(7_021_200)
-
-
-def test_insurer_ratios_are_inapplicable_to_other_filing_regimes() -> None:
-    for financials in (_nonfinancial(), _mapped_bank()):
-        ind = compute(financials, None, MarketData())
-        for name in ("loss_ratio", "combined_ratio"):
-            assert getattr(ind, name) is None
-            assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
-
-
 def test_bank_null_reasons_name_each_cause() -> None:
     ind = compute(
         replace(
@@ -488,8 +279,6 @@ def test_bank_null_reasons_name_each_cause() -> None:
         "fcf_yield",
     ):
         assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
-    for name in ("net_interest_margin", "efficiency_ratio", "cost_of_risk"):
-        assert ind.null_reasons[name] is (NullReason.MISSING_REGULATORY_DISCLOSURE)
     # The bank chart cannot isolate a current-only investment bucket because it
     # carries no current/non-current split. The headline is therefore
     # inapplicable, rather than a mapping gap guessed from all financial assets.
@@ -683,9 +472,6 @@ def test_applicability_follows_the_filed_regime_not_the_sector() -> None:
     # filing, not a verdict of ours — which is the whole difference (#95).
     assert ind.null_reasons["gross_margin"] is NullReason.SOURCE_ACCOUNT_ABSENT
     assert ind.null_reasons["fcf"] is NullReason.SOURCE_ACCOUNT_ABSENT
-    for name in ("loss_ratio", "combined_ratio"):
-        assert getattr(ind, name) is None
-        assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
     assert ind.net_margin == Decimal("0.625")
     assert ind.roe is not None  # the mapped core still computes
 

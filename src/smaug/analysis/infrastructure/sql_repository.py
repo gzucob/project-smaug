@@ -22,7 +22,6 @@ from smaug.analysis.domain.financials import (
     AccountingRegime,
     B3CapitalEventEvidence,
     B3CapitalEventReconciliation,
-    BankRegulatoryProvenance,
     CapitalActionEvidence,
     CapitalComposition,
     ClassMarketValue,
@@ -45,7 +44,12 @@ from smaug.analysis.domain.financials import (
     SourceAccountRef,
     SourceAccountStatus,
 )
-from smaug.analysis.domain.indicators import Indicators, NullReason
+from smaug.analysis.domain.indicators import (
+    RETIRED_SECTOR_INDICATORS,
+    Indicators,
+    NullReason,
+    is_retired_sector_input,
+)
 from smaug.analysis.domain.outcomes import (
     AnalysisOutcome,
     AnalysisStatus,
@@ -238,6 +242,8 @@ def _source_account_evidence_from_json(
     parsed: list[SourceAccountEvidence] = []
     for raw in value:
         if not isinstance(raw, Mapping):
+            continue
+        if is_retired_sector_input(str(raw.get("field", ""))):
             continue
         try:
             raw_status = raw.get("status")
@@ -507,71 +513,6 @@ def _cpc41_window_provenance_from_json(
         selected_periods=tuple(periods),
         basic_blocker=blocker(value.get("basic_blocker")),
         diluted_blocker=blocker(value.get("diluted_blocker")),
-    )
-
-
-def _bank_regulatory_provenance_to_json(
-    provenance: BankRegulatoryProvenance | None,
-) -> dict[str, Any] | None:
-    if provenance is None:
-        return None
-    return {
-        "source": provenance.source,
-        "period_start": (
-            None
-            if provenance.period_start is None
-            else provenance.period_start.isoformat()
-        ),
-        "period_end": (
-            None if provenance.period_end is None else provenance.period_end.isoformat()
-        ),
-        "perimeter": provenance.perimeter,
-        "averaging_method": provenance.averaging_method,
-        "basis": provenance.basis,
-        "available_inputs": sorted(provenance.available_inputs),
-        "missing_inputs": sorted(provenance.missing_inputs),
-        "incompatible_inputs": sorted(provenance.incompatible_inputs),
-    }
-
-
-def _bank_regulatory_provenance_from_json(
-    value: object,
-) -> BankRegulatoryProvenance | None:
-    if not isinstance(value, Mapping):
-        return None
-
-    def parse_date(raw: object) -> date | None:
-        if raw is None:
-            return None
-        try:
-            return date.fromisoformat(str(raw))
-        except ValueError:
-            return None
-
-    def parse_set(key: str) -> frozenset[str]:
-        raw = value.get(key, [])
-        return (
-            frozenset(str(item) for item in raw)
-            if isinstance(raw, (list, tuple, set, frozenset))
-            else frozenset()
-        )
-
-    return BankRegulatoryProvenance(
-        source=None if value.get("source") is None else str(value.get("source")),
-        period_start=parse_date(value.get("period_start")),
-        period_end=parse_date(value.get("period_end")),
-        perimeter=(
-            None if value.get("perimeter") is None else str(value.get("perimeter"))
-        ),
-        averaging_method=(
-            None
-            if value.get("averaging_method") is None
-            else str(value.get("averaging_method"))
-        ),
-        basis=None if value.get("basis") is None else str(value.get("basis")),
-        available_inputs=parse_set("available_inputs"),
-        missing_inputs=parse_set("missing_inputs"),
-        incompatible_inputs=parse_set("incompatible_inputs"),
     )
 
 
@@ -1095,11 +1036,6 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         fcf=i.fcf,
         price_to_fcf=i.price_to_fcf,
         fcf_yield=i.fcf_yield,
-        net_interest_margin=i.net_interest_margin,
-        efficiency_ratio=i.efficiency_ratio,
-        cost_of_risk=i.cost_of_risk,
-        loss_ratio=i.loss_ratio,
-        combined_ratio=i.combined_ratio,
         revenue=i.revenue,
         net_income=i.net_income,
         net_income_total=i.net_income_total,
@@ -1119,9 +1055,6 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         ),
         cpc41_window_provenance=_cpc41_window_provenance_to_json(
             i.cpc41_window_provenance
-        ),
-        bank_regulatory_provenance=_bank_regulatory_provenance_to_json(
-            i.bank_regulatory_provenance
         ),
         share_class_mappings=_share_class_mappings_to_json(
             analysis.share_class_mappings
@@ -1227,11 +1160,6 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
             fcf=row.fcf,
             price_to_fcf=row.price_to_fcf,
             fcf_yield=row.fcf_yield,
-            net_interest_margin=row.net_interest_margin,
-            efficiency_ratio=row.efficiency_ratio,
-            cost_of_risk=row.cost_of_risk,
-            loss_ratio=row.loss_ratio,
-            combined_ratio=row.combined_ratio,
             revenue=row.revenue,
             net_income=row.net_income,
             net_income_total=row.net_income_total,
@@ -1253,12 +1181,11 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
             cpc41_window_provenance=_cpc41_window_provenance_from_json(
                 row.cpc41_window_provenance
             ),
-            bank_regulatory_provenance=_bank_regulatory_provenance_from_json(
-                row.bank_regulatory_provenance
-            ),
             # Pre-vocabulary rows carry NULL: degrade to "unclassified" ({}).
             null_reasons={
-                k: NullReason(v) for k, v in (row.null_reasons or {}).items()
+                k: NullReason(v)
+                for k, v in (row.null_reasons or {}).items()
+                if k not in RETIRED_SECTOR_INDICATORS
             },
         ),
         share_class_mappings=_share_class_mappings_from_json(row.share_class_mappings),

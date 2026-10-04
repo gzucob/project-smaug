@@ -8,8 +8,6 @@ from typing import Any
 from smaug.analysis.domain.calculator import compute
 from smaug.analysis.domain.entities import VIEW_TTM, TickerAnalysis
 from smaug.analysis.domain.financials import (
-    AccountingRegime,
-    BankRegulatoryProvenance,
     Cpc41AccountEvidence,
     Cpc41EvidenceStatus,
     Cpc41PeriodProvenance,
@@ -42,27 +40,6 @@ def _evidence_by_field(
     financials: StandardizedFinancials,
 ) -> dict[str, SourceAccountEvidence]:
     return {item.field: item for item in financials.source_account_evidence}
-
-
-def _valid_bank_provenance() -> BankRegulatoryProvenance:
-    return BankRegulatoryProvenance(
-        source="issuer_public_performance_analysis",
-        period_start=date(2025, 1, 1),
-        period_end=date(2025, 12, 31),
-        perimeter="consolidated",
-        averaging_method="arithmetic_mean_month_end",
-        basis="issuer_defined_annualized_disclosure",
-        available_inputs=frozenset(
-            {
-                "bank_interest_result_annualized",
-                "average_earning_assets",
-                "bank_efficiency_expenses",
-                "bank_efficiency_income",
-                "credit_loss_expense_annualized",
-                "average_credit_portfolio",
-            }
-        ),
-    )
 
 
 def test_mapping_records_raw_accounts_and_dfc_parent_scope() -> None:
@@ -141,54 +118,6 @@ def test_absent_and_unmapped_sources_remain_distinct() -> None:
     assert corporate_evidence["dep_amort"].blocker is NullReason.SOURCE_ACCOUNT_ABSENT
     assert bank_evidence["dep_amort"].status is SourceAccountStatus.UNMAPPED
     assert bank_evidence["dep_amort"].blocker is NullReason.SOURCE_ACCOUNT_UNMAPPED
-    assert (
-        bank_evidence["average_earning_assets"].blocker
-        is NullReason.SOURCE_ACCOUNT_ABSENT
-    )
-
-
-def test_bank_ratios_require_a_complete_paired_source_contract() -> None:
-    values = {
-        "filed_regime": AccountingRegime.BANK,
-        "bank_interest_result_annualized": Decimal("100"),
-        "average_earning_assets": Decimal("1000"),
-        "bank_efficiency_expenses": Decimal("20"),
-        "bank_efficiency_income": Decimal("100"),
-        "credit_loss_expense_annualized": Decimal("10"),
-        "average_credit_portfolio": Decimal("1000"),
-    }
-    without_contract = StandardizedFinancials(
-        reference_date=date(2025, 12, 31),
-        sector=Sector.BANK,
-        **values,
-    )
-    with_contract = replace(
-        without_contract,
-        bank_regulatory_provenance=_valid_bank_provenance(),
-    )
-    partial = replace(
-        with_contract,
-        bank_regulatory_provenance=replace(
-            _valid_bank_provenance(),
-            available_inputs=frozenset({"bank_interest_result_annualized"}),
-        ),
-    )
-
-    missing = compute(without_contract, None, MarketData())
-    valid = compute(with_contract, None, MarketData())
-    partial_result = compute(partial, None, MarketData())
-
-    assert missing.net_interest_margin is None
-    assert missing.null_reasons["net_interest_margin"] is (
-        NullReason.MISSING_REGULATORY_DISCLOSURE
-    )
-    assert valid.net_interest_margin == Decimal("0.1")
-    assert valid.efficiency_ratio == Decimal("0.2")
-    assert valid.cost_of_risk == Decimal("0.01")
-    assert partial_result.net_interest_margin is None
-    assert partial_result.null_reasons["net_interest_margin"] is (
-        NullReason.PARTIAL_REGULATORY_DISCLOSURE
-    )
 
 
 def test_ttm_and_calculation_carry_source_lineage() -> None:
@@ -241,40 +170,6 @@ def test_ttm_and_calculation_carry_source_lineage() -> None:
     assert basic.dependencies == ("net_income", "shares")
 
 
-def test_ttm_carries_valid_bank_inputs_and_provenance() -> None:
-    quarters = [
-        StandardizedFinancials(
-            reference_date=end,
-            sector=Sector.BANK,
-            filed_regime=AccountingRegime.BANK,
-            revenue=Decimal("10"),
-            bank_interest_result_annualized=Decimal("100"),
-            average_earning_assets=Decimal("1000"),
-            bank_efficiency_expenses=Decimal("20"),
-            bank_efficiency_income=Decimal("100"),
-            credit_loss_expense_annualized=Decimal("10"),
-            average_credit_portfolio=Decimal("1000"),
-            bank_regulatory_provenance=_valid_bank_provenance(),
-        )
-        for end in (
-            date(2025, 3, 31),
-            date(2025, 6, 30),
-            date(2025, 9, 30),
-            date(2025, 12, 31),
-        )
-    ]
-    ttm = build_ttm(quarters, None)
-
-    assert ttm is not None
-    assert ttm.bank_interest_result_annualized == Decimal("100")
-    assert ttm.average_earning_assets == Decimal("1000")
-    assert ttm.bank_efficiency_expenses == Decimal("20")
-    assert ttm.bank_efficiency_income == Decimal("100")
-    assert ttm.credit_loss_expense_annualized == Decimal("10")
-    assert ttm.average_credit_portfolio == Decimal("1000")
-    assert ttm.bank_regulatory_provenance == _valid_bank_provenance()
-
-
 def test_source_lineage_round_trips_through_sql_and_api() -> None:
     evidence = SourceAccountEvidence(
         field="cfo",
@@ -288,7 +183,6 @@ def test_source_lineage_round_trips_through_sql_and_api() -> None:
     )
     indicators = Indicators(
         source_account_evidence=(evidence,),
-        bank_regulatory_provenance=_valid_bank_provenance(),
     )
     analysis = TickerAnalysis(
         ticker="PETR4",
@@ -301,11 +195,8 @@ def test_source_lineage_round_trips_through_sql_and_api() -> None:
     row = _to_row(analysis)
     assert row.source_account_evidence is not None
     assert row.source_account_evidence[0]["found"][0]["code"] == "6.01"
-    assert row.bank_regulatory_provenance is not None
-    assert row.bank_regulatory_provenance["perimeter"] == "consolidated"
     restored = _to_entity(row)
     assert restored.indicators.source_account_evidence == (evidence,)
-    assert restored.indicators.bank_regulatory_provenance == _valid_bank_provenance()
     response = _to_response(analysis)
     assert response.indicators.source_account_evidence[0].status is (
         SourceAccountStatus.MAPPED
@@ -317,10 +208,6 @@ def test_source_lineage_round_trips_through_sql_and_api() -> None:
         "Operating"
     )
     assert response.indicators.source_account_evidence[0].duplicates_discarded == 2
-    assert response.indicators.bank_regulatory_provenance is not None
-    assert response.indicators.bank_regulatory_provenance.basis == (
-        "issuer_defined_annualized_disclosure"
-    )
 
 
 def test_cpc41_window_provenance_round_trips_through_sql_and_api() -> None:

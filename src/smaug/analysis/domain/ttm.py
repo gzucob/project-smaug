@@ -33,15 +33,12 @@ from decimal import Decimal
 from itertools import pairwise
 from typing import cast
 
-from smaug.analysis.domain.bank_ratios import resolve_bank_ratios
 from smaug.analysis.domain.financials import (
     Cpc41AccountEvidence,
     Cpc41EvidenceStatus,
     Cpc41PeriodProvenance,
     Cpc41SelectionStatus,
     Cpc41WindowProvenance,
-    InsuranceUnderwritingEvidence,
-    InsuranceUnderwritingStatus,
     SourceAccountEvidence,
     SourceAccountStatus,
     StandardizedFinancials,
@@ -66,10 +63,6 @@ _DRE_FLOW_FIELDS = (
     "fee_income",
     "personnel_expense",
     "admin_expense",
-    "earned_premium",
-    "claims_incurred",
-    "acquisition_costs",
-    "insurance_admin_expenses",
 )
 _DFC_FLOW_FIELDS = ("dep_amort", "dividends_paid", "cfo", "capex")
 _FLOW_FIELDS = _DRE_FLOW_FIELDS + _DFC_FLOW_FIELDS
@@ -854,142 +847,6 @@ def _cpc41_window_provenance(
     )
 
 
-def _ttm_insurance_underwriting_selection(
-    periods: Sequence[StandardizedFinancials],
-    annual: StandardizedFinancials | None,
-    refs: Sequence[date],
-) -> tuple[
-    list[tuple[date, StandardizedFinancials]],
-    tuple[date, StandardizedFinancials] | None,
-]:
-    """Select TTM periods and the latest one carrying underwriting evidence."""
-    by_date = {period.reference_date: period for period in periods}
-    if annual is not None:
-        by_date[annual.reference_date] = annual
-    selected = [
-        (ref, period) for ref in refs if (period := by_date.get(ref)) is not None
-    ]
-    latest = max(
-        (
-            (ref, period)
-            for ref, period in selected
-            if period.insurance_underwriting_evidence is not None
-        ),
-        key=lambda item: item[0],
-        default=None,
-    )
-    return selected, latest
-
-
-def _ttm_insurance_underwriting_status(
-    selected: Sequence[tuple[date, StandardizedFinancials]],
-    refs: Sequence[date],
-) -> InsuranceUnderwritingStatus:
-    """Aggregate the selected periods without allowing a zero to mask activity."""
-    selected_evidence = [
-        period.insurance_underwriting_evidence for _, period in selected
-    ]
-    if len(selected) == len(refs) and all(
-        evidence is not None
-        and evidence.status is InsuranceUnderwritingStatus.ZERO_ACTIVITY
-        for evidence in selected_evidence
-    ):
-        return InsuranceUnderwritingStatus.ZERO_ACTIVITY
-    if any(
-        evidence is not None and evidence.status is InsuranceUnderwritingStatus.ACTIVE
-        for evidence in selected_evidence
-    ):
-        return InsuranceUnderwritingStatus.ACTIVE
-    return InsuranceUnderwritingStatus.UNKNOWN
-
-
-def _ttm_insurance_underwriting_representative(
-    selected: Sequence[tuple[date, StandardizedFinancials]],
-    status: InsuranceUnderwritingStatus,
-) -> tuple[date, StandardizedFinancials] | None:
-    """Choose raw evidence whose status supports the aggregate verdict.
-
-    A newer zero period must not replace an older active period in an active TTM.
-    When the aggregate is unknown because the window is incomplete, retain the
-    newest available raw evidence but let the caller remove any period-local
-    inapplicability blocker.
-    """
-    with_evidence = [
-        (ref, period)
-        for ref, period in selected
-        if period.insurance_underwriting_evidence is not None
-    ]
-    if not with_evidence:
-        return None
-    matching = [
-        (ref, period)
-        for ref, period in with_evidence
-        if period.insurance_underwriting_evidence is not None
-        and period.insurance_underwriting_evidence.status is status
-    ]
-    return max(matching or with_evidence, key=lambda item: item[0])
-
-
-def _ttm_insurance_underwriting_evidence(
-    periods: Sequence[StandardizedFinancials],
-    annual: StandardizedFinancials | None,
-    refs: Sequence[date],
-) -> InsuranceUnderwritingEvidence | None:
-    """Carry an activity verdict only when every quarter proves the verdict.
-
-    A current TTM is a four-period window. One zero quarter cannot establish
-    that the whole window is a non-underwriting holding, while one active quarter
-    is enough to prevent that false inapplicability. The representative evidence
-    retains the raw aggregate accounts for the persisted source lineage.
-    """
-    selected, _latest = _ttm_insurance_underwriting_selection(periods, annual, refs)
-    if not selected:
-        return None
-    status = _ttm_insurance_underwriting_status(selected, refs)
-    representative = _ttm_insurance_underwriting_representative(selected, status)
-    if representative is None:
-        return None
-    evidence = representative[1].insurance_underwriting_evidence
-    assert evidence is not None
-    return InsuranceUnderwritingEvidence(
-        status=status,
-        revenue_aggregate=evidence.revenue_aggregate,
-        expense_aggregate=evidence.expense_aggregate,
-    )
-
-
-def _ttm_insurance_underwriting_source(
-    periods: Sequence[StandardizedFinancials],
-    annual: StandardizedFinancials | None,
-    refs: Sequence[date],
-) -> SourceAccountEvidence | None:
-    """Return raw activity proof from the period selected for the verdict."""
-    selected, _latest = _ttm_insurance_underwriting_selection(periods, annual, refs)
-    if not selected:
-        return None
-    status = _ttm_insurance_underwriting_status(selected, refs)
-    representative = _ttm_insurance_underwriting_representative(selected, status)
-    if representative is None:
-        return None
-    source = next(
-        (
-            entry
-            for entry in representative[1].source_account_evidence
-            if entry.field == "insurance_underwriting_activity"
-        ),
-        None,
-    )
-    if (
-        source is not None
-        and status is not InsuranceUnderwritingStatus.ZERO_ACTIVITY
-        and source.blocker is NullReason.INAPPLICABLE_REGIME
-    ):
-        # ``INAPPLICABLE_REGIME`` belongs to an individual zero period. It is
-        # not valid provenance for an incomplete or active aggregate window.
-        source = replace(source, blocker=None)
-    return source
-
-
 def _merge_source_account_evidence(
     base: tuple[SourceAccountEvidence, ...],
     overrides: tuple[SourceAccountEvidence, ...],
@@ -1249,12 +1106,7 @@ def build_ttm(
     Returns ``None`` when fewer than four isolated quarters can be assembled (the
     window would not span 12 months), so the caller degrades instead of lying.
     """
-    result = _build_ttm(quarters, annual)
-    return (
-        resolve_bank_ratios(result, [*quarters, *([annual] if annual else [])])
-        if result is not None
-        else None
-    )
+    return _build_ttm(quarters, annual)
 
 
 def build_ttm_as_of(
@@ -1276,12 +1128,7 @@ def build_ttm_as_of(
         if eligible_annuals
         else None
     )
-    result = _build_ttm(eligible_quarters, annual, required_end=end)
-    return (
-        resolve_bank_ratios(result, [*eligible_quarters, *eligible_annuals])
-        if result is not None
-        else None
-    )
+    return _build_ttm(eligible_quarters, annual, required_end=end)
 
 
 def _year_before(value: date) -> date:
@@ -1414,9 +1261,6 @@ def _build_ttm(
         if annual is not None and annual.reference_date > latest.reference_date
         else latest
     )
-    insurance_underwriting_evidence = _ttm_insurance_underwriting_evidence(
-        quarters, annual, refs
-    )
     source_account_evidence = _merge_source_account_evidence(
         latest.source_account_evidence, tuple(distribution_sources)
     )
@@ -1431,11 +1275,6 @@ def _build_ttm(
     if dep_amort_sources:
         source_account_evidence = _merge_source_account_evidence(
             source_account_evidence, dep_amort_sources
-        )
-    underwriting_source = _ttm_insurance_underwriting_source(quarters, annual, refs)
-    if underwriting_source is not None:
-        source_account_evidence = _merge_source_account_evidence(
-            source_account_evidence, (underwriting_source,)
         )
     for field in ("cfo", "capex"):
         source_account_evidence = _merge_source_account_evidence(
@@ -1452,18 +1291,6 @@ def _build_ttm(
             if s.field in {"inventories", "free_float"}
         ),
     )
-    bank_provenance = latest.bank_regulatory_provenance
-
-    def bank_input(name: str) -> Decimal | None:
-        """Transport only inputs covered by the persisted source contract."""
-        if (
-            bank_provenance is None
-            or name not in bank_provenance.available_inputs
-            or bank_provenance.period_start != period_start
-            or bank_provenance.period_end != stock_source.reference_date
-        ):
-            return None
-        return cast(Decimal | None, getattr(latest, name))
 
     end = stock_source.reference_date
     start_index = end.year * 12 + (end.month - 1) - 11
@@ -1509,24 +1336,11 @@ def _build_ttm(
         personnel_expense=summed["personnel_expense"],
         admin_expense=summed["admin_expense"],
         loan_book=stock_source.loan_book,  # a balance, like the other stocks
-        earned_premium=summed["earned_premium"],
-        claims_incurred=summed["claims_incurred"],
-        acquisition_costs=summed["acquisition_costs"],
-        insurance_admin_expenses=summed["insurance_admin_expenses"],
-        insurance_underwriting_evidence=insurance_underwriting_evidence,
         # Null-cause provenance (#30) travels with the window: same filer, same
         # regime and same deliberately-skipped fields as its quarters.
         filed_regime=stock_source.filed_regime,
         # Preserve explicitly evidenced inputs; the outer window resolver
         # separately assembles complete CVM roots and compatible stock pairs.
-        bank_ratio_null_reason=latest.bank_ratio_null_reason,
-        bank_interest_result_annualized=bank_input("bank_interest_result_annualized"),
-        average_earning_assets=bank_input("average_earning_assets"),
-        bank_efficiency_expenses=bank_input("bank_efficiency_expenses"),
-        bank_efficiency_income=bank_input("bank_efficiency_income"),
-        credit_loss_expense_annualized=bank_input("credit_loss_expense_annualized"),
-        average_credit_portfolio=bank_input("average_credit_portfolio"),
-        bank_regulatory_provenance=bank_provenance,
         unmapped_fields=latest.unmapped_fields,
         source_account_evidence=source_account_evidence,
         cpc41_window_provenance=cpc41_provenance,

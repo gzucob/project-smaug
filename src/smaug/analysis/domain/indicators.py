@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from smaug.analysis.domain.financials import (
-        BankRegulatoryProvenance,
         Cpc41WindowProvenance,
         SourceAccountEvidence,
     )
@@ -31,7 +30,47 @@ EQUIVALENT_EVIDENCE_V2 = "equivalent_evidence_v2"
 EQUIVALENT_EVIDENCE_V3 = "equivalent_evidence_v3"
 CLOSING_CAPITAL_V1 = "closing_capital_v1"
 SIMPLIFIED_INDICATORS_V1 = "simplified_indicators_v1"
-CALCULATION_CONTRACT_VERSION = "cash_flow_indicators_v1"
+CASH_FLOW_INDICATORS_V1 = "cash_flow_indicators_v1"
+CALCULATION_CONTRACT_VERSION = "general_indicators_v1"
+# Compatibility filters for historical JSON; these are no longer indicators.
+RETIRED_SECTOR_INDICATORS = frozenset(
+    {
+        "net_interest_margin",
+        "efficiency_ratio",
+        "cost_of_risk",
+        "loss_ratio",
+        "combined_ratio",
+    }
+)
+RETIRED_SECTOR_INPUTS = frozenset(
+    {
+        "bank_interest_result_annualized",
+        "average_earning_assets",
+        "bank_efficiency_expenses",
+        "bank_efficiency_income",
+        "credit_loss_expense_annualized",
+        "average_credit_portfolio",
+        "bank_net_interest",
+        "bank_earning_assets",
+        "bank_operating_expenses",
+        "bank_operating_income",
+        "bank_credit_loss",
+        "bank_gross_credit",
+        "bank_gross_credit_with_leases",
+        "earned_premium",
+        "claims_incurred",
+        "acquisition_costs",
+        "insurance_admin_expenses",
+        "insurance_underwriting_activity",
+    }
+)
+
+
+def is_retired_sector_input(name: str) -> bool:
+    """Identify old source-account roots, including dated TTM dependencies."""
+    return name.split("[", 1)[0] in RETIRED_SECTOR_INPUTS
+
+
 LEGACY_INDICATOR_NAMES = frozenset({"eps_basic_market", "pe_basic_market"})
 
 
@@ -582,7 +621,7 @@ INDICATOR_CONTRACT["capex_to_cfo"] = IndicatorContract(
 
 def indicator_contracts(version: str) -> dict[str, IndicatorContract]:
     """Describe the formula actually used by a persisted calculation version."""
-    if version == CALCULATION_CONTRACT_VERSION:
+    if version in {CALCULATION_CONTRACT_VERSION, CASH_FLOW_INDICATORS_V1}:
         return INDICATOR_CONTRACT
     if version == SIMPLIFIED_INDICATORS_V1:
         return SIMPLIFIED_INDICATOR_CONTRACT
@@ -701,16 +740,6 @@ class Indicators:
     fcf: Decimal | None = None  # annualized free cash flow, in absolute reais
     price_to_fcf: Decimal | None = None
     fcf_yield: Decimal | None = None
-    # Bank-only ratios (ADR 0058). Each consumes an explicitly scoped pair from a
-    # public regulator/issuer disclosure. The CVM structured statements alone do
-    # not contain the required average stocks or complete managerial perimeter.
-    net_interest_margin: Decimal | None = None  # interest result / avg earning assets
-    efficiency_ratio: Decimal | None = None  # full expenses / full operating income
-    cost_of_risk: Decimal | None = None  # credit loss / avg credit portfolio
-    # Insurance-only underwriting ratios (ADR 0061). Expense inputs are filed as
-    # negative values and sign-reversed once by the calculator.
-    loss_ratio: Decimal | None = None  # claims / earned premium
-    combined_ratio: Decimal | None = None  # claims + acquisition + admin / premium
     # Headline financials (absolute reais, the period's own figure — not
     # annualized). Persisted alongside the ratios so the front-end can chart the
     # per-year evolution of revenue / earnings / dividends, which the ratios alone
@@ -749,7 +778,6 @@ class Indicators:
     # Strict CPC 41 TTM evidence is a window-level contract rather than one
     # latest-period account snapshot. It is metadata, not an indicator cell.
     cpc41_window_provenance: Cpc41WindowProvenance | None = None
-    bank_regulatory_provenance: BankRegulatoryProvenance | None = None
     # Why each null field is null, keyed by the field's name. Only null fields
     # appear; a null field with no entry is unclassified (see ``NullReason``).
     null_reasons: Mapping[str, NullReason] = field(default_factory=dict)
@@ -770,7 +798,6 @@ def indicator_names() -> tuple[str, ...]:
             "null_reasons",
             "source_account_evidence",
             "cpc41_window_provenance",
-            "bank_regulatory_provenance",
             *LEGACY_INDICATOR_NAMES,
         }
     )

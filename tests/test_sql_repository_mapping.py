@@ -112,8 +112,6 @@ def _analysis() -> TickerAnalysis:
         debt_evidence_snapshot=DebtEvidenceSnapshot.CURRENT,
         indicators=Indicators(
             roe=Decimal("0.2"),
-            loss_ratio=Decimal("0.72"),
-            combined_ratio=Decimal("0.94"),
             null_reasons={
                 "net_debt": NullReason.INAPPLICABLE_REGIME,
                 "fcf": NullReason.SOURCE_ACCOUNT_UNMAPPED,
@@ -160,8 +158,6 @@ def test_null_reasons_round_trip_through_the_row() -> None:
         "fcf": NullReason.SOURCE_ACCOUNT_UNMAPPED,
     }
     assert entity.indicators.roe == Decimal("0.2")
-    assert entity.indicators.loss_ratio == Decimal("0.72")
-    assert entity.indicators.combined_ratio == Decimal("0.94")
     assert entity.price_basis == "b3_latest_close"
     assert entity.price == Decimal("38.25")
     assert entity.price_source_code == "AZZA3"

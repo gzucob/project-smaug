@@ -24,7 +24,6 @@ from typing import Any
 
 from smaug.analysis.domain.financials import (
     AccountingRegime,
-    InsuranceUnderwritingStatus,
     MarketData,
     SourceAccountEvidence,
     SourceAccountRef,
@@ -318,46 +317,6 @@ def _net_debt(financials: StandardizedFinancials) -> Decimal | None:
 # above, since a deposit is funding, not borrowing. Every *other* indicator a
 # financial filer nulls now falls through to the input check.
 #
-# The three bank ratios (ADR 0058) run the other way: they describe a balance sheet
-# that *is* the business, and a company that sells goods has no spread, no loan book
-# and no payroll-against-spread to report. They are inapplicable to everyone else.
-_BANK_ONLY = frozenset({"net_interest_margin", "efficiency_ratio", "cost_of_risk"})
-_BANK_RATIO_INPUTS: dict[str, tuple[str, str]] = {
-    "net_interest_margin": (
-        "bank_interest_result_annualized",
-        "average_earning_assets",
-    ),
-    "efficiency_ratio": ("bank_efficiency_expenses", "bank_efficiency_income"),
-    "cost_of_risk": (
-        "credit_loss_expense_annualized",
-        "average_credit_portfolio",
-    ),
-}
-_INSURER_ONLY = frozenset({"loss_ratio", "combined_ratio"})
-
-
-def _bank_ratio_blocker(name: str, f: StandardizedFinancials) -> NullReason | None:
-    """Validate the paired provenance contract before a bank ratio is built."""
-    pair = _BANK_RATIO_INPUTS[name]
-    provenance = f.bank_regulatory_provenance
-    if provenance is None:
-        return f.bank_ratio_null_reason or NullReason.MISSING_REGULATORY_DISCLOSURE
-    reason = provenance.reason_for(pair)
-    if reason is not None:
-        return (
-            NullReason.SOURCE_ACCOUNT_ABSENT
-            if provenance.source == "CVM_DRE_BPA"
-            else reason
-        )
-    if any(getattr(f, field) is None for field in pair):
-        return (
-            NullReason.SOURCE_ACCOUNT_ABSENT
-            if provenance.source == "CVM_DRE_BPA"
-            else NullReason.PARTIAL_REGULATORY_DISCLOSURE
-        )
-    return None
-
-
 _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
     AccountingRegime.BANK: frozenset(
         {
@@ -389,8 +348,7 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
             "current_financial_investments",
             "price_to_working_capital",
         }
-    )
-    | _INSURER_ONLY,
+    ),
     AccountingRegime.INSURANCE: frozenset(
         {
             "price_to_ebitda",
@@ -405,9 +363,8 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
             # corporate invested-capital bridge (ADR 0010/0059).
             "roic_statutory",
         }
-    )
-    | _BANK_ONLY,
-    AccountingRegime.CORPORATE: _BANK_ONLY | _INSURER_ONLY,
+    ),
+    AccountingRegime.CORPORATE: frozenset(),
 }
 
 
@@ -423,17 +380,6 @@ def _inapplicable(f: StandardizedFinancials) -> frozenset[str]:
     """
     regime = f.filed_regime or expected_regime(f.sector)
     inapplicable = _INAPPLICABLE_BY_REGIME.get(regime, frozenset())
-    underwriting = f.insurance_underwriting_evidence
-    if (
-        regime is AccountingRegime.INSURANCE
-        and underwriting is not None
-        and underwriting.status is InsuranceUnderwritingStatus.ZERO_ACTIVITY
-    ):
-        # The insurance chart can describe a holding that does not underwrite in
-        # its consolidated statements. The explicit zero aggregate proof makes
-        # these ratios inapplicable for this period; missing IFRS 17 components
-        # without that proof remain source-account nulls.
-        return inapplicable | _INSURER_ONLY
     return inapplicable
 
 
@@ -560,24 +506,6 @@ _NEEDS: dict[str, _Needs] = {
     "price_to_working_capital": _Needs(
         accounts=("current_assets", "current_liabilities"), cap=True
     ),
-    "net_interest_margin": _Needs(
-        accounts=("bank_interest_result_annualized", "average_earning_assets")
-    ),
-    "efficiency_ratio": _Needs(
-        accounts=("bank_efficiency_expenses", "bank_efficiency_income")
-    ),
-    "cost_of_risk": _Needs(
-        accounts=("credit_loss_expense_annualized", "average_credit_portfolio")
-    ),
-    "loss_ratio": _Needs(accounts=("claims_incurred", "earned_premium")),
-    "combined_ratio": _Needs(
-        accounts=(
-            "claims_incurred",
-            "acquisition_costs",
-            "insurance_admin_expenses",
-            "earned_premium",
-        )
-    ),
     "dividend_yield": _Needs(price=True, cash_distributions=True),
     "payout_cash_paid_in_period": _Needs(accounts=("dividends_paid", "net_income")),
     "ev_ebitda": _Needs(
@@ -656,10 +584,6 @@ def _classify(
     """
     if name in inapplicable:
         return NullReason.INAPPLICABLE_REGIME
-    if name in _BANK_ONLY:
-        blocker = _bank_ratio_blocker(name, f)
-        if blocker is not None:
-            return blocker
     if name == "eps_diluted" and f.eps_diluted_null_reason is not None:
         return f.eps_diluted_null_reason
     if name == "pe_diluted" and f.eps_diluted_null_reason is not None:
@@ -801,12 +725,6 @@ def compute(
     # flows so a bare year-to-date period is comparable to a full year.
     annual_fcf = _annualized(_sub(f.cfo, f.capex), f)
     bvps = _div(f.equity, market.shares)
-    claims_cost = None if f.claims_incurred is None else -f.claims_incurred
-    acquisition_cost = None if f.acquisition_costs is None else -f.acquisition_costs
-    admin_cost = (
-        None if f.insurance_admin_expenses is None else -f.insurance_admin_expenses
-    )
-    combined_costs = _add(_add(claims_cost, acquisition_cost), admin_cost)
 
     prev_revenue = previous.revenue if previous is not None else None
     prev_net_income = previous.net_income if previous is not None else None
@@ -816,11 +734,6 @@ def compute(
     def cagr(account: str) -> Decimal | None:
         return cagrs[account].value
 
-    # Bank ratios only consume explicitly paired, already annualized
-    # regulatory/issuer inputs
-    # (ADR 0058). The CVM-only mapper leaves them null: closing total assets, a
-    # partial operating-revenue subtotal, and a closing net loan book are not
-    # substitutes for the published average/perimeter definitions.
     indicators = Indicators(
         roe=_div(annual_net_income, f.equity),
         roe_total=_div(annual_net_income_total, f.equity_total),
@@ -879,23 +792,6 @@ def compute(
         price_to_assets=_div(cap, f.total_assets),
         price_to_ebit=_div(cap, annual_ebit),
         price_to_working_capital=_div(cap, working_capital),
-        net_interest_margin=(
-            _div(f.bank_interest_result_annualized, f.average_earning_assets)
-            if _bank_ratio_blocker("net_interest_margin", f) is None
-            else None
-        ),
-        efficiency_ratio=(
-            _div(f.bank_efficiency_expenses, f.bank_efficiency_income)
-            if _bank_ratio_blocker("efficiency_ratio", f) is None
-            else None
-        ),
-        cost_of_risk=(
-            _div(f.credit_loss_expense_annualized, f.average_credit_portfolio)
-            if _bank_ratio_blocker("cost_of_risk", f) is None
-            else None
-        ),
-        loss_ratio=_div(claims_cost, f.earned_premium),
-        combined_ratio=_div(combined_costs, f.earned_premium),
         dividend_yield=_div(market.cash_distributions, market.price),
         payout_cash_paid_in_period=_div(f.dividends_paid, f.net_income),
         ev_ebitda=_div(enterprise_value, annual_ebitda),
@@ -948,5 +844,4 @@ def compute(
             }.values()
         ),
         cpc41_window_provenance=f.cpc41_window_provenance,
-        bank_regulatory_provenance=f.bank_regulatory_provenance,
     )

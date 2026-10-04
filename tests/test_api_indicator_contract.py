@@ -246,7 +246,6 @@ def test_api_schema_matches_selected_public_indicator_names() -> None:
         "null_reasons",
         "source_account_evidence",
         "cpc41_window_provenance",
-        "bank_regulatory_provenance",
     }
     assert set(IndicatorsResponse.model_fields) - metadata == set(
         public_indicator_names()

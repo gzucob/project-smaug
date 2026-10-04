@@ -15,7 +15,6 @@ from smaug.analysis.domain.financials import (
     DebtInstrument,
     DebtLineClassification,
     DebtLineRole,
-    InsuranceUnderwritingStatus,
     IssuerIdentity,
     MarketData,
     RegimeSource,
@@ -712,7 +711,6 @@ def test_standardize_bank_reads_its_own_chart_of_accounts() -> None:
     assert f.personnel_expense == Decimal("-30")
     assert f.admin_expense == Decimal("-20")
     assert f.loan_book == Decimal("2000")  # 2200 gross, less its own 200 provision
-    assert f.bank_ratio_null_reason is NullReason.MISSING_REGULATORY_DISCLOSURE
     # Unbuildable from a bank's schema — never read, never guessed. 2.02 above is
     # the bank's funding (deposits), and must not be mistaken for debt.
     assert f.total_debt is None
@@ -959,107 +957,6 @@ def test_standardize_insurer_reads_ebit_at_307_and_no_debt_line() -> None:
     assert f.current_liabilities == Decimal("2000")
     # IFRS 17's current chart exposes only broad service/reinsurance aggregates.
     # They are not aliases for the components required by the underwriting ratios.
-    assert f.earned_premium is None
-    assert f.claims_incurred is None
-    assert f.acquisition_costs is None
-    assert f.insurance_admin_expenses is None
-
-
-def test_standardize_insurer_zero_aggregates_prove_no_underwriting_activity() -> None:
-    by_module = {
-        "DRE": {
-            "accounts": [
-                _acc("3.01", "Receitas das Atividades Seguradoras", "0"),
-                _acc("3.02", "Despesas das Atividades Seguradoras", "0"),
-                _acc("3.07", "Resultado Antes do Resultado Financeiro", "300"),
-                _acc("3.13", "Lucro/Prejuízo Consolidado do Período", "210"),
-            ]
-        }
-    }
-
-    f = standardize(by_module, Sector.INSURER, date(2025, 12, 31))
-
-    assert f.filed_regime is AccountingRegime.INSURANCE
-    assert f.insurance_underwriting_evidence is not None
-    assert (
-        f.insurance_underwriting_evidence.status
-        is InsuranceUnderwritingStatus.ZERO_ACTIVITY
-    )
-    evidence = {item.field: item for item in f.source_account_evidence}
-    activity = evidence["insurance_underwriting_activity"]
-    assert activity.blocker is NullReason.INAPPLICABLE_REGIME
-    assert [ref.code for ref in activity.found] == ["3.01", "3.02"]
-    assert [ref.value for ref in activity.found] == [Decimal(0), Decimal(0)]
-
-
-def test_standardize_insurer_material_aggregates_keep_ifrs17_components_absent() -> (
-    None
-):
-    by_module = {
-        "DRE": {
-            "accounts": [
-                _acc("3.01", "Receitas das Atividades Seguradoras", "600"),
-                _acc("3.01.01", "Receitas de Serviços de Seguros", "600"),
-                _acc("3.02", "Despesas das Atividades Seguradoras", "-500"),
-                _acc("3.02.01", "Despesas de Serviços de Seguros", "-500"),
-                _acc("3.07", "Resultado Antes do Resultado Financeiro", "300"),
-                _acc("3.13", "Lucro/Prejuízo Consolidado do Período", "210"),
-            ]
-        }
-    }
-
-    f = standardize(by_module, Sector.INSURER, date(2025, 12, 31))
-
-    assert f.insurance_underwriting_evidence is not None
-    assert (
-        f.insurance_underwriting_evidence.status is InsuranceUnderwritingStatus.ACTIVE
-    )
-    assert f.earned_premium is None
-    assert f.claims_incurred is None
-    assert f.acquisition_costs is None
-    assert f.insurance_admin_expenses is None
-    evidence = {item.field: item for item in f.source_account_evidence}
-    assert evidence["insurance_underwriting_activity"].found[0].value == Decimal(600)
-    assert evidence["insurance_underwriting_activity"].found[1].value == Decimal(-500)
-    for field in (
-        "earned_premium",
-        "claims_incurred",
-        "acquisition_costs",
-        "insurance_admin_expenses",
-    ):
-        assert evidence[field].blocker is NullReason.SOURCE_ACCOUNT_ABSENT
-
-
-def test_standardize_irbr3_2022_underwriting_components() -> None:
-    # Official CVM DFP 2022, IRB Brasil Resseguros (CD_CVM 024180), consolidated
-    # current exercise. The pre-IFRS-17 chart separates the exact inputs used by
-    # the loss and combined ratios; both insurance and reinsurance branches are
-    # supported, and expenses remain negative as filed.
-    by_module = {
-        "DRE": {
-            "currency_size": 1000,
-            "accounts": [
-                _acc("3.01", "Receitas das Atividades Seguradoras", "7047042"),
-                _acc("3.01.02.01", "Prêmios de Resseguros Ganhos", "7021200"),
-                _acc("3.02.02.01", "Sinistros Retidos de Resseguros", "-6911514"),
-                _acc(
-                    "3.02.02.02",
-                    "Despesas de Comercialização de Resseguros",
-                    "-255606",
-                ),
-                _acc("3.04", "Despesas Administrativas", "-421237"),
-                _acc("3.07", "Resultado Antes do Resultado Financeiro", "100"),
-                _acc("3.13", "Lucro/Prejuízo Consolidado do Período", "50"),
-            ],
-        }
-    }
-
-    f = standardize(by_module, Sector.INSURER, date(2022, 12, 31))
-
-    assert f.earned_premium == Decimal("7021200000")
-    assert f.claims_incurred == Decimal("-6911514000")
-    assert f.acquisition_costs == Decimal("-255606000")
-    assert f.insurance_admin_expenses == Decimal("-421237000")
 
 
 def test_standardize_irbr3_maps_complete_explicit_debt_perimeter() -> None:
@@ -1193,35 +1090,6 @@ def test_standardize_pssa3_generic_financial_liabilities_are_incomplete_debt() -
         "2.01.05.02.09",
         "2.02.02.02.07",
     ]
-
-
-def test_standardize_corporate_broad_rows_are_not_underwriting_components() -> None:
-    by_module = {
-        "DRE": {
-            "accounts": [
-                _acc("3.01", "Receita de Venda de Bens e/ou Serviços", "40000"),
-                _acc("3.01.07", "Receita de Operações de Seguros", "12000"),
-                _acc("3.03", "Resultado Bruto", "10000"),
-                _acc("3.04.05.11", "Despesas com Operações de Seguros", "-2000"),
-                _acc("3.05", "Resultado Antes do Resultado Financeiro", "8000"),
-                _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "6000"),
-            ]
-        }
-    }
-
-    f = standardize(by_module, Sector.INSURER, date(2025, 12, 31))
-
-    assert f.filed_regime is AccountingRegime.CORPORATE
-    assert f.revenue == Decimal(40000)
-    assert f.ebit == Decimal(8000)
-    assert f.earned_premium is None
-    assert f.claims_incurred is None
-    assert f.acquisition_costs is None
-    assert f.insurance_admin_expenses is None
-    assert not any(
-        item.field == "insurance_underwriting_activity"
-        for item in f.source_account_evidence
-    )
 
 
 def test_standardize_names_missing_debt_aggregate_as_a_secondary_blocker() -> None:

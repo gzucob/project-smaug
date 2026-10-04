@@ -131,11 +131,6 @@ class TickerAnalysisRow(Base):
     fcf: Mapped[Decimal | None] = mapped_column(Numeric)
     price_to_fcf: Mapped[Decimal | None] = mapped_column(Numeric)
     fcf_yield: Mapped[Decimal | None] = mapped_column(Numeric)
-    net_interest_margin: Mapped[Decimal | None] = mapped_column(Numeric)
-    efficiency_ratio: Mapped[Decimal | None] = mapped_column(Numeric)
-    cost_of_risk: Mapped[Decimal | None] = mapped_column(Numeric)
-    loss_ratio: Mapped[Decimal | None] = mapped_column(Numeric)
-    combined_ratio: Mapped[Decimal | None] = mapped_column(Numeric)
     revenue: Mapped[Decimal | None] = mapped_column(Numeric)
     net_income: Mapped[Decimal | None] = mapped_column(Numeric)
     net_income_total: Mapped[Decimal | None] = mapped_column(Numeric)
@@ -164,7 +159,6 @@ class TickerAnalysisRow(Base):
     # remain NULL until a subsequent ``smaug analyze`` run rebuilds the window.
     cpc41_window_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     # Contract metadata for any published bank-regulatory ratio (#261).
-    bank_regulatory_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     # FCA security-class identity and class-by-class cap ledger (#259). Legacy
     # rows remain readable with NULL and are backfilled by the next analyze run.
     share_class_mappings: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)

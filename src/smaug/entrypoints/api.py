@@ -45,6 +45,7 @@ from smaug.analysis.domain.financials import (
 from smaug.analysis.domain.indicators import (
     NullReason,
     indicator_contracts,
+    is_retired_sector_input,
     public_indicator_names,
 )
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
@@ -71,20 +72,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
-
-
-class BankRegulatoryProvenanceResponse(BaseModel):
-    """Source contract behind bank-specific regulatory ratios."""
-
-    source: str | None
-    period_start: date | None
-    period_end: date | None
-    perimeter: str | None
-    averaging_method: str | None
-    basis: str | None
-    available_inputs: list[str]
-    missing_inputs: list[str]
-    incompatible_inputs: list[str]
 
 
 class TickerCodeEvidenceResponse(BaseModel):
@@ -305,11 +292,6 @@ class IndicatorsResponse(BaseModel):
     fcf: Decimal | None
     price_to_fcf: Decimal | None
     fcf_yield: Decimal | None
-    net_interest_margin: Decimal | None
-    efficiency_ratio: Decimal | None
-    cost_of_risk: Decimal | None
-    loss_ratio: Decimal | None
-    combined_ratio: Decimal | None
     revenue: Decimal | None
     net_income: Decimal | None
     net_income_total: Decimal | None
@@ -326,7 +308,6 @@ class IndicatorsResponse(BaseModel):
     null_reasons: dict[str, str]
     source_account_evidence: list[SourceAccountEvidenceResponse]
     cpc41_window_provenance: Cpc41WindowProvenanceResponse | None
-    bank_regulatory_provenance: BankRegulatoryProvenanceResponse | None
 
 
 class IndicatorContractResponse(BaseModel):
@@ -718,36 +699,12 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
                     duplicates_discarded=item.duplicates_discarded,
                 )
                 for item in analysis.indicators.source_account_evidence
-                if item.field != "dividends_declared"
+                if not is_retired_sector_input(item.field)
+                and item.field != "dividends_declared"
                 and not item.field.startswith("dividends_declared[")
             ],
             "cpc41_window_provenance": _cpc41_window_response(
                 analysis.indicators.cpc41_window_provenance
-            ),
-            "bank_regulatory_provenance": (
-                None
-                if analysis.indicators.bank_regulatory_provenance is None
-                else BankRegulatoryProvenanceResponse(
-                    source=analysis.indicators.bank_regulatory_provenance.source,
-                    period_start=(
-                        analysis.indicators.bank_regulatory_provenance.period_start
-                    ),
-                    period_end=analysis.indicators.bank_regulatory_provenance.period_end,
-                    perimeter=analysis.indicators.bank_regulatory_provenance.perimeter,
-                    averaging_method=(
-                        analysis.indicators.bank_regulatory_provenance.averaging_method
-                    ),
-                    basis=analysis.indicators.bank_regulatory_provenance.basis,
-                    available_inputs=sorted(
-                        analysis.indicators.bank_regulatory_provenance.available_inputs
-                    ),
-                    missing_inputs=sorted(
-                        analysis.indicators.bank_regulatory_provenance.missing_inputs
-                    ),
-                    incompatible_inputs=sorted(
-                        analysis.indicators.bank_regulatory_provenance.incompatible_inputs
-                    ),
-                )
             ),
         }
     )

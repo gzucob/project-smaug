@@ -160,17 +160,6 @@ export interface Cpc41WindowProvenance {
   diluted_blocker: NullReason | null;
 }
 
-export interface BankRegulatoryProvenance {
-  source: string | null;
-  period_start: string | null;
-  period_end: string | null;
-  perimeter: string | null;
-  averaging_method: string | null;
-  basis: string | null;
-  available_inputs: string[];
-  missing_inputs: string[];
-  incompatible_inputs: string[];
-}
 
 export interface DebtLine {
   code: string;
@@ -259,12 +248,7 @@ export interface Indicators {
   price_to_fcf: Decimalish;
   fcf_yield: Decimalish;
   // Bank-only (ADR 0058): null under every other accounting regime.
-  net_interest_margin: Decimalish;
-  efficiency_ratio: Decimalish;
-  cost_of_risk: Decimalish;
   // Insurance-only underwriting ratios (ADR 0061).
-  loss_ratio: Decimalish;
-  combined_ratio: Decimalish;
   revenue: Decimalish;
   net_income: Decimalish;
   net_income_total: Decimalish;
@@ -288,7 +272,6 @@ export interface Indicators {
   /** Filing diagnostics retained by the read API; not displayed in the UI. */
   cpc41_window_provenance?: Cpc41WindowProvenance | null;
   /** Regulatory inputs behind bank-only indicators, when available. */
-  bank_regulatory_provenance?: BankRegulatoryProvenance | null;
 }
 
 /** Formula metadata published by the API for market-facing indicators. */
@@ -333,7 +316,7 @@ export type NullReason =
 /** Indicator fields displayed in the UI; the API mirror retains hidden fields. */
 export type IndicatorKey = Exclude<
   keyof Indicators,
-  "null_reasons" | "source_account_evidence" | "cpc41_window_provenance" | "bank_regulatory_provenance"
+  "null_reasons" | "source_account_evidence" | "cpc41_window_provenance"
   | "eps_diluted" | "pe_diluted"
 >;
 
