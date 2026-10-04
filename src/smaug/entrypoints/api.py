@@ -271,26 +271,35 @@ class IndicatorsResponse(BaseModel):
     liabilities_to_assets: Decimal | None
     equity_to_assets: Decimal | None
     current_ratio: Decimal | None
+    price_to_cfo: Decimal | None
+    ev_cfo: Decimal | None
+    ev_fcf: Decimal | None
+    cash_ratio: Decimal | None
+    quick_ratio: Decimal | None
+    ev_revenue: Decimal | None
+    free_float: Decimal | None
+    price_to_ebitda: Decimal | None
+    cfo_yield: Decimal | None
+    cfo_margin: Decimal | None
+    fcf_margin: Decimal | None
+    cash_conversion: Decimal | None
+    capex_to_cfo: Decimal | None
     revenue_growth: Decimal | None
     net_income_growth: Decimal | None
     revenue_cagr_5y: Decimal | None
     ebitda_cagr_5y: Decimal | None
     ebit_cagr_5y: Decimal | None
     net_income_cagr_5y: Decimal | None
+    earnings_yield: Decimal | None
     pe_basic: Decimal | None
     pe_diluted: Decimal | None
     pb: Decimal | None
-    company_pe: Decimal | None
-    company_pb: Decimal | None
     psr: Decimal | None
     price_to_assets: Decimal | None
     price_to_ebit: Decimal | None
     price_to_working_capital: Decimal | None
     dividend_yield: Decimal | None
     payout_cash_paid_in_period: Decimal | None
-    payout_declared_in_period: Decimal | None
-    company_cash_yield_paid_in_period: Decimal | None
-    company_yield_declared_in_period: Decimal | None
     ev_ebitda: Decimal | None
     ev_ebit: Decimal | None
     fcf: Decimal | None
@@ -306,7 +315,6 @@ class IndicatorsResponse(BaseModel):
     net_income_total: Decimal | None
     distributions_per_security: Decimal | None
     company_distributions_paid_in_period: Decimal | None
-    company_distributions_declared_in_period: Decimal | None
     total_assets: Decimal | None
     total_liabilities: Decimal | None
     equity: Decimal | None
@@ -464,6 +472,7 @@ def _to_indicator_contract(
         for key, contract in indicator_contracts(
             analysis.calculation_contract_version
         ).items()
+        if key in public_indicator_names()
     }
 
 
@@ -701,10 +710,16 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
                     formula=item.formula,
                     dependencies=list(item.dependencies),
                     blocker=item.blocker,
-                    consumer_indicators=list(item.consumer_indicators),
+                    consumer_indicators=[
+                        key
+                        for key in item.consumer_indicators
+                        if key in public_indicator_names()
+                    ],
                     duplicates_discarded=item.duplicates_discarded,
                 )
                 for item in analysis.indicators.source_account_evidence
+                if item.field != "dividends_declared"
+                and not item.field.startswith("dividends_declared[")
             ],
             "cpc41_window_provenance": _cpc41_window_response(
                 analysis.indicators.cpc41_window_provenance

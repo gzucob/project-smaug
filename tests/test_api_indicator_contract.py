@@ -93,8 +93,6 @@ def _analysis(view: AnalysisView) -> TickerAnalysis:
         indicators=Indicators(
             pe_basic=Decimal("6"),
             pb=Decimal("1.4"),
-            company_pe=Decimal("7"),
-            company_pb=Decimal("1.6"),
         ),
     )
 
@@ -113,26 +111,10 @@ def test_api_contract_exposes_one_selected_result_per_concept() -> None:
     assert "pe_basic_market" not in response.indicator_contract
     assert "eps_basic_market" not in response.indicator_contract
 
-    company_pe = response.indicator_contract["company_pe"]
-    assert company_pe.basis == "company_market_convention"
-    assert company_pe.numerator == "market_capitalization"
-    assert company_pe.denominator == "attributable_net_income"
-    assert company_pe.reference_period == "last_twelve_months"
-    assert company_pe.price_basis == "analysis.price_basis"
-    assert company_pe.share_basis == "listed_classes_outstanding"
-
-    company_pb = response.indicator_contract["company_pb"]
-    assert company_pb.denominator == "current_attributable_equity"
-    assert company_pb.reference_period == "reference_date_closing"
-
 
 def test_api_contract_names_closed_year_period_without_changing_formula() -> None:
     response = _to_response(_analysis(VIEW_CLOSED_YEAR))
 
-    assert (
-        response.indicator_contract["company_pe"].reference_period
-        == "closed_fiscal_year"
-    )
     assert response.indicator_contract["pe_basic"].reference_period == (
         "closed_fiscal_year"
     )

@@ -3,20 +3,15 @@ import type { Analysis, IndicatorContract, IndicatorKey } from "@/lib/types";
 import { reasonCopy } from "@/lib/null-reasons";
 
 type ValuationCard = {
-  key: Extract<IndicatorKey, "pe_basic" | "pe_diluted" | "pb" | "company_pe" | "company_pb">;
+  key: Extract<IndicatorKey, "pe_basic" | "pb">;
   label: string;
 };
 
 const SECURITY_CARDS: ValuationCard[] = [
-  { key: "pe_basic", label: "P/L básico" },
-  { key: "pe_diluted", label: "P/L diluído" },
+  { key: "pe_basic", label: "P/L" },
   { key: "pb", label: "P/VP" },
 ];
 
-const COMPANY_CARDS: ValuationCard[] = [
-  { key: "company_pe", label: "P/L da companhia" },
-  { key: "company_pb", label: "P/VP da companhia" },
-];
 
 const TOKEN_LABEL: Record<string, string> = {
   security_price: "preço do papel",
@@ -67,28 +62,19 @@ export function ValuationSummary({ analysis }: { analysis: Analysis }) {
             Valuation
           </h2>
           <p className="mt-1 max-w-3xl text-sm text-ink-500">
-            Duas leituras convivem: a estrita respeita o papel e a divulgação CPC 41;
-            a de convenção resume a companhia pelo valor de mercado e deixa seus
-            denominadores explícitos.
+            Preço comparado com o lucro e o patrimônio por ação.
           </p>
         </div>
         <span className="h-px flex-1 bg-gradient-to-r from-gold-500/30 to-transparent" />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+      <div className="grid gap-4">
         <ValuationGroup
           title="Dados por ação"
           subtitle="P/L por papel e P/VP por ação"
           cards={SECURITY_CARDS}
           analysis={analysis}
           accent="var(--color-gem-azure)"
-        />
-        <ValuationGroup
-          title="Visão da empresa"
-          subtitle="Capitalização ÷ resultado ou patrimônio da companhia"
-          cards={COMPANY_CARDS}
-          analysis={analysis}
-          accent="var(--color-gold-400)"
         />
       </div>
     </section>

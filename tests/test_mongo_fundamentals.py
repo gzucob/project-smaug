@@ -357,49 +357,6 @@ def test_source_cell_identity_keeps_distinct_dmpl_columns_and_fixed_flags() -> N
     ]
 
 
-def test_dmpl_evidence_keeps_distinct_columns_after_exact_deduplication() -> None:
-    financials = standardize(
-        {
-            "DMPL": {
-                "accounts": [
-                    {
-                        "code": "5.04.06",
-                        "name": "Dividendos",
-                        "quantity": "-10",
-                        "COLUNA_DF": "Patrimônio Líquido",
-                    },
-                    {
-                        "code": "5.04.06",
-                        "name": "Dividendos",
-                        "quantity": "-10",
-                        "COLUNA_DF": "Patrimônio Líquido",
-                    },
-                    {
-                        "code": "5.04.06",
-                        "name": "Dividendos",
-                        "quantity": "-8",
-                        "COLUNA_DF": "Lucros ou Prejuízos Acumulados",
-                    },
-                ]
-            }
-        },
-        Sector.COMMODITY,
-        date(2024, 12, 31),
-    )
-
-    declared = next(
-        item
-        for item in financials.source_account_evidence
-        if item.field == "dividends_declared"
-    )
-    assert financials.dividends_declared == Decimal("10")
-    assert declared.duplicates_discarded == 1
-    assert [ref.column for ref in declared.found] == [
-        "Patrimônio Líquido",
-        "Lucros ou Prejuízos Acumulados",
-    ]
-
-
 def test_standardize_applies_currency_size_to_absolute_reais() -> None:
     # CVM reports in thousands; the mapper must scale to keep market ratios sane.
     by_module = {
@@ -1476,108 +1433,6 @@ def _macc(code: str, name: str, column: str | None, qty: str) -> dict[str, Any]:
     return cell
 
 
-def test_standardize_reads_declared_dividends_from_the_dmpl() -> None:
-    # #104: the declared basis. Shaped on BBDC4's real 2024 DMPL, whose column
-    # HEADERS are shifted (the controllers' total sits under "Participação dos
-    # Não Controladores" and the consolidated total under an unnamed column), so
-    # the row's figure must be read structurally — the largest absolute cell —
-    # never by the column's name. Positive rows ("dividendos prescritos", a
-    # return to equity) and the treasury rows stay out.
-    by_module = {
-        "DMPL": {
-            "period_start_date": "2024-01-01",
-            "accounts": [
-                _macc("5.04.06", "Dividendos", "Lucros ou Prejuízos Acumulados", "0"),
-                _macc(
-                    "5.04.07",
-                    "Juros sobre Capital Próprio",
-                    "Outros Resultados Abrangentes",  # shifted: really controllers'
-                    "-11283288",
-                ),
-                _macc(
-                    "5.04.07",
-                    "Juros sobre Capital Próprio",
-                    "Patrimônio Líquido Consolidado",  # shifted: really minority
-                    "-435571",
-                ),
-                _macc(
-                    "5.04.07",
-                    "Juros sobre Capital Próprio",
-                    None,  # shifted: really the consolidated total
-                    "-11718859",
-                ),
-                # A prescribed dividend RETURNS to equity — never netted in.
-                _macc(
-                    "5.04.08",
-                    "Dividendos Prescritos",
-                    "Lucros ou Prejuízos Acumulados",
-                    "120000",
-                ),
-                # Treasury transactions live under 5.04 too — not a declaration.
-                _macc(
-                    "5.04.04",
-                    "Ações em Tesouraria Adquiridas",
-                    "Reservas de Capital, Opções Outorgadas e Ações em Tesouraria",
-                    "-224377",
-                ),
-            ],
-        },
-    }
-
-    f = standardize(by_module, Sector.BANK, date(2024, 12, 31))
-
-    assert f.dividends_declared == Decimal("11718859")  # the row's largest cell
-    assert f.dmpl_period_start == date(2024, 1, 1)
-
-
-def test_standardize_sums_the_dividend_and_jcp_declaration_rows() -> None:
-    # A filer that declares both: the two 5.04 rows sum (VIVT3's shape).
-    by_module = {
-        "DMPL": {
-            "accounts": [
-                _macc("5.04.06", "Dividendos", "Patrimônio Líquido", "-1500000"),
-                _macc(
-                    "5.04.06",
-                    "Dividendos",
-                    "Lucros ou Prejuízos Acumulados",
-                    "-1500000",
-                ),
-                _macc(
-                    "5.04.07",
-                    "Juros sobre Capital Próprio",
-                    "Patrimônio Líquido",
-                    "-3105000",
-                ),
-            ],
-        },
-    }
-
-    f = standardize(by_module, Sector.INDUSTRY, date(2024, 12, 31))
-
-    assert f.dividends_declared == Decimal("4605000")  # 1.5m + 3.105m, positive
-
-
-def test_standardize_declared_is_zero_when_the_dmpl_declares_nothing() -> None:
-    # A filed DMPL with no 5.04 dividend/JCP row is an economic ZERO — the
-    # company declared nothing in the period. Reading it as null would void
-    # every TTM window containing one quiet quarter. Null is reserved for the
-    # DMPL itself being absent from the mirror.
-    filed_quiet = {
-        "DMPL": {
-            "accounts": [
-                _macc("5.01", "Saldos Iniciais", "Patrimônio Líquido", "1000"),
-            ]
-        },
-    }
-    no_dmpl: dict[str, Any] = {}
-
-    quiet = standardize(filed_quiet, Sector.INDUSTRY, date(2024, 12, 31))
-    absent = standardize(no_dmpl, Sector.INDUSTRY, date(2024, 12, 31))
-
-    assert quiet.dividends_declared == Decimal("0")
-    assert absent.dividends_declared is None
-
-
 def test_standardize_derives_net_income_when_the_controllers_split_is_filed_blank() -> (
     None
 ):
@@ -2109,26 +1964,6 @@ def _dmpl_filing(balance_type: str, jcp: str) -> dict[str, Any]:
         "module": "DMPL",
         "fetched_at": datetime(2026, 7, 2, tzinfo=UTC),
     }
-
-
-async def test_the_declared_dividends_come_from_the_parent_dmpl() -> None:
-    # #104: the parent's declaration is what the listed shareholders receive, and
-    # the parent DMPL has no minority column to shift — so it beats the
-    # consolidated statement that ordinarily outranks it.
-    reader = MongoFundamentalsReader(
-        _FakeCollection(
-            [
-                _dmpl_filing("consolidated", "-11718859"),  # minority included
-                _dmpl_filing("individual", "-11283288"),  # the parent's charge
-            ]
-        ),
-        sector_resolver=fake_sector_resolver,
-    )
-
-    annual = await reader.annual("BBDC4")
-
-    assert annual is not None
-    assert annual.dividends_declared == Decimal("11283288")
 
 
 async def test_reader_uses_the_individual_statement_when_it_is_all_there_is() -> None:
@@ -2987,7 +2822,7 @@ def test_duplicate_financial_bucket_children_cannot_prove_complete_composition()
         "Pgto de dividendos",
     ],
 )
-def test_financing_distribution_aliases_feed_paid_payout_and_company_yield(
+def test_financing_distribution_aliases_feed_paid_payout(
     label: str,
 ) -> None:
     f = standardize(
@@ -3010,7 +2845,6 @@ def test_financing_distribution_aliases_feed_paid_payout_and_company_yield(
         MarketData(market_cap=Decimal(1000000)),
     )
     assert result.payout_cash_paid_in_period == Decimal("0.3")
-    assert result.company_cash_yield_paid_in_period == Decimal("0.03")
     evidence = next(s for s in f.source_account_evidence if s.field == "dividends_paid")
     assert [r.code for r in evidence.found] == ["6.03.05"]
     assert evidence.found[0].value == Decimal(-30000)
@@ -3116,53 +2950,7 @@ def test_paid_zero_is_evidence_and_indirect_adjustment_is_not_cash() -> None:
         replace(f, net_income=Decimal(100)), None, MarketData(market_cap=Decimal(1000))
     )
     assert result.payout_cash_paid_in_period == Decimal(0)
-    assert result.company_cash_yield_paid_in_period == Decimal(0)
     assert result.dividend_yield is None
-
-
-def test_declared_jcp_alias_and_parent_detail_are_one_distribution() -> None:
-    f = standardize(
-        {
-            "DMPL": {
-                "accounts": [
-                    _macc("5.04.06", "JCP", "Patrimônio Líquido", "-100"),
-                    _macc(
-                        "5.04.06.01",
-                        "Juros sobre Capital Próprio",
-                        "Reserva de Lucros",
-                        "-40",
-                    ),
-                ]
-            }
-        },
-        Sector.INDUSTRY,
-        date(2025, 12, 31),
-    )
-    assert f.dividends_declared == Decimal(100)
-    result = compute(
-        replace(f, net_income=Decimal(500)), None, MarketData(market_cap=Decimal(1000))
-    )
-    assert result.payout_declared_in_period == Decimal("0.2")
-    assert result.company_yield_declared_in_period == Decimal("0.1")
-
-
-@pytest.mark.parametrize("amount", ["bad", "NaN", "Infinity"])
-def test_unreadable_declared_component_does_not_become_a_quiet_period(
-    amount: str,
-) -> None:
-    f = standardize(
-        {
-            "DMPL": {
-                "accounts": [
-                    _macc("5.04.06", "Dividendos", "Patrimônio Líquido", "-30"),
-                    _macc("5.04.07", "JCP", "Patrimônio Líquido", amount),
-                ]
-            }
-        },
-        Sector.INDUSTRY,
-        date(2025, 12, 31),
-    )
-    assert f.dividends_declared is None
 
 
 @pytest.mark.parametrize(

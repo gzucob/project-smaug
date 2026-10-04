@@ -95,15 +95,12 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.eps_basic_market is None
     assert ind.pe_basic_market is None
     assert ind.pb == Decimal("1.2")  # paper price 12 / closing BVPS 10
-    assert ind.company_pe == Decimal(10)  # company cap 12000 / annual profit 1200
-    assert ind.company_pb == Decimal(2)  # company cap 12000 / equity 6000
     assert ind.psr == Decimal(3)  # 12000 / 4000 annual revenue
     assert ind.price_to_assets == Decimal(1)  # 12000 / 12000
     assert ind.price_to_ebit == Decimal(10)  # 12000 / 1200 annual EBIT
     assert ind.price_to_working_capital == Decimal(6)  # 12000 / (4000 - 2000)
     assert ind.payout_cash_paid_in_period == Decimal(600) / Decimal(900)
     assert ind.dividend_yield == Decimal("0.05")  # R$ 0.60 / paper price R$ 12
-    assert ind.company_cash_yield_paid_in_period == Decimal("0.05")
     # Consolidated EBIT/EBITDA include the minority-owned operations, so EV adds
     # the R$600 non-controlling interest to cap + net debt (ADR 0057).
     assert ind.non_controlling_interests == Decimal(600)
@@ -171,7 +168,6 @@ def test_closed_year_leaves_annualization_a_no_op() -> None:
 
     assert ind.roe == Decimal("0.2")  # 1200 / 6000, no 12/12 inflation
     assert ind.net_margin == Decimal("0.3")  # 1200 / 4000
-    assert ind.company_pe == Decimal(10)  # 12000 / 1200
 
 
 # The one line the CVM mapper still skips for a financial-regime filer — mirrors
@@ -241,8 +237,6 @@ def test_bank_computes_the_ratios_its_schema_supports() -> None:
     assert ind.net_margin == Decimal("0.2")  # 600 / 3000
     assert ind.pe_basic == Decimal(10) / Decimal("0.75")  # 600 / 800 shares
     assert ind.pb == Decimal(1)  # paper price 10 / BVPS 10
-    assert ind.company_pe == Decimal(10)  # company cap 8000 / profit 800
-    assert ind.company_pb == Decimal(1)
     # The filed intermediation result still supports the generic gross-margin
     # view. PBT is never mislabeled EBIT, and CFO-CAPEX is not bank free cash flow.
     assert ind.gross_margin == Decimal("0.4")  # 1200 / 3000 — the spread
@@ -642,64 +636,6 @@ def test_insurer_explicit_debt_uses_the_same_formula_as_a_corporate_filer() -> N
     assert ind.ev_ebit == Decimal(32000) / Decimal(3000)
 
 
-def test_declared_dividend_basis_computes_alongside_the_paid_one() -> None:
-    # #104: the declared basis (DMPL charge) and the paid basis (DFC outflow)
-    # answer different questions and are published side by side — the same dual
-    # pattern ADR 0026 set for the statement slices.
-    financials = replace(
-        _nonfinancial(),
-        dividends_declared=Decimal(450),
-        dmpl_period_start=date(2024, 1, 1),
-    )
-    market = MarketData(
-        price=Decimal(12),
-        market_cap=Decimal(12000),
-        cash_distributions=Decimal("0.60"),
-    )
-
-    ind = compute(financials, None, market)
-
-    assert ind.payout_cash_paid_in_period == Decimal(600) / Decimal(900)
-    assert ind.payout_declared_in_period == Decimal("0.5")  # 450 / 900
-    assert ind.dividend_yield == Decimal("0.05")  # B3 rights / paper price
-    assert ind.company_cash_yield_paid_in_period == Decimal("0.05")
-    assert ind.company_yield_declared_in_period == Decimal("0.0375")
-    assert ind.company_distributions_declared_in_period == Decimal(450)
-
-
-def test_a_missing_dmpl_row_blames_the_declared_account() -> None:
-    ind = compute(_nonfinancial(), None, MarketData(market_cap=Decimal(12000)))
-
-    assert ind.payout_declared_in_period is None
-    assert ind.null_reasons["payout_declared_in_period"] is (
-        NullReason.SOURCE_ACCOUNT_ABSENT
-    )
-    assert ind.null_reasons["company_distributions_declared_in_period"] is (
-        NullReason.SOURCE_ACCOUNT_ABSENT
-    )
-    # The paid basis is untouched by the declared one going missing:
-    assert ind.payout_cash_paid_in_period is not None
-
-
-def test_post_closing_agm_is_not_mislabelled_as_exercise_payout() -> None:
-    # A 2025 AGM may declare the distribution of 2024 profit. The structured
-    # inputs identify when the declaration entered DMPL, not which exercise
-    # generated it, so the ratio states its timing instead of guessing.
-    financials = replace(
-        _nonfinancial(),
-        reference_date=date(2025, 12, 31),
-        period_start=date(2025, 1, 1),
-        dividends_declared=Decimal(450),
-        dmpl_period_start=date(2025, 1, 1),
-    )
-
-    ind = compute(financials, None, MarketData(market_cap=Decimal(12000)))
-
-    assert ind.payout_declared_in_period == Decimal("0.5")
-    assert ind.company_distributions_declared_in_period == Decimal(450)
-    assert not hasattr(ind, "payout_declared")
-
-
 def test_incomplete_debt_coverage_precedes_a_missing_market_input() -> None:
     # EV is suppressed before market arithmetic when its debt perimeter is not
     # established. A missing cap must not hide the more fundamental basis gap.
@@ -839,9 +775,7 @@ def test_basic_and_company_multiples_survive_a_missing_cpc41_share_input() -> No
     assert "pe_basic" not in ind.null_reasons
     assert ind.eps_basic_market is None
     assert ind.pe_basic_market is None
-    assert ind.company_pe == Decimal(10)
     assert ind.pb == Decimal("1.2")
-    assert ind.company_pb == Decimal(2)
 
 
 def test_missing_shares_blames_the_share_count_not_the_price() -> None:
@@ -859,8 +793,6 @@ def test_missing_shares_blames_the_share_count_not_the_price() -> None:
     assert ind.null_reasons["eps_basic"] is NullReason.MISSING_SHARE_COUNT
     assert ind.null_reasons["pe_basic"] is NullReason.MISSING_SHARE_COUNT
     assert ind.pe_diluted == Decimal(6) / Decimal("1.40")
-    assert ind.company_pe is None
-    assert ind.null_reasons["company_pe"] is NullReason.MISSING_SHARE_COUNT
     assert ind.null_reasons["pb"] is NullReason.MISSING_SHARE_COUNT
 
 
@@ -898,8 +830,6 @@ def test_a_sibling_class_without_a_quote_blames_the_price() -> None:
     )
 
     assert ind.pe_basic == Decimal(4)
-    assert ind.company_pe is None
-    assert ind.null_reasons["company_pe"] is NullReason.MISSING_PRICE
     assert ind.eps is not None  # basic EPS needs no quote
 
 
@@ -917,8 +847,6 @@ def test_zero_denominator_null_is_named() -> None:
     assert ind.null_reasons["payout_cash_paid_in_period"] is (
         NullReason.ZERO_DENOMINATOR
     )
-    assert ind.company_pe is None
-    assert ind.null_reasons["company_pe"] is NullReason.ZERO_DENOMINATOR
     assert ind.eps_basic == Decimal(0)
     assert ind.pe_basic is None
     assert ind.null_reasons["pe_basic"] is NullReason.ZERO_DENOMINATOR

@@ -49,6 +49,7 @@ from smaug.analysis.domain.financials import (
     expected_regime,
 )
 from smaug.analysis.domain.indicators import NullReason
+from smaug.analysis.infrastructure.free_float import filed_free_float
 from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
 from smaug.portfolio.domain.company import RegistrantResolver
 from smaug.portfolio.domain.sectors import Sector
@@ -664,64 +665,6 @@ def _resolve_dep_amort(
     )
 
 
-# The DMPL rows that carry a dividend/JCP declaration, inside 5.04 ("Transações
-# de Capital com os Sócios"). Matched by folded name; the 5.04 scope keeps the
-# treasury rows (5.04.04/05) and the reserve destinations (5.06.*) out, and the
-# negative-sign filter keeps "dividendos prescritos" (a *return* to equity,
-# positive) from netting the declaration down.
-_DECLARED_PREFIX = "5.04"
-_DECLARED_NEEDLES = ("dividendo", "juros sobre capital", "capital proprio")
-
-
-def _dividends_declared(dmpl: Accounts) -> Decimal | None:
-    """Dividends + JCP declared against equity in the period (DMPL 5.04 rows).
-
-    The DMPL is a matrix — each account repeats once per equity column — and the
-    column *names* cannot be trusted: BBDC4's filing shifts them (its R$166bn
-    controllers' equity sits under "Participação dos Não Controladores", and the
-    consolidated total under an unnamed column). So the row's figure is read
-    structurally: a declaration posts one-signed cells, and the largest absolute
-    cell is the row's total column. Read from the parent-only statement wherever
-    it exists (see ``_load``) — the parent's declaration is what the listed
-    shareholders receive, and the parent DMPL has no minority column to shift.
-
-    Returned positive. ``None`` only when the DMPL itself is absent; a filed
-    DMPL with no declaration row is an economic **zero** — the company declared
-    nothing in the period — not a missing input, and reading it as null would
-    void every TTM window containing one quiet quarter. Note the basis is
-    *declared during the period*: a dividend the AGM approves months after
-    year-end lands in the next year's DMPL, so a filer that declares mostly
-    after closing (rather than as intra-year JCP) still shows the gap the
-    platforms' "of the exercise" attribution closes by hand.
-    """
-    if not dmpl:
-        return None
-    rows: dict[tuple[str, str], Decimal] = {}
-    for account in dmpl:
-        code = str(account.get("code", ""))
-        if not code.startswith(_DECLARED_PREFIX):
-            continue
-        name = _fold(str(account.get("name", "")))
-        if not _is_distribution_name(name):
-            continue
-        value = _finite_account_value(account)
-        if value is None:
-            return None
-        if value >= 0:
-            continue
-        key = (code, name)
-        if key not in rows or abs(value) > abs(rows[key]):
-            rows[key] = value
-    selected = [
-        (code, value)
-        for (code, _), value in rows.items()
-        if not any(
-            code.startswith(parent + ".") for parent, _ in rows if parent != code
-        )
-    ]
-    return sum((abs(value) for _, value in selected), Decimal(0))
-
-
 def _capex_accounts(dfc: Accounts) -> tuple[Mapping[str, Any], ...]:
     """Return qualifying PP&E/intangible cash-out rows from the DFC."""
     return tuple(
@@ -766,8 +709,30 @@ def _capex(dfc: Accounts) -> Decimal | None:
 
 
 _SOURCE_CONSUMERS: dict[str, tuple[str, ...]] = {
-    "cfo": ("fcf", "price_to_fcf", "fcf_yield"),
-    "capex": ("fcf", "price_to_fcf", "fcf_yield"),
+    "inventories": ("quick_ratio",),
+    "current_assets": ("current_ratio", "quick_ratio"),
+    "current_liabilities": ("current_ratio", "cash_ratio", "quick_ratio"),
+    "cfo": (
+        "fcf",
+        "price_to_fcf",
+        "fcf_yield",
+        "price_to_cfo",
+        "ev_cfo",
+        "ev_fcf",
+        "cfo_yield",
+        "cfo_margin",
+        "fcf_margin",
+        "cash_conversion",
+        "capex_to_cfo",
+    ),
+    "capex": (
+        "fcf",
+        "price_to_fcf",
+        "fcf_yield",
+        "ev_fcf",
+        "fcf_margin",
+        "capex_to_cfo",
+    ),
     "dep_amort": (
         "ebitda_margin",
         "ebitda_cagr_5y",
@@ -780,14 +745,7 @@ _SOURCE_CONSUMERS: dict[str, tuple[str, ...]] = {
         "net_debt_to_ebitda",
         "ev_ebitda",
     ),
-    "dividends_paid": (
-        "payout_cash_paid_in_period",
-        "company_cash_yield_paid_in_period",
-    ),
-    "dividends_declared": (
-        "payout_declared_in_period",
-        "company_yield_declared_in_period",
-    ),
+    "dividends_paid": ("payout_cash_paid_in_period",),
     "current_financial_investments": ("current_financial_investments",),
     "bank_net_interest": ("net_interest_margin",),
     "bank_earning_assets": ("net_interest_margin",),
@@ -950,7 +908,6 @@ def _source_account_evidence(
     bpp, bpp_s = _accounts(by_module, "BPP"), _scale(by_module, "BPP")
     dre, dre_s = _accounts(by_module, "DRE"), _scale(by_module, "DRE")
     dfc, dfc_s = _accounts(by_module, "DFC"), _scale(by_module, "DFC")
-    dmpl, dmpl_s = _accounts(by_module, "DMPL"), _scale(by_module, "DMPL")
     duplicate_counts = {
         module: _duplicate_count(by_module, module) for module in _STATEMENTS
     }
@@ -1288,6 +1245,20 @@ def _source_account_evidence(
     if regime is not AccountingRegime.BANK:
         add(
             _source_entry(
+                "inventories",
+                "BPA",
+                ("code=1.01.04",),
+                tuple(
+                    r
+                    for r in _code_refs(bpa, bpa_s, "1.01.04")
+                    if "estoqu" in _fold(r.name)
+                ),
+                financials.inventories,
+                financials.unmapped_fields,
+            )
+        )
+        add(
+            _source_entry(
                 "current_assets",
                 "BPA",
                 ("code=1.01",),
@@ -1360,36 +1331,6 @@ def _source_account_evidence(
         )
     )
 
-    def is_declared_source(account: Mapping[str, Any]) -> bool:
-        return str(account.get("code", "")).startswith(
-            _DECLARED_PREFIX
-        ) and _is_distribution_name(str(account.get("name", "")))
-
-    declared_refs = tuple(
-        SourceAccountRef(
-            str(a.get("code", "")),
-            str(a.get("name", "")),
-            _mul(_finite_account_value(a), dmpl_s),
-            column=_account_column(a),
-        )
-        for a in dmpl
-        if is_declared_source(a)
-    )
-    add(
-        _source_entry(
-            "dividends_declared",
-            "DMPL",
-            (
-                "scope=5.04",
-                "label~dividend/JCP",
-                *_statement_period_evidence(by_module, "DMPL"),
-            ),
-            declared_refs,
-            financials.dividends_declared,
-            financials.unmapped_fields,
-            parent_code="5.04",
-        )
-    )
     if regime is AccountingRegime.BANK:
         for field, expected in (
             ("bank_interest_result_annualized", "same-span interest result"),
@@ -2124,6 +2065,16 @@ def _duplicate_count(by_module: Mapping[str, Any], module: str) -> int:
     return _deduplicate_accounts(module, payload, accounts)[1]
 
 
+def _inventories(bpa: Accounts) -> Decimal | None:
+    """Accept the inventory root only when the filed label identifies stocks."""
+    if not any(
+        a.get("code") == "1.01.04" and "estoqu" in _fold(str(a.get("name", "")))
+        for a in bpa
+    ):
+        return None
+    return _by_code(bpa, "1.01.04")
+
+
 def _accounts(by_module: Mapping[str, Any], module: str) -> Accounts:
     payload = by_module.get(module)
     if not isinstance(payload, Mapping):
@@ -2441,7 +2392,6 @@ def standardize(
     bpp, bpp_s = _accounts(by_module, "BPP"), _scale(by_module, "BPP")
     dre, dre_s = _accounts(by_module, "DRE"), _scale(by_module, "DRE")
     dfc, dfc_s = _accounts(by_module, "DFC"), _scale(by_module, "DFC")
-    dmpl, dmpl_s = _accounts(by_module, "DMPL"), _scale(by_module, "DMPL")
 
     filed_regime = _filed_regime(dre)
     cpc41_accounts = dre if per_share_accounts is None else per_share_accounts
@@ -2488,8 +2438,6 @@ def standardize(
         revenue=_mul(_by_code(dre, "3.01"), dre_s),
         gross_profit=_mul(_by_code(dre, "3.03"), dre_s),
         dividends_paid=_mul(_dividends_paid(dfc), dfc_s),
-        dividends_declared=_mul(_dividends_declared(dmpl), dmpl_s),
-        dmpl_period_start=_period_start(by_module, "DMPL"),
         cfo=_mul(_by_code(dfc, "6.01"), dfc_s),  # net operating cash flow
         capex=_mul(_capex(dfc), dfc_s),
         filed_regime=filed_regime,
@@ -3147,6 +3095,7 @@ def _as_insurer(
         cash_equivalents=_cash_equivalents(bpa, bpa_s, AccountingRegime.CORPORATE),
         current_financial_investments=_mul(_by_code(bpa, "1.01.02"), bpa_s),
         current_assets=_mul(_by_code(bpa, "1.01"), bpa_s),
+        inventories=_mul(_inventories(bpa), bpa_s),
         current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),
         total_debt=total_debt,
         debt_coverage_null_reason=debt_reason,
@@ -3189,6 +3138,7 @@ def _as_corporate(
         cash_equivalents=_cash_equivalents(bpa, bpa_s, AccountingRegime.CORPORATE),
         current_financial_investments=_mul(_by_code(bpa, "1.01.02"), bpa_s),
         current_assets=_mul(_by_code(bpa, "1.01"), bpa_s),
+        inventories=_mul(_inventories(bpa), bpa_s),
         current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),
         total_debt=total_debt,
         debt_coverage_null_reason=debt_reason,
@@ -3404,6 +3354,17 @@ class MongoFundamentalsReader:
                 per_share_classes=company_classes,
                 period_share_classes=self._period_share_classes(
                     cnpj or "", date.fromisoformat(ref).year
+                ),
+            )
+            free_float, free_float_source = filed_free_float(
+                docs, financials.reference_date
+            )
+            financials = replace(
+                financials,
+                free_float=free_float,
+                source_account_evidence=(
+                    *financials.source_account_evidence,
+                    free_float_source,
                 ),
             )
             evidence = financials.debt_evidence

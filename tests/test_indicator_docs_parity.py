@@ -8,8 +8,9 @@ a failing test rather than a silent, user-facing lie.
 
 What is checked mechanically (the reworded-formula prose stays manual, by design
 — see the issue) is the **set** of documented indicators, against the
-public domain names and the TypeScript mirror. Retired storage fields and the
-internal EPS compatibility alias are not public indicators.
+public domain names and the TypeScript mirror. API fields remain mirrored even
+when the frontend intentionally hides an indicator. Retired storage fields and
+the internal EPS compatibility alias are not public indicators.
 
 Applicability is deliberately *not* checked any more. The front-end used to
 restate the calculator's regime guards in a ``naSectors`` field, and this test
@@ -46,6 +47,7 @@ def test_types_mirror_lists_exactly_the_indicator_fields() -> None:
     assert _typescript_indicator_fields() == set(public_indicator_names())
 
 
-def test_every_indicator_is_documented_and_no_stragglers() -> None:
-    # Adding a field to Indicators without documenting it (or removing one) fails here.
-    assert _documented_indicators() == set(public_indicator_names())
+def test_every_displayed_indicator_is_documented_and_no_stragglers() -> None:
+    # Diluted indicators stay in the API mirror but are hidden in the frontend.
+    hidden = {"eps_diluted", "pe_diluted"}
+    assert _documented_indicators() == set(public_indicator_names()) - hidden

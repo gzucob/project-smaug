@@ -222,45 +222,6 @@ def test_ttm_does_not_infer_a_weighted_denominator_from_a_missing_period() -> No
     assert ttm.eps_basic_null_reason is NullReason.MISSING_CPC41_DISCLOSURE
 
 
-def test_ttm_isolates_the_declared_dividends_on_the_dmpl_span() -> None:
-    # #104: the DMPL is year-to-date like the DFC, on its own span. Four YTD
-    # figures (100, 250, 400 within one year, then Q1 of the next at 80) must
-    # isolate to 100+150+150... — here two full years make it simple: the last
-    # four isolated quarters are 150 (Q2), 150 (Q3), 200 (Q4, from the annual),
-    # and 80 (the new year's Q1) = 580.
-    year1 = [
-        replace(
-            _q(
-                date(2025, m, d),
-                revenue=Decimal(1000),
-                period_start=date(2025, m - 2, 1),
-            ),
-            dividends_declared=ytd,
-            dmpl_period_start=date(2025, 1, 1),
-        )
-        for (m, d), ytd in zip(
-            [(3, 31), (6, 30), (9, 30)],
-            [Decimal(100), Decimal(250), Decimal(400)],
-            strict=True,
-        )
-    ]
-    annual = replace(
-        _q(date(2025, 12, 31), revenue=Decimal(4000), period_start=date(2025, 1, 1)),
-        dividends_declared=Decimal(600),  # the year's total → Q4 = 600 − 400
-        dmpl_period_start=date(2025, 1, 1),
-    )
-    q1_next = replace(
-        _q(date(2026, 3, 31), revenue=Decimal(1000), period_start=date(2026, 1, 1)),
-        dividends_declared=Decimal(80),
-        dmpl_period_start=date(2026, 1, 1),
-    )
-
-    ttm = build_ttm(year1 + [q1_next], annual)
-
-    assert ttm is not None
-    assert ttm.dividends_declared == Decimal(580)  # 150 + 150 + 200 + 80
-
-
 def test_ttm_sums_isolated_flows_and_takes_latest_stocks() -> None:
     quarters = [_q(e, revenue=Decimal(1000), net_income=Decimal(100)) for e in _ENDS]
     quarters[-1] = _q(
@@ -1306,10 +1267,7 @@ def _distribution_period(end: date, amount: Decimal | None) -> StandardizedFinan
                 ),
             ),
         )
-        for field, statement in (
-            ("dividends_paid", "DFC"),
-            ("dividends_declared", "DMPL"),
-        )
+        for field, statement in (("dividends_paid", "DFC"),)
     )
     return StandardizedFinancials(
         reference_date=end,
@@ -1317,9 +1275,7 @@ def _distribution_period(end: date, amount: Decimal | None) -> StandardizedFinan
         cd_cvm="123",
         filed_regime=AccountingRegime.CORPORATE,
         dfc_period_start=start,
-        dmpl_period_start=start,
         dividends_paid=amount,
-        dividends_declared=amount,
         source_account_evidence=sources,
     )
 
@@ -1344,8 +1300,7 @@ def test_ttm_distributions_use_ytd_identity_despite_unknown_intermediate_amounts
     result = build_ttm_as_of(quarters, [annual], date(2026, 6, 30))
     assert result is not None
     assert result.dividends_paid == Decimal(90)
-    assert result.dividends_declared == Decimal(90)
-    for field in ("dividends_paid", "dividends_declared"):
+    for field in ("dividends_paid",):
         root = next(s for s in result.source_account_evidence if s.field == field)
         assert root.status is SourceAccountStatus.DERIVED
         assert root.formula == "prior annual - prior same-period YTD + current YTD"
@@ -1366,7 +1321,6 @@ def test_exact_annual_distribution_needs_no_intermediate_payment_disclosures() -
     result = build_ttm_as_of(quarters, [annual], annual.reference_date)
     assert result is not None
     assert result.dividends_paid == Decimal(100)
-    assert result.dividends_declared == Decimal(100)
 
 
 def test_missing_quarter_observation_still_prevents_a_ttm_window() -> None:
@@ -1403,7 +1357,6 @@ def test_mismatched_distribution_scope_currency_or_span_does_not_recover() -> No
         result = build_ttm_as_of(quarters, [annual], date(2026, 6, 30))
         assert result is not None
         assert result.dividends_paid is None
-        assert result.dividends_declared is None
 
 
 def test_unresolved_issuer_regime_or_ytd_distribution_keeps_null() -> None:
@@ -1412,17 +1365,16 @@ def test_unresolved_issuer_regime_or_ytd_distribution_keeps_null() -> None:
         {"cd_cvm": "456"},
         {"filed_regime": AccountingRegime.BANK},
         {"filed_regime": None},
-        {"dfc_period_start": date(2025, 4, 1), "dmpl_period_start": date(2025, 4, 1)},
-        {"dividends_paid": None, "dividends_declared": None},
-        {"dividends_paid": Decimal("NaN"), "dividends_declared": Decimal("NaN")},
-        {"dividends_paid": Decimal(110), "dividends_declared": Decimal(110)},
+        {"dfc_period_start": date(2025, 4, 1)},
+        {"dividends_paid": None},
+        {"dividends_paid": Decimal("NaN")},
+        {"dividends_paid": Decimal(110)},
     ):
         quarters, annual = _distribution_window()
         quarters[1] = replace(quarters[1], **updates)
         result = build_ttm_as_of(quarters, [annual], date(2026, 6, 30))
         assert result is not None
         assert result.dividends_paid is None
-        assert result.dividends_declared is None
 
 
 def test_unresolved_distribution_lineage_keeps_every_required_filing() -> None:

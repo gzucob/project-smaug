@@ -72,9 +72,7 @@ _DRE_FLOW_FIELDS = (
     "insurance_admin_expenses",
 )
 _DFC_FLOW_FIELDS = ("dep_amort", "dividends_paid", "cfo", "capex")
-# The DMPL is year-to-date like the DFC, on its own span (#104).
-_DMPL_FLOW_FIELDS = ("dividends_declared",)
-_FLOW_FIELDS = _DRE_FLOW_FIELDS + _DFC_FLOW_FIELDS + _DMPL_FLOW_FIELDS
+_FLOW_FIELDS = _DRE_FLOW_FIELDS + _DFC_FLOW_FIELDS
 _TTM_QUARTERS = 4
 _ISOLATED_SPAN_MONTHS = 3
 _ONE_DAY = timedelta(days=1)
@@ -1068,12 +1066,8 @@ def _distribution_source(
     if source is None:
         return None
     facts = dict(entry.split("=", 1) for entry in source.expected if "=" in entry)
-    start = (
-        period.dfc_period_start
-        if field == "dividends_paid"
-        else period.dmpl_period_start
-    )
-    statement = "DFC" if field == "dividends_paid" else "DMPL"
+    start = period.dfc_period_start
+    statement = "DFC"
     value = getattr(period, field)
     if (
         period.cd_cvm is None
@@ -1180,7 +1174,7 @@ def _ttm_isolated_distribution_sources(
     if annual is not None and annual.reference_date in refs:
         supporting.append(annual)
     lineage: list[SourceAccountEvidence] = []
-    clock = "dfc_period_start" if field == "dividends_paid" else "dmpl_period_start"
+    clock = "dfc_period_start"
     for period in sorted(supporting, key=lambda p: p.reference_date):
         source = next(
             (s for s in period.source_account_evidence if s.field == field), None
@@ -1226,13 +1220,10 @@ def _isolate_year(
     for period in periods:
         dre_span = _months(period.period_start, period.reference_date)
         dfc_span = _months(period.dfc_period_start, period.reference_date)
-        dmpl_span = _months(period.dmpl_period_start, period.reference_date)
         flows: Flows = {}
         for name in _FLOW_FIELDS:
             if name in _DFC_FLOW_FIELDS:
                 span = dfc_span
-            elif name in _DMPL_FLOW_FIELDS:
-                span = dmpl_span
             else:
                 span = dre_span
             value = getattr(period, name)
@@ -1381,7 +1372,7 @@ def _build_ttm(
         summed[name] = sum(present, Decimal(0)) if len(present) == len(values) else None
 
     distribution_sources: list[SourceAccountEvidence] = []
-    for field in ("dividends_paid", "dividends_declared"):
+    for field in ("dividends_paid",):
         resolved = _ttm_distribution_from_cumulative(quarters, annual, refs[0], field)
         if resolved is not None:
             summed[field] = resolved[0]
@@ -1446,6 +1437,21 @@ def _build_ttm(
         source_account_evidence = _merge_source_account_evidence(
             source_account_evidence, (underwriting_source,)
         )
+    for field in ("cfo", "capex"):
+        source_account_evidence = _merge_source_account_evidence(
+            source_account_evidence,
+            _ttm_isolated_distribution_sources(
+                quarters, annual, refs, field, summed[field]
+            ),
+        )
+    source_account_evidence = _merge_source_account_evidence(
+        source_account_evidence,
+        tuple(
+            s
+            for s in stock_source.source_account_evidence
+            if s.field in {"inventories", "free_float"}
+        ),
+    )
     bank_provenance = latest.bank_regulatory_provenance
 
     def bank_input(name: str) -> Decimal | None:
@@ -1486,6 +1492,8 @@ def _build_ttm(
         cash_equivalents=stock_source.cash_equivalents,
         current_financial_investments=(stock_source.current_financial_investments),
         current_assets=stock_source.current_assets,
+        inventories=stock_source.inventories,
+        free_float=stock_source.free_float,
         current_liabilities=stock_source.current_liabilities,
         total_debt=stock_source.total_debt,
         debt_coverage_null_reason=stock_source.debt_coverage_null_reason,
@@ -1494,8 +1502,6 @@ def _build_ttm(
         cd_cvm=stock_source.cd_cvm,
         cnpj=stock_source.cnpj,
         dividends_paid=summed["dividends_paid"],
-        dividends_declared=summed["dividends_declared"],
-        dmpl_period_start=period_start,
         cfo=summed["cfo"],
         capex=summed["capex"],
         loan_loss_provision=summed["loan_loss_provision"],

@@ -232,7 +232,7 @@ def _per_share_sources(
             status=SourceAccountStatus.DERIVED,
             formula="net_income / shares",
             dependencies=("net_income", "shares"),
-            consumer_indicators=("eps", "eps_basic", "pe_basic"),
+            consumer_indicators=("eps", "eps_basic", "pe_basic", "earnings_yield"),
             expected=(
                 f"net_income={f.net_income}",
                 f"shares={market.shares}",
@@ -379,6 +379,13 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
             "enterprise_value",
             "roic_statutory",
             "current_ratio",
+            "cash_ratio",
+            "quick_ratio",
+            "price_to_ebitda",
+            "fcf_margin",
+            "ev_cfo",
+            "ev_fcf",
+            "ev_revenue",
             "current_financial_investments",
             "price_to_working_capital",
         }
@@ -386,6 +393,7 @@ _INAPPLICABLE_BY_REGIME: dict[AccountingRegime, frozenset[str]] = {
     | _INSURER_ONLY,
     AccountingRegime.INSURANCE: frozenset(
         {
+            "price_to_ebitda",
             "gross_margin",
             "ebit_margin",
             "ebitda_margin",
@@ -499,17 +507,53 @@ _NEEDS: dict[str, _Needs] = {
     "liabilities_to_assets": _Needs(accounts=("total_assets", "equity_total")),
     "equity_to_assets": _Needs(accounts=("equity", "total_assets")),
     "current_ratio": _Needs(accounts=("current_assets", "current_liabilities")),
+    "cash_ratio": _Needs(accounts=("cash_equivalents", "current_liabilities")),
+    "quick_ratio": _Needs(
+        accounts=("current_assets", "inventories", "current_liabilities")
+    ),
+    "free_float": _Needs(accounts=("free_float",)),
+    "price_to_cfo": _Needs(accounts=("cfo",), cap=True),
+    "price_to_ebitda": _Needs(accounts=("ebitda",), cap=True),
+    "cfo_yield": _Needs(accounts=("cfo",), cap=True),
+    "cfo_margin": _Needs(accounts=("cfo", "revenue")),
+    "fcf_margin": _Needs(accounts=("cfo", "capex", "revenue")),
+    "cash_conversion": _Needs(accounts=("cfo", "net_income")),
+    "capex_to_cfo": _Needs(accounts=("capex", "cfo")),
+    "ev_cfo": _Needs(
+        accounts=("total_debt", "cash_equivalents", "equity_total", "equity", "cfo"),
+        cap=True,
+    ),
+    "ev_fcf": _Needs(
+        accounts=(
+            "total_debt",
+            "cash_equivalents",
+            "equity_total",
+            "equity",
+            "cfo",
+            "capex",
+        ),
+        cap=True,
+    ),
+    "ev_revenue": _Needs(
+        accounts=(
+            "total_debt",
+            "cash_equivalents",
+            "equity_total",
+            "equity",
+            "revenue",
+        ),
+        cap=True,
+    ),
     "revenue_growth": _Needs(accounts=("revenue",), prior="revenue"),
     "net_income_growth": _Needs(accounts=("net_income",), prior="net_income"),
     "revenue_cagr_5y": _Needs(series="revenue"),
     "ebitda_cagr_5y": _Needs(series="ebitda"),
     "ebit_cagr_5y": _Needs(series="ebit"),
     "net_income_cagr_5y": _Needs(series="net_income"),
+    "earnings_yield": _Needs(accounts=("net_income",), price=True, shares=True),
     "pe_basic": _Needs(accounts=("net_income",), price=True, shares=True),
     "pe_diluted": _Needs(accounts=("eps_diluted",), price=True),
     "pb": _Needs(accounts=("equity",), price=True, shares=True),
-    "company_pe": _Needs(accounts=("net_income",), cap=True),
-    "company_pb": _Needs(accounts=("equity",), cap=True),
     "psr": _Needs(accounts=("revenue",), cap=True),
     "price_to_assets": _Needs(accounts=("total_assets",), cap=True),
     "price_to_ebit": _Needs(accounts=("ebit",), cap=True),
@@ -536,11 +580,6 @@ _NEEDS: dict[str, _Needs] = {
     ),
     "dividend_yield": _Needs(price=True, cash_distributions=True),
     "payout_cash_paid_in_period": _Needs(accounts=("dividends_paid", "net_income")),
-    "payout_declared_in_period": _Needs(accounts=("dividends_declared", "net_income")),
-    "company_cash_yield_paid_in_period": _Needs(accounts=("dividends_paid",), cap=True),
-    "company_yield_declared_in_period": _Needs(
-        accounts=("dividends_declared",), cap=True
-    ),
     "ev_ebitda": _Needs(
         accounts=(
             "total_debt",
@@ -569,9 +608,6 @@ _NEEDS: dict[str, _Needs] = {
     "net_income_total": _Needs(accounts=("net_income_total",)),
     "distributions_per_security": _Needs(cash_distributions=True),
     "company_distributions_paid_in_period": _Needs(accounts=("dividends_paid",)),
-    "company_distributions_declared_in_period": _Needs(
-        accounts=("dividends_declared",)
-    ),
     # Balance-sheet scale. ``total_liabilities`` is assets less the consolidated
     # equity, so it is missing whenever either side is.
     "total_assets": _Needs(accounts=("total_assets",)),
@@ -739,6 +775,7 @@ def compute(
     cap = market.market_cap
     annual_net_income = _annualized(f.net_income, f)
     annual_net_income_total = _annualized(f.net_income_total, f)
+    annual_cfo = _annualized(f.cfo, f)
     annual_revenue = _annualized(f.revenue, f)
     annual_ebit = _annualized(f.ebit, f)
     annual_ebitda = _annualized(f.ebitda, f)
@@ -815,17 +852,29 @@ def compute(
         ),
         equity_to_assets=_div(f.equity, f.total_assets),
         current_ratio=_div(f.current_assets, f.current_liabilities),
+        cash_ratio=_div(f.cash_equivalents, f.current_liabilities),
+        quick_ratio=_div(_sub(f.current_assets, f.inventories), f.current_liabilities),
+        free_float=f.free_float,
+        price_to_cfo=_div(cap, annual_cfo),
+        price_to_ebitda=_div(cap, annual_ebitda),
+        cfo_yield=_div(annual_cfo, cap),
+        cfo_margin=_div(annual_cfo, annual_revenue),
+        fcf_margin=_div(annual_fcf, annual_revenue),
+        cash_conversion=_div(f.cfo, f.net_income),
+        capex_to_cfo=_div(f.capex, f.cfo),
+        ev_cfo=_div(enterprise_value, annual_cfo),
+        ev_fcf=_div(enterprise_value, annual_fcf),
+        ev_revenue=_div(enterprise_value, annual_revenue),
         revenue_growth=_growth(f.revenue, prev_revenue),
         net_income_growth=_growth(f.net_income, prev_net_income),
         revenue_cagr_5y=cagr("revenue"),
         ebitda_cagr_5y=cagr("ebitda"),
         ebit_cagr_5y=cagr("ebit"),
         net_income_cagr_5y=cagr("net_income"),
+        earnings_yield=_div(basic_eps, market.price),
         pe_basic=_div(market.price, basic_eps),
         pe_diluted=_div(market.price, f.eps_diluted),
         pb=_div(market.price, bvps),
-        company_pe=_div(cap, annual_net_income),
-        company_pb=_div(cap, f.equity),
         psr=_div(cap, annual_revenue),
         price_to_assets=_div(cap, f.total_assets),
         price_to_ebit=_div(cap, annual_ebit),
@@ -849,9 +898,6 @@ def compute(
         combined_ratio=_div(combined_costs, f.earned_premium),
         dividend_yield=_div(market.cash_distributions, market.price),
         payout_cash_paid_in_period=_div(f.dividends_paid, f.net_income),
-        payout_declared_in_period=_div(f.dividends_declared, f.net_income),
-        company_cash_yield_paid_in_period=_div(f.dividends_paid, cap),
-        company_yield_declared_in_period=_div(f.dividends_declared, cap),
         ev_ebitda=_div(enterprise_value, annual_ebitda),
         ev_ebit=_div(enterprise_value, annual_ebit),
         fcf=annual_fcf,
@@ -862,7 +908,6 @@ def compute(
         net_income_total=f.net_income_total,
         distributions_per_security=market.cash_distributions,
         company_distributions_paid_in_period=f.dividends_paid,
-        company_distributions_declared_in_period=f.dividends_declared,
         total_assets=f.total_assets,
         total_liabilities=_sub(f.total_assets, f.equity_total),
         equity=f.equity,

@@ -218,12 +218,24 @@ def test_ttm_and_calculation_carry_source_lineage() -> None:
     ]
     ttm = build_ttm(quarters, None)
     assert ttm is not None
-    assert ttm.source_account_evidence == (evidence,)
+    sources = _evidence_by_field(ttm)
+    capex = sources["capex"]
+    assert capex.status is SourceAccountStatus.DERIVED
+    assert capex.blocker is NullReason.SOURCE_ACCOUNT_ABSENT
+    assert capex.dependencies == tuple(
+        f"capex[{quarter.reference_date}]" for quarter in quarters
+    )
+    for dependency in capex.dependencies:
+        assert sources[dependency].found == evidence.found
     indicators = compute(ttm, None, market=MarketData())
     # The source metadata is carried independently of whether the fixture has
     # enough market inputs to calculate the full indicator set.
-    assert indicators.source_account_evidence[0] == evidence
-    basic = indicators.source_account_evidence[1]
+    assert indicators.source_account_evidence[: len(ttm.source_account_evidence)] == (
+        ttm.source_account_evidence
+    )
+    basic = next(
+        item for item in indicators.source_account_evidence if item.field == "eps_basic"
+    )
     assert basic.field == "eps_basic"
     assert basic.formula == "net_income / shares"
     assert basic.dependencies == ("net_income", "shares")
@@ -579,7 +591,6 @@ def test_cumulative_paid_distribution_lineage_survives_sql_and_api() -> None:
         MarketData(market_cap=Decimal(1000000)),
     )
     assert indicators.payout_cash_paid_in_period == Decimal("0.9")
-    assert indicators.company_cash_yield_paid_in_period == Decimal("0.09")
     analysis = TickerAnalysis(
         ticker="TEST3",
         classification=Classification("Industriais", None, None),
