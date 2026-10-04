@@ -4,19 +4,14 @@ import { TickerSearch } from "@/components/TickerSearch";
 
 export function Navbar() {
   return (
-    <header className="sticky top-0 z-50 border-b border-gold-500/10 bg-vault-950/70 backdrop-blur-xl">
-      <div className="mx-auto flex h-16 max-w-6xl items-center gap-4 px-5">
-        <Link href="/" className="group flex items-center gap-3">
-          <DragonMark
-            size={34}
-            className="transition-transform duration-200 ease-[var(--ease-out-strong)] motion-safe:group-hover:-rotate-6"
-          />
-          <span className="font-brand text-lg font-bold tracking-[0.28em] text-gold-molten">
-            SMAUG
-          </span>
+    <header className="sticky top-0 z-50 border-b border-copy-200/10 bg-canvas-950/95">
+      <div className="mx-auto flex h-16 max-w-6xl items-center gap-5 px-5">
+        <Link href="/" className="group flex items-center gap-2.5 text-copy-50">
+          <DragonMark size={27} />
+          <span className="font-brand text-sm font-semibold tracking-[0.22em]">SMAUG</span>
         </Link>
 
-        <nav className="ml-2 hidden items-center gap-1 text-sm text-ink-400 sm:flex">
+        <nav className="ml-2 hidden items-center gap-1 text-sm text-copy-500 sm:flex">
           <NavLink href="/">Início</NavLink>
           <NavLink href="/portfolio">Carteira</NavLink>
         </nav>
@@ -33,7 +28,7 @@ function NavLink({ href, children }: { href: string; children: React.ReactNode }
   return (
     <Link
       href={href}
-      className="rounded-lg px-3 py-1.5 font-medium transition-colors hover:bg-gold-500/10 hover:text-gold-300"
+      className="rounded-md px-3 py-1.5 font-medium transition-colors hover:bg-copy-200/8 hover:text-copy-50"
     >
       {children}
     </Link>

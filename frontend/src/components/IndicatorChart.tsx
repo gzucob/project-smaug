@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Evolution of a single indicator: the closed exercises plus the trailing TTM
+ * Evolution of a single indicator: the closed exercises plus the current rolling
  * window, drawn as bars or as a line.
  *
  * Charted with Recharts rather than hand-rolled SVG because the reading only
@@ -10,7 +10,7 @@
  * carries no scale — the reader cannot see how far this year sits from a
  * normal year, which is the whole question a multiple raises.
  *
- * The TTM point keeps a visual basis of its own (hollow bar / dashed segment):
+ * The current point keeps a visual basis of its own (hollow bar / dashed segment):
  * it is a 12-month window, not one more closed exercise, and averaging it into
  * the reference line would quietly change what the line means.
  *
@@ -50,7 +50,7 @@ interface Point {
   envelope: number | null;
   /** Closed exercises only — the solid line. */
   closed: number | null;
-  /** The TTM window and the exercise before it — the dashed tail. */
+  /** The current window and the exercise before it — the dashed tail. */
   live: number | null;
   ghost: boolean;
 }
@@ -134,7 +134,7 @@ export function IndicatorChart({
   return (
     <div className="w-full">
       <ResponsiveContainer width="100%" height={height}>
-        {/* The right margin holds the last x label ("12 meses"), which sits on
+        {/* The right margin holds the last x label ("Atual"), which sits on
             the plot edge in line mode and would otherwise be clipped. */}
         <ComposedChart data={data} margin={{ top: 10, right: 34, bottom: 2, left: 2 }}>
           <CartesianGrid
@@ -327,7 +327,7 @@ function ChartTooltip({
   // quantity, and reading it before the part makes the difference legible.
   const paired = envelopeLabel !== undefined;
   return (
-    <div className="panel px-3 py-2 text-xs shadow-lg">
+    <div className="rounded-lg border border-copy-200/10 bg-canvas-900 px-3 py-2 text-xs shadow-lg">
       <div className="text-[0.68rem] uppercase tracking-wide text-ink-500">{label}</div>
       {paired && (
         <div className="mt-1 flex items-baseline justify-between gap-4">
@@ -350,7 +350,7 @@ function ChartTooltip({
         </div>
       )}
       {value.ghost && (
-        <div className="mt-1 text-[0.62rem] text-ink-600">janela de 12 meses</div>
+        <div className="mt-1 text-[0.62rem] text-copy-600">período atual</div>
       )}
     </div>
   );

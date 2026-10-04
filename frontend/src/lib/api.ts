@@ -11,7 +11,7 @@
  * ADR 0049 covers the backend's matching CORS allowance for that one proxy).
  *
  * Every call returns an `ApiResult` rather than throwing, so pages can render
- * a friendly vault-offline state when the backend isn't running.
+ * a clear offline state when the backend isn't running.
  */
 import type { Analysis, PortfolioTicker, TickerViews } from "@/lib/types";
 
@@ -39,7 +39,7 @@ async function get<T>(path: string): Promise<ApiResult<T>> {
     return {
       ok: false,
       status: 0,
-      message: "Não foi possível falar com a API. O cofre está fechado (backend offline?).",
+      message: "Não foi possível falar com a API. O backend está offline?",
     };
   }
 }
@@ -49,7 +49,7 @@ export function fetchPortfolio(): Promise<ApiResult<Analysis[]>> {
   return get<Analysis[]>("/analysis");
 }
 
-/** Both perspectives (live TTM + closed-year history) for one ticker. */
+/** Both perspectives (current rolling period + closed-year history) for one ticker. */
 export function fetchTicker(symbol: string): Promise<ApiResult<TickerViews>> {
   return get<TickerViews>(`/analysis/${encodeURIComponent(symbol.toUpperCase())}`);
 }

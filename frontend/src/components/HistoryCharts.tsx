@@ -62,14 +62,14 @@ const GROUPS: ChartGroup[] = [
       },
       {
         key: "fcf",
-        label: "Fluxo de caixa livre",
+        label: "FCL",
         hint: "Caixa operacional − CAPEX",
         kind: "money",
       },
     ],
   },
   {
-    title: "Balanço e alavancagem",
+    title: "Balanço e dívida",
     charts: [
       {
         key: "total_liabilities",
@@ -87,7 +87,7 @@ const GROUPS: ChartGroup[] = [
       },
       {
         key: "net_debt_to_ebitda",
-        label: "Dív. líquida / EBITDA",
+        label: "Dívida líquida/EBITDA",
         hint: "Anos de EBITDA para quitar a dívida líquida",
         kind: "multiple",
       },
@@ -131,7 +131,7 @@ export function HistoryCharts({
     <div className="flex flex-col gap-10">
       {groups.map((group) => (
         <div key={group.title} className="flex flex-col gap-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-copy-500">
             {group.title}
           </h3>
           <div className="grid gap-4 lg:grid-cols-3">
@@ -155,18 +155,18 @@ export function HistoryCharts({
               return (
                 <div key={c.key} className="panel flex flex-col gap-2 p-5" title={c.hint}>
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-copy-500">
                       {c.label}
                       {c.totalKey && (
-                        <span className="ml-1.5 font-normal normal-case tracking-normal text-ink-600">
+                        <span className="ml-1.5 font-normal normal-case tracking-normal text-copy-600">
                           · {BASIS_LABEL.controllers}
                         </span>
                       )}
                     </span>
                     {showTotal && total !== null && (
-                      <span className="text-[0.62rem] text-ink-600" title={BASIS_HINT.total}>
+                      <span className="text-[0.62rem] text-copy-600" title={BASIS_HINT.total}>
                         {BASIS_LABEL.total}{" "}
-                        <span className="nums text-ink-400">{format(total)}</span>
+                        <span className="nums text-copy-400">{format(total)}</span>
                       </span>
                     )}
                   </div>
@@ -237,13 +237,13 @@ function EmptySeries({ reason }: { reason: NullReason | undefined }) {
       className="flex flex-col items-center justify-center gap-1 text-center"
       style={{ height: 170 }}
     >
-      <span className="nums text-2xl text-ink-700">{DASH}</span>
+      <span className="nums text-2xl text-copy-600">{DASH}</span>
       <span
-        className={`text-[0.68rem] ${copy.intentional ? "text-ink-600" : "text-ember-400"}`}
+        className={`text-[0.68rem] ${copy.intentional ? "text-copy-600" : "text-warning"}`}
       >
         {copy.short}
       </span>
-      <span className="max-w-[26ch] text-[0.6rem] leading-snug text-ink-700">
+      <span className="max-w-[26ch] text-[0.6rem] leading-snug text-copy-600">
         {copy.long}
       </span>
     </div>

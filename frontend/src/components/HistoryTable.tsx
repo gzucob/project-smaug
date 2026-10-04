@@ -22,11 +22,11 @@ const COLUMNS: Column[] = [
   { key: "revenue", label: "Receita", format: money },
   { key: "net_income", label: "Lucro líq.", format: money },
   { key: "net_margin", label: "Margem líq.", format: pct },
-  { key: "net_debt", label: "Dív. líquida", format: money },
-  { key: "net_debt_to_ebitda", label: "Dív.líq./EBITDA", format: multiple },
+  { key: "net_debt", label: "Dívida líquida", format: money },
+  { key: "net_debt_to_ebitda", label: "Dívida líquida/EBITDA", format: multiple },
   { key: "roe", label: "ROE", format: pct },
-  { key: "pe_basic", label: "P/L básico", format: multiple },
-  { key: "dividend_yield", label: "DY", format: pct },
+  { key: "pe_basic", label: "P/L", format: multiple },
+  { key: "dividend_yield", label: "Dividend Yield", format: pct },
 ];
 
 export function HistoryTable({ history }: { history: Analysis[] }) {
@@ -44,17 +44,20 @@ export function HistoryTable({ history }: { history: Analysis[] }) {
   const rows = [...history].reverse();
 
   return (
-    <div className="panel overflow-x-auto">
+    <div
+      className="overflow-x-auto rounded-lg border border-copy-200/10 bg-canvas-900"
+      tabIndex={0}
+    >
       <table className="w-full min-w-max border-collapse text-sm">
         <thead>
-          <tr className="border-b border-ink-900/80">
-            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
+          <tr className="border-b border-copy-200/10">
+            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-copy-600">
               Ano
             </th>
             {columns.map((c) => (
               <th
                 key={c.key}
-                className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-ink-500"
+                className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-copy-600"
               >
                 {c.label}
               </th>
@@ -65,9 +68,9 @@ export function HistoryTable({ history }: { history: Analysis[] }) {
           {rows.map((h) => (
             <tr
               key={h.reference_date}
-              className="border-b border-ink-900/40 last:border-0 transition-colors hover:bg-vault-900/40"
+              className="border-b border-copy-200/10 last:border-0 transition-colors hover:bg-canvas-850"
             >
-              <td className="nums px-4 py-3 text-left font-display text-base text-ink-100">
+              <td className="nums px-4 py-3 text-left font-display text-base text-copy-100">
                 {yearOf(h.reference_date)}
               </td>
               {columns.map((c) => {
@@ -76,7 +79,7 @@ export function HistoryTable({ history }: { history: Analysis[] }) {
                   <td
                     key={c.key}
                     className={`nums px-4 py-3 text-right ${
-                      toNum(h.indicators[c.key]) === null ? "text-ink-600" : "text-ink-100"
+                      toNum(h.indicators[c.key]) === null ? "text-copy-600" : "text-copy-100"
                     }`}
                   >
                     {text === DASH ? DASH : text}

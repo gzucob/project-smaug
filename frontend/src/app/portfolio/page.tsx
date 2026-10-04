@@ -43,13 +43,13 @@ export default async function PortfolioPage() {
         style={{ animationDelay: "0ms" }}
       >
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gold-500">
-            O tesouro
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-accent-400">
+            Acompanhamento
           </p>
-          <h1 className="mt-2 font-display text-4xl text-ink-50">A carteira</h1>
+          <h1 className="mt-2 text-4xl font-semibold tracking-tight text-copy-50">Carteira</h1>
         </div>
         <p className="nums text-sm text-ink-500">
-          <span className="text-gold-300">{computed}</span> de{" "}
+          <span className="text-accent-300">{computed}</span> de{" "}
           {favorites.length} tickers analisados
         </p>
       </header>
@@ -73,10 +73,10 @@ export default async function PortfolioPage() {
               >
                 <div className="mb-5 flex items-center gap-3">
                   <span
-                    className="h-3 w-3 rotate-45"
+                    className="h-6 w-1 rounded-full"
                     style={{ backgroundColor: color }}
                   />
-                  <h2 className="font-display text-2xl text-ink-100">
+                  <h2 className="text-xl font-semibold tracking-tight text-copy-100">
                     {meta.label}
                   </h2>
                   <span
@@ -107,19 +107,18 @@ export default async function PortfolioPage() {
 function EmptyPortfolio() {
   return (
     <div className="mx-auto max-w-2xl px-5 py-24 text-center">
-      <p className="rise text-xs font-semibold uppercase tracking-[0.3em] text-gold-500">
-        O tesouro
+      <p className="rise text-xs font-semibold uppercase tracking-[0.3em] text-accent-400">
+        Acompanhamento
       </p>
-      <h1 className="rise mt-2 font-display text-3xl text-ink-50">
-        A carteira está vazia
+      <h1 className="rise mt-2 text-3xl font-semibold tracking-tight text-copy-50">
+        Sua carteira está vazia
       </h1>
       <p className="rise mt-4 text-ink-400">
-        Busque um ticker e toque no coração na página dele para começar a
-        guardar seu tesouro.
+        Busque um ticker e favorite-o na página da análise para começar a acompanhar seus ativos.
       </p>
       <Link
         href="/"
-        className="pressable mt-8 inline-block rounded-lg border border-gold-500/20 px-4 py-2 text-sm font-semibold text-gold-300 hover:border-gold-400/50"
+        className="pressable mt-8 inline-block rounded-lg border border-accent-500/30 px-4 py-2 text-sm font-semibold text-accent-300 hover:border-accent-400/60"
       >
         Buscar um ticker
       </Link>

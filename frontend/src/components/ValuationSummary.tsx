@@ -16,9 +16,9 @@ const SECURITY_CARDS: ValuationCard[] = [
 const TOKEN_LABEL: Record<string, string> = {
   security_price: "preço do papel",
   market_capitalization: "valor de mercado da companhia",
-  selected_basic_eps: "LPA básico",
-  cpc41_basic_eps: "LPA básico CPC 41",
-  cpc41_diluted_eps: "LPA diluído CPC 41",
+  selected_basic_eps: "lucro por ação",
+  net_income_per_selected_closing_share: "lucro líquido por ação",
+  cpc41_basic_eps: "lucro por ação divulgado",
   annualized_attributable_net_income: "lucro atribuível anualizado",
   closing_outstanding_shares: "ações em circulação no fechamento",
   market_convention_basic_eps: "LPA básico estimado",
@@ -29,7 +29,8 @@ const TOKEN_LABEL: Record<string, string> = {
 
 const BASIS_LABEL: Record<string, string> = {
   security_selected_evidence: "papel individual",
-  security_cpc41: "papel individual com resultado CPC 41",
+  security_closing_capital: "lucro líquido e quantidade de ações",
+  security_cpc41: "papel individual com resultado divulgado",
   security_market_convention: "papel individual",
   security_closing: "papel individual em base de fechamento",
   company_market_convention: "companhia inteira",
@@ -37,13 +38,14 @@ const BASIS_LABEL: Record<string, string> = {
 
 const SHARE_BASIS_LABEL: Record<string, string> = {
   selected_weighted_average_class_rights: "média ponderada da classe e direitos",
-  cpc41_weighted_average_class_rights: "média ponderada da classe e direitos CPC 41",
+  selected_closing_total_unit_equivalent: "total de ações, com ajuste para units",
+  cpc41_weighted_average_class_rights: "média ponderada da classe e direitos",
   listed_classes_outstanding: "classes listadas e ações em circulação",
 };
 
 const PERIOD_LABEL: Record<string, string> = {
-  last_twelve_months: "últimos 12 meses (LTM)",
-  closed_fiscal_year: "exercício fechado",
+  last_twelve_months: "período atual",
+  closed_fiscal_year: "ano fechado",
   reference_date_closing: "saldo no fechamento da data de referência",
   cash_rights_window: "janela de datas ex dos direitos B3",
 };
@@ -55,26 +57,26 @@ const SOURCE_LABEL: Record<string, string> = {
 
 export function ValuationSummary({ analysis }: { analysis: Analysis }) {
   return (
-    <section className="mb-12" aria-labelledby="valuation-title">
+    <section className="mb-8" aria-labelledby="valuation-title">
       <div className="mb-5 flex items-end gap-3">
         <div>
-          <h2 id="valuation-title" className="font-display text-2xl text-ink-100">
-            Valuation
+          <h2 id="valuation-title" className="text-xl font-semibold tracking-tight text-copy-100">
+            Preço e valor
           </h2>
-          <p className="mt-1 max-w-3xl text-sm text-ink-500">
+          <p className="mt-1 max-w-3xl text-sm leading-relaxed text-copy-600">
             Preço comparado com o lucro e o patrimônio por ação.
           </p>
         </div>
-        <span className="h-px flex-1 bg-gradient-to-r from-gold-500/30 to-transparent" />
+        <span className="h-px flex-1 bg-copy-200/10" />
       </div>
 
       <div className="grid gap-4">
         <ValuationGroup
           title="Dados por ação"
-          subtitle="P/L por papel e P/VP por ação"
+          subtitle="Preço comparado com lucro e patrimônio por ação"
           cards={SECURITY_CARDS}
           analysis={analysis}
-          accent="var(--color-gem-azure)"
+          accent="var(--color-pastel-violet)"
         />
       </div>
     </section>
@@ -95,11 +97,11 @@ function ValuationGroup({
   accent: string;
 }) {
   return (
-    <div className="panel p-5">
+    <div className="rounded-lg border border-copy-200/10 bg-canvas-900 p-5">
       <header className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold text-ink-100">{title}</h3>
-          <p className="mt-1 text-xs text-ink-500">{subtitle}</p>
+          <h3 className="text-sm font-semibold text-copy-200">{title}</h3>
+          <p className="mt-1 text-xs text-copy-600">{subtitle}</p>
         </div>
         <span
           className="mt-0.5 h-2 w-2 shrink-0 rounded-full"
@@ -108,7 +110,7 @@ function ValuationGroup({
         />
       </header>
 
-      <div className="grid gap-2 sm:grid-cols-3">
+      <div className="grid gap-2 sm:grid-cols-2">
         {cards.map((card) => (
           <ValuationMetric key={card.key} card={card} analysis={analysis} />
         ))}
@@ -124,16 +126,16 @@ function ValuationMetric({ card, analysis }: { card: ValuationCard; analysis: An
   const reasonLabel = displayValue === null && reason ? reasonCopy(reason)?.short : null;
 
   return (
-    <article className="rounded-xl border border-gold-500/8 bg-vault-950/45 p-3">
+    <article className="rounded-lg border border-copy-200/10 bg-canvas-950 p-3">
       <div className="flex items-start justify-between gap-2">
-        <h4 className="text-[0.68rem] font-medium uppercase tracking-wide text-ink-500">
+        <h4 className="text-[0.68rem] font-medium leading-snug text-copy-500">
           {card.label}
         </h4>
       </div>
-      <div className="nums mt-1 text-xl font-semibold text-ink-50">
+      <div className="nums mt-1 text-xl font-semibold text-copy-50">
         {multiple(displayValue)}
       </div>
-      {reasonLabel && <div className="mt-0.5 text-[0.6rem] text-gold-600">{reasonLabel}</div>}
+      {reasonLabel && <div className="mt-0.5 text-[0.6rem] text-warning">{reasonLabel}</div>}
       {contract && <ContractLine contract={contract} analysis={analysis} />}
     </article>
   );
@@ -150,16 +152,14 @@ function ContractLine({ contract, analysis }: { contract: IndicatorContract; ana
       ? `ações ${analysis.share_count_basis ?? DASH}`
       : contract.share_basis === "listed_classes_outstanding"
         ? `ações ${analysis.share_count_basis ?? DASH} · classes listadas`
-      : `base de ações ${SHARE_BASIS_LABEL[contract.share_basis] ?? contract.share_basis}`;
+        : `base de ações ${SHARE_BASIS_LABEL[contract.share_basis] ?? contract.share_basis}`;
 
   return (
-    <div className="mt-3 space-y-1 text-[0.61rem] leading-relaxed text-ink-600">
+    <div className="mt-3 space-y-1 text-[0.61rem] leading-relaxed text-copy-600">
       <p title={`${numerator} ÷ ${denominator}`}>
         {numerator} ÷ {denominator}
       </p>
-      <p>
-        {basis} · {period}
-      </p>
+      <p>{basis} · {period}</p>
       <p title="A base efetiva da cotação vem da visão analisada; a base de ações segue o contrato do indicador.">
         preço {analysis.price_basis ?? DASH} · {shareBasis}
       </p>

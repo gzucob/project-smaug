@@ -1,14 +1,14 @@
 # Smaug — Frontend
 
-Front-end for **project-smaug**: a dark "dragon's hoard" dashboard over the
-Phase 2 analysis read API.
+Front-end for **project-smaug**: a dark, modular dashboard over the Phase 2
+analysis read API.
 
 - **Stack:** Next.js 15 (App Router) · React 19 · Tailwind CSS v4 · TypeScript 5
-- **Design:** *Smaug's Hoard* — warm near-black vault, molten-gold as the
-  primary metal, one vivid gemstone hue per sector (safira/ametista/esmeralda/
-  ouro/rubi) as a data-encoding system.
-- **Fonts:** Cinzel (wordmark), Fraunces (display), Manrope (body),
-  IBM Plex Mono (numeric data).
+- **Design:** dark-only, modern and minimal — neutral surfaces, the dragon as
+  the brand mark, and one restrained hue per sector/group as a data-encoding
+  system.
+- **Fonts:** Geist (interface and wordmark), Newsreader (display), Geist Mono
+  (numeric data).
 
 ## Screens
 
@@ -16,7 +16,7 @@ Phase 2 analysis read API.
 |---|---|
 | `/` | Home / landing — branding + ticker search |
 | `/portfolio` | Portfolio overview, grouped by sector |
-| `/ticker/[symbol]` | Ticker detail — TTM live + closed-year, indicators, trajectory |
+| `/ticker/[symbol]` | Ticker detail — período atual, anos fechados, indicadores e trajetória |
 
 ## Data
 

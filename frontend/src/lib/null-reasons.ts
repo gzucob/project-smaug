@@ -77,8 +77,8 @@ const COPY: Record<NullReason, ReasonCopy> = {
     intentional: false,
   },
   missing_cpc41_disclosure: {
-    short: "sem LPA CPC 41",
-    long: "A DRE consolidada entregue à CVM não traz um resultado por ação básico ou diluído reconciliável para esta classe.",
+    short: "sem resultado por ação divulgado",
+    long: "A DRE consolidada entregue à CVM não traz um resultado por ação reconciliável para esta classe.",
     intentional: false,
   },
   missing_weighted_average_shares: {

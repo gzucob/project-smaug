@@ -39,7 +39,11 @@ export function ViewPanel({
     priceAdjusted !== null && priceMain !== null && Math.abs(priceAdjusted - priceMain) > 0.005;
 
   return (
-    <article className={`panel ${primary ? "panel-hover" : ""} flex flex-col gap-5 p-6`}>
+    <article
+      className={`rounded-lg border border-copy-200/10 bg-canvas-950 ${
+        primary ? "panel-hover" : ""
+      } flex flex-col gap-5 p-4 sm:p-5`}
+    >
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <ViewBadge view={analysis.view} year={yearOf(analysis.reference_date)} />
@@ -51,7 +55,7 @@ export function ViewPanel({
           </p>
           {comparableExercise && (
             <p className="mt-1 text-xs text-ink-500">
-              Variações medidas contra o exercício de{" "}
+              Comparado com o ano de{" "}
               <span className="text-ink-400">{yearOf(comparableExercise.reference_date)}</span>
             </p>
           )}
@@ -59,8 +63,8 @@ export function ViewPanel({
 
         <div className="text-right">
           <div className="nums text-2xl font-semibold text-ink-50">{price(analysis.price)}</div>
-          <div className="text-[0.68rem] text-ink-500">
-            {analysis.price_basis ? `base: ${analysis.price_basis}` : "preço para múltiplos"}
+          <div className="text-[0.68rem] text-copy-500">
+            {analysis.price_basis ? `base: ${analysis.price_basis}` : "preço usado nos múltiplos"}
           </div>
           {showAdjusted && (
             <div className="nums text-[0.68rem] text-ink-600">
@@ -74,6 +78,7 @@ export function ViewPanel({
 
       <IndicatorGrid
         indicators={analysis.indicators}
+        indicatorContract={analysis.indicator_contract}
         compare={comparableExercise?.indicators ?? null}
         compareLabel={comparableExercise ? yearOf(comparableExercise.reference_date) : null}
         sector={gemKey(analysis.classification)}
