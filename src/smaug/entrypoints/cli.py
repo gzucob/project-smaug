@@ -127,6 +127,10 @@ from smaug.ingestion.infrastructure.cvm_capital import (
     CvmCapitalSource,
     CvmTreasurySource,
 )
+from smaug.ingestion.infrastructure.cvm_free_float import (
+    FREE_FLOAT_MODULE,
+    CvmFreeFloatSource,
+)
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, CvmDocument
 from smaug.ingestion.infrastructure.repositories import (
     BeanieIngestionFailureRepository,
@@ -931,9 +935,29 @@ def _build_data_source(
         validation_reporter=validation_reporter,
         reused_root_recovery=reused_root_recovery,
     )
+    free_float_archive = (
+        capital
+        if isinstance(capital, CvmCapitalSource)
+        else CvmCapitalSource(
+            http,
+            ticker_to_cnpj,
+            year=cvm_year,
+            cache_dir=settings.cvm_cache_dir,
+            ticker_to_code=ticker_to_code,
+            artifact_store=artifact_store,
+            validation_reporter=validation_reporter,
+        )
+    )
     return RoutedDataSource(
         {
             CAPITAL_MODULE: capital,
+            FREE_FLOAT_MODULE: CvmFreeFloatSource(
+                free_float_archive,
+                ticker_to_cnpj,
+                ticker_to_code,
+                year=cvm_year,
+                validation_reporter=validation_reporter,
+            ),
             TREASURY_MODULE: treasury,
             CAPITAL_EVENT_MODULE: events,
             CAPITAL_EVENT_B3_MODULE: exchange_events,
@@ -1367,6 +1391,7 @@ def _parser_identities(modules: Sequence[str]) -> tuple[ParserIdentity, ...]:
 
 _MODULE_ADAPTERS = {
     CAPITAL_MODULE: (CvmCapitalSource.parser_identity, CvmCapitalSource.source),
+    FREE_FLOAT_MODULE: (CvmFreeFloatSource.parser_identity, CvmFreeFloatSource.source),
     TREASURY_MODULE: (CvmTreasurySource.parser_identity, CvmTreasurySource.source),
     CAPITAL_EVENT_MODULE: (
         CvmCapitalEventSource.parser_identity,
