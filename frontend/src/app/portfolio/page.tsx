@@ -5,7 +5,7 @@ import { fetchPortfolio, fetchPortfolioList } from "@/lib/api";
 import { SECTORS, gemKey } from "@/lib/sectors";
 import type { Analysis, PortfolioTicker, SectorKey } from "@/lib/types";
 
-export const metadata = { title: "Carteira — Smaug" };
+export const metadata = { title: "Favoritos — Smaug" };
 
 export default async function PortfolioPage() {
   const [portfolioResult, analysesResult] = await Promise.all([
@@ -43,14 +43,11 @@ export default async function PortfolioPage() {
         style={{ animationDelay: "0ms" }}
       >
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-accent-400">
-            Acompanhamento
-          </p>
-          <h1 className="mt-2 text-4xl font-semibold tracking-tight text-copy-50">Carteira</h1>
+          <h1 className="text-4xl font-semibold tracking-tight text-copy-50">Favoritos</h1>
         </div>
         <p className="nums text-sm text-ink-500">
           <span className="text-accent-300">{computed}</span> de{" "}
-          {favorites.length} tickers analisados
+          {favorites.length} favoritos analisados
         </p>
       </header>
 
@@ -107,14 +104,11 @@ export default async function PortfolioPage() {
 function EmptyPortfolio() {
   return (
     <div className="mx-auto max-w-2xl px-5 py-24 text-center">
-      <p className="rise text-xs font-semibold uppercase tracking-[0.3em] text-accent-400">
-        Acompanhamento
-      </p>
-      <h1 className="rise mt-2 text-3xl font-semibold tracking-tight text-copy-50">
-        Sua carteira está vazia
+      <h1 className="rise text-3xl font-semibold tracking-tight text-copy-50">
+        Você ainda não tem favoritos
       </h1>
       <p className="rise mt-4 text-ink-400">
-        Busque um ticker e favorite-o na página da análise para começar a acompanhar seus ativos.
+        Busque um ticker e adicione-o aos favoritos para começar a acompanhar seus ativos.
       </p>
       <Link
         href="/"

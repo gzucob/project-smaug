@@ -121,20 +121,19 @@ not in the fonts.
 - **A delta is never sign-coloured.** An arrow states direction, which is a
   fact; green would state "good", which is the judgement the domain refuses to
   make — and a rising P/L is not the same news as a rising ROE.
-- **A screen never shows a statement slice without naming it.** A
-  bare indicator name is the controllers' slice; `roe_total` and friends are the
-  consolidated group. `lib/indicators.ts` owns the pairing (`basisPair`,
-  `BASIS_LABEL`) and the drill-down carries the toggle. The second basis is
-  surfaced in a cell **only when the two format differently** — comparing the
-  rendered text, not a tolerance, because a line that repeats "24,2%" costs
-  height and says nothing.
-- **A null is never explained by the front-end.** The API sends `null_reasons`
-  naming why each indicator is null; render it through
-  `lib/null-reasons.ts` and distinguish a deliberate n/d (`inapplicable_regime`,
-  `zero_denominator`) from a gap of ours (missing price, unmapped account),
-  which is coloured as the warning it is. The old `naSectors` field mirrored the
-  calculator's guards by hand and was deleted in #54 — do not reintroduce a
-  second source for a fact the API already states.
+- **An indicator card shows one selected result.** Paired statement bases stay
+  defined by `basisPair` and `BASIS_LABEL` in `lib/indicators.ts`; the drill-down
+  names the active slice and exposes the basis toggle. Do not add a second basis
+  value to the compact card. Historical charts name the plotted slice and may
+  show the consolidated value beside it when the formatted values differ.
+- **Compact indicator views render nulls without an explanation.** Format a
+  missing result as `n/d` in neutral ink. Do not infer a cause from the sector,
+  indicator, or other fields. The API's `null_reasons` remains authoritative;
+  the UI may use it to omit a group whose indicators are all
+  `inapplicable_regime`, as `IndicatorGrid` and `HistoryCharts` do. If a future
+  view chooses to display a cause, render the API value through
+  `lib/null-reasons.ts`; do not duplicate the calculator's guards in the
+  frontend.
 - `lib/api.ts` returns a **non-throwing `ApiResult` discriminated union**.
   Pages must render the `VaultOffline` empty state on `ok: false` (backend down
   or 404) instead of throwing.

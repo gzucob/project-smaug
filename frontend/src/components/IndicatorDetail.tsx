@@ -14,7 +14,7 @@
 import { Dialog, DialogPanel, Tab, TabGroup, TabList, TabPanel, TabPanels } from "@headlessui/react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { FiAlertTriangle, FiBarChart2, FiTrendingUp, FiX } from "react-icons/fi";
+import { FiBarChart2, FiTrendingUp, FiX } from "react-icons/fi";
 import { IndicatorChart } from "@/components/IndicatorChart";
 import type { ChartMode } from "@/components/IndicatorChart";
 import { IndicatorPicker } from "@/components/IndicatorPicker";
@@ -31,9 +31,7 @@ import {
   valueFormatter,
 } from "@/lib/indicators";
 import type { Basis, IndicatorSpec } from "@/lib/indicators";
-import { reasonCopy } from "@/lib/null-reasons";
-import { sectorMeta } from "@/lib/sectors";
-import type { Decimalish, IndicatorContract, IndicatorKey, NullReason } from "@/lib/types";
+import type { Decimalish, IndicatorContract, IndicatorKey } from "@/lib/types";
 
 export interface IndicatorSeries {
   labels: string[];
@@ -47,22 +45,19 @@ export function IndicatorDetail({
   doc,
   series,
   accent,
-  sector,
   contract,
-  nullReason,
   previous,
   previousLabel,
   onSelectKey,
   onClose,
+  isCurrent,
 }: {
+  isCurrent: boolean;
   spec: IndicatorSpec;
   doc: IndicatorDoc;
   series: IndicatorSeries;
   accent: string;
-  sector: string;
   contract?: IndicatorContract;
-  /** Set when this indicator is null in the view the reader came from. */
-  nullReason: NullReason | undefined;
   /** Same indicator on the latest closed exercise, for the change tile. */
   previous: Decimalish;
   previousLabel: string | null;
@@ -83,23 +78,23 @@ export function IndicatorDetail({
       // A `_total` column is not in the grid's list; walk from its controllers'
       // sibling so the arrows keep working while reading the consolidated basis.
       const gridKey = basisPair(spec.key)?.controllers ?? spec.key;
-      const at = INDICATORS.findIndex((s) => s.key === gridKey);
+      const available = INDICATORS.filter((s) => isCurrent || s.key !== "tag_along");
+      const at = available.findIndex((s) => s.key === gridKey);
       if (at < 0) return;
       const step = e.key === "ArrowRight" ? 1 : -1;
-      const next = (at + step + INDICATORS.length) % INDICATORS.length;
+      const next = (at + step + available.length) % available.length;
       e.preventDefault();
-      onSelectKey(INDICATORS[next].key);
+      onSelectKey(available[next].key);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onSelectKey, spec.key]);
+  }, [onSelectKey, spec.key, isCurrent]);
 
   const formatKind = formatKindOf(spec);
   const fmt = valueFormatter(formatKind);
   const fmtOrDash = (n: number | null) => (n === null ? DASH : fmt(n));
 
   const plottable = series.values.filter((v) => v !== null).length;
-  const reason = nullReason ? reasonCopy(nullReason) : null;
   // Switching basis is switching indicator: `roe` and `roe_total` are separate
   // columns with their own series and their own doc (ADR 0026), so the toggle
   // reuses the same path the picker takes.
@@ -173,6 +168,7 @@ export function IndicatorDetail({
                   it shows that column's controllers' sibling — the basis toggle
                   below is what states which slice is on screen. */}
               <IndicatorPicker
+                isCurrent={isCurrent}
                 value={pair?.controllers ?? spec.key}
                 label={spec.label}
                 onChange={onSelectKey}
@@ -189,20 +185,6 @@ export function IndicatorDetail({
             </div>
           </div>
         </header>
-
-        {reason && (
-          <div className="mt-5 flex gap-3 rounded-lg border border-warning/25 bg-warning/5 p-3.5">
-            <FiAlertTriangle className="mt-0.5 shrink-0 text-warning" size={15} />
-            <p className="text-xs leading-relaxed text-copy-400">
-              <span className="text-copy-200">
-                {reason.intentional ? "Sem valor de propósito" : "Sem valor por falta de dado"} (
-                {sectorMeta(sector).label.toLowerCase()}):
-              </span>{" "}
-              {reason.long}
-              {reason.intentional && <> Veja &ldquo;Onde engana&rdquo;.</>}
-            </p>
-          </div>
-        )}
 
         {/* ------------------------------------------------- the reading --- */}
         {/* The value leads, because it is what the reader came for; the rest is
@@ -239,7 +221,7 @@ export function IndicatorDetail({
         </div>
 
         {/* -------------------------------------------------------- chart --- */}
-        <section className="mt-6">
+        {spec.key !== "tag_along" && (<section className="mt-6">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h4 className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-copy-500">
               Evolução
@@ -299,7 +281,7 @@ export function IndicatorDetail({
               Série insuficiente: são necessários ao menos dois períodos com valor apurado.
             </p>
           )}
-        </section>
+        </section>)}
         </div>
 
         <div className="hairline my-6 lg:hidden" />
@@ -346,17 +328,17 @@ export function IndicatorDetail({
                 <p className="text-sm leading-relaxed text-copy-200">{doc.what}</p>
               </div>
 
-              <NoteList
+              {doc.strongIn.length > 0 && (<NoteList
                 title="Onde é mais relevante"
                 notes={doc.strongIn}
                 markerColor="var(--color-up)"
-              />
-              <NoteList
+              />)}
+              {doc.weakIn.length > 0 && (<NoteList
                 title="Onde engana"
                 notes={doc.weakIn}
                 markerColor="var(--color-down)"
                 hollow
-              />
+              />)}
             </TabPanel>
 
             <TabPanel className="flex flex-col gap-6 focus:outline-none">
@@ -508,6 +490,10 @@ function ContractSummary({ contract }: { contract: IndicatorContract }) {
     cash_equivalents: "caixa e equivalentes de caixa",
     filed_total_free_float_percent: "percentual total divulgado de ações em circulação",
     one_hundred: "100",
+    resolved_tag_along_percent: "percentual de tag along comprovado para o papel",
+    security_current_rights: "direitos comprovados da espécie/classe",
+    current_security_rights: "direitos na data da análise atual",
+    security_class_or_unit_components: "espécie/classe ou componentes da unit",
     gross_acquisition_capex: "aquisições de imobilizado e intangível",
     company_closing: "companhia no fechamento",
     company_period_cash: "fluxos de caixa da companhia no período",

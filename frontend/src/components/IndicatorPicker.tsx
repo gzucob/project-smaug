@@ -22,8 +22,10 @@ export function IndicatorPicker({
   value,
   label,
   onChange,
+  isCurrent,
 }: {
   /** The grid indicator in focus — a `_total` column shows its sibling (#121). */
+  isCurrent: boolean;
   value: IndicatorKey;
   label: string;
   onChange: (key: IndicatorKey) => void;
@@ -55,7 +57,7 @@ export function IndicatorPicker({
             >
               {indicatorGroupMeta(group).title}
             </div>
-            {specsByGroup(group).map((spec) => (
+            {specsByGroup(group).filter((s) => isCurrent || s.key !== "tag_along").map((spec) => (
               <ListboxOption
                 key={spec.key}
                 value={spec.key}

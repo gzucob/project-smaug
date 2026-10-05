@@ -330,6 +330,15 @@ export interface Analysis {
   ticker: string;
   view: ViewKind | string;
   classification: Classification;
+  governance?: {
+    ipo_date: string | null;
+    listing_segment: string | null;
+    listing_observed_on: string | null;
+    listing_source: string | null;
+    tag_along_source: string | null;
+    tag_along_reference: string | null;
+    blocker: string | null;
+  };
   reference_date: string; // ISO date
   computed_at: string; // ISO datetime
   filed_regime?: string | null;
@@ -366,4 +375,21 @@ export interface TickerViews {
 export interface PortfolioTicker {
   ticker: string;
   added_at: string; // ISO datetime
+}
+export interface PriceHistory {
+  ticker: string;
+  computed_at: string;
+  start_year: number;
+  end_year: number;
+  contract_version: string;
+  price_basis: "split_adjusted";
+  source: string;
+  points: {
+    session: string;
+    code: string;
+    as_traded: Decimalish;
+    adjusted: Decimalish;
+    factor: Decimalish;
+  }[];
+  gaps: { year: number; reason: string }[];
 }

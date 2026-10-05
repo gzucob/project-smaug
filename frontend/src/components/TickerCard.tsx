@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { LAST_12M_SHORT, multiple, pct, price, yearOf } from "@/lib/format";
 import { sectorColor, sectorMeta } from "@/lib/sectors";
+import { listingSegmentLabel } from "@/lib/governance";
 import type { Analysis } from "@/lib/types";
 
 /** Portfolio tile for one ticker; muted when no analysis has been computed. */
@@ -36,6 +37,9 @@ export function TickerCard({ ticker, sector, analysis }: { ticker: string; secto
           <div className="mt-0.5 text-[0.7rem] font-medium" style={{ color }}>
             {meta.label}
           </div>
+          <p className="mt-1 text-[0.7rem] text-copy-500">
+            {listingSegmentLabel(analysis.governance?.listing_segment)}
+          </p>
         </div>
         <span className="nums rounded-md border border-copy-200/10 px-2 py-0.5 text-[0.62rem] font-medium tracking-wide text-copy-500">
           {analysis.view === "ttm_live" ? LAST_12M_SHORT : yearOf(analysis.reference_date)}

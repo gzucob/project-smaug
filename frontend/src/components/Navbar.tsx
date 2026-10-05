@@ -13,7 +13,7 @@ export function Navbar() {
 
         <nav className="ml-2 hidden items-center gap-1 text-sm text-copy-500 sm:flex">
           <NavLink href="/">Início</NavLink>
-          <NavLink href="/portfolio">Carteira</NavLink>
+          <NavLink href="/portfolio">Favoritos</NavLink>
         </nav>
 
         <div className="ml-auto w-40 sm:w-56">

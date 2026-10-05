@@ -2,9 +2,8 @@ import { IndicatorChart } from "@/components/IndicatorChart";
 import { DASH, LAST_12M_SHORT, toNum, yearOf } from "@/lib/format";
 import { BASIS_HINT, BASIS_LABEL, valueFormatter } from "@/lib/indicators";
 import type { FormatKind } from "@/lib/indicators";
-import { reasonCopy } from "@/lib/null-reasons";
 import { sectorColor } from "@/lib/sectors";
-import type { Analysis, IndicatorKey, NullReason } from "@/lib/types";
+import type { Analysis, IndicatorKey } from "@/lib/types";
 
 type ChartSpec = {
   key: IndicatorKey;
@@ -171,7 +170,7 @@ export function HistoryCharts({
                     )}
                   </div>
                   {values.every((v) => v === null) ? (
-                    <EmptySeries reason={firstReason(periods, c.key)} />
+                    <EmptySeries />
                   ) : (
                     <IndicatorChart
                       labels={labels}
@@ -208,44 +207,14 @@ function inapplicable(periods: Analysis[], key: IndicatorKey): boolean {
   return periods.every((p) => p.indicators.null_reasons[key] === "inapplicable_regime");
 }
 
-/** The first recorded cause across the series — they agree in practice. */
-function firstReason(periods: Analysis[], key: IndicatorKey): NullReason | undefined {
-  for (const p of periods) {
-    const reason = p.indicators.null_reasons[key];
-    if (reason) return reason;
-  }
-  return undefined;
-}
-
-/**
- * A series with nothing in it says why, instead of drawing an empty axis.
- *
- * A chart card with grid lines, tick labels and no bars reads as a rendering
- * failure. It is also the one place the app would be flattering itself: an empty
- * frame hides that the gap is *ours* (WEGE3 files no dividend line in the DFC
- * our mapper reads, so the paid basis is `source_account_absent` while the
- * declared one is complete). The grid cells already name their nulls; so does
- * this.
- *
- * A cause that is a gap of ours is coloured as the warning it is, exactly as in
- * the grid — a deliberate n/d stays quiet.
- */
-function EmptySeries({ reason }: { reason: NullReason | undefined }) {
-  const copy = reasonCopy(reason);
+/** A series without data shows a single dash instead of an empty axis. */
+function EmptySeries() {
   return (
     <div
       className="flex flex-col items-center justify-center gap-1 text-center"
       style={{ height: 170 }}
     >
       <span className="nums text-2xl text-copy-600">{DASH}</span>
-      <span
-        className={`text-[0.68rem] ${copy.intentional ? "text-copy-600" : "text-warning"}`}
-      >
-        {copy.short}
-      </span>
-      <span className="max-w-[26ch] text-[0.6rem] leading-snug text-copy-600">
-        {copy.long}
-      </span>
     </div>
   );
 }

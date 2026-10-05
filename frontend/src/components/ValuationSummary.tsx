@@ -1,6 +1,5 @@
 import { DASH, multiple } from "@/lib/format";
 import type { Analysis, IndicatorContract, IndicatorKey } from "@/lib/types";
-import { reasonCopy } from "@/lib/null-reasons";
 
 type ValuationCard = {
   key: Extract<IndicatorKey, "pe_basic" | "pb">;
@@ -122,9 +121,6 @@ function ValuationGroup({
 function ValuationMetric({ card, analysis }: { card: ValuationCard; analysis: Analysis }) {
   const displayValue = analysis.indicators[card.key];
   const contract = analysis.indicator_contract?.[card.key];
-  const reason = analysis.indicators.null_reasons[card.key];
-  const reasonLabel = displayValue === null && reason ? reasonCopy(reason)?.short : null;
-
   return (
     <article className="rounded-lg border border-copy-200/10 bg-canvas-950 p-3">
       <div className="flex items-start justify-between gap-2">
@@ -135,7 +131,6 @@ function ValuationMetric({ card, analysis }: { card: ValuationCard; analysis: An
       <div className="nums mt-1 text-xl font-semibold text-copy-50">
         {multiple(displayValue)}
       </div>
-      {reasonLabel && <div className="mt-0.5 text-[0.6rem] text-warning">{reasonLabel}</div>}
       {contract && <ContractLine contract={contract} analysis={analysis} />}
     </article>
   );

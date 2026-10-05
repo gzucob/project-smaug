@@ -26,7 +26,6 @@ export type IndicatorGroup =
 
 export interface IndicatorGroupMeta {
   title: string;
-  description: string;
 }
 
 /**
@@ -38,23 +37,18 @@ export interface IndicatorGroupMeta {
 export const INDICATOR_GROUP_META: Record<IndicatorGroup, IndicatorGroupMeta> = {
   Valuation: {
     title: "Valuation",
-    description: "Preço em relação ao lucro, patrimônio, receita, caixa e proventos.",
   },
   Endividamento: {
     title: "Endividamento",
-    description: "Dívida, estrutura de capital e capacidade de pagar obrigações.",
   },
   Eficiência: {
     title: "Eficiência",
-    description: "Margens, uso dos ativos, geração de caixa e custos da operação.",
   },
   Rentabilidade: {
     title: "Rentabilidade",
-    description: "Retorno sobre o patrimônio, os ativos e o capital investido.",
   },
   Crescimento: {
     title: "Crescimento",
-    description: "Evolução da receita, do lucro e dos resultados operacionais.",
   },
 };
 
@@ -139,7 +133,6 @@ export const INDICATORS: IndicatorSpec[] = [
   { key: "payout_cash_paid_in_period", label: "Payout", hint: "Caixa pago pela companhia no período / lucro do mesmo período — sem atribuição ao exercício de origem", group: "Valuation", format: pct },
   { key: "eps_basic", label: "LPA", hint: "Lucro líquido do período / quantidade total de ações, com ajuste para units", group: "Valuation", format: price },
   { key: "bvps", label: "VPA", hint: "Valor patrimonial por ação (patrimônio / número de ações)", group: "Valuation", format: price },
-  { key: "free_float", label: "Free Float", hint: "Percentual total de ações em circulação informado no FRE da companhia", group: "Valuation", format: pct },
   { key: "net_debt", label: "Dívida líquida", hint: "Dívida total − caixa e equivalentes classificados no CPC 03", group: "Endividamento", format: money },
   { key: "net_debt_to_ebitda", label: "Dívida líquida/EBITDA", hint: "Anos de EBITDA para quitar a dívida líquida", group: "Endividamento", format: multiple },
   { key: "net_debt_to_ebit", label: "Dívida líquida/EBIT", hint: "Anos de lucro operacional (EBIT) para quitar a dívida líquida", group: "Endividamento", format: multiple },
@@ -179,16 +172,13 @@ export const INDICATOR_GROUPS: IndicatorGroup[] = [
   "Crescimento",
 ];
 
-/**
- * One restrained hue per group, derived from the existing sector palette. The
- * colours are used as thin rules and headings; the values remain neutral.
- */
+/** Distinct vivid accents identify each group; indicator values remain neutral. */
 const GROUP_COLOR_VARS: Record<IndicatorGroup, string> = {
-  Valuation: "--color-pastel-violet",
-  Endividamento: "--color-pastel-rose",
-  Eficiência: "--color-pastel-sky",
-  Rentabilidade: "--color-pastel-mint",
-  Crescimento: "--color-pastel-amber",
+  Valuation: "--color-gem-violet",
+  Endividamento: "--color-gem-coral",
+  Eficiência: "--color-gem-azure",
+  Rentabilidade: "--color-gem-jade",
+  Crescimento: "--color-gem-gold",
 };
 
 export function groupColor(group: IndicatorGroup): string {

@@ -9,8 +9,7 @@ export function SiteFooter() {
           <span className="font-brand text-sm tracking-[0.25em]">SMAUG</span>
         </div>
         <p className="max-w-md text-xs leading-relaxed text-copy-600">
-          Ferramenta pessoal de análise da carteira. Indicadores derivados dos dados
-          fundamentalistas — não é recomendação de investimento.
+          Não é recomendação de investimento.
         </p>
       </div>
     </footer>

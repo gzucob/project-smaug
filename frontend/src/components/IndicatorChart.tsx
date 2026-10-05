@@ -31,6 +31,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { DASH } from "@/lib/format";
 import { axisFormatter, valueFormatter } from "@/lib/indicators";
 import type { FormatKind } from "@/lib/indicators";
 
@@ -85,6 +86,7 @@ export function IndicatorChart({
   height = 264,
   envelope = null,
   seriesLabel,
+  dateLabels = false,
 }: {
   labels: string[];
   values: (number | null)[];
@@ -101,6 +103,8 @@ export function IndicatorChart({
   envelope?: EnvelopeSeries | null;
   /** Names `values` in the tooltip — only needed when a pair makes it ambiguous. */
   seriesLabel?: string;
+  /** ISO session labels retain the full date in tooltips. */
+  dateLabels?: boolean;
 }) {
   const format = axisFormatter(formatKind);
   const readable = valueFormatter(formatKind);
@@ -150,7 +154,8 @@ export function IndicatorChart({
             // Default interval, not `0`: on a phone the year labels would
             // otherwise run into each other. Recharts drops the ones that do
             // not fit and always keeps the trailing period.
-            minTickGap={4}
+            minTickGap={dateLabels ? 24 : 4}
+            tickFormatter={dateLabels ? (value: string) => value.split("-").reverse().join("/") : undefined}
           />
           <YAxis
             domain={domain}
@@ -167,7 +172,11 @@ export function IndicatorChart({
             cursor={{ stroke: "var(--color-ink-400)", strokeOpacity: 0.28, strokeWidth: 1 }}
             content={(props) => (
               <ChartTooltip
-                label={typeof props.label === "string" ? props.label : ""}
+                label={typeof props.label === "string"
+                  ? dateLabels
+                    ? props.label.split("-").reverse().join("/")
+                    : props.label
+                  : ""}
                 value={pointOf(data, props.label)}
                 format={readable}
                 seriesLabel={seriesLabel}
@@ -236,10 +245,10 @@ export function IndicatorChart({
             <>
               <Line
                 dataKey="closed"
-                type="monotone"
+                type={dateLabels ? "linear" : "monotone"}
                 stroke="var(--color-up)"
                 strokeWidth={2}
-                dot={{ r: 3, fill: "var(--color-up)", stroke: "none" }}
+                dot={dateLabels && values.length > 1 ? false : { r: 3, fill: "var(--color-up)", stroke: "none" }}
                 activeDot={{ r: 4.5 }}
                 isAnimationActive={false}
                 connectNulls={false}
@@ -333,7 +342,7 @@ function ChartTooltip({
         <div className="mt-1 flex items-baseline justify-between gap-4">
           <span className="text-[0.62rem] text-ink-500">{envelopeLabel}</span>
           <span className="nums text-ink-200">
-            {value.envelope === null ? "n/d" : format(value.envelope)}
+            {value.envelope === null ? DASH : format(value.envelope)}
           </span>
         </div>
       )}
@@ -341,12 +350,12 @@ function ChartTooltip({
         <div className="flex items-baseline justify-between gap-4">
           <span className="text-[0.62rem] text-ink-500">{seriesLabel}</span>
           <span className="nums font-semibold" style={{ color: mark }}>
-            {value.value === null ? "n/d" : format(value.value)}
+            {value.value === null ? DASH : format(value.value)}
           </span>
         </div>
       ) : (
         <div className="nums mt-0.5 text-sm font-semibold" style={{ color: mark }}>
-          {value.value === null ? "n/d" : format(value.value)}
+          {value.value === null ? DASH : format(value.value)}
         </div>
       )}
       {value.ghost && (
