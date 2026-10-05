@@ -31,7 +31,8 @@ EQUIVALENT_EVIDENCE_V3 = "equivalent_evidence_v3"
 CLOSING_CAPITAL_V1 = "closing_capital_v1"
 SIMPLIFIED_INDICATORS_V1 = "simplified_indicators_v1"
 CASH_FLOW_INDICATORS_V1 = "cash_flow_indicators_v1"
-CALCULATION_CONTRACT_VERSION = "general_indicators_v1"
+GENERAL_INDICATORS_V1 = "general_indicators_v1"
+CALCULATION_CONTRACT_VERSION = "security_governance_v1"
 # Compatibility filters for historical JSON; these are no longer indicators.
 RETIRED_SECTOR_INDICATORS = frozenset(
     {
@@ -144,6 +145,7 @@ class NullReason(StrEnum):
     """
 
     INAPPLICABLE_REGIME = "inapplicable_regime"
+    CURRENT_ONLY_INDICATOR = "current_only_indicator"
     SOURCE_ACCOUNT_UNMAPPED = "source_account_unmapped"
     SOURCE_ACCOUNT_ABSENT = "source_account_absent"
     MISSING_PRICE = "missing_price"
@@ -157,6 +159,9 @@ class NullReason(StrEnum):
     MISSING_TREASURY_COMPOSITION = "missing_treasury_composition"
     UNRESOLVED_SHARE_CLASS = "unresolved_share_class"
     MISSING_REGULATORY_DISCLOSURE = "missing_regulatory_disclosure"
+    MISSING_TAG_ALONG_EVIDENCE = "missing_tag_along_evidence"
+    UNRESOLVED_TAG_ALONG_CLASSES = "unresolved_tag_along_classes"
+    CONFLICTING_TAG_ALONG_EVIDENCE = "conflicting_tag_along_evidence"
     PARTIAL_REGULATORY_DISCLOSURE = "partial_regulatory_disclosure"
     INCOMPATIBLE_REGULATORY_DISCLOSURE = "incompatible_regulatory_disclosure"
     INCOMPLETE_DEBT_COVERAGE = "incomplete_debt_coverage"
@@ -206,12 +211,22 @@ NULL_DISPOSITION_BY_REASON = MappingProxyType(
     {
         # A formula has no economic meaning under the filed regime.
         NullReason.INAPPLICABLE_REGIME: NullDisposition.INAPPLICABLE,
+        NullReason.CURRENT_ONLY_INDICATOR: NullDisposition.INAPPLICABLE,
         # Inputs are present, but the requested arithmetic has no real result.
         NullReason.ZERO_DENOMINATOR: NullDisposition.MATHEMATICALLY_UNDEFINED,
         NullReason.NON_POSITIVE_ENDPOINT: NullDisposition.MATHEMATICALLY_UNDEFINED,
         # The applicable primary disclosure is absent or cannot prove the
         # required perimeter/basis.  There is no safe value to reconstruct.
         NullReason.SOURCE_ACCOUNT_ABSENT: NullDisposition.PRIMARY_SOURCE_UNAVAILABLE,
+        NullReason.MISSING_TAG_ALONG_EVIDENCE: (
+            NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
+        ),
+        NullReason.UNRESOLVED_TAG_ALONG_CLASSES: (
+            NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
+        ),
+        NullReason.CONFLICTING_TAG_ALONG_EVIDENCE: (
+            NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
+        ),
         NullReason.MISSING_REGULATORY_DISCLOSURE: (
             NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
         ),
@@ -619,10 +634,28 @@ INDICATOR_CONTRACT["capex_to_cfo"] = IndicatorContract(
 )
 
 
+INDICATOR_CONTRACT["tag_along"] = IndicatorContract(
+    tier=IndicatorTier.STRICT,
+    basis="security_current_rights",
+    numerator="resolved_tag_along_percent",
+    denominator="one_hundred",
+    reference_period="current_security_rights",
+    price_basis="not_applicable",
+    share_basis="security_class_or_unit_components",
+    provenance=("cvm", "b3"),
+)
+
+
 def indicator_contracts(version: str) -> dict[str, IndicatorContract]:
     """Describe the formula actually used by a persisted calculation version."""
-    if version in {CALCULATION_CONTRACT_VERSION, CASH_FLOW_INDICATORS_V1}:
+    if version == CALCULATION_CONTRACT_VERSION:
         return INDICATOR_CONTRACT
+    if version in {GENERAL_INDICATORS_V1, CASH_FLOW_INDICATORS_V1}:
+        return {
+            key: value
+            for key, value in INDICATOR_CONTRACT.items()
+            if key != "tag_along"
+        }
     if version == SIMPLIFIED_INDICATORS_V1:
         return SIMPLIFIED_INDICATOR_CONTRACT
     if version == CLOSING_CAPITAL_V1:
@@ -697,6 +730,7 @@ class Indicators:
     cash_ratio: Decimal | None = None
     quick_ratio: Decimal | None = None
     ev_revenue: Decimal | None = None
+    tag_along: Decimal | None = None
     free_float: Decimal | None = None
     price_to_ebitda: Decimal | None = None
     cfo_yield: Decimal | None = None

@@ -97,6 +97,8 @@ class TickerAnalysisRow(Base):
     cash_ratio: Mapped[Decimal | None] = mapped_column(Numeric)
     quick_ratio: Mapped[Decimal | None] = mapped_column(Numeric)
     ev_revenue: Mapped[Decimal | None] = mapped_column(Numeric)
+    governance: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    tag_along: Mapped[Decimal | None] = mapped_column(Numeric)
     free_float: Mapped[Decimal | None] = mapped_column(Numeric)
     price_to_ebitda: Mapped[Decimal | None] = mapped_column(Numeric)
     cfo_yield: Mapped[Decimal | None] = mapped_column(Numeric)

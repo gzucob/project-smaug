@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from typing import Protocol
 
@@ -23,9 +24,10 @@ from smaug.analysis.domain.financials import (
     StandardizedFinancials,
     YearPrices,
 )
+from smaug.analysis.domain.governance import Governance
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.outcomes import AnalysisOutcome
-from smaug.portfolio.domain.share_classes import PerShareClass
+from smaug.portfolio.domain.share_classes import PerShareClass, UnitComponent
 
 
 @dataclass(frozen=True)
@@ -277,3 +279,11 @@ class AnalysisRepository(Protocol):
         reclaims space without changing any read. A deliberate maintenance action,
         never a side effect of ``analyze``."""
         ...
+
+
+class GovernanceReader(Protocol):
+    """Read dated security rights and listing classification from the mirror."""
+
+    async def read(
+        self, ticker: str, end: date, components: tuple[UnitComponent, ...]
+    ) -> Governance: ...

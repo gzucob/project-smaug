@@ -58,6 +58,7 @@ from smaug.analysis.infrastructure.dividend_adjusted_price import (
 from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
 from smaug.analysis.infrastructure.mongo_dividends import MongoCashEventReader
 from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsReader
+from smaug.analysis.infrastructure.mongo_governance import MongoGovernanceReader
 from smaug.analysis.infrastructure.restated_price import RestatedPriceProvider
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
 from smaug.analysis.infrastructure.succession import (
@@ -109,6 +110,7 @@ from smaug.ingestion.infrastructure.b3_listed_company import (
     B3ListedCompany,
     B3ListedCompanyResolver,
 )
+from smaug.ingestion.infrastructure.b3_listing import B3_LISTING_MODULE, B3ListingSource
 from smaug.ingestion.infrastructure.b3_reused_roots import (
     REUSED_ROOT_TICKERS,
     B3ReusedRootRecovery,
@@ -132,6 +134,10 @@ from smaug.ingestion.infrastructure.cvm_free_float import (
     CvmFreeFloatSource,
 )
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, CvmDocument
+from smaug.ingestion.infrastructure.cvm_tag_along import (
+    TAG_ALONG_MODULE,
+    CvmTagAlongSource,
+)
 from smaug.ingestion.infrastructure.repositories import (
     BeanieIngestionFailureRepository,
     BeanieIngestionRunRepository,
@@ -370,8 +376,7 @@ def _classification_resolver(
 def _listed_since_resolver(
     identities: dict[str, CompanyIdentity],
 ) -> Callable[[str], date | None]:
-    """When a ticker was listed, from the FCA's ``Data_Inicio_Listagem`` (#153,
-    #212) — the same registry every other resolver here reads."""
+    """FCA ``Data_Inicio_Listagem``, exposed as IPO date and used as a listing floor."""
 
     def resolve(ticker: str) -> date | None:
         identity = identities.get(ticker)
@@ -951,6 +956,19 @@ def _build_data_source(
     return RoutedDataSource(
         {
             CAPITAL_MODULE: capital,
+            TAG_ALONG_MODULE: CvmTagAlongSource(
+                free_float_archive,
+                ticker_to_cnpj,
+                ticker_to_code,
+                year=cvm_year,
+                validation_reporter=validation_reporter,
+            ),
+            B3_LISTING_MODULE: B3ListingSource(
+                http,
+                ticker_to_code,
+                ticker_to_cnpj,
+                base_url=settings.b3_listed_base_url,
+            ),
             FREE_FLOAT_MODULE: CvmFreeFloatSource(
                 free_float_archive,
                 ticker_to_cnpj,
@@ -1313,11 +1331,13 @@ async def _ingest_one_year(
             event_bus=EventBus(),
             modules=owed,
             run_id=run_id,
-            # Only these two hit a live, per-ticker B3 endpoint
+            # These modules hit live, per-ticker B3 endpoints
             # (``GetListedSupplementCompany``, ADR 0034/ADR 0039); every other
             # module reads this year's already-downloaded CVM archive from
             # memory and owes the call no pause at all (#214).
-            paced_modules=frozenset({CAPITAL_EVENT_B3_MODULE, CASH_DIVIDEND_B3_MODULE}),
+            paced_modules=frozenset(
+                {CAPITAL_EVENT_B3_MODULE, CASH_DIVIDEND_B3_MODULE, B3_LISTING_MODULE}
+            ),
             max_concurrency=concurrency,
             outcome_sink=outcome_sink,
             failure_sink=failure_sink,
@@ -1390,6 +1410,8 @@ def _parser_identities(modules: Sequence[str]) -> tuple[ParserIdentity, ...]:
 
 
 _MODULE_ADAPTERS = {
+    TAG_ALONG_MODULE: (CvmTagAlongSource.parser_identity, CvmTagAlongSource.source),
+    B3_LISTING_MODULE: (B3ListingSource.parser_identity, B3ListingSource.source),
     CAPITAL_MODULE: (CvmCapitalSource.parser_identity, CvmCapitalSource.source),
     FREE_FLOAT_MODULE: (CvmFreeFloatSource.parser_identity, CvmFreeFloatSource.source),
     TREASURY_MODULE: (CvmTreasurySource.parser_identity, CvmTreasurySource.source),
@@ -1947,6 +1969,10 @@ async def _run_analyze(
             )
             analysis_repository = SqlAlchemyAnalysisRepository(session_factory)
             use_case = AnalyzePortfolioUseCase(
+                governance_reader=MongoGovernanceReader(
+                    mongo[settings.mongo_db]["raw_ingestions"],
+                    registrant_resolver=registrant,
+                ),
                 reader=MongoFundamentalsReader(
                     mongo[settings.mongo_db]["raw_ingestions"],
                     sector_resolver=_sector_resolver(identities),
@@ -1969,6 +1995,7 @@ async def _run_analyze(
                 repository=analysis_repository,
                 shares_reader=shares_reader,
                 classification_resolver=_classification_resolver(identities),
+                ipo_date_resolver=_listed_since_resolver(identities),
                 classes_resolver=_classes_resolver(identities),
                 class_mapping_resolver=_class_mappings_resolver(
                     identities, historical_codes

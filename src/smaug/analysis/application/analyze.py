@@ -41,9 +41,13 @@ from smaug.analysis.domain.financials import (
     MarketData,
     ShareCountProvenance,
     ShareCounts,
+    SourceAccountEvidence,
+    SourceAccountRef,
+    SourceAccountStatus,
     StandardizedFinancials,
     YearPrices,
 )
+from smaug.analysis.domain.governance import Governance
 from smaug.analysis.domain.indicators import CALCULATION_CONTRACT_VERSION, NullReason
 from smaug.analysis.domain.market_cap import capitalize
 from smaug.analysis.domain.outcomes import (
@@ -68,6 +72,7 @@ from smaug.analysis.domain.ports import (
     CashEventReader,
     CountReasonReader,
     FundamentalsReader,
+    GovernanceReader,
     PriceProvider,
     SessionPriceProvider,
     SharesReader,
@@ -134,6 +139,7 @@ def _price_null_reason(error: SourceError) -> NullReason:
 # Defaults to the committed snapshot; the CLI passes a registry-backed resolver
 # so an on-demand ticker outside it degrades to the CVM single level (ADR 0024).
 ClassificationResolver = Callable[[str], Classification]
+IpoDateResolver = Callable[[str], date | None]
 
 # How a ticker's listed share classes are resolved for the cap (ADR 0014). The
 # CLI passes a registry-backed resolver, unconditionally, for every ticker
@@ -149,6 +155,10 @@ def _default_classification(ticker: str) -> Classification:
     if classification is None:
         raise UnknownTickerError(ticker)
     return classification
+
+
+def _unknown_ipo_date(_ticker: str) -> date | None:
+    return None
 
 
 def _no_per_share_components(_ticker: str) -> tuple[UnitComponent, ...]:
@@ -287,19 +297,23 @@ class AnalyzePortfolioUseCase:
         *,
         clock: Clock = _utc_now,
         classification_resolver: ClassificationResolver = _default_classification,
+        ipo_date_resolver: IpoDateResolver = _unknown_ipo_date,
         classes_resolver: ClassesResolver,
         class_mapping_resolver: ClassMappingsResolver = _no_class_mappings,
         cash_event_reader: CashEventReader | None = None,
         per_share_resolver: PerShareResolver = _no_per_share_components,
         outcome_repository: AnalysisOutcomeWriter | None = None,
+        governance_reader: GovernanceReader | None = None,
         id_factory: IdFactory = _new_id,
     ) -> None:
+        self._governance_reader = governance_reader
         self._reader = reader
         self._price_provider = price_provider
         self._repository = repository
         self._shares_reader = shares_reader
         self._clock = clock
         self._classification_resolver = classification_resolver
+        self._ipo_date_resolver = ipo_date_resolver
         self._classes_resolver = classes_resolver
         self._class_mappings = class_mapping_resolver
         self._cash_events = cash_event_reader
@@ -498,6 +512,50 @@ class AnalyzePortfolioUseCase:
             )
             return False
 
+    async def _governance(
+        self, ticker: str, financials: StandardizedFinancials, end: date
+    ) -> tuple[StandardizedFinancials, Governance]:
+        evidence = (
+            await self._governance_reader.read(ticker, end, self._per_share(ticker))
+            if self._governance_reader is not None
+            else Governance()
+        )
+        reason = (
+            NullReason(evidence.blocker or "missing_tag_along_evidence")
+            if evidence.tag_along is None
+            else None
+        )
+        source = SourceAccountEvidence(
+            field="tag_along",
+            statement=evidence.tag_along_source or "CVM/B3",
+            status=SourceAccountStatus.DERIVED
+            if reason is None
+            else SourceAccountStatus.ABSENT,
+            expected=(
+                evidence.tag_along_reference
+                or evidence.blocker
+                or "dated_security_rights",
+            ),
+            found=(
+                SourceAccountRef(
+                    code="tag_along",
+                    name="Tag along da espécie/classe",
+                    value=evidence.tag_along,
+                ),
+            )
+            if reason is None
+            else (),
+            formula="resolved_tag_along_percent / 100",
+            blocker=reason,
+            consumer_indicators=("tag_along",),
+        )
+        return replace(
+            financials,
+            tag_along=evidence.tag_along,
+            tag_along_null_reason=reason,
+            source_account_evidence=(*financials.source_account_evidence, source),
+        ), evidence
+
     async def _ttm_analysis(
         self,
         ticker: str,
@@ -512,6 +570,10 @@ class AnalyzePortfolioUseCase:
         if current is None:
             logger.info("No TTM window for %s (needs 4 quarters)", ticker)
             return None
+        current, governance = await self._governance(
+            ticker, current, computed_at.date()
+        )
+        governance = replace(governance, ipo_date=self._ipo_date_resolver(ticker))
         year = current.reference_date.year
         prior_end = _prior_year_end(current.reference_date)
         previous = build_ttm_as_of(quarters, annuals, prior_end)
@@ -531,6 +593,7 @@ class AnalyzePortfolioUseCase:
             calculation_contract_version=CALCULATION_CONTRACT_VERSION,
             ticker=ticker,
             classification=classification,
+            governance=governance,
             reference_date=current.reference_date,
             computed_at=computed_at,
             # The whole closed series: a compounded rate runs over exercises, and
@@ -576,6 +639,15 @@ class AnalyzePortfolioUseCase:
         computed_at: datetime,
     ) -> TickerAnalysis:
         """One closed fiscal year, priced on what the shares traded at that year."""
+        annual = replace(
+            annual,
+            tag_along=None,
+            tag_along_null_reason=NullReason.CURRENT_ONLY_INDICATOR,
+        )
+        governance = Governance(
+            ipo_date=self._ipo_date_resolver(ticker),
+            blocker="current_only_indicator",
+        )
         year = annual.reference_date.year
         previous = _prior_year_annual(annuals, annual.reference_date)
         market, adjusted_avg = await self._market_for_year(ticker, year)
@@ -590,6 +662,7 @@ class AnalyzePortfolioUseCase:
             calculation_contract_version=CALCULATION_CONTRACT_VERSION,
             ticker=ticker,
             classification=classification,
+            governance=governance,
             reference_date=annual.reference_date,
             computed_at=computed_at,
             indicators=compute(

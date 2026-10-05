@@ -44,6 +44,7 @@ from smaug.analysis.domain.financials import (
     SourceAccountRef,
     SourceAccountStatus,
 )
+from smaug.analysis.domain.governance import Governance
 from smaug.analysis.domain.indicators import (
     RETIRED_SECTOR_INDICATORS,
     Indicators,
@@ -1008,6 +1009,20 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         quick_ratio=i.quick_ratio,
         ev_revenue=i.ev_revenue,
         free_float=i.free_float,
+        tag_along=i.tag_along,
+        governance={
+            "ipo_date": analysis.governance.ipo_date.isoformat()
+            if analysis.governance.ipo_date
+            else None,
+            "listing_segment": analysis.governance.listing_segment,
+            "listing_observed_on": analysis.governance.listing_observed_on.isoformat()
+            if analysis.governance.listing_observed_on
+            else None,
+            "listing_source": analysis.governance.listing_source,
+            "tag_along_source": analysis.governance.tag_along_source,
+            "tag_along_reference": analysis.governance.tag_along_reference,
+            "blocker": analysis.governance.blocker,
+        },
         price_to_ebitda=i.price_to_ebitda,
         cfo_yield=i.cfo_yield,
         cfo_margin=i.cfo_margin,
@@ -1068,6 +1083,7 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
     return TickerAnalysis(
         ticker=row.ticker,
         classification=Classification(row.setor, row.subsetor, row.segmento),
+        governance=_governance_from_row(row),
         reference_date=row.reference_date,
         computed_at=row.computed_at,
         calculation_contract_version=(
@@ -1132,6 +1148,7 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
             quick_ratio=row.quick_ratio,
             ev_revenue=row.ev_revenue,
             free_float=row.free_float,
+            tag_along=row.tag_along,
             price_to_ebitda=row.price_to_ebitda,
             cfo_yield=row.cfo_yield,
             cfo_margin=row.cfo_margin,
@@ -1422,3 +1439,19 @@ class SqlAlchemyAnalysisRepository:
         # Every row is either kept or deleted, so this is exact — no need to read a
         # driver-specific rowcount back.
         return PruneResult(deleted=len(runs) - len(keep), kept=len(keep))
+
+
+def _governance_from_row(row: TickerAnalysisRow) -> Governance:
+    data = row.governance or {}
+    ipo_date = data.get("ipo_date")
+    observed = data.get("listing_observed_on")
+    return Governance(
+        ipo_date=date.fromisoformat(ipo_date) if ipo_date else None,
+        listing_segment=data.get("listing_segment"),
+        listing_observed_on=date.fromisoformat(observed) if observed else None,
+        listing_source=data.get("listing_source"),
+        tag_along=row.tag_along,
+        tag_along_source=data.get("tag_along_source"),
+        tag_along_reference=data.get("tag_along_reference"),
+        blocker=data.get("blocker", "missing_tag_along_evidence"),
+    )

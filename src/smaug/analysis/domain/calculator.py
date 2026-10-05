@@ -457,6 +457,7 @@ _NEEDS: dict[str, _Needs] = {
     "quick_ratio": _Needs(
         accounts=("current_assets", "inventories", "current_liabilities")
     ),
+    "tag_along": _Needs(accounts=("tag_along",)),
     "free_float": _Needs(accounts=("free_float",)),
     "price_to_cfo": _Needs(accounts=("cfo",), cap=True),
     "price_to_ebitda": _Needs(accounts=("ebitda",), cap=True),
@@ -588,6 +589,8 @@ def _classify(
         return f.eps_diluted_null_reason
     if name == "pe_diluted" and f.eps_diluted_null_reason is not None:
         return f.eps_diluted_null_reason
+    if name == "tag_along" and f.tag_along_null_reason is not None:
+        return f.tag_along_null_reason
     if needs.series is not None:
         return _classify_cagr(needs.series, f, history)
     for account in needs.accounts:
@@ -768,6 +771,7 @@ def compute(
         cash_ratio=_div(f.cash_equivalents, f.current_liabilities),
         quick_ratio=_div(_sub(f.current_assets, f.inventories), f.current_liabilities),
         free_float=f.free_float,
+        tag_along=f.tag_along,
         price_to_cfo=_div(cap, annual_cfo),
         price_to_ebitda=_div(cap, annual_ebitda),
         cfo_yield=_div(annual_cfo, cap),

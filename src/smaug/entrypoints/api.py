@@ -264,6 +264,7 @@ class IndicatorsResponse(BaseModel):
     cash_ratio: Decimal | None
     quick_ratio: Decimal | None
     ev_revenue: Decimal | None
+    tag_along: Decimal | None
     free_float: Decimal | None
     price_to_ebitda: Decimal | None
     cfo_yield: Decimal | None
@@ -380,12 +381,25 @@ class DebtEvidenceResponse(BaseModel):
     secondary_blockers: list[DebtBlocker]
 
 
+class GovernanceResponse(BaseModel):
+    """IPO date, dated listing segment, and selected tag-along evidence."""
+
+    ipo_date: date | None
+    listing_segment: str | None
+    listing_observed_on: date | None
+    listing_source: str | None
+    tag_along_source: str | None
+    tag_along_reference: str | None
+    blocker: str | None
+
+
 class AnalysisResponse(BaseModel):
     """One ticker's analysis for a single view: provenance + indicator contract."""
 
     ticker: str
     view: str
     classification: ClassificationResponse
+    governance: GovernanceResponse
     reference_date: date
     computed_at: datetime
     calculation_contract_version: str
@@ -711,6 +725,15 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
     return AnalysisResponse(
         ticker=analysis.ticker,
         view=analysis.view,
+        governance=GovernanceResponse(
+            ipo_date=analysis.governance.ipo_date,
+            listing_segment=analysis.governance.listing_segment,
+            listing_observed_on=analysis.governance.listing_observed_on,
+            listing_source=analysis.governance.listing_source,
+            tag_along_source=analysis.governance.tag_along_source,
+            tag_along_reference=analysis.governance.tag_along_reference,
+            blocker=analysis.governance.blocker,
+        ),
         classification=ClassificationResponse(
             setor=analysis.classification.setor,
             subsetor=analysis.classification.subsetor,

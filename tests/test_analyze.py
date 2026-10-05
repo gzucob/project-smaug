@@ -771,6 +771,9 @@ async def test_analyze_produces_ttm_and_closed_year_views() -> None:
         for row in repo.saved
     )
     y2025 = views[("closed_year", date(2025, 12, 31))]
+    assert y2025.indicators.tag_along is None
+    assert y2025.indicators.null_reasons["tag_along"] == "current_only_indicator"
+    assert y2025.governance.listing_segment is None
     assert y2025.price_basis == "b3_year_end_close"
     assert y2025.price == Decimal(9)  # B3's last close at the fiscal cut-off
     assert y2025.price_adjusted == Decimal(6)  # the total-return ruler, kept aside

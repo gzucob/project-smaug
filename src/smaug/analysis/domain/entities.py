@@ -15,6 +15,7 @@ from smaug.analysis.domain.financials import (
     RegimeSource,
     ShareCountProvenance,
 )
+from smaug.analysis.domain.governance import Governance
 from smaug.analysis.domain.indicators import LEGACY_CALCULATION_CONTRACT, Indicators
 from smaug.portfolio.domain.share_classes import ShareClassMapping
 from smaug.portfolio.domain.taxonomy import Classification
@@ -90,3 +91,4 @@ class TickerAnalysis:
     share_class_mappings: tuple[ShareClassMapping, ...] = ()
     class_market_values: tuple[ClassMarketValue, ...] = ()
     capital_provenance: ShareCountProvenance | None = None
+    governance: Governance = Governance()

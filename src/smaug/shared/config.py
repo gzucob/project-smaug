@@ -33,6 +33,8 @@ DEFAULT_CVM_MODULES: tuple[str, ...] = (
     "DRA",
     "CAPITAL",
     "FREE_FLOAT",
+    "TAG_ALONG",
+    "LISTING_B3",
     "CAPITAL_DFP",
     # The FRE's declared corporate actions (split/grupamento/bonificação) with
     # their approval date — what ADR 0027 infers from count ratios instead.

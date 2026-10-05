@@ -378,6 +378,8 @@ class StandardizedFinancials:
     current_financial_investments: Decimal | None = None
     current_assets: Decimal | None = None
     inventories: Decimal | None = None
+    tag_along: Decimal | None = None
+    tag_along_null_reason: NullReason | None = None
     free_float: Decimal | None = None  # filed company-wide fraction
     current_liabilities: Decimal | None = None
     total_debt: Decimal | None = None

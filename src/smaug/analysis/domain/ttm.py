@@ -1288,7 +1288,7 @@ def _build_ttm(
         tuple(
             s
             for s in stock_source.source_account_evidence
-            if s.field in {"inventories", "free_float"}
+            if s.field in {"inventories", "free_float", "tag_along"}
         ),
     )
 
@@ -1321,6 +1321,8 @@ def _build_ttm(
         current_assets=stock_source.current_assets,
         inventories=stock_source.inventories,
         free_float=stock_source.free_float,
+        tag_along=stock_source.tag_along,
+        tag_along_null_reason=stock_source.tag_along_null_reason,
         current_liabilities=stock_source.current_liabilities,
         total_debt=stock_source.total_debt,
         debt_coverage_null_reason=stock_source.debt_coverage_null_reason,
