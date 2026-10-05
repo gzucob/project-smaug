@@ -68,6 +68,13 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     weakIn: [],
     caveat: "Receita segue o perímetro das demonstrações CVM selecionadas para a companhia.",
   },
+  tag_along: {
+    formula: "Percentual de proteção na alienação de controle ÷ 100",
+    what: "Parcela do preço pago ao controlador assegurada ao titular desta espécie ou classe de ação, na hipótese de alienação de controle.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "A origem identifica a declaração do FRE ou a garantia do segmento de listagem da B3. Um dado antigo não comprova o estatuto atual. Units só recebem um percentual quando todos os componentes têm a mesma proteção comprovada.",
+  },
   free_float: {
     formula: "Percentual total de ações em circulação informado no FRE da companhia",
     what: "A participação do capital social que a companhia informa como ações em circulação no FRE, convertida de percentual para fração.",

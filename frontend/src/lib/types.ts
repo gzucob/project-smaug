@@ -217,6 +217,7 @@ export interface Indicators {
   cash_ratio: Decimalish;
   quick_ratio: Decimalish;
   ev_revenue: Decimalish;
+  tag_along: Decimalish;
   free_float: Decimalish;
   price_to_ebitda: Decimalish;
   cfo_yield: Decimalish;
@@ -295,6 +296,7 @@ export interface IndicatorContract {
  */
 export type NullReason =
   | "inapplicable_regime"
+  | "current_only_indicator"
   | "source_account_unmapped"
   | "source_account_absent"
   | "missing_price"
@@ -303,6 +305,9 @@ export type NullReason =
   | "missing_share_count"
   | "missing_unit_composition"
   | "missing_regulatory_disclosure"
+  | "missing_tag_along_evidence"
+  | "unresolved_tag_along_classes"
+  | "conflicting_tag_along_evidence"
   | "incomplete_debt_coverage"
   | "missing_cpc41_disclosure"
   | "missing_weighted_average_shares"
