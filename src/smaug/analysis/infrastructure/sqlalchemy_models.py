@@ -191,3 +191,21 @@ class AnalysisOutcomeRow(Base):
     no_analysis_reason: Mapped[str | None] = mapped_column(String(64))
     detail: Mapped[str] = mapped_column(Text)
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PriceHistoryRow(Base):
+    """Append-only daily series; one atomic snapshot per CLI calculation."""
+
+    __tablename__ = "price_histories"
+    __table_args__ = (Index("ix_price_histories_latest", "ticker", "id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticker: Mapped[str] = mapped_column(String(12))
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    start_year: Mapped[int]
+    end_year: Mapped[int]
+    contract_version: Mapped[str] = mapped_column(String(48))
+    price_basis: Mapped[str] = mapped_column(String(32))
+    source: Mapped[str] = mapped_column(String(32))
+    points: Mapped[list[dict[str, str]]] = mapped_column(JSON)
+    gaps: Mapped[list[dict[str, str | int]]] = mapped_column(JSON)

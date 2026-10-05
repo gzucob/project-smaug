@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 from time import perf_counter
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
 import httpx
 import typer
@@ -39,6 +39,7 @@ from smaug.analysis.application.doctor import (
     TickerCoverage,
 )
 from smaug.analysis.application.drift import AccountDriftUseCase, DriftReport
+from smaug.analysis.application.price_history import BuildPriceHistoryUseCase
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.financials import IssuerIdentity
 from smaug.analysis.domain.indicators import NullReason
@@ -60,6 +61,7 @@ from smaug.analysis.infrastructure.mongo_dividends import MongoCashEventReader
 from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsReader
 from smaug.analysis.infrastructure.mongo_governance import MongoGovernanceReader
 from smaug.analysis.infrastructure.restated_price import RestatedPriceProvider
+from smaug.analysis.infrastructure.sql_price_history import SqlPriceHistoryRepository
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
 from smaug.analysis.infrastructure.succession import (
     CodeSuccession,
@@ -1604,6 +1606,17 @@ def analyze(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Print every indicator instead of a summary."
     ),
+    price_history_only: Annotated[
+        bool,
+        typer.Option(
+            "--price-history-only",
+            help="Prepare daily closing history without recomputing indicators.",
+        ),
+    ] = False,
+    price_history_since: Annotated[
+        int,
+        typer.Option("--price-history-since", min=2010, help="First history year."),
+    ] = 2010,
 ) -> None:
     """Compute the fundamental + market indicators and store them in Postgres.
 
@@ -1614,9 +1627,16 @@ def analyze(
     With no flags, the command analyzes the complete traded-code universe, the
     same scope selected explicitly by ``--all``.
     """
+    if price_history_only and price_history_since > date.today().year:
+        raise typer.BadParameter("--price-history-since cannot be in the future")
     tickers, whole_exchange = _resolve_scope(ticker, all_listed)
     exit_code = _guarded(
-        _run_analyze(tickers, whole_exchange=whole_exchange, verbose=verbose)
+        _run_analyze(
+            tickers,
+            whole_exchange=whole_exchange,
+            verbose=verbose,
+            price_history_since=price_history_since if price_history_only else None,
+        )
     )
     raise typer.Exit(code=exit_code)
 
@@ -1892,7 +1912,11 @@ def _build_price_provider(
 
 
 async def _run_analyze(
-    tickers: tuple[str, ...], *, whole_exchange: bool = False, verbose: bool = False
+    tickers: tuple[str, ...],
+    *,
+    whole_exchange: bool = False,
+    verbose: bool = False,
+    price_history_since: int | None = None,
 ) -> int:
     settings = get_settings()
     mongo = await init_database(settings)
@@ -1962,6 +1986,30 @@ async def _run_analyze(
                 unit_composition_resolver=_unit_composition_resolver(identities),
                 unit_resolver=units,
             )
+            if price_history_since is not None:
+                history_builder = BuildPriceHistoryUseCase(
+                    SuccessionPriceProvider(
+                        B3PriceProvider(archive),
+                        succession,
+                        timeline=shares_reader.restatement_timeline,
+                    ),
+                    shares_reader,
+                    SqlPriceHistoryRepository(session_factory),
+                )
+                errors = 0
+                for symbol in tickers:
+                    try:
+                        history = await history_builder.execute(
+                            symbol, start_year=price_history_since
+                        )
+                        typer.echo(
+                            f"{symbol}: {len(history.points)} daily closes; "
+                            f"{len(history.gaps)} years without a resolved series"
+                        )
+                    except Exception as exc:
+                        errors += 1
+                        typer.echo(f"{symbol}: error: {exc}", err=True)
+                return 1 if errors else 0
             cash_events = MongoCashEventReader(
                 mongo[settings.mongo_db]["raw_ingestions"],
                 registrant_resolver=registrant,

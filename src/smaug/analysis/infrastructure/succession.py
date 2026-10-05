@@ -24,6 +24,7 @@ from smaug.analysis.domain.capital import RestatementStep
 from smaug.analysis.domain.financials import MarketData, SessionClose, YearPrices
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.ports import SessionPriceProvider
+from smaug.analysis.domain.price_history import TradedClose
 from smaug.analysis.domain.succession import (
     CodeWindow,
     Explains,
@@ -627,6 +628,28 @@ class SuccessionPriceProvider:
             closing_session=last.session,
             closing_code=closing_code,
         )
+
+    async def history_year(
+        self, ticker: str, year: int
+    ) -> tuple[tuple[TradedClose, ...], str | None]:
+        """Daily observations with official codes, rejecting unresolved years."""
+        resolved = await self._chain(ticker, year)
+        if await self._succession.unpriceable(ticker, year, resolved):
+            return (), "price_symbol_not_found"
+        if len(resolved) < 2:
+            return tuple(
+                TradedClose(item.session, ticker.strip().upper(), item.close)
+                for item in await self._inner.year_sessions(ticker, year)
+            ), None
+        observations: dict[date, TradedClose] = {}
+        for window in resolved:
+            for item in await self._inner.year_sessions(window.code, year):
+                if item.session in observations:
+                    return (), "ambiguous_price_identity"
+                observations[item.session] = TradedClose(
+                    item.session, window.code, item.close
+                )
+        return tuple(observations[key] for key in sorted(observations)), None
 
     async def _chain(self, ticker: str, year: int) -> tuple[CodeWindow, ...]:
         steps = await self._restatement(ticker)

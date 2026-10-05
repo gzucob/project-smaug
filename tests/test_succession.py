@@ -358,6 +358,23 @@ async def test_the_rename_year_averages_the_whole_year_not_its_tail() -> None:
     assert prices.null_reason is None
 
 
+async def test_daily_history_preserves_the_code_on_each_side_of_a_rename() -> None:
+    archive = _renamed_archive()
+    provider = SuccessionPriceProvider(
+        _StaticPrices(archive),  # type: ignore[arg-type]
+        _succession(archive),
+    )
+    observations, reason = await provider.history_year("AZZA3", 2024)
+    assert reason is None
+    assert [item.code for item in observations] == ["ARZZ3", "ARZZ3", "AZZA3", "AZZA3"]
+    assert [item.close for item in observations] == [
+        Decimal("48"),
+        Decimal("48.65"),
+        Decimal("50.39"),
+        Decimal("51"),
+    ]
+
+
 async def test_a_year_before_the_predecessor_reads_the_predecessor() -> None:
     archive = _renamed_archive()
     provider = SuccessionPriceProvider(
@@ -942,6 +959,17 @@ async def test_the_price_joins_a_seam_the_restatement_has_dated() -> None:
     assert (await blind.year_prices("VSTE3", 2023)).null_reason is (
         NullReason.PRICE_SYMBOL_NOT_FOUND
     )
+    observations, reason = await blind.history_year("VSTE3", 2023)
+    assert observations == ()
+    assert reason == "price_symbol_not_found"
+    joined_observations, joined_reason = await dated.history_year("VSTE3", 2023)
+    assert joined_reason is None
+    assert [item.code for item in joined_observations] == [
+        "LLIS3",
+        "LLIS3",
+        "VSTE3",
+        "VSTE3",
+    ]
     # Dated, the four sessions of 2023 are one series again — the two under LLIS3
     # are restated by the outer decorator, which is what the step is for.
     joined_year = await dated.year_prices("VSTE3", 2023)

@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from smaug.analysis.application.price_history import ReadPriceHistoryUseCase
 from smaug.analysis.domain.entities import VIEW_TTM, TickerAnalysis
 from smaug.analysis.domain.financials import (
     AccountingRegime,
@@ -48,6 +49,8 @@ from smaug.analysis.domain.indicators import (
     is_retired_sector_input,
     public_indicator_names,
 )
+from smaug.analysis.domain.price_history import PriceHistory
+from smaug.analysis.infrastructure.sql_price_history import SqlPriceHistoryRepository
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
 from smaug.portfolio.application.manage_portfolio import ManagePortfolioUseCase
 from smaug.portfolio.domain.entities import PortfolioTicker
@@ -60,6 +63,7 @@ from smaug.shared.sql_db import create_engine, create_session_factory
 _settings = get_settings()
 _session_factory = create_session_factory(create_engine(_settings))
 _repository = SqlAlchemyAnalysisRepository(_session_factory)
+_price_history = ReadPriceHistoryUseCase(SqlPriceHistoryRepository(_session_factory))
 _portfolio = ManagePortfolioUseCase(SqlAlchemyPortfolioRepository(_session_factory))
 
 app = FastAPI(title="smaug — análise fundamentalista", version="0.1.0")
@@ -794,6 +798,68 @@ async def get_analysis(ticker: str) -> TickerViewsResponse:
         ttm=_to_response(ttm) if ttm is not None else None,
         history=[_to_response(a) for a in history],
     )
+
+
+class HistoricalCloseResponse(BaseModel):
+    """One daily close and the underlying B3 observation."""
+
+    session: date
+    code: str
+    as_traded: Decimal
+    adjusted: Decimal
+    factor: Decimal
+
+
+class PriceHistoryGapResponse(BaseModel):
+    year: int
+    reason: str
+
+
+class PriceHistoryResponse(BaseModel):
+    ticker: str
+    computed_at: datetime
+    start_year: int
+    end_year: int
+    contract_version: str
+    price_basis: str
+    source: str
+    points: list[HistoricalCloseResponse]
+    gaps: list[PriceHistoryGapResponse]
+
+
+def _to_price_history_response(history: PriceHistory) -> PriceHistoryResponse:
+    return PriceHistoryResponse(
+        ticker=history.ticker,
+        computed_at=history.computed_at,
+        start_year=history.start_year,
+        end_year=history.end_year,
+        contract_version=history.contract_version,
+        price_basis=history.price_basis,
+        source=history.source,
+        points=[
+            HistoricalCloseResponse(
+                session=item.session,
+                code=item.code,
+                as_traded=item.as_traded,
+                adjusted=item.adjusted,
+                factor=item.factor,
+            )
+            for item in history.points
+        ],
+        gaps=[
+            PriceHistoryGapResponse(year=item.year, reason=item.reason)
+            for item in history.gaps
+        ],
+    )
+
+
+@app.get("/prices/{ticker}/history", response_model=PriceHistoryResponse)
+async def get_price_history(ticker: str) -> PriceHistoryResponse:
+    """Read daily history prepared by the CLI, without source access or writes."""
+    history = await _price_history.execute(ticker)
+    if history is None:
+        raise HTTPException(status_code=404, detail="price_history_not_prepared")
+    return _to_price_history_response(history)
 
 
 @app.get("/portfolio", response_model=list[PortfolioTickerResponse])
