@@ -1,5 +1,6 @@
 """CVM account mapping -> StandardizedFinancials (pure, no Mongo)."""
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
@@ -14,12 +15,13 @@ from smaug.analysis.domain.financials import (
     DebtInstrument,
     DebtLineClassification,
     DebtLineRole,
-    InsuranceUnderwritingStatus,
     IssuerIdentity,
     MarketData,
     RegimeSource,
+    SourceAccountStatus,
 )
 from smaug.analysis.domain.indicators import NullReason
+from smaug.analysis.domain.ttm import build_ttm
 from smaug.analysis.infrastructure.mongo_fundamentals import (
     MongoFundamentalsReader,
     _deduplicate_accounts,
@@ -349,49 +351,6 @@ def test_source_cell_identity_keeps_distinct_dmpl_columns_and_fixed_flags() -> N
     assert discarded == 1
     assert len(retained) == 3
     assert [account["COLUNA_DF"] for account in retained[:2]] == [
-        "Patrimônio Líquido",
-        "Lucros ou Prejuízos Acumulados",
-    ]
-
-
-def test_dmpl_evidence_keeps_distinct_columns_after_exact_deduplication() -> None:
-    financials = standardize(
-        {
-            "DMPL": {
-                "accounts": [
-                    {
-                        "code": "5.04.06",
-                        "name": "Dividendos",
-                        "quantity": "-10",
-                        "COLUNA_DF": "Patrimônio Líquido",
-                    },
-                    {
-                        "code": "5.04.06",
-                        "name": "Dividendos",
-                        "quantity": "-10",
-                        "COLUNA_DF": "Patrimônio Líquido",
-                    },
-                    {
-                        "code": "5.04.06",
-                        "name": "Dividendos",
-                        "quantity": "-8",
-                        "COLUNA_DF": "Lucros ou Prejuízos Acumulados",
-                    },
-                ]
-            }
-        },
-        Sector.COMMODITY,
-        date(2024, 12, 31),
-    )
-
-    declared = next(
-        item
-        for item in financials.source_account_evidence
-        if item.field == "dividends_declared"
-    )
-    assert financials.dividends_declared == Decimal("10")
-    assert declared.duplicates_discarded == 1
-    assert [ref.column for ref in declared.found] == [
         "Patrimônio Líquido",
         "Lucros ou Prejuízos Acumulados",
     ]
@@ -752,7 +711,6 @@ def test_standardize_bank_reads_its_own_chart_of_accounts() -> None:
     assert f.personnel_expense == Decimal("-30")
     assert f.admin_expense == Decimal("-20")
     assert f.loan_book == Decimal("2000")  # 2200 gross, less its own 200 provision
-    assert f.bank_ratio_null_reason is NullReason.MISSING_REGULATORY_DISCLOSURE
     # Unbuildable from a bank's schema — never read, never guessed. 2.02 above is
     # the bank's funding (deposits), and must not be mistaken for debt.
     assert f.total_debt is None
@@ -999,107 +957,6 @@ def test_standardize_insurer_reads_ebit_at_307_and_no_debt_line() -> None:
     assert f.current_liabilities == Decimal("2000")
     # IFRS 17's current chart exposes only broad service/reinsurance aggregates.
     # They are not aliases for the components required by the underwriting ratios.
-    assert f.earned_premium is None
-    assert f.claims_incurred is None
-    assert f.acquisition_costs is None
-    assert f.insurance_admin_expenses is None
-
-
-def test_standardize_insurer_zero_aggregates_prove_no_underwriting_activity() -> None:
-    by_module = {
-        "DRE": {
-            "accounts": [
-                _acc("3.01", "Receitas das Atividades Seguradoras", "0"),
-                _acc("3.02", "Despesas das Atividades Seguradoras", "0"),
-                _acc("3.07", "Resultado Antes do Resultado Financeiro", "300"),
-                _acc("3.13", "Lucro/Prejuízo Consolidado do Período", "210"),
-            ]
-        }
-    }
-
-    f = standardize(by_module, Sector.INSURER, date(2025, 12, 31))
-
-    assert f.filed_regime is AccountingRegime.INSURANCE
-    assert f.insurance_underwriting_evidence is not None
-    assert (
-        f.insurance_underwriting_evidence.status
-        is InsuranceUnderwritingStatus.ZERO_ACTIVITY
-    )
-    evidence = {item.field: item for item in f.source_account_evidence}
-    activity = evidence["insurance_underwriting_activity"]
-    assert activity.blocker is NullReason.INAPPLICABLE_REGIME
-    assert [ref.code for ref in activity.found] == ["3.01", "3.02"]
-    assert [ref.value for ref in activity.found] == [Decimal(0), Decimal(0)]
-
-
-def test_standardize_insurer_material_aggregates_keep_ifrs17_components_absent() -> (
-    None
-):
-    by_module = {
-        "DRE": {
-            "accounts": [
-                _acc("3.01", "Receitas das Atividades Seguradoras", "600"),
-                _acc("3.01.01", "Receitas de Serviços de Seguros", "600"),
-                _acc("3.02", "Despesas das Atividades Seguradoras", "-500"),
-                _acc("3.02.01", "Despesas de Serviços de Seguros", "-500"),
-                _acc("3.07", "Resultado Antes do Resultado Financeiro", "300"),
-                _acc("3.13", "Lucro/Prejuízo Consolidado do Período", "210"),
-            ]
-        }
-    }
-
-    f = standardize(by_module, Sector.INSURER, date(2025, 12, 31))
-
-    assert f.insurance_underwriting_evidence is not None
-    assert (
-        f.insurance_underwriting_evidence.status is InsuranceUnderwritingStatus.ACTIVE
-    )
-    assert f.earned_premium is None
-    assert f.claims_incurred is None
-    assert f.acquisition_costs is None
-    assert f.insurance_admin_expenses is None
-    evidence = {item.field: item for item in f.source_account_evidence}
-    assert evidence["insurance_underwriting_activity"].found[0].value == Decimal(600)
-    assert evidence["insurance_underwriting_activity"].found[1].value == Decimal(-500)
-    for field in (
-        "earned_premium",
-        "claims_incurred",
-        "acquisition_costs",
-        "insurance_admin_expenses",
-    ):
-        assert evidence[field].blocker is NullReason.SOURCE_ACCOUNT_ABSENT
-
-
-def test_standardize_irbr3_2022_underwriting_components() -> None:
-    # Official CVM DFP 2022, IRB Brasil Resseguros (CD_CVM 024180), consolidated
-    # current exercise. The pre-IFRS-17 chart separates the exact inputs used by
-    # the loss and combined ratios; both insurance and reinsurance branches are
-    # supported, and expenses remain negative as filed.
-    by_module = {
-        "DRE": {
-            "currency_size": 1000,
-            "accounts": [
-                _acc("3.01", "Receitas das Atividades Seguradoras", "7047042"),
-                _acc("3.01.02.01", "Prêmios de Resseguros Ganhos", "7021200"),
-                _acc("3.02.02.01", "Sinistros Retidos de Resseguros", "-6911514"),
-                _acc(
-                    "3.02.02.02",
-                    "Despesas de Comercialização de Resseguros",
-                    "-255606",
-                ),
-                _acc("3.04", "Despesas Administrativas", "-421237"),
-                _acc("3.07", "Resultado Antes do Resultado Financeiro", "100"),
-                _acc("3.13", "Lucro/Prejuízo Consolidado do Período", "50"),
-            ],
-        }
-    }
-
-    f = standardize(by_module, Sector.INSURER, date(2022, 12, 31))
-
-    assert f.earned_premium == Decimal("7021200000")
-    assert f.claims_incurred == Decimal("-6911514000")
-    assert f.acquisition_costs == Decimal("-255606000")
-    assert f.insurance_admin_expenses == Decimal("-421237000")
 
 
 def test_standardize_irbr3_maps_complete_explicit_debt_perimeter() -> None:
@@ -1233,35 +1090,6 @@ def test_standardize_pssa3_generic_financial_liabilities_are_incomplete_debt() -
         "2.01.05.02.09",
         "2.02.02.02.07",
     ]
-
-
-def test_standardize_corporate_broad_rows_are_not_underwriting_components() -> None:
-    by_module = {
-        "DRE": {
-            "accounts": [
-                _acc("3.01", "Receita de Venda de Bens e/ou Serviços", "40000"),
-                _acc("3.01.07", "Receita de Operações de Seguros", "12000"),
-                _acc("3.03", "Resultado Bruto", "10000"),
-                _acc("3.04.05.11", "Despesas com Operações de Seguros", "-2000"),
-                _acc("3.05", "Resultado Antes do Resultado Financeiro", "8000"),
-                _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "6000"),
-            ]
-        }
-    }
-
-    f = standardize(by_module, Sector.INSURER, date(2025, 12, 31))
-
-    assert f.filed_regime is AccountingRegime.CORPORATE
-    assert f.revenue == Decimal(40000)
-    assert f.ebit == Decimal(8000)
-    assert f.earned_premium is None
-    assert f.claims_incurred is None
-    assert f.acquisition_costs is None
-    assert f.insurance_admin_expenses is None
-    assert not any(
-        item.field == "insurance_underwriting_activity"
-        for item in f.source_account_evidence
-    )
 
 
 def test_standardize_names_missing_debt_aggregate_as_a_secondary_blocker() -> None:
@@ -1471,108 +1299,6 @@ def _macc(code: str, name: str, column: str | None, qty: str) -> dict[str, Any]:
     cell = _acc(code, name, qty)
     cell["column"] = column
     return cell
-
-
-def test_standardize_reads_declared_dividends_from_the_dmpl() -> None:
-    # #104: the declared basis. Shaped on BBDC4's real 2024 DMPL, whose column
-    # HEADERS are shifted (the controllers' total sits under "Participação dos
-    # Não Controladores" and the consolidated total under an unnamed column), so
-    # the row's figure must be read structurally — the largest absolute cell —
-    # never by the column's name. Positive rows ("dividendos prescritos", a
-    # return to equity) and the treasury rows stay out.
-    by_module = {
-        "DMPL": {
-            "period_start_date": "2024-01-01",
-            "accounts": [
-                _macc("5.04.06", "Dividendos", "Lucros ou Prejuízos Acumulados", "0"),
-                _macc(
-                    "5.04.07",
-                    "Juros sobre Capital Próprio",
-                    "Outros Resultados Abrangentes",  # shifted: really controllers'
-                    "-11283288",
-                ),
-                _macc(
-                    "5.04.07",
-                    "Juros sobre Capital Próprio",
-                    "Patrimônio Líquido Consolidado",  # shifted: really minority
-                    "-435571",
-                ),
-                _macc(
-                    "5.04.07",
-                    "Juros sobre Capital Próprio",
-                    None,  # shifted: really the consolidated total
-                    "-11718859",
-                ),
-                # A prescribed dividend RETURNS to equity — never netted in.
-                _macc(
-                    "5.04.08",
-                    "Dividendos Prescritos",
-                    "Lucros ou Prejuízos Acumulados",
-                    "120000",
-                ),
-                # Treasury transactions live under 5.04 too — not a declaration.
-                _macc(
-                    "5.04.04",
-                    "Ações em Tesouraria Adquiridas",
-                    "Reservas de Capital, Opções Outorgadas e Ações em Tesouraria",
-                    "-224377",
-                ),
-            ],
-        },
-    }
-
-    f = standardize(by_module, Sector.BANK, date(2024, 12, 31))
-
-    assert f.dividends_declared == Decimal("11718859")  # the row's largest cell
-    assert f.dmpl_period_start == date(2024, 1, 1)
-
-
-def test_standardize_sums_the_dividend_and_jcp_declaration_rows() -> None:
-    # A filer that declares both: the two 5.04 rows sum (VIVT3's shape).
-    by_module = {
-        "DMPL": {
-            "accounts": [
-                _macc("5.04.06", "Dividendos", "Patrimônio Líquido", "-1500000"),
-                _macc(
-                    "5.04.06",
-                    "Dividendos",
-                    "Lucros ou Prejuízos Acumulados",
-                    "-1500000",
-                ),
-                _macc(
-                    "5.04.07",
-                    "Juros sobre Capital Próprio",
-                    "Patrimônio Líquido",
-                    "-3105000",
-                ),
-            ],
-        },
-    }
-
-    f = standardize(by_module, Sector.INDUSTRY, date(2024, 12, 31))
-
-    assert f.dividends_declared == Decimal("4605000")  # 1.5m + 3.105m, positive
-
-
-def test_standardize_declared_is_zero_when_the_dmpl_declares_nothing() -> None:
-    # A filed DMPL with no 5.04 dividend/JCP row is an economic ZERO — the
-    # company declared nothing in the period. Reading it as null would void
-    # every TTM window containing one quiet quarter. Null is reserved for the
-    # DMPL itself being absent from the mirror.
-    filed_quiet = {
-        "DMPL": {
-            "accounts": [
-                _macc("5.01", "Saldos Iniciais", "Patrimônio Líquido", "1000"),
-            ]
-        },
-    }
-    no_dmpl: dict[str, Any] = {}
-
-    quiet = standardize(filed_quiet, Sector.INDUSTRY, date(2024, 12, 31))
-    absent = standardize(no_dmpl, Sector.INDUSTRY, date(2024, 12, 31))
-
-    assert quiet.dividends_declared == Decimal("0")
-    assert absent.dividends_declared is None
 
 
 def test_standardize_derives_net_income_when_the_controllers_split_is_filed_blank() -> (
@@ -2108,26 +1834,6 @@ def _dmpl_filing(balance_type: str, jcp: str) -> dict[str, Any]:
     }
 
 
-async def test_the_declared_dividends_come_from_the_parent_dmpl() -> None:
-    # #104: the parent's declaration is what the listed shareholders receive, and
-    # the parent DMPL has no minority column to shift — so it beats the
-    # consolidated statement that ordinarily outranks it.
-    reader = MongoFundamentalsReader(
-        _FakeCollection(
-            [
-                _dmpl_filing("consolidated", "-11718859"),  # minority included
-                _dmpl_filing("individual", "-11283288"),  # the parent's charge
-            ]
-        ),
-        sector_resolver=fake_sector_resolver,
-    )
-
-    annual = await reader.annual("BBDC4")
-
-    assert annual is not None
-    assert annual.dividends_declared == Decimal("11283288")
-
-
 async def test_reader_uses_the_individual_statement_when_it_is_all_there_is() -> None:
     # SAPR11 files no consolidated statement at all — the parent-only one is the
     # filing, not a second-best.
@@ -2142,3 +1848,1022 @@ async def test_reader_uses_the_individual_statement_when_it_is_all_there_is() ->
 
     assert annual is not None
     assert annual.revenue == Decimal("500")
+
+
+def _dep_amort_filing(
+    end: str = "2025-12-31", start: str = "2025-01-01", amount: str = "-80"
+) -> dict[str, Any]:
+    metadata = {
+        "cvm_code": "123",
+        "balance_type": "consolidated",
+        "document_type": "DFP" if end.endswith("12-31") else "ITR",
+        "version": 1,
+        "currency": "BRL",
+        "currency_size": 1000,
+        "period_start_date": start,
+        "period_end_date": end,
+        "reference_date": end,
+        "ordem_exerc": "ULTIMO",
+    }
+    return {
+        "DRE": {
+            **metadata,
+            "accounts": [
+                _acc("3.01", "Receita de Venda de Bens e/ou Serviços", "900"),
+                _acc("3.05", "Resultado Antes do Resultado Financeiro", "200"),
+            ],
+        },
+        "DFC": {**metadata, "accounts": []},
+        "DVA": {
+            **metadata,
+            "accounts": [
+                _acc("7.04.01", "Depreciação, Amortização e Exaustão", amount)
+            ],
+        },
+    }
+
+
+@pytest.mark.parametrize("amount", ["-80", "0"])
+def test_aligned_dva_recovers_the_same_addback_with_source_lineage(amount: str) -> None:
+    financials = standardize(
+        _dep_amort_filing(amount=amount), Sector.INDUSTRY, date(2025, 12, 31)
+    )
+    assert financials.dep_amort == -Decimal(amount) * 1000
+    assert financials.ebitda == Decimal("200000") - Decimal(amount) * 1000
+    evidence = next(
+        item for item in financials.source_account_evidence if item.field == "dep_amort"
+    )
+    assert evidence.statement == "DVA"
+    assert evidence.status is SourceAccountStatus.MAPPED
+    assert evidence.formula == "-DVA[7.04.01]"
+    assert evidence.found[0].value == Decimal(amount) * 1000
+    assert "balance_type=consolidated" in evidence.expected
+    assert "period_start_date=2025-01-01" in evidence.expected
+    assert evidence.blocker is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("cvm_code", "456"),
+        ("balance_type", "individual"),
+        ("version", 2),
+        ("document_type", "ITR"),
+        ("currency", "USD"),
+        ("period_start_date", "2025-10-01"),
+        ("period_end_date", "2025-09-30"),
+        ("reference_date", "2025-09-30"),
+        ("balance_type", None),
+        ("period_start_date", "invalid"),
+    ],
+)
+def test_incompatible_or_unproved_dva_does_not_supply_an_addback(
+    field: str, value: str | int | None
+) -> None:
+    modules = _dep_amort_filing()
+    modules["DVA"][field] = value
+    financials = standardize(modules, Sector.INDUSTRY, date(2025, 12, 31))
+    assert financials.dep_amort is None
+    assert financials.ebitda is None
+
+
+@pytest.mark.parametrize("module", ["DRE", "DFC", "DVA"])
+def test_missing_statement_cannot_establish_the_dva_perimeter(module: str) -> None:
+    modules = _dep_amort_filing()
+    del modules[module]
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort is None
+
+
+@pytest.mark.parametrize("amount", ["80", "invalid", "NaN", "Infinity"])
+def test_invalid_or_opposite_sign_dva_is_not_normalized_by_absolute_value(
+    amount: str,
+) -> None:
+    assert (
+        standardize(
+            _dep_amort_filing(amount=amount), Sector.INDUSTRY, date(2025, 12, 31)
+        ).dep_amort
+        is None
+    )
+
+
+def test_dva_retentions_require_the_explicit_other_component() -> None:
+    modules = _dep_amort_filing()
+    modules["DVA"]["accounts"] = [_acc("7.04", "Retenções", "-100")]
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort is None
+    modules["DVA"]["accounts"].append(_acc("7.04.02", "Outras", "-20"))
+    financials = standardize(modules, Sector.INDUSTRY, date(2025, 12, 31))
+    assert financials.dep_amort == Decimal("80000")
+    evidence = next(
+        item for item in financials.source_account_evidence if item.field == "dep_amort"
+    )
+    assert evidence.formula == "-(DVA[7.04] - DVA[7.04.02])"
+    assert [item.code for item in evidence.found] == ["7.04", "7.04.02"]
+
+
+@pytest.mark.parametrize("amount", ["0", "60"])
+def test_existing_dfc_result_is_selected_once_even_when_dva_has_another_value(
+    amount: str,
+) -> None:
+    modules = _dep_amort_filing()
+    modules["DFC"]["accounts"] = [
+        _acc("6.01.01.01", "Depreciação e amortização", amount)
+    ]
+    financials = standardize(modules, Sector.INDUSTRY, date(2025, 12, 31))
+    assert financials.dep_amort == Decimal(amount) * 1000
+    assert (
+        next(
+            item
+            for item in financials.source_account_evidence
+            if item.field == "dep_amort"
+        ).statement
+        == "DFC"
+    )
+
+
+def test_unreadable_dfc_component_is_not_skipped_to_publish_a_partial_sum() -> None:
+    modules = _dep_amort_filing()
+    modules["DFC"]["accounts"] = [
+        _acc("6.01.01.01", "Depreciação", "60"),
+        _acc("6.01.01.02", "Amortização", "invalid"),
+    ]
+    del modules["DVA"]
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort is None
+    modules["DVA"] = _dep_amort_filing()["DVA"]
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort == 80000
+
+
+def test_parent_and_child_are_not_double_counted_in_reverse_source_order() -> None:
+    modules = _dep_amort_filing()
+    modules["DFC"]["accounts"] = [
+        _acc("6.01.01.01.01", "Depreciação", "60"),
+        _acc("6.01.01.01", "Depreciação e amortização", "80"),
+    ]
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort == 80000
+
+
+def test_dva_does_not_make_ebitda_applicable_to_banks() -> None:
+    modules = _dep_amort_filing()
+    modules["DRE"]["accounts"][0]["name"] = "Receitas de Intermediação Financeira"
+    financials = standardize(modules, Sector.BANK, date(2025, 12, 31))
+    assert financials.dep_amort is None
+    assert financials.ebitda is None
+
+
+def test_dva_addbacks_use_the_aligned_ytd_clock_during_ttm_assembly() -> None:
+    periods = [
+        standardize(
+            _dep_amort_filing(end, start, amount),
+            Sector.INDUSTRY,
+            date.fromisoformat(end),
+        )
+        for end, start, amount in (
+            ("2025-03-31", "2025-01-01", "-10"),
+            ("2025-06-30", "2025-01-01", "-30"),
+            ("2025-09-30", "2025-01-01", "-60"),
+            ("2026-03-31", "2026-01-01", "-20"),
+        )
+    ]
+    annual = standardize(
+        _dep_amort_filing(amount="-100"), Sector.INDUSTRY, date(2025, 12, 31)
+    )
+    ttm = build_ttm(periods, annual)
+    assert ttm is not None
+    assert ttm.dep_amort == Decimal("110000")  # 100 - prior Q1 10 + current Q1 20
+
+
+async def test_reader_selects_the_accumulated_consolidated_dva() -> None:
+    modules = _dep_amort_filing("2025-06-30")
+    docs = [
+        {
+            "module": module,
+            "payload": payload,
+            "fetched_at": datetime(2026, 9, 30, tzinfo=UTC),
+        }
+        for module, payload in modules.items()
+    ]
+    for override in (
+        {"balance_type": "individual", "version": 2},
+        {"period_start_date": "2025-04-01"},
+    ):
+        docs.append({**docs[-1], "payload": {**modules["DVA"], **override}})
+    reader = MongoFundamentalsReader(
+        _FakeCollection(docs), sector_resolver=lambda _: Sector.INDUSTRY
+    )
+    history = await reader.history("TEST3")
+    assert len(history) == 1
+    assert history[0].dep_amort == 80000
+
+
+async def test_dva_only_filing_does_not_create_an_analysis_period() -> None:
+    reader = MongoFundamentalsReader(
+        _FakeCollection(
+            [
+                {
+                    "module": "DVA",
+                    "payload": _dep_amort_filing()["DVA"],
+                    "fetched_at": datetime(2026, 9, 30, tzinfo=UTC),
+                }
+            ]
+        ),
+        sector_resolver=lambda _: Sector.INDUSTRY,
+    )
+    assert await reader.annuals("TEST3") == []
+
+
+@pytest.mark.parametrize("module", ["DFC", "DVA"])
+def test_conflicting_addback_cells_do_not_supply_a_value(module: str) -> None:
+    modules = _dep_amort_filing()
+    if module == "DFC":
+        del modules["DVA"]
+        modules[module]["accounts"] = [
+            _acc("6.01.01.01", "Depreciação e amortização", "80"),
+            _acc("6.01.01.01", "Depreciação e amortização", "90"),
+        ]
+    else:
+        modules[module]["accounts"].append(
+            _acc("7.04.01", "Depreciação, Amortização e Exaustão", "-90")
+        )
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort is None
+
+
+@pytest.mark.parametrize("size", [None, 0, -1, "1000"])
+def test_dva_without_a_valid_declared_scale_does_not_supply_an_addback(
+    size: int | str | None,
+) -> None:
+    modules = _dep_amort_filing()
+    modules["DVA"]["currency_size"] = size
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort is None
+
+
+def test_dva_uses_its_own_declared_scale() -> None:
+    modules = _dep_amort_filing()
+    modules["DVA"]["currency_size"] = 1
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort == 80
+
+
+def test_dva_rejects_an_aligned_but_impossible_period() -> None:
+    modules = _dep_amort_filing(start="2026-01-01")
+    assert standardize(modules, Sector.INDUSTRY, date(2025, 12, 31)).dep_amort is None
+
+
+def test_ttm_retains_older_dva_sources_when_the_latest_period_uses_dfc() -> None:
+    periods = [
+        standardize(
+            _dep_amort_filing(end, start, amount),
+            Sector.INDUSTRY,
+            date.fromisoformat(end),
+        )
+        for end, start, amount in (
+            ("2025-03-31", "2025-01-01", "-10"),
+            ("2025-06-30", "2025-01-01", "-30"),
+            ("2025-09-30", "2025-01-01", "-60"),
+        )
+    ]
+    current = _dep_amort_filing("2026-03-31", "2026-01-01")
+    current["DFC"]["accounts"] = [_acc("6.01.01.01", "Depreciação e amortização", "20")]
+    periods.append(standardize(current, Sector.INDUSTRY, date(2026, 3, 31)))
+    annual = standardize(
+        _dep_amort_filing(amount="-100"), Sector.INDUSTRY, date(2025, 12, 31)
+    )
+    ttm = build_ttm(periods, annual)
+    assert ttm is not None
+    assert ttm.dep_amort == Decimal("110000")
+    evidence = {item.field: item for item in ttm.source_account_evidence}
+    root = evidence["dep_amort"]
+    assert root.status is SourceAccountStatus.DERIVED
+    assert root.blocker is None
+    assert root.dependencies == (
+        "dep_amort[2025-03-31]",
+        "dep_amort[2025-06-30]",
+        "dep_amort[2025-09-30]",
+        "dep_amort[2025-12-31]",
+        "dep_amort[2026-03-31]",
+    )
+    assert evidence["dep_amort[2025-03-31]"].statement == "DVA"
+    assert evidence["dep_amort[2025-12-31]"].formula == "-DVA[7.04.01]"
+    assert evidence["dep_amort[2026-03-31]"].statement == "DFC"
+    assert "resolved_value=20000" in evidence["dep_amort[2026-03-31]"].expected
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_standardize_reconciles_generic_pn_in_a_period_proved_unit(
+    reverse: bool,
+) -> None:
+    accounts = [
+        _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "100"),
+        _acc("3.99.01.01", "ON", "2"),
+        _acc("3.99.01.02", "PN", "2"),
+        _acc("3.99.02.01", "ON", "2"),
+        _acc("3.99.02.02", "PN", "2"),
+    ]
+    if reverse:
+        accounts.reverse()
+    result = standardize(
+        {"DRE": {"accounts": accounts}},
+        Sector.UTILITY,
+        date(2025, 3, 31),
+        per_share_components=(
+            UnitComponent(1, PerShareClass.ORDINARY),
+            UnitComponent(2, PerShareClass.PREFERRED_A),
+        ),
+        per_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED_A),
+        period_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED_A),
+    )
+    assert result.eps_basic == Decimal(6)
+    assert result.cpc41 is not None
+    assert result.cpc41.basic_base_eps == Decimal(2)
+    assert result.cpc41.diluted_base_eps == Decimal(2)
+    assert result.cpc41.security_multiplier == Decimal(3)
+    source = next(e for e in result.source_account_evidence if e.field == "eps_basic")
+    assert "period_class=PNA" in source.expected
+    assert "component=2*PNA" in source.expected
+
+
+@pytest.mark.parametrize(
+    "classes", [(), (PerShareClass.ORDINARY, PerShareClass.PREFERRED)]
+)
+def test_standardize_per_lot_requires_single_period_class(
+    classes: tuple[PerShareClass, ...],
+) -> None:
+    result = standardize(
+        {
+            "DRE": {
+                "accounts": [_acc("3.99.01.01", "Lucro por lote de mil ações", "2000")]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        period_share_classes=classes,
+    )
+    assert result.eps_basic is None
+    assert result.cpc41 is None
+
+
+@pytest.mark.parametrize("value", ["2000", "-2000", "0"])
+def test_standardize_normalizes_filed_per_lot_without_currency_scaling(
+    value: str,
+) -> None:
+    result = standardize(
+        {
+            "DRE": {
+                "currency_size": 1000,
+                "accounts": [
+                    _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "100"),
+                    _acc("3.99.01.01", "Lucro por lote de mil ações", value),
+                ],
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        per_share_classes=(PerShareClass.ORDINARY,),
+        period_share_classes=(PerShareClass.ORDINARY,),
+    )
+    assert result.eps_basic == Decimal(value) / 1000
+    source = next(e for e in result.source_account_evidence if e.field == "eps_basic")
+    assert source.found[0].value == Decimal(value)
+    assert any("/ 1000" in expected for expected in source.expected)
+
+
+@pytest.mark.parametrize("invalid", ["unreadable", "NaN", "Infinity"])
+def test_standardize_rejects_unreadable_duplicate_eps(invalid: str) -> None:
+    result = standardize(
+        {
+            "DRE": {
+                "accounts": [
+                    _acc("3.99.01.01", "ON", "2"),
+                    _acc("3.99.01.02", "ON", invalid),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        per_share_classes=(PerShareClass.ORDINARY,),
+    )
+    assert result.eps_basic is None
+    assert result.eps_basic_null_reason is NullReason.MISSING_CPC41_DISCLOSURE
+    assert result.cpc41 is None
+
+
+def test_unit_closing_capital_eps_drives_pe_and_preserves_price_dependency() -> None:
+    quarters = []
+    for month, day, start_month in ((3, 31, 1), (6, 30, 4), (9, 30, 7), (12, 31, 10)):
+        quarters.append(
+            standardize(
+                {
+                    "DRE": {
+                        "period_start_date": f"2025-{start_month:02d}-01",
+                        "accounts": [
+                            _acc(
+                                "3.11", "Lucro/Prejuízo Consolidado do Período", "100"
+                            ),
+                            _acc("3.99.01.01", "ON", "2"),
+                            _acc("3.99.01.02", "PN", "2"),
+                        ],
+                    }
+                },
+                Sector.UTILITY,
+                date(2025, month, day),
+                per_share_components=(
+                    UnitComponent(1, PerShareClass.ORDINARY),
+                    UnitComponent(2, PerShareClass.PREFERRED_A),
+                ),
+                per_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED_A),
+                period_share_classes=(
+                    PerShareClass.ORDINARY,
+                    PerShareClass.PREFERRED_A,
+                ),
+            )
+        )
+    ttm = build_ttm(quarters, None)
+    assert ttm is not None
+    assert ttm.eps_basic == Decimal(24)
+    valid = compute(
+        ttm,
+        None,
+        MarketData(
+            price=Decimal(48),
+            shares=Decimal(100),  # 300 underlying shares / 3 shares per unit
+            price_source_code="TEST11",
+            price_source_session=date(2025, 12, 30),
+        ),
+    )
+    assert valid.eps == valid.eps_basic == Decimal(4)  # TTM profit 400 / 100 units
+    assert valid.pe_basic == Decimal(12)
+    source = next(e for e in valid.source_account_evidence if e.field == "pe_basic")
+    assert source.dependencies == ("eps_basic", "price")
+    assert "price_source_code=TEST11" in source.expected
+    missing = compute(ttm, None, MarketData(shares=Decimal(100)))
+    assert missing.eps_basic == Decimal(4)
+    assert missing.pe_basic is None
+    assert missing.null_reasons["pe_basic"] is NullReason.MISSING_PRICE
+
+
+def test_unit_reconciliation_does_not_drop_an_unequal_extra_filed_class() -> None:
+    result = standardize(
+        {
+            "DRE": {
+                "accounts": [
+                    _acc("3.99.01.01", "ON", "2"),
+                    _acc("3.99.01.02", "PN", "2"),
+                    _acc("3.99.01.03", "PNB", "3"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+        per_share_components=(
+            UnitComponent(1, PerShareClass.ORDINARY),
+            UnitComponent(1, PerShareClass.PREFERRED_A),
+        ),
+        per_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED_A),
+        period_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED_A),
+    )
+    assert result.eps_basic == Decimal(4)
+    assert result.cpc41 is None
+
+
+def test_per_lot_and_per_share_conflict_is_not_silently_selected() -> None:
+    result = standardize(
+        {
+            "DRE": {
+                "accounts": [
+                    _acc("3.99.01.01", "ON", "2"),
+                    _acc("3.99.01.02", "Lucro por lote de mil ações", "3000"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        period_share_classes=(PerShareClass.ORDINARY,),
+    )
+    assert result.eps_basic is None
+    assert result.eps_basic_null_reason is NullReason.MISSING_ECONOMIC_RIGHTS
+
+
+def test_ttm_reconciliation_does_not_ignore_an_unresolved_zero_class_label() -> None:
+    result = standardize(
+        {
+            "DRE": {
+                "accounts": [
+                    _acc("3.99.01.01", "ON", "2"),
+                    _acc("3.99.01.02", "PN", "2"),
+                    _acc("3.99.01.03", "PNT", "0"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 3, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        per_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED),
+    )
+    assert result.eps_basic == Decimal(2)
+    assert result.cpc41 is None
+
+
+def test_diluted_reconciliation_requires_all_filed_class_labels_resolved() -> None:
+    result = standardize(
+        {
+            "DRE": {
+                "accounts": [
+                    _acc("3.99.01.01", "ON", "2"),
+                    _acc("3.99.01.02", "PN", "2"),
+                    _acc("3.99.02.01", "ON", "2"),
+                    _acc("3.99.02.02", "PN", "2"),
+                    _acc("3.99.02.03", "PNT", "0"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 3, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        per_share_classes=(PerShareClass.ORDINARY, PerShareClass.PREFERRED),
+    )
+    assert result.eps_diluted == Decimal(2)
+    assert result.cpc41 is not None
+    assert result.cpc41.basic_base_eps == Decimal(2)
+    assert result.cpc41.diluted_base_eps is None
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Passivo financeiro setorial",
+        "Passivos financeiros setoriais",
+        "Passivo Financeiro Setorial (Parcela A e Outros)",
+        "Passivos financeiros do setor",
+    ],
+)
+def test_tariff_deferrals_do_not_block_complete_borrowing_debt(label: str) -> None:
+    f = standardize(
+        {
+            "BPP": {
+                "accounts": [
+                    _acc("2.01.04", "Empréstimos e Financiamentos", "100"),
+                    _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+                    _acc("2.01.05.02.01", label, "400"),
+                ]
+            }
+        },
+        Sector.UTILITY,
+        date(2025, 12, 31),
+    )
+    assert f.total_debt == Decimal(300)
+    assert f.debt_coverage_null_reason is None
+    assert f.debt_evidence is not None
+    excluded = next(e for e in f.debt_evidence.excluded_lines if e.name == label)
+    assert excluded.reason is DebtBlocker.NON_DEBT_LIABILITY
+    assert excluded.value == Decimal(400)
+
+
+def test_cofins_contribution_is_not_borrowed_financing() -> None:
+    f = standardize(
+        {
+            "BPP": {
+                "accounts": [
+                    _acc("2.01.04", "Empréstimos e Financiamentos", "100"),
+                    _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+                    _acc(
+                        "2.01.03.01.03",
+                        "Contribuição para o Financiamento "
+                        "da Seguridade Social - COFINS",
+                        "15",
+                    ),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.total_debt == Decimal(300)
+    assert f.debt_evidence is not None
+    assert any(
+        e.code == "2.01.03.01.03" and e.reason is DebtBlocker.NON_DEBT_LIABILITY
+        for e in f.debt_evidence.excluded_lines
+    )
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_generic_financial_bucket_uses_only_fully_reconciled_classified_children(
+    reverse: bool,
+) -> None:
+    accounts = [
+        _acc("2.01.04", "Empréstimos e Financiamentos", "100"),
+        _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+        _acc("2.01.05.02.01", "Passivos financeiros", "25"),
+        _acc("2.01.05.02.01.01", "Passivo de Arrendamento", "20"),
+        _acc("2.01.05.02.01.01.01", "Arrendamento de imóveis", "20"),
+        _acc("2.01.05.02.01.02", "Instrumentos financeiros derivativos", "5"),
+    ]
+    if reverse:
+        accounts.reverse()
+    f = standardize(
+        {"BPP": {"accounts": accounts}}, Sector.INDUSTRY, date(2025, 12, 31)
+    )
+    assert f.total_debt == Decimal(320)
+    assert f.debt_evidence is not None
+    assert any(
+        e.code == "2.01.05.02.01" and e.reason is DebtBlocker.CHILD_DETAIL_DOUBLE_COUNT
+        for e in f.debt_evidence.excluded_lines
+    )
+    assert (
+        len(
+            [
+                e
+                for e in f.debt_evidence.used_lines
+                if e.instrument is DebtInstrument.LEASES
+            ]
+        )
+        == 1
+    )
+
+
+@pytest.mark.parametrize(
+    ("amount", "label"),
+    [
+        ("4", "Instrumentos financeiros derivativos"),
+        ("5", "Outras obrigações"),
+        ("bad", "Instrumentos financeiros derivativos"),
+        ("NaN", "Instrumentos financeiros derivativos"),
+    ],
+)
+def test_incomplete_financial_bucket_keeps_debt_and_dependent_ratios_null(
+    amount: str, label: str
+) -> None:
+    f = standardize(
+        {
+            "BPP": {
+                "accounts": [
+                    _acc("2.01.04", "Empréstimos e Financiamentos", "100"),
+                    _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+                    _acc("2.01.05.02.01", "Passivos financeiros", "25"),
+                    _acc("2.01.05.02.01.01", "Passivo de Arrendamento", "20"),
+                    _acc("2.01.05.02.01.02", label, amount),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.total_debt is None
+    f = replace(
+        f,
+        cash_equivalents=Decimal(50),
+        equity=Decimal(500),
+        equity_total=Decimal(600),
+        ebit=Decimal(100),
+        ebitda=Decimal(120),
+    )
+    result = compute(f, None, MarketData(market_cap=Decimal(1000)))
+    for field in (
+        "net_debt",
+        "enterprise_value",
+        "ev_ebit",
+        "ev_ebitda",
+        "net_debt_to_equity",
+        "debt_to_equity",
+        "roic_statutory",
+    ):
+        assert getattr(result, field) is None
+        assert result.null_reasons[field] is NullReason.INCOMPLETE_DEBT_COVERAGE
+
+
+@pytest.mark.parametrize("code", ["1.01.07", "1.01.01.09"])
+def test_cash_equivalents_recovers_equivalent_filed_current_aggregate(
+    code: str,
+) -> None:
+    f = standardize(
+        {
+            "BPA": {
+                "currency_size": 1000,
+                "accounts": [
+                    _acc(code, "Caixa e equivalentes de caixa", "20"),
+                    _acc("1.01.02", "Aplicações financeiras", "50"),
+                ],
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.cash_equivalents == Decimal(20000)
+    evidence = next(
+        e for e in f.source_account_evidence if e.field == "cash_equivalents"
+    )
+    assert evidence.found[0].code == code
+    assert evidence.found[0].value == Decimal(20000)
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Caixa restrito e equivalentes de caixa",
+        "Caixa vinculado e equivalentes de caixa",
+        "Aplicações financeiras",
+        "Depósitos judiciais (caixa e equivalentes de caixa)",
+        "Caixa e equivalentes de caixa - moeda estrangeira",
+    ],
+)
+def test_cash_recovery_does_not_assume_other_assets_are_cash_equivalents(
+    label: str,
+) -> None:
+    f = standardize(
+        {"BPA": {"accounts": [_acc("1.01.07", label, "20")]}},
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.cash_equivalents is None
+
+
+def test_cash_recovery_rejects_conflicting_complete_aggregates() -> None:
+    f = standardize(
+        {
+            "BPA": {
+                "accounts": [
+                    _acc("1.01.07", "Caixa e equivalentes de caixa", "20"),
+                    _acc("1.01.08", "Caixa e equivalentes de caixa", "30"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.cash_equivalents is None
+
+
+@pytest.mark.parametrize("amount", ["bad", "NaN", "Infinity"])
+def test_nonfinite_debt_aggregate_is_named_null(amount: str) -> None:
+    f = standardize(
+        {
+            "BPP": {
+                "accounts": [
+                    _acc("2.01.04", "Empréstimos e Financiamentos", amount),
+                    _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.total_debt is None
+    assert f.debt_coverage_null_reason is NullReason.INCOMPLETE_DEBT_COVERAGE
+
+
+@pytest.mark.parametrize("cash", ["50", "0", "400"])
+def test_recovered_foundations_feed_existing_debt_ev_and_roic_formulas(
+    cash: str,
+) -> None:
+    f = standardize(
+        {
+            "BPA": {
+                "accounts": [_acc("1.01.07", "Caixa e equivalentes de caixa", cash)]
+            },
+            "BPP": {
+                "accounts": [
+                    _acc("2.01.04", "Empréstimos e Financiamentos", "100"),
+                    _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+                    _acc("2.01.05.02", "Passivos financeiros setoriais", "40"),
+                ]
+            },
+        },
+        Sector.UTILITY,
+        date(2025, 12, 31),
+    )
+    f = replace(
+        f,
+        equity=Decimal(500),
+        equity_total=Decimal(600),
+        ebit=Decimal(100),
+        ebitda=Decimal(120),
+    )
+    result = compute(f, None, MarketData(market_cap=Decimal(1000)))
+    net_debt = Decimal(300) - Decimal(cash)
+    ev = Decimal(1100) + net_debt
+    assert result.net_debt == net_debt
+    assert result.enterprise_value == ev
+    assert result.ev_ebit == ev / Decimal(100)
+    assert result.ev_ebitda == ev / Decimal(120)
+    assert result.net_debt_to_ebitda == net_debt / Decimal(120)
+    assert result.net_debt_to_equity == net_debt / Decimal(500)
+    assert result.debt_to_equity == Decimal("0.6")
+    assert result.roic_statutory == Decimal(66) / (Decimal(600) + net_debt)
+    without_cap = compute(f, None, MarketData())
+    assert without_cap.enterprise_value is None
+    assert without_cap.ev_ebit is None
+    assert without_cap.net_debt == net_debt
+    assert without_cap.roic_statutory == result.roic_statutory
+
+
+def test_duplicate_financial_bucket_children_cannot_prove_complete_composition() -> (
+    None
+):
+    f = standardize(
+        {
+            "BPP": {
+                "accounts": [
+                    _acc("2.01.04", "Empréstimos e Financiamentos", "100"),
+                    _acc("2.02.01", "Empréstimos e Financiamentos", "200"),
+                    _acc("2.01.05.02", "Passivos financeiros", "40"),
+                    _acc("2.01.05.02.01", "Passivo de Arrendamento", "20"),
+                    _acc("2.01.05.02.01", "Passivo de Arrendamento", "20"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.total_debt is None
+    assert f.debt_coverage_null_reason is NullReason.INCOMPLETE_DEBT_COVERAGE
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Dividendos",
+        "JCP",
+        "JSCP",
+        "Juros sobre o capital próprio",
+        "Distribuição de lucros",
+        "Dividendos distribuídos",
+        "Pgto de dividendos",
+    ],
+)
+def test_financing_distribution_aliases_feed_paid_payout(
+    label: str,
+) -> None:
+    f = standardize(
+        {
+            "DFC": {
+                "currency_size": 1000,
+                "accounts": [
+                    _acc("6.03.05", label, "-30"),
+                    _acc("6.03.06", "Dividendos recebidos", "200"),
+                ],
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_paid == Decimal(30000)
+    result = compute(
+        replace(f, net_income=Decimal(100000)),
+        None,
+        MarketData(market_cap=Decimal(1000000)),
+    )
+    assert result.payout_cash_paid_in_period == Decimal("0.3")
+    evidence = next(s for s in f.source_account_evidence if s.field == "dividends_paid")
+    assert [r.code for r in evidence.found] == ["6.03.05"]
+    assert evidence.found[0].value == Decimal(-30000)
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Dividendos recebidos",
+        "Dividendos a pagar",
+        "Dividendos propostos",
+        "Reversão de dividendos",
+        "Dividendos prescritos",
+        "IRRF sobre JCP",
+        "Aumento de capital próprio",
+        "Dividendos provisionados",
+        "Conversão de dividendos em AFAC",
+    ],
+)
+def test_non_cash_or_received_distribution_is_not_a_paid_proxy(label: str) -> None:
+    f = standardize(
+        {"DFC": {"accounts": [_acc("6.03.05", label, "-30")]}},
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_paid is None
+
+
+@pytest.mark.parametrize("amount", ["bad", "NaN", "Infinity"])
+def test_unreadable_paid_component_voids_the_complete_distribution(amount: str) -> None:
+    f = standardize(
+        {
+            "DFC": {
+                "accounts": [
+                    _acc("6.03.05", "Dividendos pagos", "-30"),
+                    _acc("6.03.06", "JCP", amount),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_paid is None
+    result = compute(
+        replace(f, net_income=Decimal(100)), None, MarketData(market_cap=Decimal(1000))
+    )
+    assert result.payout_cash_paid_in_period is None
+    assert (
+        result.null_reasons["payout_cash_paid_in_period"]
+        is NullReason.SOURCE_ACCOUNT_ABSENT
+    )
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_paid_parent_detail_and_minority_reconcile_once(reverse: bool) -> None:
+    accounts = [
+        _acc("6.03.05", "Dividendos e JCP pagos", "-40"),
+        _acc("6.03.05.01", "Dividendos pagos aos controladores", "-30"),
+        _acc("6.03.05.02", "Dividendos pagos aos não controladores", "-10"),
+    ]
+    if reverse:
+        accounts.reverse()
+    f = standardize(
+        {"DFC": {"accounts": accounts}}, Sector.INDUSTRY, date(2025, 12, 31)
+    )
+    assert f.dividends_paid == Decimal(30)
+
+
+@pytest.mark.parametrize("minority", ["-50", "bad", "5"])
+def test_paid_parent_with_unresolved_minority_keeps_named_null(minority: str) -> None:
+    f = standardize(
+        {
+            "DFC": {
+                "accounts": [
+                    _acc("6.03.05", "Dividendos pagos", "-40"),
+                    _acc(
+                        "6.03.05.01", "Dividendos pagos aos não controladores", minority
+                    ),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_paid is None
+
+
+def test_paid_zero_is_evidence_and_indirect_adjustment_is_not_cash() -> None:
+    f = standardize(
+        {
+            "DFC": {
+                "accounts": [
+                    _acc("6.03.05", "Dividendos", "0"),
+                    _acc("6.01.01.03", "Dividendos pagos", "-100"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_paid == Decimal(0)
+    result = compute(
+        replace(f, net_income=Decimal(100)), None, MarketData(market_cap=Decimal(1000))
+    )
+    assert result.payout_cash_paid_in_period == Decimal(0)
+    assert result.dividend_yield is None
+
+
+@pytest.mark.parametrize(
+    ("code", "label"),
+    [
+        ("6.03.05", "Pagamento de dividendos propostos e adicionais"),
+        ("6.03.05", "Pagamento de dividendos e JCP bruto de imposto de renda"),
+        ("6.02.05", "Dividendos pagos"),
+    ],
+)
+def test_explicit_payment_resolves_event_despite_proposal_or_section_label(
+    code: str, label: str
+) -> None:
+    f = standardize(
+        {"DFC": {"accounts": [_acc(code, label, "-30")]}},
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_paid == Decimal(30)
+
+
+def test_positive_receipt_does_not_void_a_separate_complete_payment() -> None:
+    f = standardize(
+        {
+            "DFC": {
+                "accounts": [
+                    _acc("6.03.04", "Dividendos pagos", "-30"),
+                    _acc(
+                        "6.03.05", "Dividendos ressarcidos pelos administradores", "20"
+                    ),
+                    _acc("6.03.06", "Dividendos", "10"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+    )
+    assert f.dividends_paid == Decimal(30)
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+def test_paid_account_transport_flags_do_not_duplicate_or_hide_conflicting_amounts(
+    conflict: bool,
+) -> None:
+    a = _acc("6.03.05", "Dividendos pagos", "-30")
+    b = dict(a, is_fixed=True, quantity="-31" if conflict else "-30")
+    f = standardize({"DFC": {"accounts": [a, b]}}, Sector.INDUSTRY, date(2025, 12, 31))
+    assert f.dividends_paid == (None if conflict else Decimal(30))

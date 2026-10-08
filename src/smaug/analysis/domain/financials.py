@@ -160,29 +160,6 @@ class SourceAccountEvidence:
     duplicates_discarded: int = 0
 
 
-class InsuranceUnderwritingStatus(StrEnum):
-    """What the insurance DRE proves about consolidated underwriting activity."""
-
-    ACTIVE = "active"
-    ZERO_ACTIVITY = "zero_activity"
-    UNKNOWN = "unknown"
-
-
-@dataclass(frozen=True, slots=True)
-class InsuranceUnderwritingEvidence:
-    """Evidence used to decide whether insurer-only ratios apply.
-
-    The two top-level insurance DRE aggregates are the complete consolidated
-    underwriting perimeter. An explicit zero in both is evidence that the filer
-    did not underwrite in that period; it is different from a missing aggregate
-    or from an IFRS 17 aggregate whose legacy components are unavailable.
-    """
-
-    status: InsuranceUnderwritingStatus = InsuranceUnderwritingStatus.UNKNOWN
-    revenue_aggregate: SourceAccountRef | None = None
-    expense_aggregate: SourceAccountRef | None = None
-
-
 class Cpc41EvidenceStatus(StrEnum):
     """Whether one CPC 41 input is proved by the filed source evidence."""
 
@@ -251,56 +228,6 @@ class Cpc41WindowProvenance:
     selected_periods: tuple[Cpc41PeriodProvenance, ...] = ()
     basic_blocker: NullReason | None = None
     diluted_blocker: NullReason | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class BankRegulatoryProvenance:
-    """Contract metadata for a bank ratio's paired regulatory inputs.
-
-    One provenance object covers inputs from one disclosure, period, perimeter,
-    averaging method, and basis. A ratio is eligible only when both of its
-    named inputs are in ``available_inputs`` and every metadata field is
-    present. Missing and partial pairs remain distinguishable from an absent
-    provider and from an incompatible scope.
-    """
-
-    source: str | None = None
-    period_start: date | None = None
-    period_end: date | None = None
-    perimeter: str | None = None
-    averaging_method: str | None = None
-    basis: str | None = None
-    available_inputs: frozenset[str] = frozenset()
-    missing_inputs: frozenset[str] = frozenset()
-    incompatible_inputs: frozenset[str] = frozenset()
-
-    @property
-    def metadata_complete(self) -> bool:
-        """Whether the source contract proves the disclosure's identity."""
-        return all(
-            value is not None and value != ""
-            for value in (
-                self.source,
-                self.period_start,
-                self.period_end,
-                self.perimeter,
-                self.averaging_method,
-                self.basis,
-            )
-        )
-
-    def reason_for(self, inputs: tuple[str, str]) -> NullReason | None:
-        """Return the blocker for one numerator/denominator pair."""
-        if not self.metadata_complete or any(
-            item in self.incompatible_inputs for item in inputs
-        ):
-            return NullReason.INCOMPATIBLE_REGULATORY_DISCLOSURE
-        present = sum(item in self.available_inputs for item in inputs)
-        if present == len(inputs):
-            return None
-        if present:
-            return NullReason.PARTIAL_REGULATORY_DISCLOSURE
-        return NullReason.MISSING_REGULATORY_DISCLOSURE
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,9 +343,6 @@ class StandardizedFinancials:
     # quarters — so DFC-sourced flows (D&A, dividends) must be isolated on their
     # own span, not the DRE's.
     dfc_period_start: date | None = None
-    # Start of the DMPL flow period — same reasoning as the DFC's: the equity
-    # movements are filed year-to-date, on their own span.
-    dmpl_period_start: date | None = None
     total_assets: Decimal | None = None
     equity: Decimal | None = None  # attributable to controlling shareholders
     net_income: Decimal | None = None  # attributable to controlling shareholders
@@ -453,6 +377,10 @@ class StandardizedFinancials:
     cash_equivalents: Decimal | None = None
     current_financial_investments: Decimal | None = None
     current_assets: Decimal | None = None
+    inventories: Decimal | None = None
+    tag_along: Decimal | None = None
+    tag_along_null_reason: NullReason | None = None
+    free_float: Decimal | None = None  # filed company-wide fraction
     current_liabilities: Decimal | None = None
     total_debt: Decimal | None = None
     # ``total_debt`` is published only when the CVM BPP establishes a complete
@@ -461,51 +389,15 @@ class StandardizedFinancials:
     debt_coverage_null_reason: NullReason | None = None
     debt_evidence: DebtCoverageEvidence | None = None
     dividends_paid: Decimal | None = None  # dividends + JCP paid to controllers
-    # Dividends + JCP the parent DECLARED against equity during the period (DMPL
-    # 5.04 rows, positive). The paid figure above is the cash that left in the
-    # period — often the prior year's profit; the declared figure is the charge
-    # the company recorded during this period, without proving which exercise
-    # generated it (ADR 0055). Year-to-date like the DFC, isolated on
-    # ``dmpl_period_start``.
-    dividends_declared: Decimal | None = None
     # Cash-flow flows (DFC, year-to-date basis — isolated on ``dfc_period_start``).
     cfo: Decimal | None = None  # net cash from operating activities (DFC 6.01)
     capex: Decimal | None = None  # purchases of PP&E + intangibles (positive outflow)
-    # Bank-regime CVM lines retained as faithful statement facts. Signed as filed:
-    # expenses are negative. They are not enough to reconstruct the bank ratios —
-    # the structured filing has neither the issuer-defined managerial adjustments
-    # nor the required average stocks (ADR 0058).
-    loan_loss_provision: Decimal | None = None  # inside DRE 3.02 (negative)
-    fee_income: Decimal | None = None  # DRE 3.04 services rendered
-    personnel_expense: Decimal | None = None  # DRE 3.04 payroll (negative)
-    admin_expense: Decimal | None = None  # DRE 3.04 other administrative (negative)
-    loan_book: Decimal | None = None  # BPA 1.02.04, net of its own provision
-    # Regulator/issuer-aligned bank-ratio inputs (ADR 0058). These are paired,
-    # period-consistent values from one explicitly scoped public disclosure — not
-    # aliases for the CVM lines above. Expense inputs are normalized as positive
-    # magnitudes, and the two flow numerators are already annualized on the day-
-    # count basis declared by their source. ``average_*`` means the average basis
-    # declared by that source; a closing balance must never be substituted. The
-    # current CVM-only provider leaves all six null and names why via
-    # ``bank_ratio_null_reason``.
-    bank_interest_result_annualized: Decimal | None = None
-    average_earning_assets: Decimal | None = None
-    bank_efficiency_expenses: Decimal | None = None
-    bank_efficiency_income: Decimal | None = None
-    credit_loss_expense_annualized: Decimal | None = None
-    average_credit_portfolio: Decimal | None = None
-    bank_ratio_null_reason: NullReason | None = None
-    bank_regulatory_provenance: BankRegulatoryProvenance | None = None
-    # Insurance-regime underwriting lines (ADR 0061), same sign convention:
-    # expenses are negative. The pre-IFRS-17 CVM chart separates all four; the
-    # current chart does not, so its aggregates are never substituted for these
-    # components. Zero remains a value for a holding that files the line but does
-    # not underwrite itself; an absent component remains ``None``.
-    earned_premium: Decimal | None = None
-    claims_incurred: Decimal | None = None
-    acquisition_costs: Decimal | None = None
-    insurance_admin_expenses: Decimal | None = None
-    insurance_underwriting_evidence: InsuranceUnderwritingEvidence | None = None
+    # Signed CVM bank statement facts, preserved independently of ratios.
+    loan_loss_provision: Decimal | None = None
+    fee_income: Decimal | None = None
+    personnel_expense: Decimal | None = None
+    admin_expense: Decimal | None = None
+    loan_book: Decimal | None = None  # net accounting book, never gross exposure
     # Null-cause provenance (#30). ``filed_regime`` is what the mapper detected
     # in the statements themselves (None = undetected); ``unmapped_fields`` names
     # the fields above that the mapper deliberately never read for this filer, so

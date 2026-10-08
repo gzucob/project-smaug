@@ -35,11 +35,11 @@ export function FavoriteButton({
       onClick={toggle}
       disabled={pending}
       aria-pressed={favorited}
-      aria-label={favorited ? `Remover ${ticker} da carteira` : `Adicionar ${ticker} à carteira`}
+      aria-label={favorited ? `Remover ${ticker} dos favoritos` : `Adicionar ${ticker} aos favoritos`}
       className={`pressable flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition-colors duration-200 ease-[var(--ease-out-strong)] disabled:opacity-60 ${
         favorited
-          ? "border-gold-400/40 text-gold-400 hover:border-gold-400/60 hover:text-gold-300"
-          : "border-gold-500/15 text-ink-400 hover:border-gold-400/50 hover:text-gold-300"
+          ? "border-accent-400/50 text-down hover:border-accent-300/70 hover:text-down"
+          : "border-copy-200/15 text-copy-400 hover:border-accent-400/50 hover:text-accent-300"
       }`}
     >
       <FiHeart size={18} fill={favorited ? "currentColor" : "none"} aria-hidden />

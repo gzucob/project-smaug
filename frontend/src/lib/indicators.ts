@@ -18,14 +18,43 @@ import { money, multiple, pct, price, signedPct } from "@/lib/format";
 import type { Decimalish, IndicatorKey } from "@/lib/types";
 
 export type IndicatorGroup =
+  | "Valuation"
+  | "Endividamento"
+  | "Eficiência"
   | "Rentabilidade"
-  | "Por ação"
-  | "Crescimento"
-  | "Alavancagem & Liquidez"
-  | "Múltiplos de mercado"
-  | "Fluxo de caixa"
-  | "Banco"
-  | "Seguradora";
+  | "Crescimento";
+
+export interface IndicatorGroupMeta {
+  title: string;
+}
+
+/**
+ * The same muted sector palette used by the portfolio, applied here as a
+ * classification system rather than as a judgement about the number. A group
+ * owns a hue; the value itself stays neutral so colour does not imply "good"
+ * or "bad".
+ */
+export const INDICATOR_GROUP_META: Record<IndicatorGroup, IndicatorGroupMeta> = {
+  Valuation: {
+    title: "Valuation",
+  },
+  Endividamento: {
+    title: "Endividamento",
+  },
+  Eficiência: {
+    title: "Eficiência",
+  },
+  Rentabilidade: {
+    title: "Rentabilidade",
+  },
+  Crescimento: {
+    title: "Crescimento",
+  },
+};
+
+export function indicatorGroupMeta(group: IndicatorGroup): IndicatorGroupMeta {
+  return INDICATOR_GROUP_META[group];
+}
 
 export interface IndicatorSpec {
   key: IndicatorKey;
@@ -82,105 +111,74 @@ export function basisOf(key: IndicatorKey): Basis {
   return CONTROLLERS_SIBLING[key] ? "total" : "controllers";
 }
 
-/** The alternate market-convention value used when a strict field is null. */
-const MARKET_FALLBACK: Partial<Record<IndicatorKey, IndicatorKey>> = {
-  eps_basic: "eps_basic_market",
-  pe_basic: "pe_basic_market",
-};
-
-export function marketFallbackOf(key: IndicatorKey): IndicatorKey | undefined {
-  return MARKET_FALLBACK[key];
-}
-
 export const INDICATORS: IndicatorSpec[] = [
-  { key: "roe", label: "ROE", hint: "Retorno sobre o patrimônio líquido (fatia dos controladores)", group: "Rentabilidade", format: pct },
-  { key: "roa", label: "ROA", hint: "Retorno sobre os ativos (lucro dos controladores)", group: "Rentabilidade", format: pct },
-  { key: "roic_statutory", label: "ROIC estatutário", hint: "EBIT consolidado após alíquota legal de 34% / capital investido consolidado", group: "Rentabilidade", format: pct },
-  { key: "net_margin", label: "Margem líquida", hint: "Lucro dos controladores / receita", group: "Rentabilidade", format: pct },
-  { key: "gross_margin", label: "Margem bruta", hint: "Lucro bruto / receita", group: "Rentabilidade", format: pct },
-  { key: "ebit_margin", label: "Margem EBIT", hint: "EBIT (lucro operacional) / receita", group: "Rentabilidade", format: pct },
-  { key: "ebitda_margin", label: "Margem EBITDA", hint: "EBITDA / receita", group: "Rentabilidade", format: pct },
-  { key: "asset_turnover", label: "Giro do ativo", hint: "Receita / ativo total — quantas vezes o ativo gira em vendas no ano", group: "Rentabilidade", format: multiple },
-
-  { key: "eps_basic", label: "LPA básico", hint: "Resultado básico por ação da classe, conforme CPC 41", group: "Por ação", format: price },
-  { key: "eps_diluted", label: "LPA diluído", hint: "Resultado diluído por ação da classe, conforme CPC 41", group: "Por ação", format: price },
-  { key: "bvps", label: "VPA", hint: "Valor patrimonial por ação (patrimônio / número de ações)", group: "Por ação", format: price },
-
-  { key: "revenue_growth", label: "Cresc. receita", hint: "Variação da receita frente ao ano anterior", group: "Crescimento", format: signedPct },
-  { key: "net_income_growth", label: "Cresc. lucro", hint: "Variação do lucro frente ao ano anterior", group: "Crescimento", format: signedPct },
-  // Compounded over a stated window (#144): the endpoints sit five closed
-  // exercises apart, so the window is explicit in the label.
-  { key: "revenue_cagr_5y", label: "CAGR receita 5a", hint: "Crescimento anual composto da receita em 5 anos — extremos a 5 exercícios de distância", group: "Crescimento", format: signedPct },
-  { key: "ebitda_cagr_5y", label: "CAGR EBITDA 5a", hint: "Crescimento anual composto do EBITDA em 5 anos", group: "Crescimento", format: signedPct },
-  { key: "ebit_cagr_5y", label: "CAGR EBIT 5a", hint: "Crescimento anual composto do lucro operacional em 5 anos", group: "Crescimento", format: signedPct },
-  { key: "net_income_cagr_5y", label: "CAGR lucro 5a", hint: "Crescimento anual composto do lucro líquido em 5 anos", group: "Crescimento", format: signedPct },
-
-  { key: "net_debt", label: "Dívida líquida", hint: "Dívida total − caixa e equivalentes classificados no CPC 03", group: "Alavancagem & Liquidez", format: money },
-  { key: "net_debt_to_ebitda", label: "Dív. líq./EBITDA", hint: "Anos de EBITDA para quitar a dívida líquida", group: "Alavancagem & Liquidez", format: multiple },
-  { key: "net_debt_to_ebit", label: "Dív. líq./EBIT", hint: "Anos de lucro operacional (EBIT) para quitar a dívida líquida", group: "Alavancagem & Liquidez", format: multiple },
-  { key: "net_debt_to_equity", label: "Dív. líq./PL", hint: "Dívida líquida / patrimônio líquido — alavancagem líquida de caixa", group: "Alavancagem & Liquidez", format: multiple },
-  { key: "debt_to_equity", label: "Dív. bruta/PL", hint: "Dívida total / patrimônio líquido", group: "Alavancagem & Liquidez", format: multiple },
-  { key: "liabilities_to_assets", label: "Passivo/Ativo", hint: "Passivo total / ativo total — fatia dos ativos financiada por capital de terceiros", group: "Alavancagem & Liquidez", format: pct },
-  { key: "equity_to_assets", label: "PL/Ativo", hint: "PL dos controladores / ativo total — não é o complemento do Passivo/Ativo: o que falta entre os dois é a fatia dos minoritários", group: "Alavancagem & Liquidez", format: pct },
-  { key: "current_ratio", label: "Liquidez corrente", hint: "Ativo circulante / passivo circulante", group: "Alavancagem & Liquidez", format: multiple },
-
-  { key: "pe_basic", label: "P/L básico", hint: "Preço do papel / LPA básico CPC 41 da classe", group: "Múltiplos de mercado", format: multiple },
-  { key: "pe_diluted", label: "P/L diluído", hint: "Preço do papel / LPA diluído CPC 41 da classe", group: "Múltiplos de mercado", format: multiple },
-  { key: "pb", label: "P/VP", hint: "Preço do papel / valor patrimonial por papel", group: "Múltiplos de mercado", format: multiple },
-  { key: "company_pe", label: "P/L da companhia", hint: "Valor de mercado da companhia / lucro dos controladores", group: "Múltiplos de mercado", format: multiple },
-  { key: "company_pb", label: "P/VP da companhia", hint: "Valor de mercado da companhia / patrimônio dos controladores", group: "Múltiplos de mercado", format: multiple },
-  { key: "psr", label: "P/Receita", hint: "Valor de mercado / receita (PSR)", group: "Múltiplos de mercado", format: multiple },
-  { key: "price_to_assets", label: "P/Ativo", hint: "Valor de mercado / ativo total", group: "Múltiplos de mercado", format: multiple },
-  { key: "price_to_ebit", label: "P/EBIT", hint: "Valor de mercado / lucro operacional (EBIT)", group: "Múltiplos de mercado", format: multiple },
-  { key: "price_to_working_capital", label: "P/Cap. giro", hint: "Valor de mercado / capital de giro (ativo circ. − passivo circ.)", group: "Múltiplos de mercado", format: multiple },
-  { key: "dividend_yield", label: "Dividend yield", hint: "Proventos B3 por papel com data ex na janela / preço do próprio papel", group: "Múltiplos de mercado", format: pct },
-  { key: "payout_cash_paid_in_period", label: "Caixa pago/lucro do período", hint: "Caixa pago pela companhia no período / lucro do mesmo período — sem atribuição ao exercício de origem", group: "Múltiplos de mercado", format: pct },
-  { key: "payout_declared_in_period", label: "Declarado/lucro do período", hint: "Proventos registrados na DMPL no período / lucro do mesmo período — sem atribuição ao exercício de origem", group: "Múltiplos de mercado", format: pct },
-  { key: "company_cash_yield_paid_in_period", label: "Caixa pago/valor da companhia", hint: "Caixa pago no período / valor de mercado da companhia", group: "Múltiplos de mercado", format: pct },
-  { key: "company_yield_declared_in_period", label: "Declarado/valor da companhia", hint: "Proventos registrados na DMPL no período / valor de mercado da companhia", group: "Múltiplos de mercado", format: pct },
-  { key: "ev_ebitda", label: "EV/EBITDA", hint: "Valor da firma / EBITDA", group: "Múltiplos de mercado", format: multiple },
-  { key: "ev_ebit", label: "EV/EBIT", hint: "Valor da firma / lucro operacional (EBIT)", group: "Múltiplos de mercado", format: multiple },
-
-  { key: "fcf", label: "Fluxo de caixa livre", hint: "Caixa operacional − investimentos em ativos (CAPEX)", group: "Fluxo de caixa", format: money },
-  { key: "price_to_fcf", label: "P/FCL", hint: "Valor de mercado / fluxo de caixa livre", group: "Fluxo de caixa", format: multiple },
-  { key: "fcf_yield", label: "FCF yield", hint: "Fluxo de caixa livre / valor de mercado", group: "Fluxo de caixa", format: pct },
-  // Only a bank fills these; every other regime reports them as inapplicable (ADR 0058).
-  { key: "net_interest_margin", label: "Margem financeira", hint: "Resultado de juros anualizado / ativos rentáveis médios, no mesmo perímetro", group: "Banco", format: pct },
-  { key: "efficiency_ratio", label: "Índice de eficiência", hint: "Despesas operacionais completas / receitas operacionais completas — quanto menor, melhor", group: "Banco", format: pct },
-  { key: "cost_of_risk", label: "Custo do risco", hint: "Despesa anualizada de perdas de crédito / carteira média de crédito", group: "Banco", format: pct },
-  // Only an underwriting insurer fills these; other regimes report them as inapplicable (ADR 0061).
-  { key: "loss_ratio", label: "Índice de sinistralidade", hint: "Sinistros incorridos / prêmios ganhos, no mesmo período", group: "Seguradora", format: pct },
-  { key: "combined_ratio", label: "Índice combinado", hint: "Sinistros + custos de aquisição + despesas administrativas / prêmios ganhos", group: "Seguradora", format: pct },
+  { key: "pe_basic", label: "P/L", hint: "Preço do papel / lucro por ação", group: "Valuation", format: multiple },
+  { key: "pb", label: "P/VP", hint: "Preço do papel / valor patrimonial por papel", group: "Valuation", format: multiple },
+  { key: "psr", label: "PSR", hint: "Valor de mercado / receita (PSR)", group: "Valuation", format: multiple },
+  { key: "price_to_assets", label: "P/Ativo", hint: "Valor de mercado / ativo total", group: "Valuation", format: multiple },
+  { key: "price_to_ebit", label: "P/EBIT", hint: "Valor de mercado / lucro operacional (EBIT)", group: "Valuation", format: multiple },
+  { key: "price_to_ebitda", label: "P/EBITDA", hint: "Valor de mercado / EBITDA", group: "Valuation", format: multiple },
+  { key: "price_to_working_capital", label: "P/Capital de giro", hint: "Valor de mercado / capital de giro (ativo circ. − passivo circ.)", group: "Valuation", format: multiple },
+  { key: "price_to_cfo", label: "P/FCO", hint: "Valor de mercado / fluxo de caixa operacional", group: "Valuation", format: multiple },
+  { key: "price_to_fcf", label: "P/FCL", hint: "Valor de mercado / fluxo de caixa livre", group: "Valuation", format: multiple },
+  { key: "ev_ebitda", label: "EV/EBITDA", hint: "Valor da firma / EBITDA", group: "Valuation", format: multiple },
+  { key: "ev_ebit", label: "EV/EBIT", hint: "Valor da firma / lucro operacional (EBIT)", group: "Valuation", format: multiple },
+  { key: "ev_cfo", label: "EV/FCO", hint: "Valor da firma / fluxo de caixa operacional", group: "Valuation", format: multiple },
+  { key: "ev_fcf", label: "EV/FCL", hint: "Valor da firma / fluxo de caixa livre", group: "Valuation", format: multiple },
+  { key: "ev_revenue", label: "EV/Receita líquida", hint: "Valor da firma / receita líquida", group: "Valuation", format: multiple },
+  { key: "earnings_yield", label: "Earnings Yield", hint: "Lucro por ação / preço do papel", group: "Valuation", format: pct },
+  { key: "dividend_yield", label: "Dividend Yield", hint: "Proventos B3 por papel com data ex na janela / preço do próprio papel", group: "Valuation", format: pct },
+  { key: "cfo_yield", label: "FCO Yield", hint: "Fluxo de caixa operacional / valor de mercado", group: "Valuation", format: pct },
+  { key: "fcf_yield", label: "FCL Yield", hint: "Fluxo de caixa livre / valor de mercado", group: "Valuation", format: pct },
+  { key: "payout_cash_paid_in_period", label: "Payout", hint: "Caixa pago pela companhia no período / lucro do mesmo período — sem atribuição ao exercício de origem", group: "Valuation", format: pct },
+  { key: "eps_basic", label: "LPA", hint: "Lucro líquido do período / quantidade total de ações, com ajuste para units", group: "Valuation", format: price },
+  { key: "bvps", label: "VPA", hint: "Valor patrimonial por ação (patrimônio / número de ações)", group: "Valuation", format: price },
+  { key: "net_debt", label: "Dívida líquida", hint: "Dívida total − caixa e equivalentes classificados no CPC 03", group: "Endividamento", format: money },
+  { key: "net_debt_to_ebitda", label: "Dívida líquida/EBITDA", hint: "Anos de EBITDA para quitar a dívida líquida", group: "Endividamento", format: multiple },
+  { key: "net_debt_to_ebit", label: "Dívida líquida/EBIT", hint: "Anos de lucro operacional (EBIT) para quitar a dívida líquida", group: "Endividamento", format: multiple },
+  { key: "net_debt_to_equity", label: "Dívida líquida/PL", hint: "Dívida líquida / patrimônio líquido — alavancagem líquida de caixa", group: "Endividamento", format: multiple },
+  { key: "debt_to_equity", label: "Dívida bruta/PL", hint: "Dívida total / patrimônio líquido", group: "Endividamento", format: multiple },
+  { key: "liabilities_to_assets", label: "Passivo / ativo", hint: "Passivo total / ativo total — fatia dos ativos financiada por capital de terceiros", group: "Endividamento", format: pct },
+  { key: "equity_to_assets", label: "PL/Ativo", hint: "Patrimônio dos controladores / ativo total — não é o complemento do Passivo/Ativo: o que falta entre os dois é a fatia dos minoritários", group: "Endividamento", format: pct },
+  { key: "current_ratio", label: "Liquidez corrente", hint: "Ativo circulante / passivo circulante", group: "Endividamento", format: multiple },
+  { key: "cash_ratio", label: "Liquidez imediata", hint: "Caixa e equivalentes / passivo circulante", group: "Endividamento", format: multiple },
+  { key: "quick_ratio", label: "Liquidez seca", hint: "(Ativo circulante − estoques) / passivo circulante", group: "Endividamento", format: multiple },
+  { key: "gross_margin", label: "Margem bruta", hint: "Lucro bruto / receita", group: "Eficiência", format: pct },
+  { key: "ebit_margin", label: "Margem EBIT", hint: "EBIT (lucro operacional) / receita", group: "Eficiência", format: pct },
+  { key: "ebitda_margin", label: "Margem EBITDA", hint: "EBITDA / receita", group: "Eficiência", format: pct },
+  { key: "net_margin", label: "Margem líquida", hint: "Lucro dos controladores / receita", group: "Eficiência", format: pct },
+  { key: "asset_turnover", label: "Giro dos ativos", hint: "Receita / ativo total — quantas vezes os ativos geram vendas no ano", group: "Eficiência", format: multiple },
+  { key: "cfo_margin", label: "Margem FCO", hint: "Fluxo de caixa operacional / receita", group: "Eficiência", format: pct },
+  { key: "fcf_margin", label: "Margem FCL", hint: "Fluxo de caixa livre / receita", group: "Eficiência", format: pct },
+  { key: "cash_conversion", label: "Conversão do lucro em caixa", hint: "Fluxo de caixa operacional / lucro líquido", group: "Eficiência", format: pct },
+  { key: "capex_to_cfo", label: "CAPEX/FCO", hint: "Investimentos em imobilizado e intangíveis / fluxo de caixa operacional", group: "Eficiência", format: pct },
+  { key: "fcf", label: "FCL", hint: "Caixa operacional − investimentos em ativos (CAPEX)", group: "Eficiência", format: money },
+  { key: "roe", label: "ROE", hint: "Lucro dos controladores / patrimônio líquido dos controladores", group: "Rentabilidade", format: pct },
+  { key: "roa", label: "ROA", hint: "Lucro dos controladores / ativo total", group: "Rentabilidade", format: pct },
+  { key: "roic_statutory", label: "ROIC", hint: "EBIT consolidado após alíquota legal de 34% / capital investido consolidado", group: "Rentabilidade", format: pct },
+  { key: "revenue_growth", label: "Crescimento da receita", hint: "Variação da receita frente ao ano anterior", group: "Crescimento", format: signedPct },
+  { key: "net_income_growth", label: "Crescimento do lucro", hint: "Variação do lucro frente ao ano anterior", group: "Crescimento", format: signedPct },
+  { key: "revenue_cagr_5y", label: "CAGR Receita (5 anos)", hint: "Crescimento anual composto da receita em 5 anos — extremos a 5 exercícios de distância", group: "Crescimento", format: signedPct },
+  { key: "ebitda_cagr_5y", label: "CAGR EBITDA (5 anos)", hint: "Crescimento anual composto do EBITDA em 5 anos", group: "Crescimento", format: signedPct },
+  { key: "ebit_cagr_5y", label: "CAGR EBIT (5 anos)", hint: "Crescimento anual composto do lucro operacional em 5 anos", group: "Crescimento", format: signedPct },
+  { key: "net_income_cagr_5y", label: "CAGR Lucro (5 anos)", hint: "Crescimento anual composto do lucro líquido em 5 anos", group: "Crescimento", format: signedPct },
 ];
 
 export const INDICATOR_GROUPS: IndicatorGroup[] = [
+  "Valuation",
+  "Endividamento",
+  "Eficiência",
   "Rentabilidade",
-  "Por ação",
   "Crescimento",
-  "Alavancagem & Liquidez",
-  "Múltiplos de mercado",
-  "Fluxo de caixa",
-  "Banco",
-  "Seguradora",
 ];
 
-/**
- * One pastel per group, so a cell's family is readable at a glance.
- *
- * This is a second colour encoding alongside the gemstone-per-sector one: the
- * sector still owns the badge and the annual charts, while inside the grid the
- * hue answers "what kind of indicator is this", which is the question a reader
- * actually has when scanning 29 cells.
- */
+/** Distinct vivid accents identify each group; indicator values remain neutral. */
 const GROUP_COLOR_VARS: Record<IndicatorGroup, string> = {
-  Rentabilidade: "--color-pastel-mint",
-  "Por ação": "--color-pastel-sky",
-  Crescimento: "--color-pastel-amber",
-  "Alavancagem & Liquidez": "--color-pastel-rose",
-  "Múltiplos de mercado": "--color-pastel-lilac",
-  "Fluxo de caixa": "--color-pastel-aqua",
-  Banco: "--color-pastel-sage",
-  Seguradora: "--color-pastel-peach",
+  Valuation: "--color-gem-violet",
+  Endividamento: "--color-gem-coral",
+  Eficiência: "--color-gem-azure",
+  Rentabilidade: "--color-gem-jade",
+  Crescimento: "--color-gem-gold",
 };
 
 export function groupColor(group: IndicatorGroup): string {
@@ -312,7 +310,7 @@ export function valueFormatter(kind: FormatKind): (n: number) => string {
 const TOTAL_SPECS: IndicatorSpec[] = [
   { key: "roe_total", label: "ROE", hint: "Retorno sobre o patrimônio líquido — base consolidada", group: "Rentabilidade", format: pct },
   { key: "roa_total", label: "ROA", hint: "Retorno sobre os ativos — base consolidada", group: "Rentabilidade", format: pct },
-  { key: "net_margin_total", label: "Margem líquida", hint: "Lucro do grupo / receita — base consolidada", group: "Rentabilidade", format: pct },
+  { key: "net_margin_total", label: "Margem líquida", hint: "Lucro do grupo / receita — base consolidada", group: "Eficiência", format: pct },
   { key: "net_income_total", label: "Lucro líquido", hint: "Resultado do grupo, com minoritários — base consolidada", group: "Rentabilidade", format: money },
 ];
 

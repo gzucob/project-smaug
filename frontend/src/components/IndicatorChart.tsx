@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Evolution of a single indicator: the closed exercises plus the trailing TTM
+ * Evolution of a single indicator: the closed exercises plus the current rolling
  * window, drawn as bars or as a line.
  *
  * Charted with Recharts rather than hand-rolled SVG because the reading only
@@ -10,7 +10,7 @@
  * carries no scale — the reader cannot see how far this year sits from a
  * normal year, which is the whole question a multiple raises.
  *
- * The TTM point keeps a visual basis of its own (hollow bar / dashed segment):
+ * The current point keeps a visual basis of its own (hollow bar / dashed segment):
  * it is a 12-month window, not one more closed exercise, and averaging it into
  * the reference line would quietly change what the line means.
  *
@@ -31,6 +31,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { DASH } from "@/lib/format";
 import { axisFormatter, valueFormatter } from "@/lib/indicators";
 import type { FormatKind } from "@/lib/indicators";
 
@@ -50,7 +51,7 @@ interface Point {
   envelope: number | null;
   /** Closed exercises only — the solid line. */
   closed: number | null;
-  /** The TTM window and the exercise before it — the dashed tail. */
+  /** The current window and the exercise before it — the dashed tail. */
   live: number | null;
   ghost: boolean;
 }
@@ -85,6 +86,7 @@ export function IndicatorChart({
   height = 264,
   envelope = null,
   seriesLabel,
+  dateLabels = false,
 }: {
   labels: string[];
   values: (number | null)[];
@@ -101,6 +103,8 @@ export function IndicatorChart({
   envelope?: EnvelopeSeries | null;
   /** Names `values` in the tooltip — only needed when a pair makes it ambiguous. */
   seriesLabel?: string;
+  /** ISO session labels retain the full date in tooltips. */
+  dateLabels?: boolean;
 }) {
   const format = axisFormatter(formatKind);
   const readable = valueFormatter(formatKind);
@@ -134,7 +138,7 @@ export function IndicatorChart({
   return (
     <div className="w-full">
       <ResponsiveContainer width="100%" height={height}>
-        {/* The right margin holds the last x label ("12 meses"), which sits on
+        {/* The right margin holds the last x label ("Atual"), which sits on
             the plot edge in line mode and would otherwise be clipped. */}
         <ComposedChart data={data} margin={{ top: 10, right: 34, bottom: 2, left: 2 }}>
           <CartesianGrid
@@ -150,7 +154,8 @@ export function IndicatorChart({
             // Default interval, not `0`: on a phone the year labels would
             // otherwise run into each other. Recharts drops the ones that do
             // not fit and always keeps the trailing period.
-            minTickGap={4}
+            minTickGap={dateLabels ? 24 : 4}
+            tickFormatter={dateLabels ? (value: string) => value.split("-").reverse().join("/") : undefined}
           />
           <YAxis
             domain={domain}
@@ -167,7 +172,11 @@ export function IndicatorChart({
             cursor={{ stroke: "var(--color-ink-400)", strokeOpacity: 0.28, strokeWidth: 1 }}
             content={(props) => (
               <ChartTooltip
-                label={typeof props.label === "string" ? props.label : ""}
+                label={typeof props.label === "string"
+                  ? dateLabels
+                    ? props.label.split("-").reverse().join("/")
+                    : props.label
+                  : ""}
                 value={pointOf(data, props.label)}
                 format={readable}
                 seriesLabel={seriesLabel}
@@ -236,10 +245,10 @@ export function IndicatorChart({
             <>
               <Line
                 dataKey="closed"
-                type="monotone"
+                type={dateLabels ? "linear" : "monotone"}
                 stroke="var(--color-up)"
                 strokeWidth={2}
-                dot={{ r: 3, fill: "var(--color-up)", stroke: "none" }}
+                dot={dateLabels && values.length > 1 ? false : { r: 3, fill: "var(--color-up)", stroke: "none" }}
                 activeDot={{ r: 4.5 }}
                 isAnimationActive={false}
                 connectNulls={false}
@@ -327,13 +336,13 @@ function ChartTooltip({
   // quantity, and reading it before the part makes the difference legible.
   const paired = envelopeLabel !== undefined;
   return (
-    <div className="panel px-3 py-2 text-xs shadow-lg">
+    <div className="rounded-lg border border-copy-200/10 bg-canvas-900 px-3 py-2 text-xs shadow-lg">
       <div className="text-[0.68rem] uppercase tracking-wide text-ink-500">{label}</div>
       {paired && (
         <div className="mt-1 flex items-baseline justify-between gap-4">
           <span className="text-[0.62rem] text-ink-500">{envelopeLabel}</span>
           <span className="nums text-ink-200">
-            {value.envelope === null ? "n/d" : format(value.envelope)}
+            {value.envelope === null ? DASH : format(value.envelope)}
           </span>
         </div>
       )}
@@ -341,16 +350,16 @@ function ChartTooltip({
         <div className="flex items-baseline justify-between gap-4">
           <span className="text-[0.62rem] text-ink-500">{seriesLabel}</span>
           <span className="nums font-semibold" style={{ color: mark }}>
-            {value.value === null ? "n/d" : format(value.value)}
+            {value.value === null ? DASH : format(value.value)}
           </span>
         </div>
       ) : (
         <div className="nums mt-0.5 text-sm font-semibold" style={{ color: mark }}>
-          {value.value === null ? "n/d" : format(value.value)}
+          {value.value === null ? DASH : format(value.value)}
         </div>
       )}
       {value.ghost && (
-        <div className="mt-1 text-[0.62rem] text-ink-600">janela de 12 meses</div>
+        <div className="mt-1 text-[0.62rem] text-copy-600">período atual</div>
       )}
     </div>
   );

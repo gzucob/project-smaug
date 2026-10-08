@@ -15,15 +15,17 @@
  */
 import { Listbox, ListboxButton, ListboxOption, ListboxOptions } from "@headlessui/react";
 import { FiChevronDown } from "react-icons/fi";
-import { INDICATOR_GROUPS, groupColor, specsByGroup } from "@/lib/indicators";
+import { INDICATOR_GROUPS, groupColor, indicatorGroupMeta, specsByGroup } from "@/lib/indicators";
 import type { IndicatorKey } from "@/lib/types";
 
 export function IndicatorPicker({
   value,
   label,
   onChange,
+  isCurrent,
 }: {
   /** The grid indicator in focus — a `_total` column shows its sibling (#121). */
+  isCurrent: boolean;
   value: IndicatorKey;
   label: string;
   onChange: (key: IndicatorKey) => void;
@@ -32,12 +34,12 @@ export function IndicatorPicker({
     <Listbox value={value} onChange={onChange}>
       <ListboxButton
         aria-label="Trocar de indicador"
-        className="group/pick flex items-center gap-1.5 rounded-md focus-visible:outline-1 focus-visible:outline-gold-500"
+        className="group/pick flex items-center gap-1.5 rounded-md focus-visible:outline-1 focus-visible:outline-accent-500"
       >
-        <span className="font-display text-2xl text-ink-50 transition-colors group-hover/pick:text-gold-300">
+        <span className="text-xl font-semibold tracking-tight text-copy-50 transition-colors group-hover/pick:text-accent-300">
           {label}
         </span>
-        <FiChevronDown size={15} className="text-ink-500 transition-transform group-data-open/pick:rotate-180" />
+        <FiChevronDown size={15} className="text-copy-500 transition-transform group-data-open/pick:rotate-180" />
       </ListboxButton>
 
       {/* `--anchor-max-height` is what bounds the list: `anchor` measures the
@@ -53,13 +55,13 @@ export function IndicatorPicker({
               className="px-3 pb-1 pt-2 text-[0.6rem] font-semibold uppercase tracking-[0.16em]"
               style={{ color: groupColor(group) }}
             >
-              {group}
+              {indicatorGroupMeta(group).title}
             </div>
-            {specsByGroup(group).map((spec) => (
+            {specsByGroup(group).filter((s) => isCurrent || s.key !== "tag_along").map((spec) => (
               <ListboxOption
                 key={spec.key}
                 value={spec.key}
-                className="cursor-pointer px-3 py-1.5 text-sm text-ink-200 transition-colors data-focus:bg-vault-800"
+                className="cursor-pointer px-3 py-1.5 text-sm text-copy-200 transition-colors data-focus:bg-canvas-800"
               >
                 {({ selected }) => (
                   <span style={selected ? { color: groupColor(group) } : undefined}>

@@ -1,21 +1,20 @@
 import { IndicatorGrid } from "@/components/IndicatorGrid";
 import { ViewBadge } from "@/components/ViewBadge";
-import { dateTime, monthYear, price, toNum, yearOf } from "@/lib/format";
-import { gemKey } from "@/lib/sectors";
+import { yearOf } from "@/lib/format";
 import type { Analysis } from "@/lib/types";
 
 /**
  * One perspective of a ticker: provenance header + full indicator grid.
  *
- * `history` and `ttm` are threaded through untouched: the grid's per-indicator
- * drill-down charts the whole series, which is a property of the ticker rather
- * than of the view being displayed here.
+ * Comparisons and drill-down statistics use only rows sharing the displayed
+ * calculation contract. Historical rows remain available in the ticker history.
  */
 export function ViewPanel({
   analysis,
   compare,
   history,
   ttm,
+  sectionAccent,
   primary = false,
 }: {
   analysis: Analysis;
@@ -23,62 +22,46 @@ export function ViewPanel({
   compare: Analysis | null;
   history: Analysis[];
   ttm: Analysis | null;
+  sectionAccent: string;
   primary?: boolean;
 }) {
+  // A changed calculation contract is not a comparable statistical window.
+  const sameContract = (row: Analysis) =>
+    row.calculation_contract_version === analysis.calculation_contract_version;
+  const comparableHistory = history.filter(sameContract);
+  const comparableTtm = ttm && sameContract(ttm) ? ttm : null;
+  const comparableExercise = compare && sameContract(compare) ? compare : null;
   const isTtm = analysis.view === "ttm_live";
-  const priceMain = toNum(analysis.price);
-  const priceAdjusted = toNum(analysis.price_adjusted);
-  // The adjusted average is a return ruler, not a valuation one — shown only as a
-  // footnote, and only when it actually differs from the price the multiples use.
-  const showAdjusted =
-    priceAdjusted !== null && priceMain !== null && Math.abs(priceAdjusted - priceMain) > 0.005;
 
   return (
-    <article className={`panel ${primary ? "panel-hover" : ""} flex flex-col gap-5 p-6`}>
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <ViewBadge view={analysis.view} year={yearOf(analysis.reference_date)} />
-          <p className="mt-2 text-xs text-ink-500">
-            Período de referência ·{" "}
-            <span className="text-ink-400">
-              {isTtm ? monthYear(analysis.reference_date) : yearOf(analysis.reference_date)}
-            </span>
-          </p>
-          {compare && (
-            <p className="mt-1 text-xs text-ink-500">
-              Variações medidas contra o exercício de{" "}
-              <span className="text-ink-400">{yearOf(compare.reference_date)}</span>
-            </p>
-          )}
-        </div>
-
-        <div className="text-right">
-          <div className="nums text-2xl font-semibold text-ink-50">{price(analysis.price)}</div>
-          <div className="text-[0.68rem] text-ink-500">
-            {analysis.price_basis ? `base: ${analysis.price_basis}` : "preço para múltiplos"}
-          </div>
-          {showAdjusted && (
-            <div className="nums text-[0.68rem] text-ink-600">
-              média ajustada {price(analysis.price_adjusted)}
-            </div>
-          )}
-        </div>
-      </header>
-
-      <div className="hairline" />
+    <article
+      className={`rounded-lg border border-copy-200/10 bg-canvas-950 ${
+        primary ? "panel-hover" : ""
+      } flex flex-col gap-5 p-4 sm:p-5`}
+    >
+      {!isTtm ? (
+        <>
+          <header>
+            <ViewBadge view={analysis.view} year={yearOf(analysis.reference_date)} />
+          </header>
+          <div className="hairline" />
+        </>
+      ) : null}
 
       <IndicatorGrid
+        isCurrent={isTtm}
         indicators={analysis.indicators}
-        compare={compare?.indicators ?? null}
-        compareLabel={compare ? yearOf(compare.reference_date) : null}
-        sector={gemKey(analysis.classification)}
-        history={history}
-        ttm={ttm}
+        indicatorContract={analysis.indicator_contract}
+        compare={comparableExercise?.indicators ?? null}
+        compareLabel={comparableExercise ? yearOf(comparableExercise.reference_date) : null}
+        history={comparableHistory}
+        ttm={comparableTtm}
+        sectionAccent={sectionAccent}
       />
 
-      <footer className="mt-1 text-[0.64rem] text-ink-600">
-        Calculado em {dateTime(analysis.computed_at)}
-      </footer>
+      {comparableHistory.length < history.length && (
+        <p className="text-xs opacity-70">Histórico limitado a exercícios com a mesma metodologia.</p>
+      )}
     </article>
   );
 }

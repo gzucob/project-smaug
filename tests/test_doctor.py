@@ -383,7 +383,7 @@ async def test_doctor_carries_the_selected_cpc41_window() -> None:
 async def test_doctor_names_missing_price_never_a_bare_null() -> None:
     """#42 in miniature: a closed year that lost its price reads as missing_price."""
     priced_out = dict.fromkeys(
-        ("pe_basic", "pb", "company_pe", "psr", "dividend_yield", "ev_ebitda"),
+        ("pe_basic", "pb", "earnings_yield", "psr", "dividend_yield", "ev_ebitda"),
         NullReason.MISSING_PRICE,
     )
     indicators = Indicators(

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { FiSearch } from "react-icons/fi";
 import { useState } from "react";
 
 /** Ticker lookup — navigates to the detail route; no client-side fetch. */
@@ -18,9 +19,9 @@ export function TickerSearch({ compact = false }: { compact?: boolean }) {
     <form onSubmit={submit} className="group relative">
       <span
         aria-hidden
-        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-500 transition-colors group-focus-within:text-gold-400"
+        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-copy-500 transition-colors group-focus-within:text-accent-400"
       >
-        <SearchGlyph />
+        <FiSearch size={16} />
       </span>
       <input
         value={value}
@@ -29,19 +30,10 @@ export function TickerSearch({ compact = false }: { compact?: boolean }) {
         aria-label="Buscar ticker"
         autoComplete="off"
         spellCheck={false}
-        className={`nums w-full rounded-xl border border-gold-500/15 bg-vault-900/80 pl-9 pr-3 uppercase tracking-wider text-ink-50 placeholder:text-ink-600 placeholder:normal-case placeholder:tracking-normal outline-none transition-[border-color,background-color,box-shadow] duration-200 ease-[var(--ease-out-strong)] focus:border-gold-400/60 focus:bg-vault-850 focus:shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-gold-500)_18%,transparent)] ${
+        className={`nums w-full rounded-md border border-copy-200/10 bg-canvas-900 pl-9 pr-3 uppercase tracking-wider text-copy-50 placeholder:text-copy-600 placeholder:normal-case placeholder:tracking-normal outline-none transition-[border-color,background-color,box-shadow] duration-200 ease-[var(--ease-out-strong)] focus:border-accent-400/60 focus:bg-canvas-850 focus:shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-accent-500)_18%,transparent)] ${
           compact ? "h-9 text-sm" : "h-12 text-base"
         }`}
       />
     </form>
-  );
-}
-
-function SearchGlyph() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
-      <path d="m20 20-3.5-3.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
   );
 }

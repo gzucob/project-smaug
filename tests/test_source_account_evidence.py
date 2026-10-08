@@ -8,8 +8,6 @@ from typing import Any
 from smaug.analysis.domain.calculator import compute
 from smaug.analysis.domain.entities import VIEW_TTM, TickerAnalysis
 from smaug.analysis.domain.financials import (
-    AccountingRegime,
-    BankRegulatoryProvenance,
     Cpc41AccountEvidence,
     Cpc41EvidenceStatus,
     Cpc41PeriodProvenance,
@@ -21,7 +19,11 @@ from smaug.analysis.domain.financials import (
     SourceAccountStatus,
     StandardizedFinancials,
 )
-from smaug.analysis.domain.indicators import Indicators, NullReason
+from smaug.analysis.domain.indicators import (
+    CALCULATION_CONTRACT_VERSION,
+    Indicators,
+    NullReason,
+)
 from smaug.analysis.domain.ttm import build_ttm
 from smaug.analysis.infrastructure.mongo_fundamentals import standardize
 from smaug.analysis.infrastructure.sql_repository import _to_entity, _to_row
@@ -38,27 +40,6 @@ def _evidence_by_field(
     financials: StandardizedFinancials,
 ) -> dict[str, SourceAccountEvidence]:
     return {item.field: item for item in financials.source_account_evidence}
-
-
-def _valid_bank_provenance() -> BankRegulatoryProvenance:
-    return BankRegulatoryProvenance(
-        source="issuer_public_performance_analysis",
-        period_start=date(2025, 1, 1),
-        period_end=date(2025, 12, 31),
-        perimeter="consolidated",
-        averaging_method="arithmetic_mean_month_end",
-        basis="issuer_defined_annualized_disclosure",
-        available_inputs=frozenset(
-            {
-                "bank_interest_result_annualized",
-                "average_earning_assets",
-                "bank_efficiency_expenses",
-                "bank_efficiency_income",
-                "credit_loss_expense_annualized",
-                "average_credit_portfolio",
-            }
-        ),
-    )
 
 
 def test_mapping_records_raw_accounts_and_dfc_parent_scope() -> None:
@@ -137,54 +118,6 @@ def test_absent_and_unmapped_sources_remain_distinct() -> None:
     assert corporate_evidence["dep_amort"].blocker is NullReason.SOURCE_ACCOUNT_ABSENT
     assert bank_evidence["dep_amort"].status is SourceAccountStatus.UNMAPPED
     assert bank_evidence["dep_amort"].blocker is NullReason.SOURCE_ACCOUNT_UNMAPPED
-    assert (
-        bank_evidence["average_earning_assets"].blocker
-        is NullReason.MISSING_REGULATORY_DISCLOSURE
-    )
-
-
-def test_bank_ratios_require_a_complete_paired_source_contract() -> None:
-    values = {
-        "filed_regime": AccountingRegime.BANK,
-        "bank_interest_result_annualized": Decimal("100"),
-        "average_earning_assets": Decimal("1000"),
-        "bank_efficiency_expenses": Decimal("20"),
-        "bank_efficiency_income": Decimal("100"),
-        "credit_loss_expense_annualized": Decimal("10"),
-        "average_credit_portfolio": Decimal("1000"),
-    }
-    without_contract = StandardizedFinancials(
-        reference_date=date(2025, 12, 31),
-        sector=Sector.BANK,
-        **values,
-    )
-    with_contract = replace(
-        without_contract,
-        bank_regulatory_provenance=_valid_bank_provenance(),
-    )
-    partial = replace(
-        with_contract,
-        bank_regulatory_provenance=replace(
-            _valid_bank_provenance(),
-            available_inputs=frozenset({"bank_interest_result_annualized"}),
-        ),
-    )
-
-    missing = compute(without_contract, None, MarketData())
-    valid = compute(with_contract, None, MarketData())
-    partial_result = compute(partial, None, MarketData())
-
-    assert missing.net_interest_margin is None
-    assert missing.null_reasons["net_interest_margin"] is (
-        NullReason.MISSING_REGULATORY_DISCLOSURE
-    )
-    assert valid.net_interest_margin == Decimal("0.1")
-    assert valid.efficiency_ratio == Decimal("0.2")
-    assert valid.cost_of_risk == Decimal("0.01")
-    assert partial_result.net_interest_margin is None
-    assert partial_result.null_reasons["net_interest_margin"] is (
-        NullReason.PARTIAL_REGULATORY_DISCLOSURE
-    )
 
 
 def test_ttm_and_calculation_carry_source_lineage() -> None:
@@ -214,45 +147,27 @@ def test_ttm_and_calculation_carry_source_lineage() -> None:
     ]
     ttm = build_ttm(quarters, None)
     assert ttm is not None
-    assert ttm.source_account_evidence == (evidence,)
+    sources = _evidence_by_field(ttm)
+    capex = sources["capex"]
+    assert capex.status is SourceAccountStatus.DERIVED
+    assert capex.blocker is NullReason.SOURCE_ACCOUNT_ABSENT
+    assert capex.dependencies == tuple(
+        f"capex[{quarter.reference_date}]" for quarter in quarters
+    )
+    for dependency in capex.dependencies:
+        assert sources[dependency].found == evidence.found
     indicators = compute(ttm, None, market=MarketData())
     # The source metadata is carried independently of whether the fixture has
     # enough market inputs to calculate the full indicator set.
-    assert indicators.source_account_evidence == (evidence,)
-
-
-def test_ttm_carries_valid_bank_inputs_and_provenance() -> None:
-    quarters = [
-        StandardizedFinancials(
-            reference_date=end,
-            sector=Sector.BANK,
-            filed_regime=AccountingRegime.BANK,
-            revenue=Decimal("10"),
-            bank_interest_result_annualized=Decimal("100"),
-            average_earning_assets=Decimal("1000"),
-            bank_efficiency_expenses=Decimal("20"),
-            bank_efficiency_income=Decimal("100"),
-            credit_loss_expense_annualized=Decimal("10"),
-            average_credit_portfolio=Decimal("1000"),
-            bank_regulatory_provenance=_valid_bank_provenance(),
-        )
-        for end in (
-            date(2025, 3, 31),
-            date(2025, 6, 30),
-            date(2025, 9, 30),
-            date(2025, 12, 31),
-        )
-    ]
-    ttm = build_ttm(quarters, None)
-
-    assert ttm is not None
-    assert ttm.bank_interest_result_annualized == Decimal("100")
-    assert ttm.average_earning_assets == Decimal("1000")
-    assert ttm.bank_efficiency_expenses == Decimal("20")
-    assert ttm.bank_efficiency_income == Decimal("100")
-    assert ttm.credit_loss_expense_annualized == Decimal("10")
-    assert ttm.average_credit_portfolio == Decimal("1000")
-    assert ttm.bank_regulatory_provenance == _valid_bank_provenance()
+    assert indicators.source_account_evidence[: len(ttm.source_account_evidence)] == (
+        ttm.source_account_evidence
+    )
+    basic = next(
+        item for item in indicators.source_account_evidence if item.field == "eps_basic"
+    )
+    assert basic.field == "eps_basic"
+    assert basic.formula == "net_income / shares"
+    assert basic.dependencies == ("net_income", "shares")
 
 
 def test_source_lineage_round_trips_through_sql_and_api() -> None:
@@ -268,7 +183,6 @@ def test_source_lineage_round_trips_through_sql_and_api() -> None:
     )
     indicators = Indicators(
         source_account_evidence=(evidence,),
-        bank_regulatory_provenance=_valid_bank_provenance(),
     )
     analysis = TickerAnalysis(
         ticker="PETR4",
@@ -281,11 +195,8 @@ def test_source_lineage_round_trips_through_sql_and_api() -> None:
     row = _to_row(analysis)
     assert row.source_account_evidence is not None
     assert row.source_account_evidence[0]["found"][0]["code"] == "6.01"
-    assert row.bank_regulatory_provenance is not None
-    assert row.bank_regulatory_provenance["perimeter"] == "consolidated"
     restored = _to_entity(row)
     assert restored.indicators.source_account_evidence == (evidence,)
-    assert restored.indicators.bank_regulatory_provenance == _valid_bank_provenance()
     response = _to_response(analysis)
     assert response.indicators.source_account_evidence[0].status is (
         SourceAccountStatus.MAPPED
@@ -297,10 +208,6 @@ def test_source_lineage_round_trips_through_sql_and_api() -> None:
         "Operating"
     )
     assert response.indicators.source_account_evidence[0].duplicates_discarded == 2
-    assert response.indicators.bank_regulatory_provenance is not None
-    assert response.indicators.bank_regulatory_provenance.basis == (
-        "issuer_defined_annualized_disclosure"
-    )
 
 
 def test_cpc41_window_provenance_round_trips_through_sql_and_api() -> None:
@@ -381,3 +288,214 @@ def test_cpc41_window_provenance_round_trips_through_sql_and_api() -> None:
         response_provenance.selected_periods[0].diluted_disclosure_status
         is Cpc41EvidenceStatus.ABSENT
     )
+
+
+def test_dva_period_dependencies_round_trip_through_existing_sql_json() -> None:
+    period = SourceAccountEvidence(
+        field="dep_amort[2025-12-31]",
+        statement="DVA",
+        status=SourceAccountStatus.MAPPED,
+        expected=("period_start=2025-01-01", "balance_type=consolidated"),
+        found=(SourceAccountRef("7.04.01", "Depreciação", Decimal("-80000")),),
+        formula="-DVA[7.04.01]",
+    )
+    root = SourceAccountEvidence(
+        field="dep_amort",
+        statement="derived",
+        status=SourceAccountStatus.DERIVED,
+        dependencies=(period.field,),
+        formula="sum(isolate_on_dfc_span(dep_amort)); Q4 = annual - Q1 - Q2 - Q3",
+    )
+    analysis = TickerAnalysis(
+        ticker="TEST3",
+        classification=Classification("Industriais", None, None),
+        reference_date=date(2025, 12, 31),
+        computed_at=datetime(2026, 9, 30, tzinfo=UTC),
+        view=VIEW_TTM,
+        indicators=Indicators(source_account_evidence=(root, period)),
+    )
+    restored = _to_entity(_to_row(analysis))
+    assert restored.indicators.source_account_evidence == (root, period)
+    response = _to_response(restored)
+    sources = response.indicators.source_account_evidence
+    assert sources[0].dependencies == [period.field]
+    assert sources[1].statement == "DVA"
+    assert sources[1].found[0].value == Decimal("-80000")
+
+
+def test_cagr_selected_interval_and_raw_endpoints_round_trip_through_sql() -> None:
+    annuals = [
+        StandardizedFinancials(
+            reference_date=date(year, 12, 31),
+            period_start=date(year, 1, 1),
+            sector=Sector.INDUSTRY,
+            revenue=Decimal(value),
+            source_account_evidence=(
+                SourceAccountEvidence(
+                    field="revenue",
+                    statement="DRE",
+                    status=SourceAccountStatus.MAPPED,
+                    found=(
+                        SourceAccountRef("3.01", "Receita de Venda", Decimal(value)),
+                    ),
+                ),
+            ),
+        )
+        for year, value in ((2021, "1000"), (2024, "2000"))
+    ]
+    indicators = compute(annuals[-1], None, MarketData(), annuals)
+    analysis = TickerAnalysis(
+        ticker="TEST3",
+        classification=Classification("Industriais", None, None),
+        reference_date=date(2024, 12, 31),
+        computed_at=datetime(2026, 9, 30, tzinfo=UTC),
+        view=VIEW_TTM,
+        calculation_contract_version=CALCULATION_CONTRACT_VERSION,
+        indicators=indicators,
+    )
+    restored = _to_entity(_to_row(analysis))
+    assert (
+        restored.indicators.source_account_evidence
+        == indicators.source_account_evidence
+    )
+    sources = {
+        entry.field: entry for entry in restored.indicators.source_account_evidence
+    }
+    assert sources["revenue_cagr_5y"].dependencies == (
+        "revenue[2021-12-31]",
+        "revenue[2024-12-31]",
+    )
+    assert "elapsed_years=3" in sources["revenue_cagr_5y"].expected
+    assert sources["revenue[2021-12-31]"].found[0].value == Decimal(1000)
+    response = _to_response(restored)
+    root = next(
+        entry
+        for entry in response.indicators.source_account_evidence
+        if entry.field == "revenue_cagr_5y"
+    )
+    assert "elapsed_years=3" in root.expected
+
+
+def test_derived_basic_eps_and_dependent_pe_round_trip_through_sql_api() -> None:
+    from smaug.portfolio.domain.share_classes import PerShareClass, UnitComponent
+
+    financials = standardize(
+        {
+            "DRE": {
+                "accounts": [
+                    _acc("3.11", "Lucro/Prejuízo Consolidado do Período", "1200"),
+                    _acc("3.99.01.01", "Lucro por lote de mil ações", "3000"),
+                ]
+            }
+        },
+        Sector.INDUSTRY,
+        date(2025, 12, 31),
+        per_share_components=(UnitComponent(1, PerShareClass.ORDINARY),),
+        period_share_classes=(PerShareClass.ORDINARY,),
+    )
+    indicators = compute(
+        financials,
+        None,
+        MarketData(
+            price=Decimal(20),
+            shares=Decimal(600),
+            price_source_code="TEST3",
+            price_source_session=date(2025, 12, 30),
+        ),
+    )
+    analysis = TickerAnalysis(
+        ticker="TEST3",
+        classification=Classification("Industriais", None, None),
+        reference_date=date(2025, 12, 31),
+        computed_at=datetime(2026, 9, 30, tzinfo=UTC),
+        view=VIEW_TTM,
+        calculation_contract_version=CALCULATION_CONTRACT_VERSION,
+        indicators=indicators,
+    )
+    restored = _to_entity(_to_row(analysis))
+    assert restored.indicators.eps_basic == Decimal(2)
+    assert restored.indicators.pe_basic == Decimal(10)
+    assert (
+        restored.indicators.source_account_evidence
+        == indicators.source_account_evidence
+    )
+    sources = {
+        entry.field: entry for entry in restored.indicators.source_account_evidence
+    }
+    assert financials.eps_basic == Decimal(3)  # filed per-lot evidence is retained
+    assert sources["eps_basic"].status is SourceAccountStatus.DERIVED
+    assert sources["eps_basic"].formula == "net_income / shares"
+    assert sources["eps_basic"].dependencies == ("net_income", "shares")
+    assert "shares=600" in sources["eps_basic"].expected
+    assert sources["price"].found[0].value == Decimal(20)
+    assert sources["pe_basic"].dependencies == ("eps_basic", "price")
+    response = _to_response(restored)
+    pe = next(
+        e for e in response.indicators.source_account_evidence if e.field == "pe_basic"
+    )
+    assert pe.formula == "price / eps_basic"
+    assert "price_source_session=2025-12-30" in pe.expected
+
+
+def test_cumulative_paid_distribution_lineage_survives_sql_and_api() -> None:
+    def period(end: date, amount: str | None) -> StandardizedFinancials:
+        accounts = [] if amount is None else [_acc("6.03.05", "Dividendos", amount)]
+        financials = standardize(
+            {
+                "DRE": {"accounts": [_acc("3.01", "Receita de Venda de Bens", "100")]},
+                "DFC": {
+                    "cvm_code": "123",
+                    "balance_type": "consolidated",
+                    "currency": "BRL",
+                    "currency_size": 1000,
+                    "reference_date": str(end),
+                    "period_end_date": str(end),
+                    "period_start_date": str(date(end.year, 1, 1)),
+                    "document_type": "DFP" if end.month == 12 else "ITR",
+                    "version": 1,
+                    "accounts": accounts,
+                },
+            },
+            Sector.INDUSTRY,
+            end,
+        )
+        return replace(financials, cd_cvm="123")
+
+    annual = period(date(2025, 12, 31), "-100")
+    quarters = [
+        period(date(2025, 3, 31), None),
+        period(date(2025, 6, 30), "-40"),
+        period(date(2025, 9, 30), None),
+        period(date(2026, 3, 31), None),
+        period(date(2026, 6, 30), "-30"),
+    ]
+    ttm = build_ttm(quarters, annual)
+    assert ttm is not None
+    assert ttm.dividends_paid == Decimal(90000)
+    indicators = compute(
+        replace(ttm, net_income=Decimal(100000)),
+        None,
+        MarketData(market_cap=Decimal(1000000)),
+    )
+    assert indicators.payout_cash_paid_in_period == Decimal("0.9")
+    analysis = TickerAnalysis(
+        ticker="TEST3",
+        classification=Classification("Industriais", None, None),
+        reference_date=ttm.reference_date,
+        computed_at=datetime(2026, 10, 1, tzinfo=UTC),
+        view=VIEW_TTM,
+        indicators=indicators,
+    )
+    restored = _to_entity(_to_row(analysis))
+    assert (
+        restored.indicators.source_account_evidence
+        == indicators.source_account_evidence
+    )
+    response = _to_response(restored)
+    sources = {s.field: s for s in response.indicators.source_account_evidence}
+    root = sources["dividends_paid"]
+    assert root.formula == "prior annual - prior same-period YTD + current YTD"
+    assert len(root.dependencies) == 3
+    assert sources["dividends_paid[2025-12-31]"].found[0].value == Decimal(-100000)
+    assert "balance_type=consolidated" in sources[root.dependencies[0]].expected
+    assert response.indicators.payout_cash_paid_in_period == Decimal("0.9")

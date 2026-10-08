@@ -19,6 +19,26 @@ interface ReasonCopy {
 }
 
 const COPY: Record<NullReason, ReasonCopy> = {
+  current_only_indicator: {
+    short: "apenas visão atual",
+    long: "Este indicador é apresentado apenas na visão atual, sem série histórica.",
+    intentional: true,
+  },
+  missing_tag_along_evidence: {
+    short: "direito não comprovado",
+    long: "As evidências disponíveis não comprovam o percentual de tag along desta espécie/classe na data consultada. É necessária uma declaração ou garantia aplicável; ausência de evidência não significa 0%.",
+    intentional: false,
+  },
+  unresolved_tag_along_classes: {
+    short: "classes não resolvidas",
+    long: "O direito não foi resolvido para todas as classes. Uma unit com proteções diferentes não recebe uma média automática.",
+    intentional: false,
+  },
+  conflicting_tag_along_evidence: {
+    short: "evidências divergentes",
+    long: "A declaração da companhia não é compatível com as garantias legais ou do segmento de listagem. O percentual permanece indisponível até a divergência ser resolvida.",
+    intentional: false,
+  },
   inapplicable_regime: {
     short: "não se aplica",
     long: "Não faz sentido econômico no regime contábil que esta empresa entrega — o cálculo devolve n/d de propósito.",
@@ -58,7 +78,7 @@ const COPY: Record<NullReason, ReasonCopy> = {
   },
   missing_share_count: {
     short: "sem nº de ações",
-    long: "Faltou a quantidade de ações em circulação (FRE) para este período.",
+    long: "As evidências CVM não permitiram determinar a quantidade de ações em circulação para este período.",
     intentional: false,
   },
   missing_unit_composition: {
@@ -77,8 +97,8 @@ const COPY: Record<NullReason, ReasonCopy> = {
     intentional: false,
   },
   missing_cpc41_disclosure: {
-    short: "sem LPA CPC 41",
-    long: "A DRE consolidada entregue à CVM não traz um resultado por ação básico ou diluído reconciliável para esta classe.",
+    short: "sem resultado por ação divulgado",
+    long: "A DRE consolidada entregue à CVM não traz um resultado por ação reconciliável para esta classe.",
     intentional: false,
   },
   missing_weighted_average_shares: {

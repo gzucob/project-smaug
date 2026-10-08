@@ -5,7 +5,7 @@
  */
 import type { Decimalish } from "@/lib/types";
 
-const EN_DASH = "–";
+const MISSING_VALUE = "-";
 
 export function toNum(v: Decimalish | undefined): number | null {
   if (v === null || v === undefined || v === "") return null;
@@ -22,14 +22,14 @@ const nf = (min: number, max: number) =>
 /** Fraction → percent, e.g. 0.184 → "18,4%". */
 export function pct(v: Decimalish, digits = 1): string {
   const n = toNum(v);
-  if (n === null) return EN_DASH;
+  if (n === null) return MISSING_VALUE;
   return `${nf(digits, digits).format(n * 100)}%`;
 }
 
 /** Signed fraction → percent with an explicit +/−, for growth figures. */
 export function signedPct(v: Decimalish, digits = 1): string {
   const n = toNum(v);
-  if (n === null) return EN_DASH;
+  if (n === null) return MISSING_VALUE;
   const sign = n > 0 ? "+" : "";
   return `${sign}${nf(digits, digits).format(n * 100)}%`;
 }
@@ -37,21 +37,21 @@ export function signedPct(v: Decimalish, digits = 1): string {
 /** A ratio rendered as a multiple, e.g. 8.24 → "8,24×". */
 export function multiple(v: Decimalish, digits = 2): string {
   const n = toNum(v);
-  if (n === null) return EN_DASH;
+  if (n === null) return MISSING_VALUE;
   return `${nf(digits, digits).format(n)}×`;
 }
 
 /** Per-share price, e.g. "R$ 38,20". */
 export function price(v: Decimalish): string {
   const n = toNum(v);
-  if (n === null) return EN_DASH;
+  if (n === null) return MISSING_VALUE;
   return `R$ ${nf(2, 2).format(n)}`;
 }
 
 /** Large monetary values in compact BRL, e.g. "R$ 1,24 bi". */
 export function money(v: Decimalish): string {
   const n = toNum(v);
-  if (n === null) return EN_DASH;
+  if (n === null) return MISSING_VALUE;
   const abs = Math.abs(n);
   const sign = n < 0 ? "−" : "";
   const scale = (div: number, suffix: string) =>
@@ -66,7 +66,7 @@ export function money(v: Decimalish): string {
 /** Large plain counts in compact form, e.g. "5,71 bi" (share counts). */
 export function count(v: Decimalish): string {
   const n = toNum(v);
-  if (n === null) return EN_DASH;
+  if (n === null) return MISSING_VALUE;
   const abs = Math.abs(n);
   const sign = n < 0 ? "−" : "";
   const scale = (div: number, suffix: string) => `${sign}${nf(0, 2).format(abs / div)} ${suffix}`;
@@ -78,7 +78,20 @@ export function count(v: Decimalish): string {
 
 /** ISO date → closed-year label ("2024") or month/year for a live period. */
 export function yearOf(iso: string): string {
-  return iso?.slice(0, 4) ?? EN_DASH;
+  return iso?.slice(0, 4) ?? MISSING_VALUE;
+}
+
+/** ISO calendar date → short PT-BR date without a local-timezone shift. */
+export function dateOnly(iso: string | null | undefined): string {
+  if (!iso) return MISSING_VALUE;
+  const value = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(value.getTime())) return MISSING_VALUE;
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(value);
 }
 
 export function monthYear(iso: string): string {
@@ -102,11 +115,10 @@ export function dateTime(iso: string): string {
   }).format(d);
 }
 
-export const DASH = EN_DASH;
+export const DASH = MISSING_VALUE;
 
 /**
- * Axis label for the trailing-twelve-months bar. Deliberately short: it has to
- * fit one bar slot, where the full "Últimos 12 meses" would overrun its
- * neighbours. The long form belongs in prose next to the chart.
+ * Axis label for the current rolling period. Deliberately short: it has to
+ * fit one bar slot. The exact reference date is shown beside the chart.
  */
-export const LAST_12M_SHORT = "12 meses";
+export const LAST_12M_SHORT = "Atual";

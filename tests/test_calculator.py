@@ -4,12 +4,11 @@ from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 from smaug.analysis.domain.calculator import compute
 from smaug.analysis.domain.financials import (
     AccountingRegime,
-    BankRegulatoryProvenance,
-    InsuranceUnderwritingEvidence,
-    InsuranceUnderwritingStatus,
     MarketData,
     StandardizedFinancials,
 )
@@ -27,7 +26,7 @@ def _nonfinancial() -> StandardizedFinancials:
         equity=Decimal(6000),  # controllers'; the group's is 6600 — 600 is minority
         equity_total=Decimal(6600),
         net_income=Decimal(900),  # annualized -> 1200
-        eps_basic=Decimal("1.50"),
+        eps_basic=Decimal("1.75"),
         eps_diluted=Decimal("1.40"),
         revenue=Decimal(3000),  # annualized -> 4000
         gross_profit=Decimal(1500),
@@ -68,7 +67,7 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.ebit_margin == Decimal("0.3")  # 900 / 3000 (period ratio)
     assert ind.ebitda_margin == Decimal("0.4")
     assert ind.asset_turnover == Decimal(4000) / Decimal(12000)  # annual rev / assets
-    assert ind.eps == Decimal("1.50")  # filed CPC 41 basic result, not annualized
+    assert ind.eps == Decimal("1.50")  # period profit 900 / closing shares 600
     assert ind.eps_basic == Decimal("1.50")
     assert ind.eps_diluted == Decimal("1.40")
     assert ind.bvps == Decimal(10)  # 6000 / 600 shares
@@ -88,20 +87,17 @@ def test_nonfinancial_computes_all_indicators() -> None:
     assert ind.current_ratio == Decimal(2)
     assert ind.revenue_growth == Decimal("0.25")
     assert ind.net_income_growth == Decimal("0.2")
-    assert ind.pe_basic == Decimal(8)  # paper price 12 / filed basic EPS 1.50
+    assert ind.pe_basic == Decimal(8)  # price 12 / (profit 900 / 600 shares)
     assert ind.pe_diluted == Decimal(12) / Decimal("1.40")
-    assert ind.eps_basic_market == Decimal(2)  # 1200 / 600 closing shares
-    assert ind.pe_basic_market == Decimal(6)  # 12 / estimated EPS 2
+    assert ind.eps_basic_market is None
+    assert ind.pe_basic_market is None
     assert ind.pb == Decimal("1.2")  # paper price 12 / closing BVPS 10
-    assert ind.company_pe == Decimal(10)  # company cap 12000 / annual profit 1200
-    assert ind.company_pb == Decimal(2)  # company cap 12000 / equity 6000
     assert ind.psr == Decimal(3)  # 12000 / 4000 annual revenue
     assert ind.price_to_assets == Decimal(1)  # 12000 / 12000
     assert ind.price_to_ebit == Decimal(10)  # 12000 / 1200 annual EBIT
     assert ind.price_to_working_capital == Decimal(6)  # 12000 / (4000 - 2000)
     assert ind.payout_cash_paid_in_period == Decimal(600) / Decimal(900)
     assert ind.dividend_yield == Decimal("0.05")  # R$ 0.60 / paper price R$ 12
-    assert ind.company_cash_yield_paid_in_period == Decimal("0.05")
     # Consolidated EBIT/EBITDA include the minority-owned operations, so EV adds
     # the R$600 non-controlling interest to cap + net debt (ADR 0057).
     assert ind.non_controlling_interests == Decimal(600)
@@ -139,7 +135,7 @@ def test_total_slice_variants_pair_slice_with_slice() -> None:
     assert ind.net_margin == Decimal("0.3")  # 900 / 3000, period ratio
     assert ind.net_margin_total == Decimal("0.36")  # 1080 / 3000
     assert ind.net_income_total == Decimal(1080)  # headline: as filed
-    # CPC 41 is already filed on the controllers' class-specific slice.
+    # Basic EPS uses the selected controllers' profit and closing total.
     assert ind.eps == Decimal("1.50")
 
 
@@ -169,7 +165,6 @@ def test_closed_year_leaves_annualization_a_no_op() -> None:
 
     assert ind.roe == Decimal("0.2")  # 1200 / 6000, no 12/12 inflation
     assert ind.net_margin == Decimal("0.3")  # 1200 / 4000
-    assert ind.company_pe == Decimal(10)  # 12000 / 1200
 
 
 # The one line the CVM mapper still skips for a financial-regime filer — mirrors
@@ -177,27 +172,6 @@ def test_closed_year_leaves_annualization_a_no_op() -> None:
 # stays free of infrastructure imports.
 _FINANCIAL_UNMAPPED = frozenset({"dep_amort", "ebitda"})
 _BANK_UNMAPPED = _FINANCIAL_UNMAPPED | frozenset({"current_financial_investments"})
-
-
-def _bank_regulatory_provenance() -> BankRegulatoryProvenance:
-    return BankRegulatoryProvenance(
-        source="issuer_public_performance_analysis",
-        period_start=date(2024, 1, 1),
-        period_end=date(2024, 12, 31),
-        perimeter="consolidated",
-        averaging_method="arithmetic_mean_month_end",
-        basis="issuer_defined_annualized_disclosure",
-        available_inputs=frozenset(
-            {
-                "bank_interest_result_annualized",
-                "average_earning_assets",
-                "bank_efficiency_expenses",
-                "bank_efficiency_income",
-                "credit_loss_expense_annualized",
-                "average_credit_portfolio",
-            }
-        ),
-    )
 
 
 def _mapped_bank() -> StandardizedFinancials:
@@ -223,7 +197,6 @@ def _mapped_bank() -> StandardizedFinancials:
         cfo=Decimal(450),  # annualized -> 600
         capex=Decimal(150),  # annualized -> 200
         filed_regime=AccountingRegime.BANK,
-        bank_ratio_null_reason=NullReason.MISSING_REGULATORY_DISCLOSURE,
         unmapped_fields=_BANK_UNMAPPED,
     )
 
@@ -237,10 +210,8 @@ def test_bank_computes_the_ratios_its_schema_supports() -> None:
 
     assert ind.roe == Decimal("0.1")  # 800 / 8000
     assert ind.net_margin == Decimal("0.2")  # 600 / 3000
-    assert ind.pe_basic == Decimal(8)  # paper price 10 / filed EPS 1.25
+    assert ind.pe_basic == Decimal(10) / Decimal("0.75")  # 600 / 800 shares
     assert ind.pb == Decimal(1)  # paper price 10 / BVPS 10
-    assert ind.company_pe == Decimal(10)  # company cap 8000 / profit 800
-    assert ind.company_pb == Decimal(1)
     # The filed intermediation result still supports the generic gross-margin
     # view. PBT is never mislabeled EBIT, and CFO-CAPEX is not bank free cash flow.
     assert ind.gross_margin == Decimal("0.4")  # 1200 / 3000 — the spread
@@ -266,190 +237,6 @@ def test_bank_computes_the_ratios_its_schema_supports() -> None:
     assert ind.price_to_working_capital is None
     # No prior period -> no growth
     assert ind.revenue_growth is None
-
-
-def test_bbas3_ratios_reconcile_to_the_2024_issuer_disclosure() -> None:
-    # Banco do Brasil 4T24, tables 21/26/37/48. The source explicitly defines
-    # spread as MFB / average earning assets (monthly closing-balance mean),
-    # efficiency as full administrative expense / full operating income, and
-    # credit risk expense against the average credit portfolio.
-    # https://ri.bb.com.br/informacoes-financeiras/central-de-resultados/
-    bank = replace(
-        _mapped_bank(),
-        reference_date=date(2024, 12, 31),
-        bank_interest_result_annualized=Decimal(103_944),
-        average_earning_assets=Decimal(2_137_682),
-        bank_efficiency_expenses=Decimal(36_998),
-        bank_efficiency_income=Decimal(144_688),
-        credit_loss_expense_annualized=Decimal(41_422),
-        average_credit_portfolio=Decimal(1_020_119),
-        bank_ratio_null_reason=None,
-        bank_regulatory_provenance=_bank_regulatory_provenance(),
-    )
-
-    ind = compute(bank, None, MarketData(market_cap=Decimal(8000)))
-
-    assert ind.net_interest_margin == Decimal(103_944) / Decimal(2_137_682)
-    assert ind.efficiency_ratio == Decimal(36_998) / Decimal(144_688)
-    assert ind.cost_of_risk == Decimal(41_422) / Decimal(1_020_119)
-    assert ind.net_interest_margin.quantize(Decimal("0.001")) == Decimal("0.049")
-    assert ind.efficiency_ratio.quantize(Decimal("0.001")) == Decimal("0.256")
-    assert ind.cost_of_risk.quantize(Decimal("0.001")) == Decimal("0.041")
-
-
-def test_bbdc4_ratios_reconcile_to_the_4t24_issuer_disclosure() -> None:
-    # Bradesco 4T24. The paired values are normalized to the annualized bases the
-    # issuer publishes: 8.4% client margin, 53.2% quarterly IEO and 3.0% credit
-    # cost. The efficiency denominator includes margin, services, insurance,
-    # associates and taxes exactly as the report's footnote defines it.
-    # https://pessoajuridica.bradesco/assets/classic/pdf/
-    # bradesco-4T24-apresentacao-de-resultados-imprensa.pdf
-    average_earning_assets = Decimal(790_286)
-    average_credit_portfolio = Decimal("994666.6666666666666666666667")
-    bank = replace(
-        _mapped_bank(),
-        reference_date=date(2024, 12, 31),
-        period_start=date(2024, 10, 1),
-        bank_interest_result_annualized=(average_earning_assets * Decimal("0.084")),
-        average_earning_assets=average_earning_assets,
-        bank_efficiency_expenses=Decimal(16_418),
-        bank_efficiency_income=(
-            Decimal(16_995)
-            + Decimal(10_262)
-            + Decimal(5_531)
-            + Decimal(90)
-            - Decimal(2_031)
-        ),
-        credit_loss_expense_annualized=Decimal(29_840),
-        average_credit_portfolio=average_credit_portfolio,
-        bank_ratio_null_reason=None,
-        bank_regulatory_provenance=_bank_regulatory_provenance(),
-    )
-
-    ind = compute(bank, None, MarketData(market_cap=Decimal(8000)))
-
-    assert ind.net_interest_margin == Decimal("0.084")
-    assert ind.efficiency_ratio is not None
-    assert ind.efficiency_ratio.quantize(Decimal("0.001")) == Decimal("0.532")
-    assert ind.cost_of_risk is not None
-    assert ind.cost_of_risk.quantize(Decimal("0.001")) == Decimal("0.030")
-
-
-def test_the_bank_ratios_are_inapplicable_to_everyone_else() -> None:
-    # A company that sells goods has no spread, no loan book and no payroll measured
-    # against a spread. The null is a verdict of the regime, not a missing input.
-    ind = compute(_nonfinancial(), None, MarketData(market_cap=Decimal(12000)))
-
-    for name in ("net_interest_margin", "efficiency_ratio", "cost_of_risk"):
-        assert getattr(ind, name) is None
-        assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
-
-
-def _irbr3_2022() -> StandardizedFinancials:
-    """IRB's official CVM DFP 2022 underwriting inputs (R$ thousand)."""
-    return StandardizedFinancials(
-        reference_date=date(2022, 12, 31),
-        sector=Sector.INSURER,
-        filed_regime=AccountingRegime.INSURANCE,
-        earned_premium=Decimal(7_021_200),
-        claims_incurred=Decimal(-6_911_514),
-        acquisition_costs=Decimal(-255_606),
-        insurance_admin_expenses=Decimal(-421_237),
-    )
-
-
-def test_irbr3_underwriting_ratios_reconcile_to_the_2022_cvm_filing() -> None:
-    ind = compute(_irbr3_2022(), None, MarketData())
-
-    assert ind.loss_ratio == Decimal(6_911_514) / Decimal(7_021_200)
-    assert ind.combined_ratio == (
-        Decimal(6_911_514) + Decimal(255_606) + Decimal(421_237)
-    ) / Decimal(7_021_200)
-    assert ind.loss_ratio.quantize(Decimal("0.001")) == Decimal("0.984")
-    assert ind.combined_ratio.quantize(Decimal("0.001")) == Decimal("1.081")
-
-
-def test_insurer_ratios_name_missing_components_and_zero_premium() -> None:
-    missing = compute(
-        replace(_irbr3_2022(), acquisition_costs=None), None, MarketData()
-    )
-    zero_premium = compute(
-        replace(_irbr3_2022(), earned_premium=Decimal(0)), None, MarketData()
-    )
-
-    assert missing.loss_ratio is not None
-    assert missing.combined_ratio is None
-    assert missing.null_reasons["combined_ratio"] is NullReason.SOURCE_ACCOUNT_ABSENT
-    assert zero_premium.loss_ratio is None
-    assert zero_premium.combined_ratio is None
-    assert zero_premium.null_reasons["loss_ratio"] is NullReason.ZERO_DENOMINATOR
-    assert zero_premium.null_reasons["combined_ratio"] is NullReason.ZERO_DENOMINATOR
-
-
-def test_zero_activity_only_suppresses_underwriting_ratios() -> None:
-    financials = StandardizedFinancials(
-        reference_date=date(2025, 12, 31),
-        sector=Sector.INSURER,
-        filed_regime=AccountingRegime.INSURANCE,
-        revenue=Decimal(1000),
-        net_income=Decimal(100),
-        equity=Decimal(1000),
-        insurance_underwriting_evidence=InsuranceUnderwritingEvidence(
-            status=InsuranceUnderwritingStatus.ZERO_ACTIVITY
-        ),
-    )
-
-    ind = compute(financials, None, MarketData())
-
-    for name in ("loss_ratio", "combined_ratio"):
-        assert getattr(ind, name) is None
-        assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
-    # The aggregate proof is scoped to insurer-only ratios. It must not hide a
-    # generic ratio that the insurance chart still supports.
-    assert ind.net_margin == Decimal("0.1")
-    assert "net_margin" not in ind.null_reasons
-
-
-def test_active_ifrs17_insurer_without_legacy_components_stays_source_absent() -> None:
-    financials = StandardizedFinancials(
-        reference_date=date(2025, 12, 31),
-        sector=Sector.INSURER,
-        filed_regime=AccountingRegime.INSURANCE,
-        revenue=Decimal(1000),
-        net_income=Decimal(100),
-        equity=Decimal(1000),
-        insurance_underwriting_evidence=InsuranceUnderwritingEvidence(
-            status=InsuranceUnderwritingStatus.ACTIVE
-        ),
-    )
-
-    ind = compute(financials, None, MarketData())
-
-    assert ind.loss_ratio is None
-    assert ind.combined_ratio is None
-    assert ind.null_reasons["loss_ratio"] is NullReason.SOURCE_ACCOUNT_ABSENT
-    assert ind.null_reasons["combined_ratio"] is NullReason.SOURCE_ACCOUNT_ABSENT
-    assert ind.net_margin == Decimal("0.1")
-
-
-def test_insurer_expense_reversal_reduces_the_combined_ratio() -> None:
-    reversal = compute(
-        replace(_irbr3_2022(), insurance_admin_expenses=Decimal(421_237)),
-        None,
-        MarketData(),
-    )
-
-    assert reversal.combined_ratio == (
-        Decimal(6_911_514) + Decimal(255_606) - Decimal(421_237)
-    ) / Decimal(7_021_200)
-
-
-def test_insurer_ratios_are_inapplicable_to_other_filing_regimes() -> None:
-    for financials in (_nonfinancial(), _mapped_bank()):
-        ind = compute(financials, None, MarketData())
-        for name in ("loss_ratio", "combined_ratio"):
-            assert getattr(ind, name) is None
-            assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
 
 
 def test_bank_null_reasons_name_each_cause() -> None:
@@ -492,8 +279,6 @@ def test_bank_null_reasons_name_each_cause() -> None:
         "fcf_yield",
     ):
         assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
-    for name in ("net_interest_margin", "efficiency_ratio", "cost_of_risk"):
-        assert ind.null_reasons[name] is (NullReason.MISSING_REGULATORY_DISCLOSURE)
     # The bank chart cannot isolate a current-only investment bucket because it
     # carries no current/non-current split. The headline is therefore
     # inapplicable, rather than a mapping gap guessed from all financial assets.
@@ -501,7 +286,7 @@ def test_bank_null_reasons_name_each_cause() -> None:
         NullReason.INAPPLICABLE_REGIME
     )
     # Cause 3 — upstream inputs, each named individually:
-    assert ind.null_reasons["eps"] is NullReason.MISSING_CPC41_DISCLOSURE
+    assert ind.null_reasons["eps"] is NullReason.MISSING_SHARE_COUNT
     assert ind.null_reasons["eps_diluted"] is NullReason.MISSING_CPC41_DISCLOSURE
     assert ind.null_reasons["revenue_growth"] is NullReason.MISSING_PRIOR_PERIOD
     # The filing simply has no dividend line — absent, not unmapped:
@@ -640,64 +425,6 @@ def test_insurer_explicit_debt_uses_the_same_formula_as_a_corporate_filer() -> N
     assert ind.ev_ebit == Decimal(32000) / Decimal(3000)
 
 
-def test_declared_dividend_basis_computes_alongside_the_paid_one() -> None:
-    # #104: the declared basis (DMPL charge) and the paid basis (DFC outflow)
-    # answer different questions and are published side by side — the same dual
-    # pattern ADR 0026 set for the statement slices.
-    financials = replace(
-        _nonfinancial(),
-        dividends_declared=Decimal(450),
-        dmpl_period_start=date(2024, 1, 1),
-    )
-    market = MarketData(
-        price=Decimal(12),
-        market_cap=Decimal(12000),
-        cash_distributions=Decimal("0.60"),
-    )
-
-    ind = compute(financials, None, market)
-
-    assert ind.payout_cash_paid_in_period == Decimal(600) / Decimal(900)
-    assert ind.payout_declared_in_period == Decimal("0.5")  # 450 / 900
-    assert ind.dividend_yield == Decimal("0.05")  # B3 rights / paper price
-    assert ind.company_cash_yield_paid_in_period == Decimal("0.05")
-    assert ind.company_yield_declared_in_period == Decimal("0.0375")
-    assert ind.company_distributions_declared_in_period == Decimal(450)
-
-
-def test_a_missing_dmpl_row_blames_the_declared_account() -> None:
-    ind = compute(_nonfinancial(), None, MarketData(market_cap=Decimal(12000)))
-
-    assert ind.payout_declared_in_period is None
-    assert ind.null_reasons["payout_declared_in_period"] is (
-        NullReason.SOURCE_ACCOUNT_ABSENT
-    )
-    assert ind.null_reasons["company_distributions_declared_in_period"] is (
-        NullReason.SOURCE_ACCOUNT_ABSENT
-    )
-    # The paid basis is untouched by the declared one going missing:
-    assert ind.payout_cash_paid_in_period is not None
-
-
-def test_post_closing_agm_is_not_mislabelled_as_exercise_payout() -> None:
-    # A 2025 AGM may declare the distribution of 2024 profit. The structured
-    # inputs identify when the declaration entered DMPL, not which exercise
-    # generated it, so the ratio states its timing instead of guessing.
-    financials = replace(
-        _nonfinancial(),
-        reference_date=date(2025, 12, 31),
-        period_start=date(2025, 1, 1),
-        dividends_declared=Decimal(450),
-        dmpl_period_start=date(2025, 1, 1),
-    )
-
-    ind = compute(financials, None, MarketData(market_cap=Decimal(12000)))
-
-    assert ind.payout_declared_in_period == Decimal("0.5")
-    assert ind.company_distributions_declared_in_period == Decimal(450)
-    assert not hasattr(ind, "payout_declared")
-
-
 def test_incomplete_debt_coverage_precedes_a_missing_market_input() -> None:
     # EV is suppressed before market arithmetic when its debt perimeter is not
     # established. A missing cap must not hide the more fundamental basis gap.
@@ -745,9 +472,6 @@ def test_applicability_follows_the_filed_regime_not_the_sector() -> None:
     # filing, not a verdict of ours — which is the whole difference (#95).
     assert ind.null_reasons["gross_margin"] is NullReason.SOURCE_ACCOUNT_ABSENT
     assert ind.null_reasons["fcf"] is NullReason.SOURCE_ACCOUNT_ABSENT
-    for name in ("loss_ratio", "combined_ratio"):
-        assert getattr(ind, name) is None
-        assert ind.null_reasons[name] is NullReason.INAPPLICABLE_REGIME
     assert ind.net_margin == Decimal("0.625")
     assert ind.roe is not None  # the mapped core still computes
 
@@ -809,13 +533,12 @@ def test_missing_price_nulls_the_market_multiples_with_a_named_cause() -> None:
     assert ind.null_reasons["pe_diluted"] is NullReason.MISSING_PRICE
     assert ind.null_reasons["pb"] is NullReason.MISSING_PRICE
     assert ind.null_reasons["dividend_yield"] is NullReason.MISSING_PRICE
-    assert ind.eps is not None  # filed per-share result is independent of price
+    assert ind.eps is not None  # basic EPS is independent of price
 
 
-def test_market_convention_multiples_survive_a_missing_cpc41_share_input() -> None:
-    # The strict P/E needs the issuer's CPC 41 weighted-average/class-rights
-    # result. Company P/E and both closing-equity P/B variants have independent
-    # denominators and must remain available when those filed results are absent.
+def test_basic_and_company_multiples_survive_a_missing_cpc41_share_input() -> None:
+    # Basic EPS and P/E use profit and closing shares even when filed EPS
+    # and its weighted denominator are absent. Company ratios stay independent.
     financials = replace(
         _nonfinancial(),
         eps_basic=None,
@@ -832,13 +555,13 @@ def test_market_convention_multiples_survive_a_missing_cpc41_share_input() -> No
         ),
     )
 
-    assert ind.pe_basic is None
-    assert ind.null_reasons["pe_basic"] is NullReason.MISSING_WEIGHTED_AVERAGE_SHARES
-    assert ind.eps_basic_market == Decimal(2)
-    assert ind.pe_basic_market == Decimal(6)
-    assert ind.company_pe == Decimal(10)
+    assert ind.eps_basic == Decimal("1.5")
+    assert ind.pe_basic == Decimal(8)
+    assert "eps_basic" not in ind.null_reasons
+    assert "pe_basic" not in ind.null_reasons
+    assert ind.eps_basic_market is None
+    assert ind.pe_basic_market is None
     assert ind.pb == Decimal("1.2")
-    assert ind.company_pb == Decimal(2)
 
 
 def test_missing_shares_blames_the_share_count_not_the_price() -> None:
@@ -851,10 +574,11 @@ def test_missing_shares_blames_the_share_count_not_the_price() -> None:
         MarketData(price=Decimal(6), cap_null_reason=NullReason.MISSING_SHARE_COUNT),
     )
 
-    assert ind.pe_basic == Decimal(4)  # EPS is already filed per security
+    assert ind.eps_basic is None
+    assert ind.pe_basic is None
+    assert ind.null_reasons["eps_basic"] is NullReason.MISSING_SHARE_COUNT
+    assert ind.null_reasons["pe_basic"] is NullReason.MISSING_SHARE_COUNT
     assert ind.pe_diluted == Decimal(6) / Decimal("1.40")
-    assert ind.company_pe is None
-    assert ind.null_reasons["company_pe"] is NullReason.MISSING_SHARE_COUNT
     assert ind.null_reasons["pb"] is NullReason.MISSING_SHARE_COUNT
 
 
@@ -873,7 +597,7 @@ def test_missing_unit_composition_names_each_per_security_input() -> None:
 
     assert ind.eps is None
     assert ind.bvps is None
-    assert ind.null_reasons["eps"] is NullReason.MISSING_ECONOMIC_RIGHTS
+    assert ind.null_reasons["eps"] is NullReason.MISSING_UNIT_COMPOSITION
     assert ind.null_reasons["bvps"] is NullReason.MISSING_UNIT_COMPOSITION
 
 
@@ -892,9 +616,7 @@ def test_a_sibling_class_without_a_quote_blames_the_price() -> None:
     )
 
     assert ind.pe_basic == Decimal(4)
-    assert ind.company_pe is None
-    assert ind.null_reasons["company_pe"] is NullReason.MISSING_PRICE
-    assert ind.eps is not None  # the filed per-share side needs no quote
+    assert ind.eps is not None  # basic EPS needs no quote
 
 
 def test_zero_denominator_null_is_named() -> None:
@@ -904,16 +626,17 @@ def test_zero_denominator_null_is_named() -> None:
     ind = compute(
         zero_income,
         None,
-        MarketData(price=Decimal(12), market_cap=Decimal(12000)),
+        MarketData(price=Decimal(12), market_cap=Decimal(12000), shares=Decimal(600)),
     )
 
     assert ind.payout_cash_paid_in_period is None  # dividends / 0
     assert ind.null_reasons["payout_cash_paid_in_period"] is (
         NullReason.ZERO_DENOMINATOR
     )
-    assert ind.company_pe is None
-    assert ind.null_reasons["company_pe"] is NullReason.ZERO_DENOMINATOR
-    assert ind.pe_basic == Decimal(8)  # CPC 41 EPS remains its own denominator
+    assert ind.eps_basic == Decimal(0)
+    assert ind.pe_basic is None
+    assert ind.null_reasons["pe_basic"] is NullReason.ZERO_DENOMINATOR
+    assert ind.eps_diluted == Decimal("1.40")
 
 
 def _closed_year(year: int, **accounts: Decimal | None) -> StandardizedFinancials:
@@ -954,29 +677,21 @@ def test_cagr_compounds_between_the_endpoints_five_exercises_apart() -> None:
     assert round(float(ind.revenue_cagr_5y), 4) == 0.1487
 
 
-def test_cagr_is_null_until_the_window_closes() -> None:
-    # Five exercises span four years of variation, not five. Shortening the window
-    # in silence would make the number mean something other than its name (#144).
-    history = _rising_history([Decimal(1000)] * 5)
+def test_cagr_uses_four_elapsed_years_when_five_exercises_exist() -> None:
+    history = _rising_history([Decimal(1000)] * 4 + [Decimal(2000)])
     ind = compute(history[-1], history[-2], MarketData(), history)
-
-    assert ind.revenue_cagr_5y is None
-    assert ind.null_reasons["revenue_cagr_5y"] is (
-        NullReason.INSUFFICIENT_COMPARABLE_HISTORY
-    )
+    assert ind.revenue_cagr_5y is not None
+    assert float(ind.revenue_cagr_5y) == pytest.approx(2 ** (1 / 4) - 1)
 
 
-def test_cagr_rejects_a_discontinuous_closed_year_window() -> None:
+def test_cagr_does_not_require_intermediate_closed_exercises() -> None:
     history = [
-        _closed_year(year, revenue=Decimal(1000), net_income=Decimal(1000))
-        for year in (2019, 2020, 2022, 2023, 2024, 2025)
+        _closed_year(year, revenue=Decimal(value))
+        for year, value in ((2019, 1000), (2022, 5000), (2024, 2000))
     ]
     ind = compute(history[-1], history[-2], MarketData(), history)
-
-    assert ind.revenue_cagr_5y is None
-    assert ind.null_reasons["revenue_cagr_5y"] is (
-        NullReason.INSUFFICIENT_COMPARABLE_HISTORY
-    )
+    assert ind.revenue_cagr_5y is not None
+    assert float(ind.revenue_cagr_5y) == pytest.approx(2 ** (1 / 5) - 1)
 
 
 def test_cagr_refuses_a_non_positive_endpoint() -> None:
@@ -1059,3 +774,123 @@ def test_balance_sheet_liabilities_exclude_the_minority_interest() -> None:
     # Decimal context's precision.
     assert ind.total_liabilities + ind.equity + Decimal(500) == ind.total_assets
     assert ind.liabilities_to_assets + ind.equity_to_assets < Decimal(1)
+
+
+@pytest.mark.parametrize("account", ["revenue", "ebit", "ebitda", "net_income"])
+@pytest.mark.parametrize("years", [1, 2, 3, 4, 5])
+def test_cagr_families_share_the_actual_elapsed_window(
+    account: str, years: int
+) -> None:
+    history = [
+        _closed_year(2024 - years, **{account: Decimal(1000)}),
+        _closed_year(2024, **{account: Decimal(2000)}),
+    ]
+    ind = compute(history[-1], None, MarketData(), history)
+    result = getattr(ind, f"{account}_cagr_5y")
+    assert result is not None
+    assert float(result) == pytest.approx(2 ** (1 / years) - 1)
+    sources = {entry.field: entry for entry in ind.source_account_evidence}
+    root = sources[f"{account}_cagr_5y"]
+    assert f"elapsed_years={years}" in root.expected
+    assert root.dependencies == (
+        f"{account}[{2024 - years}-12-31]",
+        f"{account}[2024-12-31]",
+    )
+
+
+@pytest.mark.parametrize("base", [None, Decimal(0), Decimal(-1000)])
+def test_cagr_selects_the_oldest_positive_base_inside_the_window(
+    base: Decimal | None,
+) -> None:
+    history = [
+        _closed_year(2019, revenue=base),
+        _closed_year(2021, revenue=Decimal(1000)),
+        _closed_year(2024, revenue=Decimal(2000)),
+    ]
+    ind = compute(history[-1], None, MarketData(), history)
+    assert ind.revenue_cagr_5y is not None
+    assert float(ind.revenue_cagr_5y) == pytest.approx(2 ** (1 / 3) - 1)
+
+
+@pytest.mark.parametrize(
+    ("end", "reason"),
+    [
+        (None, NullReason.SOURCE_ACCOUNT_ABSENT),
+        (Decimal(0), NullReason.NON_POSITIVE_ENDPOINT),
+        (Decimal(-1000), NullReason.NON_POSITIVE_ENDPOINT),
+    ],
+)
+def test_cagr_does_not_replace_an_invalid_latest_result_with_an_older_pair(
+    end: Decimal | None,
+    reason: NullReason,
+) -> None:
+    history = _rising_history([Decimal(1000), Decimal(2000), end])
+    ind = compute(history[-1], None, MarketData(), history)
+    assert ind.revenue_cagr_5y is None
+    assert ind.null_reasons["revenue_cagr_5y"] is reason
+
+
+@pytest.mark.parametrize("years", [0, 6])
+def test_cagr_requires_distinct_endpoints_within_five_years(years: int) -> None:
+    history = [
+        _closed_year(2024 - years, revenue=Decimal(1000)),
+        _closed_year(2024, revenue=Decimal(2000)),
+    ]
+    ind = compute(history[-1], None, MarketData(), history)
+    assert ind.revenue_cagr_5y is None
+    assert (
+        ind.null_reasons["revenue_cagr_5y"]
+        is NullReason.INSUFFICIENT_COMPARABLE_HISTORY
+    )
+
+
+def test_cagr_ignores_future_exercises_and_sorts_available_history() -> None:
+    history = [
+        _closed_year(2025, revenue=Decimal(100000)),
+        _closed_year(2024, revenue=Decimal(2000)),
+        _closed_year(2021, revenue=Decimal(1000)),
+    ]
+    ind = compute(history[1], None, MarketData(), history)
+    assert float(ind.revenue_cagr_5y) == pytest.approx(2 ** (1 / 3) - 1)
+
+
+@pytest.mark.parametrize("change", ["regime", "issuer", "span", "closing_date"])
+def test_cagr_does_not_join_incompatible_endpoints(change: str) -> None:
+    start = _closed_year(2021, revenue=Decimal(1000))
+    end = _closed_year(2024, revenue=Decimal(2000))
+    if change == "regime":
+        start = replace(start, filed_regime=AccountingRegime.BANK)
+    elif change == "issuer":
+        start = replace(start, cd_cvm="111")
+        end = replace(end, cd_cvm="222")
+    elif change == "span":
+        start = replace(start, period_start=date(2021, 4, 1))
+    else:
+        start = replace(start, reference_date=date(2021, 9, 30))
+    ind = compute(end, None, MarketData(), [start, end])
+    assert ind.revenue_cagr_5y is None
+    assert (
+        ind.null_reasons["revenue_cagr_5y"]
+        is NullReason.INSUFFICIENT_COMPARABLE_HISTORY
+    )
+
+
+def test_cagr_attributes_a_missing_base_to_its_own_mapping() -> None:
+    start = replace(
+        _closed_year(2021, revenue=None), unmapped_fields=frozenset({"revenue"})
+    )
+    end = _closed_year(2024, revenue=Decimal(2000))
+    ind = compute(end, None, MarketData(), [start, end])
+    assert ind.null_reasons["revenue_cagr_5y"] is NullReason.SOURCE_ACCOUNT_UNMAPPED
+
+
+def test_selected_indicators_exclude_retired_closing_share_alternatives() -> None:
+    from smaug.analysis.domain.indicators import indicator_names
+
+    ind = compute(
+        _nonfinancial(), None, MarketData(shares=Decimal("600"), price=Decimal("12"))
+    )
+    for name in ("eps_basic_market", "pe_basic_market"):
+        assert name not in indicator_names()
+        assert name not in ind.null_reasons
+        assert getattr(ind, name) is None

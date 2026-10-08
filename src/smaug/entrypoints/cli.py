@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 from time import perf_counter
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
 import httpx
 import typer
@@ -39,6 +39,7 @@ from smaug.analysis.application.doctor import (
     TickerCoverage,
 )
 from smaug.analysis.application.drift import AccountDriftUseCase, DriftReport
+from smaug.analysis.application.price_history import BuildPriceHistoryUseCase
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.financials import IssuerIdentity
 from smaug.analysis.domain.indicators import NullReason
@@ -58,7 +59,9 @@ from smaug.analysis.infrastructure.dividend_adjusted_price import (
 from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
 from smaug.analysis.infrastructure.mongo_dividends import MongoCashEventReader
 from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsReader
+from smaug.analysis.infrastructure.mongo_governance import MongoGovernanceReader
 from smaug.analysis.infrastructure.restated_price import RestatedPriceProvider
+from smaug.analysis.infrastructure.sql_price_history import SqlPriceHistoryRepository
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
 from smaug.analysis.infrastructure.succession import (
     CodeSuccession,
@@ -109,6 +112,7 @@ from smaug.ingestion.infrastructure.b3_listed_company import (
     B3ListedCompany,
     B3ListedCompanyResolver,
 )
+from smaug.ingestion.infrastructure.b3_listing import B3_LISTING_MODULE, B3ListingSource
 from smaug.ingestion.infrastructure.b3_reused_roots import (
     REUSED_ROOT_TICKERS,
     B3ReusedRootRecovery,
@@ -127,7 +131,15 @@ from smaug.ingestion.infrastructure.cvm_capital import (
     CvmCapitalSource,
     CvmTreasurySource,
 )
+from smaug.ingestion.infrastructure.cvm_free_float import (
+    FREE_FLOAT_MODULE,
+    CvmFreeFloatSource,
+)
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, CvmDocument
+from smaug.ingestion.infrastructure.cvm_tag_along import (
+    TAG_ALONG_MODULE,
+    CvmTagAlongSource,
+)
 from smaug.ingestion.infrastructure.repositories import (
     BeanieIngestionFailureRepository,
     BeanieIngestionRunRepository,
@@ -366,8 +378,7 @@ def _classification_resolver(
 def _listed_since_resolver(
     identities: dict[str, CompanyIdentity],
 ) -> Callable[[str], date | None]:
-    """When a ticker was listed, from the FCA's ``Data_Inicio_Listagem`` (#153,
-    #212) — the same registry every other resolver here reads."""
+    """FCA ``Data_Inicio_Listagem``, exposed as IPO date and used as a listing floor."""
 
     def resolve(ticker: str) -> date | None:
         identity = identities.get(ticker)
@@ -931,9 +942,42 @@ def _build_data_source(
         validation_reporter=validation_reporter,
         reused_root_recovery=reused_root_recovery,
     )
+    free_float_archive = (
+        capital
+        if isinstance(capital, CvmCapitalSource)
+        else CvmCapitalSource(
+            http,
+            ticker_to_cnpj,
+            year=cvm_year,
+            cache_dir=settings.cvm_cache_dir,
+            ticker_to_code=ticker_to_code,
+            artifact_store=artifact_store,
+            validation_reporter=validation_reporter,
+        )
+    )
     return RoutedDataSource(
         {
             CAPITAL_MODULE: capital,
+            TAG_ALONG_MODULE: CvmTagAlongSource(
+                free_float_archive,
+                ticker_to_cnpj,
+                ticker_to_code,
+                year=cvm_year,
+                validation_reporter=validation_reporter,
+            ),
+            B3_LISTING_MODULE: B3ListingSource(
+                http,
+                ticker_to_code,
+                ticker_to_cnpj,
+                base_url=settings.b3_listed_base_url,
+            ),
+            FREE_FLOAT_MODULE: CvmFreeFloatSource(
+                free_float_archive,
+                ticker_to_cnpj,
+                ticker_to_code,
+                year=cvm_year,
+                validation_reporter=validation_reporter,
+            ),
             TREASURY_MODULE: treasury,
             CAPITAL_EVENT_MODULE: events,
             CAPITAL_EVENT_B3_MODULE: exchange_events,
@@ -1289,11 +1333,13 @@ async def _ingest_one_year(
             event_bus=EventBus(),
             modules=owed,
             run_id=run_id,
-            # Only these two hit a live, per-ticker B3 endpoint
+            # These modules hit live, per-ticker B3 endpoints
             # (``GetListedSupplementCompany``, ADR 0034/ADR 0039); every other
             # module reads this year's already-downloaded CVM archive from
             # memory and owes the call no pause at all (#214).
-            paced_modules=frozenset({CAPITAL_EVENT_B3_MODULE, CASH_DIVIDEND_B3_MODULE}),
+            paced_modules=frozenset(
+                {CAPITAL_EVENT_B3_MODULE, CASH_DIVIDEND_B3_MODULE, B3_LISTING_MODULE}
+            ),
             max_concurrency=concurrency,
             outcome_sink=outcome_sink,
             failure_sink=failure_sink,
@@ -1366,7 +1412,10 @@ def _parser_identities(modules: Sequence[str]) -> tuple[ParserIdentity, ...]:
 
 
 _MODULE_ADAPTERS = {
+    TAG_ALONG_MODULE: (CvmTagAlongSource.parser_identity, CvmTagAlongSource.source),
+    B3_LISTING_MODULE: (B3ListingSource.parser_identity, B3ListingSource.source),
     CAPITAL_MODULE: (CvmCapitalSource.parser_identity, CvmCapitalSource.source),
+    FREE_FLOAT_MODULE: (CvmFreeFloatSource.parser_identity, CvmFreeFloatSource.source),
     TREASURY_MODULE: (CvmTreasurySource.parser_identity, CvmTreasurySource.source),
     CAPITAL_EVENT_MODULE: (
         CvmCapitalEventSource.parser_identity,
@@ -1557,6 +1606,17 @@ def analyze(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Print every indicator instead of a summary."
     ),
+    price_history_only: Annotated[
+        bool,
+        typer.Option(
+            "--price-history-only",
+            help="Prepare daily closing history without recomputing indicators.",
+        ),
+    ] = False,
+    price_history_since: Annotated[
+        int,
+        typer.Option("--price-history-since", min=2010, help="First history year."),
+    ] = 2010,
 ) -> None:
     """Compute the fundamental + market indicators and store them in Postgres.
 
@@ -1567,9 +1627,16 @@ def analyze(
     With no flags, the command analyzes the complete traded-code universe, the
     same scope selected explicitly by ``--all``.
     """
+    if price_history_only and price_history_since > date.today().year:
+        raise typer.BadParameter("--price-history-since cannot be in the future")
     tickers, whole_exchange = _resolve_scope(ticker, all_listed)
     exit_code = _guarded(
-        _run_analyze(tickers, whole_exchange=whole_exchange, verbose=verbose)
+        _run_analyze(
+            tickers,
+            whole_exchange=whole_exchange,
+            verbose=verbose,
+            price_history_since=price_history_since if price_history_only else None,
+        )
     )
     raise typer.Exit(code=exit_code)
 
@@ -1845,7 +1912,11 @@ def _build_price_provider(
 
 
 async def _run_analyze(
-    tickers: tuple[str, ...], *, whole_exchange: bool = False, verbose: bool = False
+    tickers: tuple[str, ...],
+    *,
+    whole_exchange: bool = False,
+    verbose: bool = False,
+    price_history_since: int | None = None,
 ) -> int:
     settings = get_settings()
     mongo = await init_database(settings)
@@ -1915,6 +1986,30 @@ async def _run_analyze(
                 unit_composition_resolver=_unit_composition_resolver(identities),
                 unit_resolver=units,
             )
+            if price_history_since is not None:
+                history_builder = BuildPriceHistoryUseCase(
+                    SuccessionPriceProvider(
+                        B3PriceProvider(archive),
+                        succession,
+                        timeline=shares_reader.restatement_timeline,
+                    ),
+                    shares_reader,
+                    SqlPriceHistoryRepository(session_factory),
+                )
+                errors = 0
+                for symbol in tickers:
+                    try:
+                        history = await history_builder.execute(
+                            symbol, start_year=price_history_since
+                        )
+                        typer.echo(
+                            f"{symbol}: {len(history.points)} daily closes; "
+                            f"{len(history.gaps)} years without a resolved series"
+                        )
+                    except Exception as exc:
+                        errors += 1
+                        typer.echo(f"{symbol}: error: {exc}", err=True)
+                return 1 if errors else 0
             cash_events = MongoCashEventReader(
                 mongo[settings.mongo_db]["raw_ingestions"],
                 registrant_resolver=registrant,
@@ -1922,6 +2017,10 @@ async def _run_analyze(
             )
             analysis_repository = SqlAlchemyAnalysisRepository(session_factory)
             use_case = AnalyzePortfolioUseCase(
+                governance_reader=MongoGovernanceReader(
+                    mongo[settings.mongo_db]["raw_ingestions"],
+                    registrant_resolver=registrant,
+                ),
                 reader=MongoFundamentalsReader(
                     mongo[settings.mongo_db]["raw_ingestions"],
                     sector_resolver=_sector_resolver(identities),
@@ -1944,6 +2043,7 @@ async def _run_analyze(
                 repository=analysis_repository,
                 shares_reader=shares_reader,
                 classification_resolver=_classification_resolver(identities),
+                ipo_date_resolver=_listed_since_resolver(identities),
                 classes_resolver=_classes_resolver(identities),
                 class_mapping_resolver=_class_mappings_resolver(
                     identities, historical_codes

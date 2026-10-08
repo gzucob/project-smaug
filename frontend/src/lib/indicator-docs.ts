@@ -33,6 +33,104 @@ export interface IndicatorDoc {
 }
 
 export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
+  price_to_cfo: {
+    formula: "Valor de mercado ÷ fluxo de caixa operacional",
+    what: "Quantas vezes o valor de mercado da companhia representa sua geração operacional de caixa anualizada.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "FCO da DFC; múltiplo agregado da companhia.",
+  },
+  price_to_ebitda: {
+    formula: "Valor de mercado ÷ EBITDA",
+    what: "Quantas vezes o valor de mercado da companhia representa seu EBITDA anualizado.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "Usa o mesmo EBITDA dos indicadores existentes e as mesmas regras de aplicabilidade.",
+  },
+  ev_cfo: {
+    formula: "Valor da firma ÷ fluxo de caixa operacional",
+    what: "Quantas vezes o valor da empresa representa sua geração operacional de caixa anualizada.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "O FCO é o caixa operacional divulgado na DFC; sua classificação de juros permanece a divulgada pela companhia.",
+  },
+  ev_fcf: {
+    formula: "Valor da firma ÷ fluxo de caixa livre",
+    what: "Quantas vezes o valor da empresa representa o caixa livre anualizado após os investimentos em imobilizado e intangíveis.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "FCL segue a definição existente: FCO menos CAPEX de imobilizado e intangíveis.",
+  },
+  ev_revenue: {
+    formula: "Valor da firma ÷ receita líquida",
+    what: "Quantas vezes o valor da empresa representa sua receita líquida anualizada.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "Receita segue o perímetro das demonstrações CVM selecionadas para a companhia.",
+  },
+  tag_along: {
+    formula: "Percentual de proteção na alienação de controle ÷ 100",
+    what: "Parcela do preço pago ao controlador assegurada ao titular desta espécie ou classe de ação, na hipótese de alienação de controle.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "A origem identifica a declaração do FRE ou a garantia do segmento de listagem da B3. Um dado antigo não comprova o estatuto atual. Units só recebem um percentual quando todos os componentes têm a mesma proteção comprovada.",
+  },
+  free_float: {
+    formula: "Percentual total de ações em circulação informado no FRE da companhia",
+    what: "A participação do capital social que a companhia informa como ações em circulação no FRE, convertida de percentual para fração.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "Percentual da companhia inteira, incluindo as classes; a data da assembleia e a versão do FRE estão na origem dos dados. Não representa uma contagem de negócios ou a liquidez diária.",
+  },
+  cash_ratio: {
+    formula: "Caixa e equivalentes ÷ passivo circulante",
+    what: "Quanto do passivo circulante pode ser coberto pelo caixa e seus equivalentes disponíveis no fechamento.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "Inclui apenas caixa e equivalentes; aplicações financeiras classificadas separadamente não entram automaticamente.",
+  },
+  quick_ratio: {
+    formula: "(Ativo circulante − estoques) ÷ passivo circulante",
+    what: "Quanto do passivo circulante pode ser coberto pelo ativo circulante após excluir os estoques.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "Adotamos a variante que exclui estoques. Despesas antecipadas permanecem no ativo circulante; uma conta ausente não é tratada como estoque zero.",
+  },
+  cfo_yield: {
+    formula: "Fluxo de caixa operacional ÷ valor de mercado",
+    what: "A geração operacional de caixa anualizada como percentual do valor de mercado da companhia.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "O fluxo da companhia é comparado com seu valor de mercado; resultado negativo é preservado.",
+  },
+  cfo_margin: {
+    formula: "Fluxo de caixa operacional ÷ receita",
+    what: "Quanto da receita do período corresponde ao caixa gerado pelas atividades operacionais.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "O FCO inclui movimentos do capital de giro. Em bancos, movimentos de crédito e depósitos exigem uma leitura própria.",
+  },
+  fcf_margin: {
+    formula: "Fluxo de caixa livre ÷ receita",
+    what: "Quanto da receita do período corresponde ao caixa livre após os investimentos em imobilizado e intangíveis.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "Usa FCO menos aquisições de imobilizado e intangíveis; preserva as regras de aplicabilidade do FCL.",
+  },
+  cash_conversion: {
+    formula: "Fluxo de caixa operacional ÷ lucro líquido",
+    what: "Compara o caixa gerado pela operação com o lucro líquido dos controladores no mesmo período.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "Pagamentos, recebimentos e movimentos de capital de giro podem se referir a outros períodos. Lucro zero impede a divisão; prejuízo não é descartado.",
+  },
+  capex_to_cfo: {
+    formula: "Investimentos em imobilizado e intangíveis ÷ fluxo de caixa operacional",
+    what: "Quanto do caixa operacional do período corresponde aos investimentos em imobilizado e intangíveis.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "CAPEX corresponde às saídas para aquisição de ativos identificadas na DFC, apresentado positivo; não inclui aquisições de empresas nem compensa vendas de ativos.",
+  },
   // ------------------------------------------------------- rentabilidade ---
   roe: {
     formula: "Lucro líquido (anualizado) ÷ Patrimônio líquido",
@@ -274,34 +372,13 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
   },
 
   // ---------------------------------------------------------- por ação ---
-  eps: {
-    formula: "Alias compatível do LPA básico divulgado conforme CPC 41",
-    what: "A fatia básica do resultado que cabe à classe do papel. Novos consumidores devem usar o campo LPA básico explicitamente.",
-    strongIn: [
-      {
-        where: "Qualquer subsetor, na série histórica da própria empresa",
-        why: "o LPA crescente ao longo dos anos é o sinal de que o lucro cresce mais rápido do que a diluição",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Comparação entre empresas diferentes",
-        why: "depende inteiramente de quantas ações existem — um LPA de R$ 10 não é melhor que um de R$ 1",
-      },
-      {
-        where: "Construção Civil, Saúde",
-        why: "emissões frequentes diluem o LPA mesmo com o lucro total subindo",
-      },
-    ],
-    caveat: "Campo mantido por compatibilidade; usa exatamente o mesmo valor de LPA básico.",
-  },
   eps_basic: {
-    formula: "Resultado atribuível à classe ÷ média ponderada de ações em circulação",
-    what: "A participação básica de cada ação da classe no resultado consolidado atribuível aos controladores, como divulgada pela companhia segundo o CPC 41.",
+    formula: "Lucro líquido do período ÷ quantidade total de ações",
+    what: "O lucro líquido atribuível aos acionistas da companhia dividido pela quantidade de ações selecionada para a análise. Para units, o resultado corresponde às ações que compõem cada pacote.",
     strongIn: [
       {
-        where: "Série histórica da própria classe",
-        why: "incorpora emissões, recompras, tesouraria, direitos econômicos e ajustes retrospectivos divulgados pela companhia",
+        where: "Evolução do resultado por ação da companhia",
+        why: "relaciona o lucro do período à base de ações da análise",
       },
     ],
     weakIn: [
@@ -310,45 +387,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "a escala depende da quantidade de ações; o indicador é mais informativo em evolução e combinado ao preço",
       },
     ],
-    caveat: "O TTM fica n/d quando não existe uma média ponderada reconciliável; nunca usamos a quantidade de fechamento como substituta.",
-  },
-  eps_basic_market: {
-    formula: "Lucro atribuível anualizado ÷ ações em circulação no fechamento",
-    what: "Estimativa de LPA por convenção de mercado, usada como fallback quando o LPA CPC 41 não pode ser reconciliado no período.",
-    strongIn: [
-      {
-        where: "Leitura rápida de uma companhia com divulgação CPC 41 incompleta para o TTM",
-        why: "mantém o indicador disponível usando apenas o lucro e a quantidade de ações de fechamento publicados",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Empresas com direitos econômicos diferentes entre classes",
-        why: "o lucro total é distribuído sobre as ações de fechamento sem provar a atribuição CPC 41 de cada classe",
-      },
-      {
-        where: "Empresas com muitas emissões ou recompras durante o período",
-        why: "a quantidade de fechamento não representa a média ponderada ao longo dos meses",
-      },
-    ],
-    caveat: "Não é LPA CPC 41. O valor é identificado como estimativa e usa a base de ações de fechamento da CVM; nunca substitui o campo estrito quando este existe.",
-  },
-  eps_diluted: {
-    formula: "Resultado ajustado ÷ média ponderada diluída de ações",
-    what: "A participação por ação após considerar apenas instrumentos potenciais com efeito diluidor, como conversíveis, opções e bônus.",
-    strongIn: [
-      {
-        where: "Empresas com opções, conversíveis ou ações contingentes",
-        why: "mostra a participação por ação caso os instrumentos diluidores se materializem",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Empresas sem instrumentos diluidores",
-        why: "será igual ao básico; a igualdade ainda é uma divulgação útil, não ausência de dado",
-      },
-    ],
-    caveat: "Instrumentos antidiluidores são excluídos pela própria regra do CPC 41.",
+    caveat: "Usa o lucro dos últimos 12 meses na visão TTM e a quantidade de ações selecionada, sem reconstruir uma média ponderada. Fica n/d quando falta lucro ou quantidade de ações.",
   },
   bvps: {
     formula: "Patrimônio líquido ÷ Número de ações",
@@ -369,7 +408,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
         why: "o que gera valor (marca, software, pesquisa) foi despesado, não capitalizado — o VPA subestima enormemente o negócio",
       },
     ],
-    caveat: "Usa ações em circulação no fechamento; não é uma média ponderada e não deve ser confundido com o denominador do LPA.",
+    caveat: "Usa a quantidade de ações selecionada para a análise, com ajuste da composição para units.",
   },
 
   // ------------------------------------------------------- crescimento ---
@@ -417,7 +456,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "Aqui os extremos ficam a cinco exercícios de distância (seis pontos), e só os exercícios fechados entram — a janela de 12 meses não é um exercício. Só os dois extremos entram na conta: o caminho entre eles é invisível, e uma queda seguida de recuperação lê igual a um crescimento constante.",
+      "Aqui os extremos ficam a cinco exercícios de distância (seis pontos), e só os exercícios fechados entram — o período atual não é um ano fechado. Só os dois extremos entram na conta: o caminho entre eles é invisível, e uma queda seguida de recuperação lê igual a um crescimento constante.",
   },
   ebitda_cagr_5y: {
     formula: "(EBITDA do exercício ÷ EBITDA de 5 exercícios antes) ^ (1/5) − 1",
@@ -680,8 +719,8 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
 
   // ------------------------------------------------ múltiplos de mercado ---
   pe_basic: {
-    formula: "Preço do papel ÷ LPA básico CPC 41 da classe",
-    what: "Quantas vezes o preço do próprio papel representa sua participação básica no lucro, já considerando direitos econômicos e média ponderada da classe.",
+    formula: "Preço do papel ÷ lucro por ação",
+    what: "Quantas vezes o preço do papel representa o lucro por ação calculado com o lucro líquido do período e a quantidade total de ações. Para units, preço e lucro correspondem ao mesmo pacote de ações.",
     strongIn: [
       {
         where: "Intermediários Financeiros, Previdência e Seguros, Energia Elétrica",
@@ -696,43 +735,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       {
         where: "Qualquer empresa com prejuízo",
         why: "o múltiplo fica negativo e perde sentido — Smaug o exibe assim mesmo, sem escondê-lo",
-      },
-    ],
-  },
-  pe_basic_market: {
-    formula: "Preço do papel ÷ LPA básico estimado por ações de fechamento",
-    what: "P/L do papel em convenção de mercado, usado somente como fallback quando o P/L CPC 41 não pode ser calculado.",
-    strongIn: [
-      {
-        where: "Comparação operacional entre papéis de uma empresa",
-        why: "preserva o preço de cada ticker mesmo quando o denominador CPC 41 do TTM está incompleto",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Classes ON e PN com direitos econômicos diferentes",
-        why: "o denominador reparte o lucro atribuível sobre a base de fechamento e não prova o resultado específico da classe",
-      },
-      {
-        where: "Períodos com forte mudança na quantidade de ações",
-        why: "a base de fechamento pode divergir materialmente da média ponderada CPC 41",
-      },
-    ],
-    caveat: "O aviso 'fora do CPC 41' acompanha o valor. A estimativa usa somente CVM/B3 e não substitui o P/L básico estrito, que continua separado.",
-  },
-  pe_diluted: {
-    formula: "Preço do papel ÷ LPA diluído CPC 41 da classe",
-    what: "O P/L após incorporar instrumentos potenciais com efeito diluidor no resultado por ação divulgado pela companhia.",
-    strongIn: [
-      {
-        where: "Empresas com opções, conversíveis ou ações contingentes",
-        why: "mostra o múltiplo caso a diluição economicamente relevante se materialize",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Empresas sem instrumentos diluidores",
-        why: "coincide com o P/L básico; a igualdade é informativa",
       },
     ],
   },
@@ -761,40 +763,8 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
     caveat: "O VPA aloca o patrimônio dos controladores igualmente por ação subjacente em circulação; uma unit soma as quantidades do pacote FCA.",
   },
-  company_pe: {
-    formula: "Capitalização de mercado ÷ lucro atribuível aos controladores do período",
-    what: "A convenção de mercado para a companhia inteira: na visão TTM usa o lucro atribuível dos últimos 12 meses; no histórico, o exercício fechado. É igual entre classes irmãs e fica separado do P/L por papel.",
-    strongIn: [
-      {
-        where: "Comparações da companhia como um todo",
-        why: "numerador e denominador cobrem o mesmo conjunto de instrumentos dos controladores",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Comparação de PETR3 com PETR4 ou outras classes",
-        why: "não distingue o preço nem os direitos de cada papel",
-      },
-    ],
-    caveat: "O numerador soma os preços B3 de todas as classes listadas sobre suas ações em circulação; o denominador é o lucro atribuível aos controladores. É uma convenção de mercado, não um P/L CPC 41 por classe.",
-  },
-  company_pb: {
-    formula: "Capitalização de mercado ÷ patrimônio atual atribuível aos controladores",
-    what: "A convenção de mercado para o P/VP agregado da companhia, preservada sob nome explícito para não ser confundida com preço por VPA do papel.",
-    strongIn: [
-      {
-        where: "Análise do valor total dos controladores",
-        why: "mantém toda a companhia na mesma fatia contábil",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Comparação entre classes irmãs",
-        why: "é deliberadamente igual para todas elas",
-      },
-    ],
-    caveat: "O patrimônio é o saldo de fechamento da data de referência; o numerador é a capitalização agregada das classes listadas. O resultado não substitui o P/VP estrito do papel.",
-  },
+
+
   psr: {
     formula: "Valor de mercado ÷ Receita líquida anualizada",
     what: "Quanto o mercado paga por real de receita. Útil exatamente onde o lucro ainda não existe ou não é representativo.",
@@ -877,7 +847,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
   },
   payout_cash_paid_in_period: {
     formula: "Caixa pago no período (DFC) ÷ Lucro do mesmo período",
-    what: "Compara duas grandezas do mesmo intervalo sem afirmar que o caixa pago nasceu daquele lucro. O nome explicita a defasagem que o antigo payout escondia.",
+    what: "Compara duas grandezas do mesmo intervalo sem afirmar que o caixa pago nasceu daquele lucro. Os pagamentos podem se referir a lucros de períodos anteriores.",
     strongIn: [
       {
         where: "Energia Elétrica, Água e Saneamento, Telecomunicações",
@@ -900,6 +870,13 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
     caveat:
       "Não é payout por exercício de origem: dividendos aprovados na AGO após o fechamento e pagamentos de declarações anteriores permanecem no período em que o caixa saiu.",
+  },
+  earnings_yield: {
+    formula: "Lucro por ação (LPA) ÷ Preço do papel",
+    what: "O lucro por ação em relação ao preço pago pela ação, expresso em percentual. É o inverso do P/L quando ambos são diferentes de zero.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "Lucro negativo produz Earnings Yield negativo. Com lucro zero e preço válido, o resultado é zero; preço zero ou dados insuficientes impedem o cálculo.",
   },
   dividend_yield: {
     formula: "Proventos B3 por papel com data ex na janela ÷ Preço do papel",
@@ -925,68 +902,11 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
     caveat:
-      "No histórico, numerador e preço médio nominal são restatados para a mesma base de ações. No TTM, somamos as datas ex dos últimos 12 meses até o cálculo e dividimos pelo preço atual.",
+      "No histórico, numerador e preço médio nominal são restatados para a mesma base de ações. No período atual, somamos as datas ex da janela móvel até o cálculo e dividimos pelo preço atual.",
   },
-  company_cash_yield_paid_in_period: {
-    formula: "Caixa pago pela companhia no período (DFC) ÷ Valor de mercado da companhia",
-    what: "A antiga medida agregada de caixa pago sobre capitalização, preservada sob nome explícito. Não é o dividend yield de um papel.",
-    strongIn: [
-      {
-        where: "Reconciliação do fluxo de caixa da companhia",
-        why: "mantém numerador e capitalização no escopo agregado",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Comparação entre classes ou units",
-        why: "não carrega direitos nem preços do instrumento individual",
-      },
-    ],
-  },
-  payout_declared_in_period: {
-    formula: "Proventos declarados no período (DMPL) ÷ Lucro líquido do período",
-    what: "Compara o débito de dividendos e JCP na DMPL com o lucro do mesmo período, sem atribuir a declaração ao exercício que originou o lucro.",
-    strongIn: [
-      {
-        where: "Intermediários Financeiros (bancos)",
-        why: "declarações recorrentes de JCP reduzem a defasagem frente à base paga, mas não provam de qual exercício veio o lucro distribuído",
-      },
-      {
-        where: "Comparação entre declaração e pagamento",
-        why: "evidencia em qual período cada fato entrou na DMPL ou na DFC, sem tratá-los como se fossem o mesmo evento",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Empresas que deliberam o dividendo na assembleia do ano seguinte",
-        why: "a declaração cai na DMPL do ano seguinte, então parte do provento 'do exercício' aparece um ano depois — a atribuição perfeita exige a proposta da administração, que não está nos dados estruturados",
-      },
-    ],
-    caveat:
-      "Uma AGO pós-fechamento entra no período da declaração. Os dados estruturados disponíveis não identificam com segurança o exercício de origem, por isso o nome não promete essa atribuição.",
-  },
-  company_yield_declared_in_period: {
-    formula: "Proventos declarados no período (DMPL) ÷ Valor de mercado",
-    what: "Quociente agregado entre o que a controladora declarou no período e o valor de mercado da companhia. Não é DY por papel.",
-    strongIn: [
-      {
-        where: "Intermediários Financeiros (bancos)",
-        why: "o JCP aparece no período em que foi registrado na DMPL; o caixa pode sair apenas no período seguinte",
-      },
-      {
-        where: "Comparações entre a base declarada e a base paga",
-        why: "a declaração e a saída de caixa podem cair em exercícios diferentes",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Empresas que deliberam dividendos na assembleia do ano seguinte",
-        why: "a parcela deliberada depois do fechamento cai no ano seguinte da DMPL — o yield declarado subestima o 'do exercício' dessas empresas",
-      },
-    ],
-    caveat:
-      "A régua é a data da declaração na DMPL, não o exercício de origem. O denominador é a capitalização agregada, não o preço de uma classe.",
-  },
+
+
+
   ev_ebitda: {
     formula: "(Valor de mercado + Dívida líquida + Participação de não controladores) ÷ EBITDA anualizado",
     what: "Quanto custa a empresa inteira — sócios e credores — por real de geração operacional. É o múltiplo neutro à estrutura de capital.",
@@ -1290,24 +1210,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
   },
 
-  company_distributions_declared_in_period: {
-    formula: "Proventos declarados no período (DMPL 5.04, dividendos + JCP)",
-    what: "O valor agregado que a controladora debitou do patrimônio como remuneração aos acionistas durante o período.",
-    strongIn: [
-      {
-        where: "Intermediários Financeiros, Energia Elétrica",
-        why: "onde declarar e pagar caem em anos diferentes, as duas séries revelam a defasagem sem atribuir a declaração ao lucro do mesmo ano",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Empresas que deliberam o dividendo na assembleia do ano seguinte",
-        why: "a declaração pós-fechamento aparece no ano seguinte — leia a série, não o ponto",
-      },
-    ],
-    caveat:
-      "A data é a do registro na DMPL. Uma AGO realizada após o fechamento aparece no período seguinte e não é reatribuída ao exercício anterior sem uma fonte estruturada que declare essa relação.",
-  },
+
 
   // ------------------------------------------------------------ escala ---
   // Figuras de tamanho (reais absolutos / contagem), exibidas no topo da página,
@@ -1364,7 +1267,7 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
   },
   shares: {
     formula: "Ações emitidas − ações em tesouraria",
-    what: "Quantas ações estão em circulação no fechamento — o denominador do VPA e uma medida da escala acionária. Exclui as ações mantidas em tesouraria; o LPA usa uma média ponderada própria.",
+    what: "A quantidade de ações selecionada para a análise, usada no LPA e no VPA. Parte do total emitido e desconta a tesouraria quando ela pode ser conciliada; para units, a quantidade é expressa em pacotes equivalentes.",
     strongIn: [
       {
         where: "Qualquer subsetor",
@@ -1379,103 +1282,6 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
   },
 
-  // -------------------------------------------------------------- banco ---
-  // Só um banco preenche estes três: o balanço dele é o negócio (ADR 0058).
-  net_interest_margin: {
-    formula: "Resultado de juros anualizado ÷ Ativos rentáveis médios",
-    what: "O spread que o banco obtém sobre os ativos que efetivamente geram receita financeira. Numerador e média precisam vir da mesma divulgação, período e perímetro de consolidação.",
-    strongIn: [
-      {
-        where: "Intermediários Financeiros (bancos)",
-        why: "é a receita primária do negócio: alocar ativos rentáveis acima do custo de captação",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Bancos com forte receita de serviços",
-        why: "parte relevante do lucro vem de tarifas e seguros, que a margem financeira não enxerga — olhe o índice de eficiência ao lado",
-      },
-    ],
-    caveat:
-      "A demonstração estruturada da CVM não traz a média dos ativos rentáveis nem todos os ajustes do resultado de juros. Sem uma divulgação pública do Banco Central ou do próprio banco com o par completo, o Smaug retorna n/d; ativo total de fechamento não é substituto.",
-  },
-  efficiency_ratio: {
-    formula:
-      "Despesas operacionais completas ÷ Receitas operacionais completas (mesmo perímetro)",
-    what: "Quanto da receita operacional definida pelo banco ou regulador é consumido pela estrutura. O denominador inclui todas as linhas declaradas na metodologia — não apenas margem financeira e tarifas. Aqui, menor é melhor.",
-    strongIn: [
-      {
-        where: "Intermediários Financeiros (bancos)",
-        why: "é o placar de gestão do setor, e o que separa um banco caro de um enxuto",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Comparações entre bancos de perfis diferentes",
-        why: "um banco de varejo carrega milhares de agências e nunca terá a eficiência de um banco de atacado — o índice compara mal fora do mesmo perfil",
-      },
-    ],
-    caveat:
-      "Cada banco pode publicar ajustes gerenciais e um perímetro específico. O Smaug só calcula quando recebe numerador e denominador completos da mesma divulgação; a soma parcial das contas CVM permanece n/d.",
-  },
-  cost_of_risk: {
-    formula: "Despesa anualizada de perdas de crédito ÷ Carteira média de crédito",
-    what: "Quanto o banco reconheceu de perda ou provisão de crédito sobre a exposição média definida pela mesma metodologia. É o preço do risco que escolheu correr — e costuma subir antes de o lucro cair.",
-    strongIn: [
-      {
-        where: "Intermediários Financeiros (bancos)",
-        why: "é o indicador que antecipa a deterioração: a provisão sobe no balanço antes de o calote aparecer no lucro",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Um ano isolado",
-        why: "a provisão responde a mudanças de política de crédito e a eventos setoriais — só a série de vários anos mostra a tendência",
-      },
-    ],
-    caveat:
-      "Carteira líquida ou saldo de fechamento não substituem a carteira média e ampliada/prudencial definida na fonte. Sem o par completo e no mesmo perímetro, o indicador fica n/d.",
-  },
-
-  // --------------------------------------------------------- seguradora ---
-  // Só o regime contábil de seguros preenche estes dois (ADR 0061).
-  loss_ratio: {
-    formula: "− Sinistros incorridos ÷ Prêmios ganhos",
-    what: "Quanto do prêmio ganho no período foi consumido por sinistros. Quanto menor, maior a parcela que sobra para aquisição, administração e resultado técnico.",
-    strongIn: [
-      {
-        where: "Seguradoras e resseguradoras que subscrevem risco",
-        why: "mede diretamente a disciplina de subscrição e a severidade dos sinistros no mesmo período",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Holdings de seguros",
-        why: "uma holding pode ser classificada no setor sem emitir apólices ou assumir risco no próprio balanço",
-      },
-    ],
-    caveat:
-      "A DRE estruturada pós-IFRS 17 da CVM não separa sinistros e custos de aquisição nos agregados atuais. O Smaug não chama o agregado de sinistros: sem a linha separada, o índice fica n/d com causa explícita.",
-  },
-  combined_ratio: {
-    formula:
-      "− (Sinistros + custos de aquisição + despesas administrativas) ÷ Prêmios ganhos",
-    what: "Quanto toda a operação técnica definida pela fórmula consome dos prêmios ganhos. Abaixo de 100% indica resultado técnico positivo antes do resultado financeiro; acima de 100%, a subscrição não se paga sozinha.",
-    strongIn: [
-      {
-        where: "Seguradoras e resseguradoras que subscrevem risco",
-        why: "reúne sinistros e a estrutura necessária para adquirir e administrar os contratos em uma medida operacional",
-      },
-    ],
-    weakIn: [
-      {
-        where: "Comparações entre metodologias diferentes",
-        why: "companhias podem divulgar índices gerenciais com ajustes e perímetros próprios; compare apenas fórmulas equivalentes",
-      },
-    ],
-    caveat:
-      "Os quatro componentes precisam pertencer ao mesmo período e perímetro consolidado. O Smaug usa apenas as linhas separadas da CVM; agregados IFRS 17 e valores de plataformas externas não substituem componentes ausentes.",
-  },
 };
 
 export function indicatorDoc(key: IndicatorKey): IndicatorDoc {

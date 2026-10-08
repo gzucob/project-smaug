@@ -22,7 +22,6 @@ from smaug.analysis.domain.financials import (
     AccountingRegime,
     B3CapitalEventEvidence,
     B3CapitalEventReconciliation,
-    BankRegulatoryProvenance,
     CapitalActionEvidence,
     CapitalComposition,
     ClassMarketValue,
@@ -45,7 +44,13 @@ from smaug.analysis.domain.financials import (
     SourceAccountRef,
     SourceAccountStatus,
 )
-from smaug.analysis.domain.indicators import Indicators, NullReason
+from smaug.analysis.domain.governance import Governance
+from smaug.analysis.domain.indicators import (
+    RETIRED_SECTOR_INDICATORS,
+    Indicators,
+    NullReason,
+    is_retired_sector_input,
+)
 from smaug.analysis.domain.outcomes import (
     AnalysisOutcome,
     AnalysisStatus,
@@ -238,6 +243,8 @@ def _source_account_evidence_from_json(
     parsed: list[SourceAccountEvidence] = []
     for raw in value:
         if not isinstance(raw, Mapping):
+            continue
+        if is_retired_sector_input(str(raw.get("field", ""))):
             continue
         try:
             raw_status = raw.get("status")
@@ -507,71 +514,6 @@ def _cpc41_window_provenance_from_json(
         selected_periods=tuple(periods),
         basic_blocker=blocker(value.get("basic_blocker")),
         diluted_blocker=blocker(value.get("diluted_blocker")),
-    )
-
-
-def _bank_regulatory_provenance_to_json(
-    provenance: BankRegulatoryProvenance | None,
-) -> dict[str, Any] | None:
-    if provenance is None:
-        return None
-    return {
-        "source": provenance.source,
-        "period_start": (
-            None
-            if provenance.period_start is None
-            else provenance.period_start.isoformat()
-        ),
-        "period_end": (
-            None if provenance.period_end is None else provenance.period_end.isoformat()
-        ),
-        "perimeter": provenance.perimeter,
-        "averaging_method": provenance.averaging_method,
-        "basis": provenance.basis,
-        "available_inputs": sorted(provenance.available_inputs),
-        "missing_inputs": sorted(provenance.missing_inputs),
-        "incompatible_inputs": sorted(provenance.incompatible_inputs),
-    }
-
-
-def _bank_regulatory_provenance_from_json(
-    value: object,
-) -> BankRegulatoryProvenance | None:
-    if not isinstance(value, Mapping):
-        return None
-
-    def parse_date(raw: object) -> date | None:
-        if raw is None:
-            return None
-        try:
-            return date.fromisoformat(str(raw))
-        except ValueError:
-            return None
-
-    def parse_set(key: str) -> frozenset[str]:
-        raw = value.get(key, [])
-        return (
-            frozenset(str(item) for item in raw)
-            if isinstance(raw, (list, tuple, set, frozenset))
-            else frozenset()
-        )
-
-    return BankRegulatoryProvenance(
-        source=None if value.get("source") is None else str(value.get("source")),
-        period_start=parse_date(value.get("period_start")),
-        period_end=parse_date(value.get("period_end")),
-        perimeter=(
-            None if value.get("perimeter") is None else str(value.get("perimeter"))
-        ),
-        averaging_method=(
-            None
-            if value.get("averaging_method") is None
-            else str(value.get("averaging_method"))
-        ),
-        basis=None if value.get("basis") is None else str(value.get("basis")),
-        available_inputs=parse_set("available_inputs"),
-        missing_inputs=parse_set("missing_inputs"),
-        incompatible_inputs=parse_set("incompatible_inputs"),
     )
 
 
@@ -1024,6 +966,7 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         debt_evidence=_debt_evidence_to_json(analysis.debt_evidence),
         reference_date=analysis.reference_date,
         computed_at=analysis.computed_at,
+        calculation_contract_version=analysis.calculation_contract_version,
         price=analysis.price,
         price_source_code=analysis.price_source_code,
         price_source_session=analysis.price_source_session,
@@ -1059,17 +1002,43 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         liabilities_to_assets=i.liabilities_to_assets,
         equity_to_assets=i.equity_to_assets,
         current_ratio=i.current_ratio,
+        price_to_cfo=i.price_to_cfo,
+        ev_cfo=i.ev_cfo,
+        ev_fcf=i.ev_fcf,
+        cash_ratio=i.cash_ratio,
+        quick_ratio=i.quick_ratio,
+        ev_revenue=i.ev_revenue,
+        free_float=i.free_float,
+        tag_along=i.tag_along,
+        governance={
+            "ipo_date": analysis.governance.ipo_date.isoformat()
+            if analysis.governance.ipo_date
+            else None,
+            "listing_segment": analysis.governance.listing_segment,
+            "listing_observed_on": analysis.governance.listing_observed_on.isoformat()
+            if analysis.governance.listing_observed_on
+            else None,
+            "listing_source": analysis.governance.listing_source,
+            "tag_along_source": analysis.governance.tag_along_source,
+            "tag_along_reference": analysis.governance.tag_along_reference,
+            "blocker": analysis.governance.blocker,
+        },
+        price_to_ebitda=i.price_to_ebitda,
+        cfo_yield=i.cfo_yield,
+        cfo_margin=i.cfo_margin,
+        fcf_margin=i.fcf_margin,
+        cash_conversion=i.cash_conversion,
+        capex_to_cfo=i.capex_to_cfo,
         revenue_growth=i.revenue_growth,
         net_income_growth=i.net_income_growth,
         revenue_cagr_5y=i.revenue_cagr_5y,
         ebitda_cagr_5y=i.ebitda_cagr_5y,
         ebit_cagr_5y=i.ebit_cagr_5y,
         net_income_cagr_5y=i.net_income_cagr_5y,
+        earnings_yield=i.earnings_yield,
         pe_basic=i.pe_basic,
         pe_diluted=i.pe_diluted,
         pb=i.pb,
-        company_pe=i.company_pe,
-        company_pb=i.company_pb,
         pe_basic_market=i.pe_basic_market,
         psr=i.psr,
         price_to_assets=i.price_to_assets,
@@ -1077,27 +1046,16 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         price_to_working_capital=i.price_to_working_capital,
         dividend_yield=i.dividend_yield,
         payout_cash_paid_in_period=i.payout_cash_paid_in_period,
-        payout_declared_in_period=i.payout_declared_in_period,
-        company_cash_yield_paid_in_period=i.company_cash_yield_paid_in_period,
-        company_yield_declared_in_period=i.company_yield_declared_in_period,
         ev_ebitda=i.ev_ebitda,
         ev_ebit=i.ev_ebit,
         fcf=i.fcf,
         price_to_fcf=i.price_to_fcf,
         fcf_yield=i.fcf_yield,
-        net_interest_margin=i.net_interest_margin,
-        efficiency_ratio=i.efficiency_ratio,
-        cost_of_risk=i.cost_of_risk,
-        loss_ratio=i.loss_ratio,
-        combined_ratio=i.combined_ratio,
         revenue=i.revenue,
         net_income=i.net_income,
         net_income_total=i.net_income_total,
         distributions_per_security=i.distributions_per_security,
         company_distributions_paid_in_period=(i.company_distributions_paid_in_period),
-        company_distributions_declared_in_period=(
-            i.company_distributions_declared_in_period
-        ),
         total_assets=i.total_assets,
         total_liabilities=i.total_liabilities,
         equity=i.equity,
@@ -1113,9 +1071,6 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         cpc41_window_provenance=_cpc41_window_provenance_to_json(
             i.cpc41_window_provenance
         ),
-        bank_regulatory_provenance=_bank_regulatory_provenance_to_json(
-            i.bank_regulatory_provenance
-        ),
         share_class_mappings=_share_class_mappings_to_json(
             analysis.share_class_mappings
         ),
@@ -1128,8 +1083,12 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
     return TickerAnalysis(
         ticker=row.ticker,
         classification=Classification(row.setor, row.subsetor, row.segmento),
+        governance=_governance_from_row(row),
         reference_date=row.reference_date,
         computed_at=row.computed_at,
+        calculation_contract_version=(
+            row.calculation_contract_version or "legacy_unversioned"
+        ),
         filed_regime=(
             AccountingRegime(row.filed_regime) if row.filed_regime is not None else None
         ),
@@ -1182,17 +1141,30 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
             liabilities_to_assets=row.liabilities_to_assets,
             equity_to_assets=row.equity_to_assets,
             current_ratio=row.current_ratio,
+            price_to_cfo=row.price_to_cfo,
+            ev_cfo=row.ev_cfo,
+            ev_fcf=row.ev_fcf,
+            cash_ratio=row.cash_ratio,
+            quick_ratio=row.quick_ratio,
+            ev_revenue=row.ev_revenue,
+            free_float=row.free_float,
+            tag_along=row.tag_along,
+            price_to_ebitda=row.price_to_ebitda,
+            cfo_yield=row.cfo_yield,
+            cfo_margin=row.cfo_margin,
+            fcf_margin=row.fcf_margin,
+            cash_conversion=row.cash_conversion,
+            capex_to_cfo=row.capex_to_cfo,
             revenue_growth=row.revenue_growth,
             net_income_growth=row.net_income_growth,
             revenue_cagr_5y=row.revenue_cagr_5y,
             ebitda_cagr_5y=row.ebitda_cagr_5y,
             ebit_cagr_5y=row.ebit_cagr_5y,
             net_income_cagr_5y=row.net_income_cagr_5y,
+            earnings_yield=row.earnings_yield,
             pe_basic=row.pe_basic,
             pe_diluted=row.pe_diluted,
             pb=row.pb,
-            company_pe=row.company_pe,
-            company_pb=row.company_pb,
             pe_basic_market=row.pe_basic_market,
             psr=row.psr,
             price_to_assets=row.price_to_assets,
@@ -1200,28 +1172,17 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
             price_to_working_capital=row.price_to_working_capital,
             dividend_yield=row.dividend_yield,
             payout_cash_paid_in_period=row.payout_cash_paid_in_period,
-            payout_declared_in_period=row.payout_declared_in_period,
-            company_cash_yield_paid_in_period=row.company_cash_yield_paid_in_period,
-            company_yield_declared_in_period=row.company_yield_declared_in_period,
             ev_ebitda=row.ev_ebitda,
             ev_ebit=row.ev_ebit,
             fcf=row.fcf,
             price_to_fcf=row.price_to_fcf,
             fcf_yield=row.fcf_yield,
-            net_interest_margin=row.net_interest_margin,
-            efficiency_ratio=row.efficiency_ratio,
-            cost_of_risk=row.cost_of_risk,
-            loss_ratio=row.loss_ratio,
-            combined_ratio=row.combined_ratio,
             revenue=row.revenue,
             net_income=row.net_income,
             net_income_total=row.net_income_total,
             distributions_per_security=row.distributions_per_security,
             company_distributions_paid_in_period=(
                 row.company_distributions_paid_in_period
-            ),
-            company_distributions_declared_in_period=(
-                row.company_distributions_declared_in_period
             ),
             total_assets=row.total_assets,
             total_liabilities=row.total_liabilities,
@@ -1237,12 +1198,11 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
             cpc41_window_provenance=_cpc41_window_provenance_from_json(
                 row.cpc41_window_provenance
             ),
-            bank_regulatory_provenance=_bank_regulatory_provenance_from_json(
-                row.bank_regulatory_provenance
-            ),
             # Pre-vocabulary rows carry NULL: degrade to "unclassified" ({}).
             null_reasons={
-                k: NullReason(v) for k, v in (row.null_reasons or {}).items()
+                k: NullReason(v)
+                for k, v in (row.null_reasons or {}).items()
+                if k not in RETIRED_SECTOR_INDICATORS
             },
         ),
         share_class_mappings=_share_class_mappings_from_json(row.share_class_mappings),
@@ -1359,7 +1319,7 @@ class SqlAlchemyAnalysisRepository:
                 TickerAnalysisRow.ticker == ticker,
                 TickerAnalysisRow.view == VIEW_TTM,
             )
-            .order_by(TickerAnalysisRow.computed_at.desc())
+            .order_by(TickerAnalysisRow.computed_at.desc(), TickerAnalysisRow.id.desc())
             .limit(1)
         )
         async with self._session_factory() as session:
@@ -1370,7 +1330,7 @@ class SqlAlchemyAnalysisRepository:
         stmt = (
             select(TickerAnalysisRow)
             .where(TickerAnalysisRow.view == VIEW_TTM)
-            .order_by(TickerAnalysisRow.computed_at.desc())
+            .order_by(TickerAnalysisRow.computed_at.desc(), TickerAnalysisRow.id.desc())
         )
         async with self._session_factory() as session:
             rows = (await session.execute(stmt)).scalars().all()
@@ -1390,7 +1350,7 @@ class SqlAlchemyAnalysisRepository:
                 TickerAnalysisRow.ticker == ticker,
                 TickerAnalysisRow.view == VIEW_CLOSED_YEAR,
             )
-            .order_by(TickerAnalysisRow.computed_at.desc())
+            .order_by(TickerAnalysisRow.computed_at.desc(), TickerAnalysisRow.id.desc())
         )
         async with self._session_factory() as session:
             rows = (await session.execute(stmt)).scalars().all()
@@ -1479,3 +1439,19 @@ class SqlAlchemyAnalysisRepository:
         # Every row is either kept or deleted, so this is exact — no need to read a
         # driver-specific rowcount back.
         return PruneResult(deleted=len(runs) - len(keep), kept=len(keep))
+
+
+def _governance_from_row(row: TickerAnalysisRow) -> Governance:
+    data = row.governance or {}
+    ipo_date = data.get("ipo_date")
+    observed = data.get("listing_observed_on")
+    return Governance(
+        ipo_date=date.fromisoformat(ipo_date) if ipo_date else None,
+        listing_segment=data.get("listing_segment"),
+        listing_observed_on=date.fromisoformat(observed) if observed else None,
+        listing_source=data.get("listing_source"),
+        tag_along=row.tag_along,
+        tag_along_source=data.get("tag_along_source"),
+        tag_along_reference=data.get("tag_along_reference"),
+        blocker=data.get("blocker", "missing_tag_along_evidence"),
+    )

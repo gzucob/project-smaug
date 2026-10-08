@@ -28,7 +28,7 @@ from smaug.analysis.domain.financials import (
     DebtEvidenceSnapshot,
 )
 from smaug.analysis.domain.indicators import (
-    INDICATOR_CONTRACT,
+    LEGACY_INDICATOR_CONTRACT,
     Indicators,
     NullDisposition,
     NullReason,
@@ -548,7 +548,7 @@ def _coverage_of(indicators: Indicators) -> tuple[IndicatorCoverage, ...]:
         alternative_name = _MARKET_ALTERNATIVE_BY_INDICATOR.get(name)
         alternative = None
         if alternative_name is not None:
-            contract = INDICATOR_CONTRACT[alternative_name]
+            contract = LEGACY_INDICATOR_CONTRACT[alternative_name]
             alternative = MarketAlternative(
                 indicator=alternative_name,
                 has_value=getattr(indicators, alternative_name) is not None,
@@ -576,7 +576,7 @@ def _market_alternative_for_cell(
     alternative_name = _MARKET_ALTERNATIVE_BY_INDICATOR.get(cell.indicator)
     if alternative_name is None:
         return None
-    contract = INDICATOR_CONTRACT[alternative_name]
+    contract = LEGACY_INDICATOR_CONTRACT[alternative_name]
     alternative_cell = cells.get(alternative_name)
     return MarketAlternative(
         indicator=alternative_name,
@@ -672,8 +672,8 @@ def _market_alternative_coverage(
                 else rows_with_pe_market
             ),
             fields=alternative_counts[name],
-            basis=INDICATOR_CONTRACT[name].basis,
-            provenance=INDICATOR_CONTRACT[name].provenance,
+            basis=LEGACY_INDICATOR_CONTRACT[name].basis,
+            provenance=LEGACY_INDICATOR_CONTRACT[name].provenance,
         )
         for name in alternative_counts
     )

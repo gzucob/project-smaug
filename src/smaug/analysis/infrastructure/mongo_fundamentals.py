@@ -37,8 +37,6 @@ from smaug.analysis.domain.financials import (
     DebtInstrument,
     DebtLineEvidence,
     DebtLineRole,
-    InsuranceUnderwritingEvidence,
-    InsuranceUnderwritingStatus,
     IssuerIdentity,
     SourceAccountEvidence,
     SourceAccountRef,
@@ -47,6 +45,7 @@ from smaug.analysis.domain.financials import (
     expected_regime,
 )
 from smaug.analysis.domain.indicators import NullReason
+from smaug.analysis.infrastructure.free_float import filed_free_float
 from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
 from smaug.portfolio.domain.company import RegistrantResolver
 from smaug.portfolio.domain.sectors import Sector
@@ -56,7 +55,7 @@ from smaug.portfolio.domain.securities import (
 )
 from smaug.portfolio.domain.share_classes import PerShareClass, UnitComponent
 
-_STATEMENTS = ("BPA", "BPP", "DRE", "DFC", "DMPL")
+_STATEMENTS = ("BPA", "BPP", "DRE", "DFC", "DMPL", "DVA")
 
 # The mirror stores every filing and chooses none of them (ADR 0016), so the
 # choice is made here: the reported period rather than its comparative, the latest
@@ -318,26 +317,142 @@ def _equity_total(bpp: Accounts) -> Decimal | None:
     return _by_name(bpp, "patrimonio liquido")
 
 
-def _dividends_paid(dfc: Accounts) -> Decimal | None:
-    """Dividends + interest-on-equity (JCP) paid to controlling shareholders.
+def _is_distribution_name(name: str) -> bool:
+    folded = _fold(name)
+    return (
+        "dividendo" in folded
+        or bool(re.search(r"\bj(?:s)?cp\b", folded))
+        or ("capital proprio" in folded and ("juro" in folded or "remuner" in folded))
+        or "distribuicao de lucro" in folded
+        or "lucros distribuid" in folded
+    )
 
-    Financing-section cash outflows whose label mentions a dividend or JCP
-    (``capital proprio``) and "pago", excluding the non-controlling line.
-    Returned positive (the DFC records them as negative outflows); ``None`` when
-    no such line exists, so DY degrades to null rather than zero.
+
+def _is_minority_distribution(name: str) -> bool:
+    folded = _fold(name)
+    return "nao control" in folded or "minorit" in folded
+
+
+def _is_paid_distribution(account: Mapping[str, Any]) -> bool:
+    code = str(account.get("code", ""))
+    name = _fold(str(account.get("name", "")))
+    if not _is_distribution_name(name):
+        return False
+    payment = "pag" in name or "pgto" in name
+    if any(
+        word in name
+        for word in (
+            "receb",
+            "revers",
+            "prescrit",
+            "convers",
+            "variacao",
+            "ressarc",
+            "a pagar",
+            "a serem pag",
+            "aumento de capital",
+            "exercicios seguintes",
+            "de controladas",
+            "de coligadas",
+        )
+    ):
+        return False
+    if not payment and any(
+        word in name for word in ("propost", "provis", "constitui", "destina")
+    ):
+        return False
+    if name.strip().startswith(("imposto", "tribut", "irrf", "ir ")):
+        return False
+    # Gross JCP is still a distribution. A standalone tax or an inseparable
+    # dividend-plus-tax amount does not establish that full distribution.
+    if (
+        any(word in name for word in ("imposto", "tribut", "irrf", "retido"))
+        and "bruto" not in name
+    ):
+        return False
+    if payment:
+        # Explicit cash payments can be filed in another cash-flow section.
+        # Indirect operating adjustments and subsidiary receipts stay out.
+        return code.startswith(("6.01.", "6.02.", "6.03.")) and not code.startswith(
+            "6.01.01."
+        )
+    value = _finite_account_value(account)
+    # A financing outflow identifies the paid event without a payment verb.
+    # Positive short labels describe incoming cash, not a distribution paid.
+    return code.startswith("6.03.") and (value is None or value <= 0)
+
+
+def _paid_distribution_accounts(dfc: Accounts) -> Accounts:
+    return tuple(account for account in dfc if _is_paid_distribution(account))
+
+
+def _dividends_paid(dfc: Accounts) -> Decimal | None:
+    """Resolve cash distributions to controllers without mixing paid/declared.
+
+    Explicit financing outflows may name dividends/JCP or profit distributions
+    without a payment verb. Preserve a filed zero and require every selected
+    component to be readable. A parent represents its details once; an explicit
+    minority split is subtracted from a generic parent and reconciled with any
+    controllers' detail. Unobserved amounts are never zeros.
     """
+    candidates = _paid_distribution_accounts(dfc)
+    selected: list[str] = []
     total = Decimal(0)
     found = False
-    for account in dfc:
-        name = _fold(str(account.get("name", "")))
-        if "pag" not in name or "nao control" in name:
+    for account in sorted(candidates, key=lambda a: str(a.get("code", "")).count(".")):
+        code = str(account.get("code", ""))
+        name = str(account.get("name", ""))
+        if _is_minority_distribution(name) or any(_inside(code, p) for p in selected):
             continue
-        if "dividendo" not in name and "capital proprio" not in name:
-            continue
-        value = _dec(account.get("quantity"))
-        if value is not None:
-            total += abs(value)
-            found = True
+        value = _finite_account_value(account)
+        if value is None:
+            return None
+        if any(word in _fold(name) for word in ("emprest", "debentur", "arrendamento")):
+            return None
+        # An unsigned/positive short financing label does not prove an outflow.
+        if value > 0 and not ("pag" in _fold(name) or "pgto" in _fold(name)):
+            return None
+        same_code = [a for a in candidates if str(a.get("code", "")) == code]
+        if any(
+            _finite_account_value(a) != value
+            or _is_minority_distribution(str(a.get("name", "")))
+            for a in same_code
+        ):
+            return None
+        children = [
+            a for a in candidates if str(a.get("code", "")).startswith(code + ".")
+        ]
+        minorities = [
+            a for a in children if _is_minority_distribution(str(a.get("name", "")))
+        ]
+        minorities = [
+            a
+            for a in minorities
+            if not any(
+                str(a.get("code", "")).startswith(str(b.get("code", "")) + ".")
+                for b in minorities
+                if b is not a
+            )
+        ]
+        amount = abs(value)
+        if minorities:
+            amounts = [_finite_account_value(a) for a in minorities]
+            if any(v is None or v > 0 for v in amounts):
+                return None
+            if len({str(a.get("code", "")) for a in minorities}) != len(minorities):
+                return None
+            amount -= sum((abs(v) for v in amounts if v is not None), Decimal(0))
+            if amount < 0:
+                return None
+            for child in children:
+                label = _fold(str(child.get("name", "")))
+                if "controlador" in label and not _is_minority_distribution(label):
+                    child_value = _finite_account_value(child)
+                    if child_value is None or abs(child_value) != amount:
+                        return None
+        total += amount
+        found = True
+        selected.append(code)
     return total if found else None
 
 
@@ -376,7 +491,7 @@ def _dep_amort_accounts(dfc: Accounts) -> tuple[Mapping[str, Any], ...]:
     """Return the DFC rows accepted as D&A add-backs, without double counting."""
     selected: list[Mapping[str, Any]] = []
     selected_codes: list[str] = []
-    for account in dfc:
+    for account in sorted(dfc, key=lambda item: str(item.get("code", "")).count(".")):
         code = str(account.get("code", ""))
         if not code.startswith("6.01"):
             continue
@@ -384,8 +499,6 @@ def _dep_amort_accounts(dfc: Accounts) -> tuple[Mapping[str, Any], ...]:
             continue
         name = _fold(_without_parentheticals(str(account.get("name", ""))))
         if not any(needle in name for needle in _DEP_AMORT_NEEDLES):
-            continue
-        if _dec(account.get("quantity")) is None:
             continue
         selected.append(account)
         selected_codes.append(code)
@@ -405,61 +518,147 @@ def _dep_amort(dfc: Accounts) -> Decimal | None:
     so a parent and its breakdown are never double-counted.
     """
     selected = _dep_amort_accounts(dfc)
-    if not selected:
+    if len({str(account.get("code", "")) for account in selected}) != len(selected):
+        return None
+    values = tuple(_dec(account.get("quantity")) for account in selected)
+    if not values or any(value is None or not value.is_finite() for value in values):
         return None
     return sum(
-        (_dec(account.get("quantity")) or Decimal(0) for account in selected),
+        (value for value in values if value is not None),
         Decimal(0),
     )
 
 
-# The DMPL rows that carry a dividend/JCP declaration, inside 5.04 ("Transações
-# de Capital com os Sócios"). Matched by folded name; the 5.04 scope keeps the
-# treasury rows (5.04.04/05) and the reserve destinations (5.06.*) out, and the
-# negative-sign filter keeps "dividendos prescritos" (a *return* to equity,
-# positive) from netting the declaration down.
-_DECLARED_PREFIX = "5.04"
-_DECLARED_NEEDLES = ("dividendo", "juros sobre capital", "capital proprio")
+@dataclass(frozen=True, slots=True)
+class _DepAmortResolution:
+    value: Decimal | None
+    statement: str
+    found: tuple[SourceAccountRef, ...]
+    expected: tuple[str, ...]
+    formula: str | None = None
 
 
-def _dividends_declared(dmpl: Accounts) -> Decimal | None:
-    """Dividends + JCP declared against equity in the period (DMPL 5.04 rows).
+def _resolve_dep_amort(
+    by_module: Mapping[str, Any], reference_date: date
+) -> _DepAmortResolution:
+    """Resolve the period's D&A from operating add-backs or aligned DVA facts."""
+    dfc, scale = _accounts(by_module, "DFC"), _scale(by_module, "DFC")
+    selected = _dep_amort_accounts(dfc)
+    resolution = _DepAmortResolution(
+        value=_mul(_dep_amort(dfc), scale),
+        statement="DFC",
+        found=tuple(
+            SourceAccountRef(
+                code=str(account.get("code", "")),
+                name=str(account.get("name", "")),
+                value=_mul(_dec(account.get("quantity")), scale),
+                column=_account_column(account),
+            )
+            for account in selected
+        ),
+        expected=("scope=6.01", "label~depreciacao/amortizacao/exaustao"),
+    )
+    if resolution.value is not None:
+        return resolution
 
-    The DMPL is a matrix — each account repeats once per equity column — and the
-    column *names* cannot be trusted: BBDC4's filing shifts them (its R$166bn
-    controllers' equity sits under "Participação dos Não Controladores", and the
-    consolidated total under an unnamed column). So the row's figure is read
-    structurally: a declaration posts one-signed cells, and the largest absolute
-    cell is the row's total column. Read from the parent-only statement wherever
-    it exists (see ``_load``) — the parent's declaration is what the listed
-    shareholders receive, and the parent DMPL has no minority column to shift.
+    # D&A still uses the DFC flow clock during TTM isolation. Only a DVA from
+    # the same filing scope and span can supply that input. Missing metadata
+    # cannot establish compatibility, even for a filed zero.
+    payloads = [by_module.get(module) for module in ("DRE", "DFC", "DVA")]
+    if not all(isinstance(payload, Mapping) for payload in payloads):
+        return resolution
+    dre, dfc_payload, dva_payload = (
+        payload for payload in payloads if isinstance(payload, Mapping)
+    )
+    for key in (
+        "cvm_code",
+        "balance_type",
+        "document_type",
+        "version",
+        "currency",
+        "period_start_date",
+        "period_end_date",
+        "reference_date",
+    ):
+        value = dre.get(key)
+        if (
+            value is None
+            or value == ""
+            or any(payload.get(key) != value for payload in (dfc_payload, dva_payload))
+        ):
+            return resolution
+    if (
+        dre.get("balance_type") not in _BALANCE_RANK
+        or _iso_date(dre.get("period_end_date")) != reference_date
+        or _iso_date(dre.get("reference_date")) != reference_date
+        or _iso_date(dre.get("period_start_date")) is None
+    ):
+        return resolution
+    start = _iso_date(dre.get("period_start_date"))
+    assert start is not None
+    size = dva_payload.get("currency_size")
+    if start > reference_date or not isinstance(size, int) or size not in {1, 1000}:
+        return resolution
 
-    Returned positive. ``None`` only when the DMPL itself is absent; a filed
-    DMPL with no declaration row is an economic **zero** — the company declared
-    nothing in the period — not a missing input, and reading it as null would
-    void every TTM window containing one quiet quarter. Note the basis is
-    *declared during the period*: a dividend the AGM approves months after
-    year-end lands in the next year's DMPL, so a filer that declares mostly
-    after closing (rather than as intra-year JCP) still shows the gap the
-    platforms' "of the exercise" attribution closes by hand.
-    """
-    if not dmpl:
-        return None
-    rows: dict[tuple[str, str], Decimal] = {}
-    for account in dmpl:
-        code = str(account.get("code", ""))
-        if not code.startswith(_DECLARED_PREFIX):
-            continue
-        name = _fold(str(account.get("name", "")))
-        if not any(needle in name for needle in _DECLARED_NEEDLES):
-            continue
-        value = _dec(account.get("quantity"))
-        if value is None or value >= 0:
-            continue
-        key = (code, name)
-        if key not in rows or abs(value) > abs(rows[key]):
-            rows[key] = value
-    return sum((abs(value) for value in rows.values()), Decimal(0))
+    dva, dva_scale = _accounts(by_module, "DVA"), _scale(by_module, "DVA")
+    direct = _account_by_code(dva, "7.04.01")
+    amount = None if direct is None else _dec(direct.get("quantity"))
+    formula = "-DVA[7.04.01]"
+    codes: tuple[str, ...] = ("7.04.01",)
+    if any(
+        sum(str(account.get("code")) == code for account in dva) > 1
+        for code in ("7.04.01", "7.04", "7.04.02")
+    ):
+        return resolution
+    if direct is not None:
+        label = _fold(str(direct.get("name", "")))
+        if not all(needle in label for needle in _DEP_AMORT_NEEDLES):
+            return resolution
+    if amount is None or not amount.is_finite():
+        # Retentions contain D&A and Other. Both filed components of this
+        # identity are required; an omitted Other line is never a zero.
+        parent = _account_by_code(dva, "7.04")
+        other = _account_by_code(dva, "7.04.02")
+        if (
+            parent is None
+            or other is None
+            or "retenc" not in _fold(str(parent.get("name", "")))
+            or _fold(str(other.get("name", ""))).strip() not in {"outras", "outros"}
+        ):
+            return resolution
+        total, remainder = _dec(parent.get("quantity")), _dec(other.get("quantity"))
+        if (
+            total is None
+            or remainder is None
+            or not total.is_finite()
+            or not remainder.is_finite()
+        ):
+            return resolution
+        amount = total - remainder
+        formula = "-(DVA[7.04] - DVA[7.04.02])"
+        codes = ("7.04", "7.04.02")
+    if amount > 0:
+        return resolution
+    return _DepAmortResolution(
+        value=-amount * dva_scale,
+        statement="DVA",
+        found=_code_refs(dva, dva_scale, *codes),
+        expected=(
+            "code=7.04.01; or complete 7.04 - 7.04.02",
+            *(
+                f"{key}={dva_payload[key]}"
+                for key in (
+                    "cvm_code",
+                    "balance_type",
+                    "document_type",
+                    "version",
+                    "period_start_date",
+                    "period_end_date",
+                )
+            ),
+        ),
+        formula=formula,
+    )
 
 
 def _capex_accounts(dfc: Accounts) -> tuple[Mapping[str, Any], ...]:
@@ -506,8 +705,30 @@ def _capex(dfc: Accounts) -> Decimal | None:
 
 
 _SOURCE_CONSUMERS: dict[str, tuple[str, ...]] = {
-    "cfo": ("fcf", "price_to_fcf", "fcf_yield"),
-    "capex": ("fcf", "price_to_fcf", "fcf_yield"),
+    "inventories": ("quick_ratio",),
+    "current_assets": ("current_ratio", "quick_ratio"),
+    "current_liabilities": ("current_ratio", "cash_ratio", "quick_ratio"),
+    "cfo": (
+        "fcf",
+        "price_to_fcf",
+        "fcf_yield",
+        "price_to_cfo",
+        "ev_cfo",
+        "ev_fcf",
+        "cfo_yield",
+        "cfo_margin",
+        "fcf_margin",
+        "cash_conversion",
+        "capex_to_cfo",
+    ),
+    "capex": (
+        "fcf",
+        "price_to_fcf",
+        "fcf_yield",
+        "ev_fcf",
+        "fcf_margin",
+        "capex_to_cfo",
+    ),
     "dep_amort": (
         "ebitda_margin",
         "ebitda_cagr_5y",
@@ -520,26 +741,8 @@ _SOURCE_CONSUMERS: dict[str, tuple[str, ...]] = {
         "net_debt_to_ebitda",
         "ev_ebitda",
     ),
-    "dividends_paid": (
-        "payout_cash_paid_in_period",
-        "company_cash_yield_paid_in_period",
-    ),
-    "dividends_declared": (
-        "payout_declared_in_period",
-        "company_yield_declared_in_period",
-    ),
+    "dividends_paid": ("payout_cash_paid_in_period",),
     "current_financial_investments": ("current_financial_investments",),
-    "bank_interest_result_annualized": ("net_interest_margin",),
-    "average_earning_assets": ("net_interest_margin",),
-    "bank_efficiency_expenses": ("efficiency_ratio",),
-    "bank_efficiency_income": ("efficiency_ratio",),
-    "credit_loss_expense_annualized": ("cost_of_risk",),
-    "average_credit_portfolio": ("cost_of_risk",),
-    "insurance_underwriting_activity": ("loss_ratio", "combined_ratio"),
-    "earned_premium": ("loss_ratio", "combined_ratio"),
-    "claims_incurred": ("loss_ratio", "combined_ratio"),
-    "acquisition_costs": ("combined_ratio",),
-    "insurance_admin_expenses": ("combined_ratio",),
 }
 
 
@@ -646,18 +849,43 @@ def _root_blocker(
     return None
 
 
+def _statement_period_evidence(
+    by_module: Mapping[str, Any], statement: str
+) -> tuple[str, ...]:
+    payload = by_module.get(statement)
+    if not isinstance(payload, Mapping):
+        return ()
+    return tuple(
+        f"{key}={payload[key]}"
+        for key in (
+            "cvm_code",
+            "balance_type",
+            "currency",
+            "currency_size",
+            "period_start_date",
+            "period_end_date",
+            "reference_date",
+            "document_type",
+            "version",
+        )
+        if payload.get(key) is not None
+    )
+
+
 def _source_account_evidence(
     by_module: Mapping[str, Any],
     financials: StandardizedFinancials,
     *,
     per_share_accounts: Accounts,
+    per_share_components: Sequence[UnitComponent] = (),
+    period_share_classes: Sequence[PerShareClass] = (),
+    dep_amort_resolution: _DepAmortResolution | None = None,
 ) -> tuple[SourceAccountEvidence, ...]:
     """Inventory raw roots used by indicators and their derived blockers."""
     bpa, bpa_s = _accounts(by_module, "BPA"), _scale(by_module, "BPA")
     bpp, bpp_s = _accounts(by_module, "BPP"), _scale(by_module, "BPP")
     dre, dre_s = _accounts(by_module, "DRE"), _scale(by_module, "DRE")
     dfc, dfc_s = _accounts(by_module, "DFC"), _scale(by_module, "DFC")
-    dmpl, dmpl_s = _accounts(by_module, "DMPL"), _scale(by_module, "DMPL")
     duplicate_counts = {
         module: _duplicate_count(by_module, module) for module in _STATEMENTS
     }
@@ -772,66 +1000,6 @@ def _source_account_evidence(
             financials.unmapped_fields,
         )
     )
-    if regime is AccountingRegime.INSURANCE:
-        underwriting = financials.insurance_underwriting_evidence
-        aggregate_refs: tuple[SourceAccountRef, ...] = ()
-        activity_blocker: NullReason | None = None
-        if underwriting is not None:
-            aggregate_refs = tuple(
-                ref
-                for ref in (
-                    underwriting.revenue_aggregate,
-                    underwriting.expense_aggregate,
-                )
-                if ref is not None
-            )
-            if underwriting.status is InsuranceUnderwritingStatus.ZERO_ACTIVITY:
-                activity_blocker = NullReason.INAPPLICABLE_REGIME
-        add(
-            _source_entry(
-                "insurance_underwriting_activity",
-                "DRE",
-                ("code=3.01", "code=3.02", "both explicit zero => no activity"),
-                aggregate_refs,
-                None,
-                financials.unmapped_fields,
-                formula="3.01 == 0 and 3.02 == 0",
-                blocker=activity_blocker,
-                derived=True,
-            )
-        )
-        for field, codes, value in (
-            (
-                "earned_premium",
-                ("3.01.01.01", "3.01.02.01"),
-                financials.earned_premium,
-            ),
-            (
-                "claims_incurred",
-                ("3.02.01.01", "3.02.02.01"),
-                financials.claims_incurred,
-            ),
-            (
-                "acquisition_costs",
-                ("3.02.01.02", "3.02.02.02"),
-                financials.acquisition_costs,
-            ),
-            (
-                "insurance_admin_expenses",
-                ("3.04",),
-                financials.insurance_admin_expenses,
-            ),
-        ):
-            add(
-                _source_entry(
-                    field,
-                    "DRE",
-                    tuple(f"code={code}" for code in codes),
-                    _code_refs(dre, dre_s, *codes),
-                    value,
-                    financials.unmapped_fields,
-                )
-            )
     cpc_refs_basic = _matching_refs(
         per_share_accounts,
         Decimal(1),
@@ -846,7 +1014,16 @@ def _source_account_evidence(
         _source_entry(
             "eps_basic",
             "DRE",
-            ("code=3.99.01.*", "class label required"),
+            (
+                "code=3.99.01.*",
+                "class label or period-proved single-class per-lot disclosure",
+                "reais_per_share = reais_per_1000_shares / 1000 for per-lot lines",
+                *(f"period_class={item.value}" for item in period_share_classes),
+                *(
+                    f"component={item.quantity}*{item.per_share_class.value}"
+                    for item in per_share_components
+                ),
+            ),
             cpc_refs_basic,
             financials.eps_basic,
             financials.unmapped_fields,
@@ -857,7 +1034,16 @@ def _source_account_evidence(
         _source_entry(
             "eps_diluted",
             "DRE",
-            ("code=3.99.02.*", "class label required"),
+            (
+                "code=3.99.02.*",
+                "class label or period-proved single-class per-lot disclosure",
+                "reais_per_share = reais_per_1000_shares / 1000 for per-lot lines",
+                *(f"period_class={item.value}" for item in period_share_classes),
+                *(
+                    f"component={item.quantity}*{item.per_share_class.value}"
+                    for item in per_share_components
+                ),
+            ),
             cpc_refs_diluted,
             financials.eps_diluted,
             financials.unmapped_fields,
@@ -875,24 +1061,20 @@ def _source_account_evidence(
             parent_code="6.01",
         )
     )
-    dep_refs = tuple(
-        SourceAccountRef(
-            code=str(account.get("code", "")),
-            name=str(account.get("name", "")),
-            value=_mul(_dec(account.get("quantity")), dfc_s),
-            column=_account_column(account),
-        )
-        for account in _dep_amort_accounts(dfc)
+    dep_resolution = dep_amort_resolution or _resolve_dep_amort(
+        {key: value for key, value in by_module.items() if key != "DVA"},
+        financials.reference_date,
     )
     add(
         _source_entry(
             "dep_amort",
-            "DFC",
-            ("scope=6.01", "label~depreciacao/amortizacao/exaustao"),
-            dep_refs,
+            dep_resolution.statement,
+            dep_resolution.expected,
+            dep_resolution.found,
             financials.dep_amort,
             financials.unmapped_fields,
-            parent_code="6.01",
+            parent_code="7.04" if dep_resolution.statement == "DVA" else "6.01",
+            formula=dep_resolution.formula,
         )
     )
     capex_candidates = _matching_refs(
@@ -950,8 +1132,20 @@ def _source_account_evidence(
         _source_entry(
             "cash_equivalents",
             "BPA",
-            (f"code={cash_code}",),
-            _code_refs(bpa, bpa_s, cash_code),
+            (f"code={cash_code}",)
+            + (
+                ("or explicit current cash-and-equivalents aggregate",)
+                if regime is not AccountingRegime.BANK
+                else ()
+            ),
+            tuple(
+                SourceAccountRef(
+                    str(account.get("code", "")),
+                    str(account.get("name", "")),
+                    _mul(_finite_account_value(account), bpa_s),
+                )
+                for account in _cash_equivalent_accounts(bpa, regime)
+            ),
             financials.cash_equivalents,
             financials.unmapped_fields,
         )
@@ -967,6 +1161,20 @@ def _source_account_evidence(
         )
     )
     if regime is not AccountingRegime.BANK:
+        add(
+            _source_entry(
+                "inventories",
+                "BPA",
+                ("code=1.01.04",),
+                tuple(
+                    r
+                    for r in _code_refs(bpa, bpa_s, "1.01.04")
+                    if "estoqu" in _fold(r.name)
+                ),
+                financials.inventories,
+                financials.unmapped_fields,
+            )
+        )
         add(
             _source_entry(
                 "current_assets",
@@ -1017,74 +1225,29 @@ def _source_account_evidence(
             blocker=debt_blocker,
         )
     )
-    paid_refs = _matching_refs(
-        dfc,
-        dfc_s,
-        lambda account: (
-            "pag" in _fold(str(account.get("name", "")))
-            and "nao control" not in _fold(str(account.get("name", "")))
-            and (
-                "dividendo" in _fold(str(account.get("name", "")))
-                or "capital proprio" in _fold(str(account.get("name", "")))
-            )
-        ),
+    paid_refs = tuple(
+        SourceAccountRef(
+            str(a.get("code", "")),
+            str(a.get("name", "")),
+            _mul(_finite_account_value(a), dfc_s),
+            column=_account_column(a),
+        )
+        for a in _paid_distribution_accounts(dfc)
     )
     add(
         _source_entry(
             "dividends_paid",
             "DFC",
-            ("label~dividend/JCP", "label~pago"),
+            (
+                "financing distribution; or explicit operational payment",
+                *_statement_period_evidence(by_module, "DFC"),
+            ),
             paid_refs,
             financials.dividends_paid,
             financials.unmapped_fields,
+            formula="sum(nonoverlapping cash distributions to controllers)",
         )
     )
-
-    def is_declared_source(account: Mapping[str, Any]) -> bool:
-        value = _dec(account.get("quantity"))
-        return (
-            str(account.get("code", "")).startswith(_DECLARED_PREFIX)
-            and any(
-                needle in _fold(str(account.get("name", "")))
-                for needle in _DECLARED_NEEDLES
-            )
-            and value is not None
-            and value < 0
-        )
-
-    declared_refs = _matching_refs(dmpl, dmpl_s, is_declared_source)
-    add(
-        _source_entry(
-            "dividends_declared",
-            "DMPL",
-            ("scope=5.04", "label~dividend/JCP"),
-            declared_refs,
-            financials.dividends_declared,
-            financials.unmapped_fields,
-            parent_code="5.04",
-        )
-    )
-    if regime is AccountingRegime.BANK:
-        for field, expected in (
-            ("bank_interest_result_annualized", "regulatory interest result"),
-            ("average_earning_assets", "average earning assets"),
-            ("bank_efficiency_expenses", "full efficiency expenses"),
-            ("bank_efficiency_income", "full efficiency income"),
-            ("credit_loss_expense_annualized", "annualized credit loss"),
-            ("average_credit_portfolio", "average credit portfolio"),
-        ):
-            add(
-                _source_entry(
-                    field,
-                    "REGULATORY_OR_ISSUER",
-                    (expected, "same-period paired perimeter"),
-                    (),
-                    getattr(financials, field),
-                    financials.unmapped_fields,
-                    blocker=NullReason.MISSING_REGULATORY_DISCLOSURE,
-                    force_unmapped=True,
-                )
-            )
 
     # Keep future mapper fields visible even before a selector is added. This
     # prevents a new deliberately skipped field from losing its provenance.
@@ -1111,6 +1274,95 @@ def _sum(*values: Decimal | None) -> Decimal | None:
             total += value
             present = True
     return total if present else None
+
+
+def _finite_account_value(account: Mapping[str, Any]) -> Decimal | None:
+    value = _dec(account.get("quantity"))
+    return value if value is not None and value.is_finite() else None
+
+
+def _cash_equivalent_accounts(bpa: Accounts, regime: AccountingRegime) -> Accounts:
+    code = "1.01" if regime is AccountingRegime.BANK else "1.01.01"
+    canonical = _account_by_code(bpa, code)
+    if canonical is not None and _finite_account_value(canonical) is not None:
+        return (canonical,)
+    if regime is AccountingRegime.BANK:
+        return ()
+    candidates = [
+        account
+        for account in bpa
+        if str(account.get("code", "")).startswith("1.01.")
+        and re.fullmatch(
+            r"caixa e equivalentes(?: de caixa)?",
+            _fold(str(account.get("name", ""))).strip(),
+        )
+    ]
+    # A parent and its breakdown represent one amount; separate aggregates
+    # must agree before one can be selected deterministically.
+    return tuple(
+        account
+        for account in candidates
+        if not any(
+            str(account.get("code", "")).startswith(f"{other.get('code')}.")
+            for other in candidates
+            if other is not account and _finite_account_value(other) is not None
+        )
+    )
+
+
+def _cash_equivalents(
+    bpa: Accounts, scale: Decimal, regime: AccountingRegime
+) -> Decimal | None:
+    accounts = _cash_equivalent_accounts(bpa, regime)
+    values = {
+        value
+        for account in accounts
+        if (value := _finite_account_value(account)) is not None
+    }
+    if len(values) != 1:
+        return None
+    value = next(iter(values))
+    assert value is not None
+    return value * scale
+
+
+def _is_tariff_or_tax_liability(name: str) -> bool:
+    folded = _fold(name)
+    return bool(
+        re.match(r"^passivos? financeiros? (?:setori(?:al|ais)|do setor)\b", folded)
+    ) or ("contribuicao" in folded and "seguridade social" in folded)
+
+
+def _financial_bucket_components(bpp: Accounts, parent: Mapping[str, Any]) -> Accounts:
+    code = str(parent.get("code", ""))
+    value = _finite_account_value(parent)
+    children = [
+        account
+        for account in bpp
+        if str(account.get("code", "")).startswith(f"{code}.")
+        and str(account.get("code", "")).count(".") == code.count(".") + 1
+    ]
+    if (
+        value is None
+        or value < 0
+        or not children
+        or len({str(child.get("code", "")) for child in children}) != len(children)
+    ):
+        return ()
+    values = [_finite_account_value(child) for child in children]
+    if any(amount is None or amount < 0 for amount in values):
+        return ()
+    if any(
+        not (
+            _is_explicit_debt_line(str(child.get("name", "")))
+            or _is_non_debt_liability(str(child.get("name", "")))
+        )
+        for child in children
+    ):
+        return ()
+    if sum((amount for amount in values if amount is not None), Decimal(0)) != value:
+        return ()
+    return tuple(children)
 
 
 def _is_comprehensive_debt_name(name: str) -> bool:
@@ -1150,6 +1402,8 @@ def _inside(code: str, parent: str) -> bool:
 def _debt_instrument(name: str) -> DebtInstrument:
     """Classify a liability label without treating its CVM code as universal."""
     folded = _fold(name)
+    if _is_tariff_or_tax_liability(name):
+        return DebtInstrument.OTHER
     if "ressegur" in folded:
         return DebtInstrument.REINSURANCE
     if "contrato de seguro" in folded or "contratos de seguro" in folded:
@@ -1207,6 +1461,8 @@ def _debt_instrument(name: str) -> DebtInstrument:
 def _is_ambiguous_financial_liability(name: str) -> bool:
     """A financial-liability bucket whose economic components are not named."""
     folded = _fold(name)
+    if _is_tariff_or_tax_liability(name):
+        return False
     if "passiv" not in folded or "financeir" not in folded:
         return False
     # These labels name non-debt instruments rather than an undecomposed bucket.
@@ -1216,6 +1472,8 @@ def _is_ambiguous_financial_liability(name: str) -> bool:
 def _is_explicit_debt_line(name: str) -> bool:
     """A separately filed interest-bearing liability outside the aggregates."""
     folded = _fold(name)
+    if _is_tariff_or_tax_liability(name):
+        return False
     if "provis" in folded or "cancelamento" in folded:
         return False
     return _debt_instrument(name) in frozenset(
@@ -1242,6 +1500,8 @@ def _is_explicit_debt_line(name: str) -> bool:
 def _is_non_debt_liability(name: str) -> bool:
     """Whether a relevant liability is explicitly outside financing debt."""
     folded = _fold(name)
+    if _is_tariff_or_tax_liability(name):
+        return True
     if _debt_instrument(name) in frozenset(
         {
             DebtInstrument.INSURANCE_CONTRACT,
@@ -1258,7 +1518,7 @@ def _is_non_debt_liability(name: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class _DebtAssessment:
-    """Internal result of the unchanged debt rule plus its BPP evidence."""
+    """Internal debt-perimeter result and its BPP evidence."""
 
     total_debt: Decimal | None
     null_reason: NullReason | None
@@ -1280,7 +1540,7 @@ def _debt_line(
     return DebtLineEvidence(
         code=str(account.get("code", "")),
         name=name,
-        value=_mul(_dec(account.get("quantity")), scale),
+        value=_mul(_finite_account_value(account), scale),
         role=role,
         reason=reason,
         instrument=_debt_instrument(name) if instrument is None else instrument,
@@ -1367,7 +1627,9 @@ def _total_debt(bpp: Accounts, scale: Decimal) -> _DebtAssessment:
     liabilities outside those aggregates — most often CPC 06 lease liabilities
     placed under "Outras Obrigações" — are added once at their shallowest named
     level. A non-zero generic "Passivos financeiros" bucket makes the perimeter
-    unknowable from the structured statement and therefore yields a named null.
+    unknowable unless its complete, classified components reconcile exactly
+    with the filed parent. Tariff deferrals and tax contributions are excluded
+    from borrowed financing while remaining explicit in the source evidence.
 
     Insurance-contract/reserve, reinsurance, pension and capitalization
     liabilities do not match these debt labels: they arise from the products the
@@ -1425,8 +1687,8 @@ def _total_debt(bpp: Accounts, scale: Decimal) -> _DebtAssessment:
     assert current is not None
     assert non_current is not None
     aggregate_values = (
-        _dec(current.get("quantity")),
-        _dec(non_current.get("quantity")),
+        _finite_account_value(current),
+        _finite_account_value(non_current),
     )
     missing_values = sum(value is None for value in aggregate_values)
     if missing_values:
@@ -1445,7 +1707,20 @@ def _total_debt(bpp: Accounts, scale: Decimal) -> _DebtAssessment:
             secondary_blockers=tuple(secondary),
         )
 
-    excluded = _blocked_bpp_lines(bpp, aggregate_codes, scale, aggregate_missing=False)
+    resolved_buckets = {
+        str(account.get("code", ""))
+        for account in bpp
+        if _is_ambiguous_financial_liability(str(account.get("name", "")))
+        and _financial_bucket_components(bpp, account)
+    }
+    excluded = [
+        replace(line, reason=DebtBlocker.CHILD_DETAIL_DOUBLE_COUNT)
+        if line.code in resolved_buckets
+        else line
+        for line in _blocked_bpp_lines(
+            bpp, aggregate_codes, scale, aggregate_missing=False
+        )
+    ]
     for account in bpp:
         code = str(account.get("code", ""))
         if not code.startswith(("2.01.", "2.02.")):
@@ -1454,7 +1729,9 @@ def _total_debt(bpp: Accounts, scale: Decimal) -> _DebtAssessment:
             continue
         if not _is_ambiguous_financial_liability(str(account.get("name", ""))):
             continue
-        value = _dec(account.get("quantity"))
+        if code in resolved_buckets:
+            continue
+        value = _finite_account_value(account)
         if value is None or value != 0:
             secondary.append(DebtBlocker.AMBIGUOUS_FINANCIAL_LIABILITY)
 
@@ -1470,7 +1747,7 @@ def _total_debt(bpp: Accounts, scale: Decimal) -> _DebtAssessment:
             continue
         if not _is_explicit_debt_line(str(account.get("name", ""))):
             continue
-        value = _dec(account.get("quantity"))
+        value = _finite_account_value(account)
         if value is None:
             excluded.append(
                 _debt_line(
@@ -1684,6 +1961,16 @@ def _duplicate_count(by_module: Mapping[str, Any], module: str) -> int:
     return _deduplicate_accounts(module, payload, accounts)[1]
 
 
+def _inventories(bpa: Accounts) -> Decimal | None:
+    """Accept the inventory root only when the filed label identifies stocks."""
+    if not any(
+        a.get("code") == "1.01.04" and "estoqu" in _fold(str(a.get("name", "")))
+        for a in bpa
+    ):
+        return None
+    return _by_code(bpa, "1.01.04")
+
+
 def _accounts(by_module: Mapping[str, Any], module: str) -> Accounts:
     payload = by_module.get(module)
     if not isinstance(payload, Mapping):
@@ -1770,7 +2057,7 @@ def _filed_per_share(
     if not components:
         return None, missing_rights_reason
 
-    values, reason = _filed_per_share_values(dre, prefix)
+    values, reason = _filed_per_share_values(dre, prefix, period_classes=period_classes)
     if values is None:
         if missing_rights_reason is NullReason.UNRESOLVED_SHARE_CLASS:
             return None, missing_rights_reason
@@ -1831,7 +2118,7 @@ def _generic_preferred_value(
 
 
 def _filed_per_share_values(
-    dre: Accounts, prefix: str
+    dre: Accounts, prefix: str, *, period_classes: Sequence[PerShareClass] = ()
 ) -> tuple[dict[PerShareClass, Decimal] | None, NullReason | None]:
     """Read one uncomposed CPC 41 result by its class labels.
 
@@ -1846,10 +2133,21 @@ def _filed_per_share_values(
         code = str(account.get("code", ""))
         if not code.startswith(f"{prefix}.") or code.count(".") != expected_level:
             continue
-        per_share_class = _PER_SHARE_LABELS.get(_fold(str(account.get("name", ""))))
+        label = _fold(str(account.get("name", "")))
+        per_share_class = _PER_SHARE_LABELS.get(label)
+        divisor = Decimal(1)
+        # A per-lot disclosure identifies no class by itself. The period FCA
+        # must prove exactly one class before its reais-per-1,000-shares amount
+        # can be normalized into the same per-share result.
+        if label == "lucro por lote de mil acoes" and len(set(period_classes)) == 1:
+            per_share_class = period_classes[0]
+            divisor = Decimal(1000)
+        if per_share_class is None:
+            continue
         value = _dec(account.get("quantity"))
-        if per_share_class is not None and value is not None:
-            values.setdefault(per_share_class, set()).add(value)
+        if value is None or not value.is_finite():
+            return None, NullReason.MISSING_CPC41_DISCLOSURE
+        values.setdefault(per_share_class, set()).add(value / divisor)
 
     if not values:
         return None, NullReason.MISSING_CPC41_DISCLOSURE
@@ -1860,6 +2158,20 @@ def _filed_per_share_values(
             return None, NullReason.MISSING_ECONOMIC_RIGHTS
         result[per_share_class] = next(iter(candidates))
     return result, None
+
+
+def _complete_per_share_labels(
+    dre: Accounts, prefix: str, period_classes: Sequence[PerShareClass]
+) -> bool:
+    return all(
+        _fold(str(account.get("name", ""))) in _PER_SHARE_LABELS
+        or (
+            _fold(str(account.get("name", ""))) == "lucro por lote de mil acoes"
+            and len(set(period_classes)) == 1
+        )
+        for account in dre
+        if str(account.get("code", "")).startswith(f"{prefix}.")
+    )
 
 
 def _reconciled_cpc41(
@@ -1878,35 +2190,50 @@ def _reconciled_cpc41(
     a weighted average. A unit still carries the sum of its declared class
     quantities.
 
-    Diluted EPS is eligible only when its complete class disclosure is identical
-    to basic EPS. Otherwise potential-share terms are present but unavailable in
-    the structured mirror, so a diluted TTM result must remain null.
+    Share-day reconstruction of diluted EPS requires its complete class
+    disclosure to equal basic EPS because potential-share numerator adjustments
+    are unavailable in the structured mirror. A filed annual result for the
+    identical TTM span is selected directly by the TTM builder.
     """
     if not components:
         return None
 
     classes = tuple(dict.fromkeys(company_classes))
-    basic_values, _basic_reason = _filed_per_share_values(dre, "3.99.01")
+    basic_values, _basic_reason = _filed_per_share_values(
+        dre, "3.99.01", period_classes=period_classes
+    )
     multiplier = sum(
         (Decimal(component.quantity) for component in components), Decimal(0)
     )
     if multiplier <= 0:
         return None
-    diluted_values, _diluted_reason = _filed_per_share_values(dre, "3.99.02")
+    diluted_values, _diluted_reason = _filed_per_share_values(
+        dre, "3.99.02", period_classes=period_classes
+    )
 
-    if classes and basic_values is not None and set(basic_values) == set(classes):
-        basic_bases = {basic_values[per_share_class] for per_share_class in classes}
-        if len(basic_bases) == 1:
+    # Resolve equivalent labels across the complete issuer class set, using
+    # the same period FCA proof as the security result. A generic PN can then
+    # represent PNA/PNB inside a unit without demanding identical raw labels.
+    # Every filed recognized class must still agree; no unequal class is dropped.
+    complete_labels = _complete_per_share_labels(dre, "3.99.01", period_classes)
+    if classes and basic_values is not None and complete_labels:
+        basic_bases = {
+            _per_share_value(basic_values, item, period_classes) for item in classes
+        }
+        basic_bases.update(basic_values.values())
+        if len(basic_bases) == 1 and None not in basic_bases:
             basic_base = next(iter(basic_bases))
             diluted_base: Decimal | None = None
-            if diluted_values is not None and set(diluted_values) == set(classes):
+            if diluted_values is not None and _complete_per_share_labels(
+                dre, "3.99.02", period_classes
+            ):
                 diluted_bases = {
-                    diluted_values[per_share_class] for per_share_class in classes
+                    _per_share_value(diluted_values, item, period_classes)
+                    for item in classes
                 }
-                if len(diluted_bases) == 1:
-                    candidate = next(iter(diluted_bases))
-                    if candidate == basic_base:
-                        diluted_base = candidate
+                diluted_bases.update(diluted_values.values())
+                if diluted_bases == {basic_base}:
+                    diluted_base = basic_base
             return Cpc41Disclosure(
                 basic_base_eps=basic_base,
                 diluted_base_eps=diluted_base,
@@ -1961,7 +2288,6 @@ def standardize(
     bpp, bpp_s = _accounts(by_module, "BPP"), _scale(by_module, "BPP")
     dre, dre_s = _accounts(by_module, "DRE"), _scale(by_module, "DRE")
     dfc, dfc_s = _accounts(by_module, "DFC"), _scale(by_module, "DFC")
-    dmpl, dmpl_s = _accounts(by_module, "DMPL"), _scale(by_module, "DMPL")
 
     filed_regime = _filed_regime(dre)
     cpc41_accounts = dre if per_share_accounts is None else per_share_accounts
@@ -2008,26 +2334,35 @@ def standardize(
         revenue=_mul(_by_code(dre, "3.01"), dre_s),
         gross_profit=_mul(_by_code(dre, "3.03"), dre_s),
         dividends_paid=_mul(_dividends_paid(dfc), dfc_s),
-        dividends_declared=_mul(_dividends_declared(dmpl), dmpl_s),
-        dmpl_period_start=_period_start(by_module, "DMPL"),
         cfo=_mul(_by_code(dfc, "6.01"), dfc_s),  # net operating cash flow
         capex=_mul(_capex(dfc), dfc_s),
         filed_regime=filed_regime,
     )
 
     regime = filed_regime or expected_regime(sector)
+    dep_resolution = (
+        _resolve_dep_amort(by_module, reference_date)
+        if regime is AccountingRegime.CORPORATE
+        else None
+    )
     if regime is AccountingRegime.BANK:
         result = _as_bank(base, bpa, bpa_s, dre, dre_s)
     elif regime is AccountingRegime.INSURANCE:
         result = _as_insurer(base, bpa, bpa_s, bpp, bpp_s, dre, dre_s)
     else:
-        result = _as_corporate(base, bpa, bpa_s, bpp, bpp_s, dre, dre_s, dfc, dfc_s)
+        assert dep_resolution is not None
+        result = _as_corporate(
+            base, bpa, bpa_s, bpp, bpp_s, dre, dre_s, dep_resolution.value
+        )
     return replace(
         result,
         source_account_evidence=_source_account_evidence(
             by_module,
             result,
             per_share_accounts=cpc41_accounts,
+            per_share_components=per_share_components,
+            period_share_classes=period_share_classes,
+            dep_amort_resolution=dep_resolution,
         ),
     )
 
@@ -2053,9 +2388,9 @@ def _as_bank(
     3.02.05 for BBAS3 and 3.02.04 for BBDC4 (#27). The provision sits *inside* 3.02
     and is deducted before the 3.03 result, which is why ``gross_profit`` for a
     bank is net of it. These CVM lines remain faithful statement facts, but the
-    calculator does not combine them into approximate bank ratios. Average
-    earning assets, the full efficiency perimeter and average credit exposure
-    require an explicit public regulatory/issuer disclosure (ADR 0058).
+    bank ratio resolver separately requires complete same-concept flows and
+    compatible dated stock pairs. Partial components and closing-only balances
+    do not establish those inputs.
 
     Índice de Basileia (capital adequacy) is deliberately **not** built here (issue
     #102, ANL-33) — its inputs are regulatory, not accounting. The numerator is the
@@ -2081,13 +2416,12 @@ def _as_bank(
         ebit=None,  # 3.05 is pre-tax profit, never EBIT (ADR 0058)
         # A bank files the CPC 03-labelled total directly at 1.01 and has no
         # current/non-current split from which to isolate broader investments.
-        cash_equivalents=_mul(_by_code(bpa, "1.01"), bpa_s),
+        cash_equivalents=_cash_equivalents(bpa, bpa_s, AccountingRegime.BANK),
         loan_loss_provision=_mul(_child_by_name(dre, "3.02", "provisao"), dre_s),
         fee_income=_mul(_child_by_name(dre, "3.04", "prestacao de servicos"), dre_s),
         personnel_expense=_mul(_child_by_name(dre, "3.04", "pessoal"), dre_s),
         admin_expense=_mul(_child_by_name(dre, "3.04", "administrativas"), dre_s),
         loan_book=_loan_book(bpa, bpa_s),
-        bank_ratio_null_reason=NullReason.MISSING_REGULATORY_DISCLOSURE,
         unmapped_fields=_BANK_UNMAPPED_FIELDS,
         debt_evidence=evidence,
     )
@@ -2128,60 +2462,6 @@ def _loan_book(bpa: Accounts, scale: Decimal) -> Decimal | None:
     return None
 
 
-def _insurance_underwriting_evidence(
-    dre: Accounts, scale: Decimal
-) -> InsuranceUnderwritingEvidence:
-    """Prove insurance activity from the filing's complete DRE aggregates.
-
-    The legacy component leaves are required to calculate the ratios, but their
-    absence alone cannot distinguish a non-underwriting holding from an IFRS 17
-    insurer whose filing only exposes broad aggregates. The top-level 3.01 and
-    3.02 rows are the explicit consolidated perimeter: two parsed zeros prove
-    zero underwriting activity; any other complete pair proves that activity
-    exists; an absent or unreadable side leaves the status unknown.
-    """
-    revenue_account = _account_by_code(dre, "3.01")
-    expense_account = _account_by_code(dre, "3.02")
-    revenue_value = (
-        None
-        if revenue_account is None
-        else _mul(_dec(revenue_account.get("quantity")), scale)
-    )
-    expense_value = (
-        None
-        if expense_account is None
-        else _mul(_dec(expense_account.get("quantity")), scale)
-    )
-    if revenue_value is None or expense_value is None:
-        status = InsuranceUnderwritingStatus.UNKNOWN
-    elif revenue_value == 0 and expense_value == 0:
-        status = InsuranceUnderwritingStatus.ZERO_ACTIVITY
-    else:
-        status = InsuranceUnderwritingStatus.ACTIVE
-
-    return InsuranceUnderwritingEvidence(
-        status=status,
-        revenue_aggregate=(
-            None
-            if revenue_account is None
-            else SourceAccountRef(
-                code="3.01",
-                name=str(revenue_account.get("name", "")),
-                value=revenue_value,
-            )
-        ),
-        expense_aggregate=(
-            None
-            if expense_account is None
-            else SourceAccountRef(
-                code="3.02",
-                name=str(expense_account.get("name", "")),
-                value=expense_value,
-            )
-        ),
-    )
-
-
 def _as_insurer(
     base: StandardizedFinancials,
     bpa: Accounts,
@@ -2202,39 +2482,17 @@ def _as_insurer(
     assessment = _total_debt(bpp, bpp_s)
     total_debt = assessment.total_debt
     debt_reason = assessment.null_reason
-    underwriting_evidence = _insurance_underwriting_evidence(dre, dre_s)
-    # Through 2022 the structured insurer DRE separates earned premiums, claims
-    # and acquisition costs under the insurance and reinsurance branches. IFRS 17
-    # replaced those leaves with broader service/reinsurance aggregates in 2023.
-    # Those aggregates do not preserve the components required by the loss and
-    # combined ratios, so absence of the legacy leaves stays a named null (ADR 0061).
-    earned_premium = _sum(
-        _by_code(dre, "3.01.01.01"),
-        _by_code(dre, "3.01.02.01"),
-    )
-    claims_incurred = _sum(
-        _by_code(dre, "3.02.01.01"),
-        _by_code(dre, "3.02.02.01"),
-    )
-    acquisition_costs = _sum(
-        _by_code(dre, "3.02.01.02"),
-        _by_code(dre, "3.02.02.02"),
-    )
     return replace(
         base,
         ebit=_mul(_by_code(dre, "3.07"), dre_s),  # before financial result/taxes
-        cash_equivalents=_mul(_by_code(bpa, "1.01.01"), bpa_s),
+        cash_equivalents=_cash_equivalents(bpa, bpa_s, AccountingRegime.CORPORATE),
         current_financial_investments=_mul(_by_code(bpa, "1.01.02"), bpa_s),
         current_assets=_mul(_by_code(bpa, "1.01"), bpa_s),
+        inventories=_mul(_inventories(bpa), bpa_s),
         current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),
         total_debt=total_debt,
         debt_coverage_null_reason=debt_reason,
         debt_evidence=_debt_evidence(base, AccountingRegime.INSURANCE, assessment),
-        earned_premium=_mul(earned_premium, dre_s),
-        claims_incurred=_mul(claims_incurred, dre_s),
-        acquisition_costs=_mul(acquisition_costs, dre_s),
-        insurance_admin_expenses=_mul(_by_code(dre, "3.04"), dre_s),
-        insurance_underwriting_evidence=underwriting_evidence,
         unmapped_fields=_FINANCIAL_UNMAPPED_FIELDS,
     )
 
@@ -2247,12 +2505,10 @@ def _as_corporate(
     bpp_s: Decimal,
     dre: Accounts,
     dre_s: Decimal,
-    dfc: Accounts,
-    dfc_s: Decimal,
+    dep_amort: Decimal | None,
 ) -> StandardizedFinancials:
     """The standard chart of accounts — and what CXSE3 files, despite its sector."""
     ebit = _mul(_by_code(dre, "3.05"), dre_s)  # before financial result/taxes
-    dep_amort = _mul(_dep_amort(dfc), dfc_s)  # cash-flow add-backs, summed
     assessment = _total_debt(bpp, bpp_s)
     total_debt = assessment.total_debt
     debt_reason = assessment.null_reason
@@ -2267,9 +2523,10 @@ def _as_corporate(
         # CPC 03 eligibility is the line the issuer itself classifies as cash and
         # cash equivalents. The broader 1.01.02 investments remain visible but do
         # not silently reduce net debt (ADR 0057).
-        cash_equivalents=_mul(_by_code(bpa, "1.01.01"), bpa_s),
+        cash_equivalents=_cash_equivalents(bpa, bpa_s, AccountingRegime.CORPORATE),
         current_financial_investments=_mul(_by_code(bpa, "1.01.02"), bpa_s),
         current_assets=_mul(_by_code(bpa, "1.01"), bpa_s),
+        inventories=_mul(_inventories(bpa), bpa_s),
         current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),
         total_debt=total_debt,
         debt_coverage_null_reason=debt_reason,
@@ -2416,7 +2673,7 @@ class MongoFundamentalsReader:
             key = (ref, module)
             rank = (
                 _dre_rank(payload, fetched)
-                if module == "DRE"
+                if module in {"DRE", "DVA"}
                 else _rank(payload, fetched)
             )
             if key not in best or rank > best[key]:
@@ -2437,6 +2694,8 @@ class MongoFundamentalsReader:
         fallback_cd_cvm = self._registrant(ticker)
         loaded: list[tuple[str | None, StandardizedFinancials]] = []
         for ref, modules in sorted(by_period.items()):
+            if modules.keys() == {"DVA"}:
+                continue
             payloads = [
                 payload for payload in modules.values() if isinstance(payload, Mapping)
             ]
@@ -2483,6 +2742,17 @@ class MongoFundamentalsReader:
                 per_share_classes=company_classes,
                 period_share_classes=self._period_share_classes(
                     cnpj or "", date.fromisoformat(ref).year
+                ),
+            )
+            free_float, free_float_source = filed_free_float(
+                docs, financials.reference_date
+            )
+            financials = replace(
+                financials,
+                free_float=free_float,
+                source_account_evidence=(
+                    *financials.source_account_evidence,
+                    free_float_source,
                 ),
             )
             evidence = financials.debt_evidence

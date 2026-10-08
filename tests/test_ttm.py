@@ -13,8 +13,6 @@ from smaug.analysis.domain.financials import (
     DebtIdentityStatus,
     DebtLineEvidence,
     DebtLineRole,
-    InsuranceUnderwritingEvidence,
-    InsuranceUnderwritingStatus,
     RegimeSource,
     SourceAccountEvidence,
     SourceAccountRef,
@@ -222,45 +220,6 @@ def test_ttm_does_not_infer_a_weighted_denominator_from_a_missing_period() -> No
     assert ttm.eps_basic_null_reason is NullReason.MISSING_CPC41_DISCLOSURE
 
 
-def test_ttm_isolates_the_declared_dividends_on_the_dmpl_span() -> None:
-    # #104: the DMPL is year-to-date like the DFC, on its own span. Four YTD
-    # figures (100, 250, 400 within one year, then Q1 of the next at 80) must
-    # isolate to 100+150+150... — here two full years make it simple: the last
-    # four isolated quarters are 150 (Q2), 150 (Q3), 200 (Q4, from the annual),
-    # and 80 (the new year's Q1) = 580.
-    year1 = [
-        replace(
-            _q(
-                date(2025, m, d),
-                revenue=Decimal(1000),
-                period_start=date(2025, m - 2, 1),
-            ),
-            dividends_declared=ytd,
-            dmpl_period_start=date(2025, 1, 1),
-        )
-        for (m, d), ytd in zip(
-            [(3, 31), (6, 30), (9, 30)],
-            [Decimal(100), Decimal(250), Decimal(400)],
-            strict=True,
-        )
-    ]
-    annual = replace(
-        _q(date(2025, 12, 31), revenue=Decimal(4000), period_start=date(2025, 1, 1)),
-        dividends_declared=Decimal(600),  # the year's total → Q4 = 600 − 400
-        dmpl_period_start=date(2025, 1, 1),
-    )
-    q1_next = replace(
-        _q(date(2026, 3, 31), revenue=Decimal(1000), period_start=date(2026, 1, 1)),
-        dividends_declared=Decimal(80),
-        dmpl_period_start=date(2026, 1, 1),
-    )
-
-    ttm = build_ttm(year1 + [q1_next], annual)
-
-    assert ttm is not None
-    assert ttm.dividends_declared == Decimal(580)  # 150 + 150 + 200 + 80
-
-
 def test_ttm_sums_isolated_flows_and_takes_latest_stocks() -> None:
     quarters = [_q(e, revenue=Decimal(1000), net_income=Decimal(100)) for e in _ENDS]
     quarters[-1] = _q(
@@ -325,234 +284,6 @@ def test_ttm_sums_the_bank_dre_lines_and_takes_the_loan_book_as_a_stock() -> Non
     assert ttm.personnel_expense == Decimal(-1000)
     assert ttm.admin_expense == Decimal(-600)
     assert ttm.loan_book == Decimal(56_000)  # stock: latest quarter, not summed
-
-
-def test_ttm_sums_the_insurer_dre_lines() -> None:
-    # Same hole as the bank's (#140): #98 would have hit it the moment it landed.
-    quarters = [
-        replace(
-            _q(e),
-            earned_premium=Decimal(900),
-            claims_incurred=Decimal(-400),
-            acquisition_costs=Decimal(-80),
-            insurance_admin_expenses=Decimal(-50),
-        )
-        for e in _ENDS
-    ]
-
-    ttm = build_ttm(quarters, None)
-
-    assert ttm is not None
-    assert ttm.earned_premium == Decimal(3600)
-    assert ttm.claims_incurred == Decimal(-1600)  # negative as filed
-    assert ttm.acquisition_costs == Decimal(-320)
-    assert ttm.insurance_admin_expenses == Decimal(-200)
-
-
-def test_ttm_requires_zero_activity_proof_for_the_whole_insurance_window() -> None:
-    evidence = InsuranceUnderwritingEvidence(
-        status=InsuranceUnderwritingStatus.ZERO_ACTIVITY,
-        revenue_aggregate=SourceAccountRef("3.01", "Insurance revenue", Decimal(0)),
-        expense_aggregate=SourceAccountRef("3.02", "Insurance expenses", Decimal(0)),
-    )
-    source = SourceAccountEvidence(
-        field="insurance_underwriting_activity",
-        statement="DRE",
-        status=SourceAccountStatus.DERIVED,
-        expected=("code=3.01", "code=3.02"),
-        found=(
-            SourceAccountRef("3.01", "Insurance revenue", Decimal(0)),
-            SourceAccountRef("3.02", "Insurance expenses", Decimal(0)),
-        ),
-        formula="3.01 == 0 and 3.02 == 0",
-        blocker=NullReason.INAPPLICABLE_REGIME,
-    )
-    quarters = [
-        replace(
-            _q(e, revenue=Decimal(100)),
-            sector=Sector.INSURER,
-            filed_regime=AccountingRegime.INSURANCE,
-            insurance_underwriting_evidence=evidence,
-            source_account_evidence=(source,),
-        )
-        for e in _ENDS
-    ]
-
-    ttm = build_ttm(quarters, None)
-
-    assert ttm is not None
-    assert ttm.insurance_underwriting_evidence is not None
-    assert (
-        ttm.insurance_underwriting_evidence.status
-        is InsuranceUnderwritingStatus.ZERO_ACTIVITY
-    )
-    assert ttm.source_account_evidence == (source,)
-
-
-def test_ttm_keeps_active_underwriting_provenance_over_a_newer_zero_period() -> None:
-    def underwriting(
-        label: str, status: InsuranceUnderwritingStatus
-    ) -> InsuranceUnderwritingEvidence:
-        value = (
-            Decimal(100) if status is InsuranceUnderwritingStatus.ACTIVE else Decimal(0)
-        )
-        return InsuranceUnderwritingEvidence(
-            status=status,
-            revenue_aggregate=SourceAccountRef("3.01", f"{label} revenue", value),
-            expense_aggregate=SourceAccountRef("3.02", f"{label} expenses", -value),
-        )
-
-    def activity_source(
-        label: str, status: InsuranceUnderwritingStatus
-    ) -> SourceAccountEvidence:
-        value = (
-            Decimal(100) if status is InsuranceUnderwritingStatus.ACTIVE else Decimal(0)
-        )
-        return SourceAccountEvidence(
-            field="insurance_underwriting_activity",
-            statement="DRE",
-            status=SourceAccountStatus.DERIVED,
-            expected=("code=3.01", "code=3.02"),
-            found=(
-                SourceAccountRef("3.01", f"{label} revenue", value),
-                SourceAccountRef("3.02", f"{label} expenses", -value),
-            ),
-            formula="3.01 == 0 and 3.02 == 0",
-            blocker=(
-                NullReason.INAPPLICABLE_REGIME
-                if status is InsuranceUnderwritingStatus.ZERO_ACTIVITY
-                else None
-            ),
-        )
-
-    statuses = [
-        InsuranceUnderwritingStatus.ACTIVE,
-        InsuranceUnderwritingStatus.ZERO_ACTIVITY,
-        InsuranceUnderwritingStatus.ZERO_ACTIVITY,
-        InsuranceUnderwritingStatus.ZERO_ACTIVITY,
-    ]
-    quarters = [
-        replace(
-            _q(end, revenue=Decimal(100)),
-            sector=Sector.INSURER,
-            filed_regime=AccountingRegime.INSURANCE,
-            insurance_underwriting_evidence=underwriting(f"Q{index}", status),
-            source_account_evidence=(activity_source(f"Q{index}", status),),
-        )
-        for index, (end, status) in enumerate(
-            zip(_ENDS, statuses, strict=True), start=1
-        )
-    ]
-
-    ttm = build_ttm(quarters, None)
-
-    assert ttm is not None
-    assert ttm.insurance_underwriting_evidence is not None
-    assert (
-        ttm.insurance_underwriting_evidence.status is InsuranceUnderwritingStatus.ACTIVE
-    )
-    assert ttm.insurance_underwriting_evidence.revenue_aggregate == SourceAccountRef(
-        "3.01", "Q1 revenue", Decimal(100)
-    )
-    activity = {item.field: item for item in ttm.source_account_evidence}[
-        "insurance_underwriting_activity"
-    ]
-    assert activity.found == (
-        SourceAccountRef("3.01", "Q1 revenue", Decimal(100)),
-        SourceAccountRef("3.02", "Q1 expenses", Decimal(-100)),
-    )
-    assert activity.blocker is None
-
-
-def test_ttm_uses_annual_underwriting_proof_without_losing_latest_lineage() -> None:
-    def activity_source(label: str) -> SourceAccountEvidence:
-        return SourceAccountEvidence(
-            field="insurance_underwriting_activity",
-            statement="DRE",
-            status=SourceAccountStatus.DERIVED,
-            expected=("code=3.01", "code=3.02"),
-            found=(
-                SourceAccountRef("3.01", f"{label} revenue", Decimal(0)),
-                SourceAccountRef("3.02", f"{label} expenses", Decimal(0)),
-            ),
-            formula="3.01 == 0 and 3.02 == 0",
-            blocker=NullReason.INAPPLICABLE_REGIME,
-        )
-
-    def underwriting_zero(label: str) -> InsuranceUnderwritingEvidence:
-        return InsuranceUnderwritingEvidence(
-            status=InsuranceUnderwritingStatus.ZERO_ACTIVITY,
-            revenue_aggregate=SourceAccountRef("3.01", f"{label} revenue", Decimal(0)),
-            expense_aggregate=SourceAccountRef("3.02", f"{label} expenses", Decimal(0)),
-        )
-
-    jan = date(2025, 1, 1)
-    quarters = [
-        replace(
-            _q(end, revenue=Decimal(value), period_start=jan),
-            sector=Sector.INSURER,
-            filed_regime=AccountingRegime.INSURANCE,
-            insurance_underwriting_evidence=underwriting_zero(f"Q{index}"),
-            source_account_evidence=(
-                SourceAccountEvidence(
-                    field="revenue",
-                    statement="DRE",
-                    status=SourceAccountStatus.MAPPED,
-                    expected=("code=3.01",),
-                    found=(
-                        SourceAccountRef(
-                            "3.01", "Latest quarter revenue", Decimal(value)
-                        ),
-                    ),
-                ),
-                activity_source(f"Q{index}"),
-            ),
-        )
-        for index, (end, value) in enumerate(
-            zip(
-                (
-                    date(2025, 3, 31),
-                    date(2025, 6, 30),
-                    date(2025, 9, 30),
-                ),
-                (Decimal(100), Decimal(200), Decimal(300)),
-                strict=True,
-            ),
-            start=1,
-        )
-    ]
-    annual = replace(
-        _q(date(2025, 12, 31), revenue=Decimal(400), period_start=jan),
-        sector=Sector.INSURER,
-        filed_regime=AccountingRegime.INSURANCE,
-        insurance_underwriting_evidence=underwriting_zero("Annual"),
-        source_account_evidence=(
-            SourceAccountEvidence(
-                field="revenue",
-                statement="DRE",
-                status=SourceAccountStatus.MAPPED,
-                expected=("code=3.01",),
-                found=(SourceAccountRef("3.01", "Annual revenue", Decimal(400)),),
-            ),
-            activity_source("Annual"),
-        ),
-    )
-
-    ttm = build_ttm(quarters, annual)
-
-    assert ttm is not None
-    assert ttm.insurance_underwriting_evidence is not None
-    assert ttm.insurance_underwriting_evidence.revenue_aggregate == SourceAccountRef(
-        "3.01", "Annual revenue", Decimal(0)
-    )
-    evidence = {item.field: item for item in ttm.source_account_evidence}
-    assert evidence["revenue"].found[0] == SourceAccountRef(
-        "3.01", "Latest quarter revenue", Decimal(300)
-    )
-    assert evidence["insurance_underwriting_activity"].found == (
-        SourceAccountRef("3.01", "Annual revenue", Decimal(0)),
-        SourceAccountRef("3.02", "Annual expenses", Decimal(0)),
-    )
 
 
 def test_ttm_carries_every_numeric_account_on_its_declared_basis() -> None:
@@ -918,7 +649,6 @@ def test_ttm_carries_the_null_cause_provenance() -> None:
         replace(
             _q(e, revenue=Decimal(1000)),
             filed_regime=AccountingRegime.BANK,
-            bank_ratio_null_reason=NullReason.MISSING_REGULATORY_DISCLOSURE,
             debt_coverage_null_reason=NullReason.INCOMPLETE_DEBT_COVERAGE,
             unmapped_fields=frozenset({"cfo", "capex"}),
         )
@@ -929,7 +659,6 @@ def test_ttm_carries_the_null_cause_provenance() -> None:
 
     assert ttm is not None
     assert ttm.filed_regime is AccountingRegime.BANK
-    assert ttm.bank_ratio_null_reason is NullReason.MISSING_REGULATORY_DISCLOSURE
     assert ttm.debt_coverage_null_reason is NullReason.INCOMPLETE_DEBT_COVERAGE
     assert ttm.unmapped_fields == frozenset({"cfo", "capex"})
 
@@ -1132,3 +861,300 @@ def test_ttm_flow_is_null_when_a_quarter_lacks_the_line() -> None:
     assert ttm is not None
     assert ttm.revenue == Decimal(4000)  # revenue present in all four
     assert ttm.net_income is None  # a gap makes the TTM flow null, not understated
+
+
+def test_ttm_uses_filed_annual_eps_for_its_exact_span_with_unequal_class_rights() -> (
+    None
+):
+    quarters = [
+        _q(
+            date(2025, month, day),
+            period_start=date(2025, start, 1),
+            net_income=Decimal(100),
+        )
+        for month, day, start in ((3, 31, 1), (6, 30, 4), (9, 30, 7))
+    ]
+    annual = replace(
+        _q(date(2025, 12, 31), period_start=date(2025, 1, 1), net_income=Decimal(400)),
+        eps_basic=Decimal(8),
+        eps_diluted=Decimal(7),
+        source_account_evidence=(
+            SourceAccountEvidence(
+                field="eps_basic",
+                statement="DRE",
+                status=SourceAccountStatus.MAPPED,
+                found=(SourceAccountRef("3.99.01.02", "PN", Decimal(8)),),
+            ),
+        ),
+    )
+    assert annual.cpc41 is None  # no common issuer-class denominator
+    ttm = build_ttm(quarters, annual)
+    assert ttm is not None
+    assert ttm.eps_basic == Decimal(8)
+    assert ttm.eps_diluted == Decimal(7)
+    assert ttm.eps_basic_null_reason is None
+    assert ttm.eps_diluted_null_reason is None
+    assert ttm.cpc41_window_provenance is None  # quarter reconstruction not selected
+    sources = {e.field: e for e in ttm.source_account_evidence}
+    assert sources["eps_basic"].dependencies == ("eps_basic[2025-12-31]",)
+    assert "resolution=filed_same_ttm_span" in sources["eps_basic"].expected
+    assert sources["eps_basic[2025-12-31]"].found[0].value == Decimal(8)
+
+
+def test_ttm_preserves_explicit_annual_zero_eps_without_inventing_weighted_shares() -> (
+    None
+):
+    quarters = [
+        _q(
+            date(2025, month, day),
+            period_start=date(2025, start, 1),
+            net_income=Decimal(0),
+        )
+        for month, day, start in ((3, 31, 1), (6, 30, 4), (9, 30, 7))
+    ]
+    annual = replace(
+        _q(date(2025, 12, 31), period_start=date(2025, 1, 1), net_income=Decimal(0)),
+        eps_basic=Decimal(0),
+    )
+    ttm = build_ttm(quarters, annual)
+    assert ttm is not None
+    assert ttm.eps_basic == Decimal(0)
+    assert ttm.eps_basic_null_reason is None
+    assert ttm.eps_diluted is None
+
+
+def test_ttm_does_not_use_annual_eps_when_attributable_profit_differs() -> None:
+    quarters = [
+        _q(
+            date(2025, month, day),
+            period_start=date(2025, start, 1),
+            net_income=Decimal(100),
+        )
+        for month, day, start in ((3, 31, 1), (6, 30, 4), (9, 30, 7), (12, 31, 10))
+    ]
+    annual = replace(
+        _q(date(2025, 12, 31), period_start=date(2025, 1, 1), net_income=Decimal(450)),
+        eps_basic=Decimal(9),
+    )
+    ttm = build_ttm(quarters, annual)
+    assert ttm is not None
+    assert ttm.net_income == Decimal(400)
+    assert ttm.eps_basic is None
+
+
+def test_ttm_does_not_use_a_short_annual_disclosure_as_a_full_year_eps() -> None:
+    quarters = [
+        _q(
+            date(2025, month, day),
+            period_start=date(2025, start, 1),
+            net_income=Decimal(100),
+        )
+        for month, day, start in ((3, 31, 1), (6, 30, 4), (9, 30, 7))
+    ]
+    annual = replace(
+        _q(date(2025, 12, 31), period_start=date(2025, 12, 1), net_income=Decimal(400)),
+        eps_basic=Decimal(9),
+    )
+    ttm = build_ttm(quarters, annual)
+    assert ttm is not None
+    assert ttm.eps_basic is None
+
+
+def test_ttm_does_not_use_previous_year_filed_eps_for_a_shifted_window() -> None:
+    quarters = [
+        _q(
+            date(year, month, day),
+            period_start=date(year, start, 1),
+            net_income=Decimal(100),
+        )
+        for year, month, day, start in (
+            (2025, 3, 31, 1),
+            (2025, 6, 30, 4),
+            (2025, 9, 30, 7),
+            (2026, 3, 31, 1),
+        )
+    ]
+    annual = replace(
+        _q(date(2025, 12, 31), period_start=date(2025, 1, 1), net_income=Decimal(400)),
+        eps_basic=Decimal(8),
+    )
+    ttm = build_ttm(quarters, annual)
+    assert ttm is not None
+    assert ttm.reference_date == date(2026, 3, 31)
+    assert ttm.eps_basic is None
+
+
+def test_ttm_rejects_annual_eps_when_issuer_or_regime_differs() -> None:
+    quarters = [
+        replace(
+            _q(
+                date(2025, month, day),
+                period_start=date(2025, start, 1),
+                net_income=Decimal(100),
+            ),
+            cd_cvm="100",
+            filed_regime=AccountingRegime.CORPORATE,
+        )
+        for month, day, start in ((3, 31, 1), (6, 30, 4), (9, 30, 7))
+    ]
+    annual = replace(
+        _q(date(2025, 12, 31), period_start=date(2025, 1, 1), net_income=Decimal(400)),
+        eps_basic=Decimal(8),
+        cd_cvm="100",
+        filed_regime=AccountingRegime.CORPORATE,
+    )
+    for incompatible in (
+        replace(annual, cd_cvm="200"),
+        replace(annual, filed_regime=AccountingRegime.BANK),
+    ):
+        ttm = build_ttm(quarters, incompatible)
+        assert ttm is not None
+        assert ttm.eps_basic is None
+
+
+def _distribution_period(end: date, amount: Decimal | None) -> StandardizedFinancials:
+    start = date(end.year, 1, 1)
+    sources = tuple(
+        SourceAccountEvidence(
+            field=field,
+            statement=statement,
+            status=SourceAccountStatus.MAPPED,
+            expected=(
+                "cvm_code=123",
+                "balance_type=consolidated",
+                "currency=BRL",
+                "currency_size=1000",
+                f"period_start_date={start}",
+                f"period_end_date={end}",
+                f"reference_date={end}",
+                "version=2",
+            ),
+            found=(
+                SourceAccountRef(
+                    "6.03.05" if statement == "DFC" else "5.04.06", "Dividendos", amount
+                ),
+            ),
+        )
+        for field, statement in (("dividends_paid", "DFC"),)
+    )
+    return StandardizedFinancials(
+        reference_date=end,
+        sector=Sector.INDUSTRY,
+        cd_cvm="123",
+        filed_regime=AccountingRegime.CORPORATE,
+        dfc_period_start=start,
+        dividends_paid=amount,
+        source_account_evidence=sources,
+    )
+
+
+def _distribution_window() -> tuple[
+    list[StandardizedFinancials], StandardizedFinancials
+]:
+    quarters = [
+        _distribution_period(date(2025, 3, 31), None),
+        _distribution_period(date(2025, 6, 30), Decimal(40)),
+        _distribution_period(date(2025, 9, 30), None),
+        _distribution_period(date(2026, 3, 31), None),
+        _distribution_period(date(2026, 6, 30), Decimal(30)),
+    ]
+    return quarters, _distribution_period(date(2025, 12, 31), Decimal(100))
+
+
+def test_ttm_distributions_use_ytd_identity_despite_unknown_intermediate_amounts() -> (
+    None
+):
+    quarters, annual = _distribution_window()
+    result = build_ttm_as_of(quarters, [annual], date(2026, 6, 30))
+    assert result is not None
+    assert result.dividends_paid == Decimal(90)
+    for field in ("dividends_paid",):
+        root = next(s for s in result.source_account_evidence if s.field == field)
+        assert root.status is SourceAccountStatus.DERIVED
+        assert root.formula == "prior annual - prior same-period YTD + current YTD"
+        assert root.dependencies == (
+            f"{field}[2025-12-31]",
+            f"{field}[2025-06-30]",
+            f"{field}[2026-06-30]",
+        )
+        source = next(
+            s for s in result.source_account_evidence if s.field == root.dependencies[1]
+        )
+        assert source.found[0].value == Decimal(40)
+        assert "currency_size=1000" in source.expected
+
+
+def test_exact_annual_distribution_needs_no_intermediate_payment_disclosures() -> None:
+    quarters, annual = _distribution_window()
+    result = build_ttm_as_of(quarters, [annual], annual.reference_date)
+    assert result is not None
+    assert result.dividends_paid == Decimal(100)
+
+
+def test_missing_quarter_observation_still_prevents_a_ttm_window() -> None:
+    quarters, annual = _distribution_window()
+    assert (
+        build_ttm_as_of(quarters[:-2] + quarters[-1:], [annual], date(2026, 6, 30))
+        is None
+    )
+
+
+def test_mismatched_distribution_scope_currency_or_span_does_not_recover() -> None:
+    for key, value in (
+        ("balance_type", "individual"),
+        ("currency", "USD"),
+        ("period_start_date", "2025-04-01"),
+        ("period_end_date", "2025-03-31"),
+        ("reference_date", "2024-06-30"),
+        ("cvm_code", "456"),
+        ("currency_size", "10"),
+    ):
+        quarters, annual = _distribution_window()
+        previous = quarters[1]
+        sources = tuple(
+            replace(
+                s,
+                expected=tuple(
+                    f"{key}={value}" if item.startswith(key + "=") else item
+                    for item in s.expected
+                ),
+            )
+            for s in previous.source_account_evidence
+        )
+        quarters[1] = replace(previous, source_account_evidence=sources)
+        result = build_ttm_as_of(quarters, [annual], date(2026, 6, 30))
+        assert result is not None
+        assert result.dividends_paid is None
+
+
+def test_unresolved_issuer_regime_or_ytd_distribution_keeps_null() -> None:
+    for updates in (
+        {"cd_cvm": None},
+        {"cd_cvm": "456"},
+        {"filed_regime": AccountingRegime.BANK},
+        {"filed_regime": None},
+        {"dfc_period_start": date(2025, 4, 1)},
+        {"dividends_paid": None},
+        {"dividends_paid": Decimal("NaN")},
+        {"dividends_paid": Decimal(110)},
+    ):
+        quarters, annual = _distribution_window()
+        quarters[1] = replace(quarters[1], **updates)
+        result = build_ttm_as_of(quarters, [annual], date(2026, 6, 30))
+        assert result is not None
+        assert result.dividends_paid is None
+
+
+def test_unresolved_distribution_lineage_keeps_every_required_filing() -> None:
+    quarters, annual = _distribution_window()
+    quarters[1] = replace(quarters[1], dividends_paid=None)
+    result = build_ttm_as_of(quarters, [annual], date(2026, 6, 30))
+    assert result is not None
+    assert result.dividends_paid is None
+    sources = {s.field: s for s in result.source_account_evidence}
+    root = sources["dividends_paid"]
+    assert root.status is SourceAccountStatus.DERIVED
+    assert root.blocker is NullReason.SOURCE_ACCOUNT_ABSENT
+    assert "dividends_paid[2025-06-30]" in root.dependencies
+    assert "resolved_value=None" in sources["dividends_paid[2025-06-30]"].expected
+    assert "dividends_paid[2025-12-31]" in root.dependencies

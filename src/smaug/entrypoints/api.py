@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from smaug.analysis.application.price_history import ReadPriceHistoryUseCase
 from smaug.analysis.domain.entities import VIEW_TTM, TickerAnalysis
 from smaug.analysis.domain.financials import (
     AccountingRegime,
@@ -43,10 +44,13 @@ from smaug.analysis.domain.financials import (
     SourceAccountStatus,
 )
 from smaug.analysis.domain.indicators import (
-    INDICATOR_CONTRACT,
-    IndicatorTier,
     NullReason,
+    indicator_contracts,
+    is_retired_sector_input,
+    public_indicator_names,
 )
+from smaug.analysis.domain.price_history import PriceHistory
+from smaug.analysis.infrastructure.sql_price_history import SqlPriceHistoryRepository
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
 from smaug.portfolio.application.manage_portfolio import ManagePortfolioUseCase
 from smaug.portfolio.domain.entities import PortfolioTicker
@@ -59,6 +63,7 @@ from smaug.shared.sql_db import create_engine, create_session_factory
 _settings = get_settings()
 _session_factory = create_session_factory(create_engine(_settings))
 _repository = SqlAlchemyAnalysisRepository(_session_factory)
+_price_history = ReadPriceHistoryUseCase(SqlPriceHistoryRepository(_session_factory))
 _portfolio = ManagePortfolioUseCase(SqlAlchemyPortfolioRepository(_session_factory))
 
 app = FastAPI(title="smaug — análise fundamentalista", version="0.1.0")
@@ -71,20 +76,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
-
-
-class BankRegulatoryProvenanceResponse(BaseModel):
-    """Source contract behind bank-specific regulatory ratios."""
-
-    source: str | None
-    period_start: date | None
-    period_end: date | None
-    perimeter: str | None
-    averaging_method: str | None
-    basis: str | None
-    available_inputs: list[str]
-    missing_inputs: list[str]
-    incompatible_inputs: list[str]
 
 
 class TickerCodeEvidenceResponse(BaseModel):
@@ -258,10 +249,8 @@ class IndicatorsResponse(BaseModel):
     ebit_margin: Decimal | None
     ebitda_margin: Decimal | None
     asset_turnover: Decimal | None
-    eps: Decimal | None
     eps_basic: Decimal | None
     eps_diluted: Decimal | None
-    eps_basic_market: Decimal | None
     bvps: Decimal | None
     net_debt: Decimal | None
     cash_equivalents: Decimal | None
@@ -273,43 +262,46 @@ class IndicatorsResponse(BaseModel):
     liabilities_to_assets: Decimal | None
     equity_to_assets: Decimal | None
     current_ratio: Decimal | None
+    price_to_cfo: Decimal | None
+    ev_cfo: Decimal | None
+    ev_fcf: Decimal | None
+    cash_ratio: Decimal | None
+    quick_ratio: Decimal | None
+    ev_revenue: Decimal | None
+    tag_along: Decimal | None
+    free_float: Decimal | None
+    price_to_ebitda: Decimal | None
+    cfo_yield: Decimal | None
+    cfo_margin: Decimal | None
+    fcf_margin: Decimal | None
+    cash_conversion: Decimal | None
+    capex_to_cfo: Decimal | None
     revenue_growth: Decimal | None
     net_income_growth: Decimal | None
     revenue_cagr_5y: Decimal | None
     ebitda_cagr_5y: Decimal | None
     ebit_cagr_5y: Decimal | None
     net_income_cagr_5y: Decimal | None
+    earnings_yield: Decimal | None
     pe_basic: Decimal | None
     pe_diluted: Decimal | None
     pb: Decimal | None
-    company_pe: Decimal | None
-    company_pb: Decimal | None
-    pe_basic_market: Decimal | None
     psr: Decimal | None
     price_to_assets: Decimal | None
     price_to_ebit: Decimal | None
     price_to_working_capital: Decimal | None
     dividend_yield: Decimal | None
     payout_cash_paid_in_period: Decimal | None
-    payout_declared_in_period: Decimal | None
-    company_cash_yield_paid_in_period: Decimal | None
-    company_yield_declared_in_period: Decimal | None
     ev_ebitda: Decimal | None
     ev_ebit: Decimal | None
     fcf: Decimal | None
     price_to_fcf: Decimal | None
     fcf_yield: Decimal | None
-    net_interest_margin: Decimal | None
-    efficiency_ratio: Decimal | None
-    cost_of_risk: Decimal | None
-    loss_ratio: Decimal | None
-    combined_ratio: Decimal | None
     revenue: Decimal | None
     net_income: Decimal | None
     net_income_total: Decimal | None
     distributions_per_security: Decimal | None
     company_distributions_paid_in_period: Decimal | None
-    company_distributions_declared_in_period: Decimal | None
     total_assets: Decimal | None
     total_liabilities: Decimal | None
     equity: Decimal | None
@@ -321,13 +313,11 @@ class IndicatorsResponse(BaseModel):
     null_reasons: dict[str, str]
     source_account_evidence: list[SourceAccountEvidenceResponse]
     cpc41_window_provenance: Cpc41WindowProvenanceResponse | None
-    bank_regulatory_provenance: BankRegulatoryProvenanceResponse | None
 
 
 class IndicatorContractResponse(BaseModel):
     """Formula and provenance metadata for one market-facing indicator."""
 
-    tier: IndicatorTier
     basis: str
     numerator: str
     denominator: str
@@ -395,14 +385,28 @@ class DebtEvidenceResponse(BaseModel):
     secondary_blockers: list[DebtBlocker]
 
 
+class GovernanceResponse(BaseModel):
+    """IPO date, dated listing segment, and selected tag-along evidence."""
+
+    ipo_date: date | None
+    listing_segment: str | None
+    listing_observed_on: date | None
+    listing_source: str | None
+    tag_along_source: str | None
+    tag_along_reference: str | None
+    blocker: str | None
+
+
 class AnalysisResponse(BaseModel):
     """One ticker's analysis for a single view: provenance + indicator contract."""
 
     ticker: str
     view: str
     classification: ClassificationResponse
+    governance: GovernanceResponse
     reference_date: date
     computed_at: datetime
+    calculation_contract_version: str
     filed_regime: AccountingRegime | None
     regime_source: RegimeSource | None
     issuer: str | None
@@ -452,7 +456,6 @@ def _to_indicator_contract(
     period = "last_twelve_months" if analysis.view == VIEW_TTM else "closed_fiscal_year"
     return {
         key: IndicatorContractResponse(
-            tier=contract.tier,
             basis=contract.basis,
             numerator=contract.numerator,
             denominator=contract.denominator,
@@ -465,7 +468,10 @@ def _to_indicator_contract(
             share_basis=contract.share_basis,
             provenance=list(contract.provenance),
         )
-        for key, contract in INDICATOR_CONTRACT.items()
+        for key, contract in indicator_contracts(
+            analysis.calculation_contract_version
+        ).items()
+        if key in public_indicator_names()
     }
 
 
@@ -679,6 +685,11 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
         analysis.indicators, from_attributes=True
     ).model_copy(
         update={
+            "null_reasons": {
+                key: reason
+                for key, reason in analysis.indicators.null_reasons.items()
+                if key in public_indicator_names()
+            },
             "source_account_evidence": [
                 SourceAccountEvidenceResponse(
                     field=item.field,
@@ -698,44 +709,35 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
                     formula=item.formula,
                     dependencies=list(item.dependencies),
                     blocker=item.blocker,
-                    consumer_indicators=list(item.consumer_indicators),
+                    consumer_indicators=[
+                        key
+                        for key in item.consumer_indicators
+                        if key in public_indicator_names()
+                    ],
                     duplicates_discarded=item.duplicates_discarded,
                 )
                 for item in analysis.indicators.source_account_evidence
+                if not is_retired_sector_input(item.field)
+                and item.field != "dividends_declared"
+                and not item.field.startswith("dividends_declared[")
             ],
             "cpc41_window_provenance": _cpc41_window_response(
                 analysis.indicators.cpc41_window_provenance
-            ),
-            "bank_regulatory_provenance": (
-                None
-                if analysis.indicators.bank_regulatory_provenance is None
-                else BankRegulatoryProvenanceResponse(
-                    source=analysis.indicators.bank_regulatory_provenance.source,
-                    period_start=(
-                        analysis.indicators.bank_regulatory_provenance.period_start
-                    ),
-                    period_end=analysis.indicators.bank_regulatory_provenance.period_end,
-                    perimeter=analysis.indicators.bank_regulatory_provenance.perimeter,
-                    averaging_method=(
-                        analysis.indicators.bank_regulatory_provenance.averaging_method
-                    ),
-                    basis=analysis.indicators.bank_regulatory_provenance.basis,
-                    available_inputs=sorted(
-                        analysis.indicators.bank_regulatory_provenance.available_inputs
-                    ),
-                    missing_inputs=sorted(
-                        analysis.indicators.bank_regulatory_provenance.missing_inputs
-                    ),
-                    incompatible_inputs=sorted(
-                        analysis.indicators.bank_regulatory_provenance.incompatible_inputs
-                    ),
-                )
             ),
         }
     )
     return AnalysisResponse(
         ticker=analysis.ticker,
         view=analysis.view,
+        governance=GovernanceResponse(
+            ipo_date=analysis.governance.ipo_date,
+            listing_segment=analysis.governance.listing_segment,
+            listing_observed_on=analysis.governance.listing_observed_on,
+            listing_source=analysis.governance.listing_source,
+            tag_along_source=analysis.governance.tag_along_source,
+            tag_along_reference=analysis.governance.tag_along_reference,
+            blocker=analysis.governance.blocker,
+        ),
         classification=ClassificationResponse(
             setor=analysis.classification.setor,
             subsetor=analysis.classification.subsetor,
@@ -743,6 +745,7 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
         ),
         reference_date=analysis.reference_date,
         computed_at=analysis.computed_at,
+        calculation_contract_version=analysis.calculation_contract_version,
         filed_regime=analysis.filed_regime,
         regime_source=analysis.regime_source,
         issuer=analysis.issuer_name,
@@ -795,6 +798,68 @@ async def get_analysis(ticker: str) -> TickerViewsResponse:
         ttm=_to_response(ttm) if ttm is not None else None,
         history=[_to_response(a) for a in history],
     )
+
+
+class HistoricalCloseResponse(BaseModel):
+    """One daily close and the underlying B3 observation."""
+
+    session: date
+    code: str
+    as_traded: Decimal
+    adjusted: Decimal
+    factor: Decimal
+
+
+class PriceHistoryGapResponse(BaseModel):
+    year: int
+    reason: str
+
+
+class PriceHistoryResponse(BaseModel):
+    ticker: str
+    computed_at: datetime
+    start_year: int
+    end_year: int
+    contract_version: str
+    price_basis: str
+    source: str
+    points: list[HistoricalCloseResponse]
+    gaps: list[PriceHistoryGapResponse]
+
+
+def _to_price_history_response(history: PriceHistory) -> PriceHistoryResponse:
+    return PriceHistoryResponse(
+        ticker=history.ticker,
+        computed_at=history.computed_at,
+        start_year=history.start_year,
+        end_year=history.end_year,
+        contract_version=history.contract_version,
+        price_basis=history.price_basis,
+        source=history.source,
+        points=[
+            HistoricalCloseResponse(
+                session=item.session,
+                code=item.code,
+                as_traded=item.as_traded,
+                adjusted=item.adjusted,
+                factor=item.factor,
+            )
+            for item in history.points
+        ],
+        gaps=[
+            PriceHistoryGapResponse(year=item.year, reason=item.reason)
+            for item in history.gaps
+        ],
+    )
+
+
+@app.get("/prices/{ticker}/history", response_model=PriceHistoryResponse)
+async def get_price_history(ticker: str) -> PriceHistoryResponse:
+    """Read daily history prepared by the CLI, without source access or writes."""
+    history = await _price_history.execute(ticker)
+    if history is None:
+        raise HTTPException(status_code=404, detail="price_history_not_prepared")
+    return _to_price_history_response(history)
 
 
 @app.get("/portfolio", response_model=list[PortfolioTickerResponse])

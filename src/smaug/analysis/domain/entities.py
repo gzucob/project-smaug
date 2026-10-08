@@ -15,7 +15,8 @@ from smaug.analysis.domain.financials import (
     RegimeSource,
     ShareCountProvenance,
 )
-from smaug.analysis.domain.indicators import Indicators
+from smaug.analysis.domain.governance import Governance
+from smaug.analysis.domain.indicators import LEGACY_CALCULATION_CONTRACT, Indicators
 from smaug.portfolio.domain.share_classes import ShareClassMapping
 from smaug.portfolio.domain.taxonomy import Classification
 
@@ -52,6 +53,7 @@ class TickerAnalysis:
     reference_date: date  # CVM period the fundamentals came from
     computed_at: datetime
     indicators: Indicators
+    calculation_contract_version: str = LEGACY_CALCULATION_CONTRACT
     # The price the market multiples divide by: B3's last available close for the
     # view's valuation date. A closed year no longer mixes a mean price with a
     # closing share count (ADR 0057).
@@ -89,3 +91,4 @@ class TickerAnalysis:
     share_class_mappings: tuple[ShareClassMapping, ...] = ()
     class_market_values: tuple[ClassMarketValue, ...] = ()
     capital_provenance: ShareCountProvenance | None = None
+    governance: Governance = Governance()

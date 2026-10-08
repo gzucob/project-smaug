@@ -36,6 +36,9 @@ class TickerAnalysisRow(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     ticker: Mapped[str] = mapped_column(String(12), index=True)
+    calculation_contract_version: Mapped[str] = mapped_column(
+        String(48), default="legacy_unversioned", server_default="legacy_unversioned"
+    )
     view: Mapped[str] = mapped_column(String(16), index=True)  # ttm_live | closed_year
     # B3 economic taxonomy (ADR 0024). ``setor`` is always present (B3 snapshot or
     # the CVM single-level fallback); ``subsetor``/``segmento`` are NULL under the
@@ -88,12 +91,28 @@ class TickerAnalysisRow(Base):
     liabilities_to_assets: Mapped[Decimal | None] = mapped_column(Numeric)
     equity_to_assets: Mapped[Decimal | None] = mapped_column(Numeric)
     current_ratio: Mapped[Decimal | None] = mapped_column(Numeric)
+    price_to_cfo: Mapped[Decimal | None] = mapped_column(Numeric)
+    ev_cfo: Mapped[Decimal | None] = mapped_column(Numeric)
+    ev_fcf: Mapped[Decimal | None] = mapped_column(Numeric)
+    cash_ratio: Mapped[Decimal | None] = mapped_column(Numeric)
+    quick_ratio: Mapped[Decimal | None] = mapped_column(Numeric)
+    ev_revenue: Mapped[Decimal | None] = mapped_column(Numeric)
+    governance: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    tag_along: Mapped[Decimal | None] = mapped_column(Numeric)
+    free_float: Mapped[Decimal | None] = mapped_column(Numeric)
+    price_to_ebitda: Mapped[Decimal | None] = mapped_column(Numeric)
+    cfo_yield: Mapped[Decimal | None] = mapped_column(Numeric)
+    cfo_margin: Mapped[Decimal | None] = mapped_column(Numeric)
+    fcf_margin: Mapped[Decimal | None] = mapped_column(Numeric)
+    cash_conversion: Mapped[Decimal | None] = mapped_column(Numeric)
+    capex_to_cfo: Mapped[Decimal | None] = mapped_column(Numeric)
     revenue_growth: Mapped[Decimal | None] = mapped_column(Numeric)
     net_income_growth: Mapped[Decimal | None] = mapped_column(Numeric)
     revenue_cagr_5y: Mapped[Decimal | None] = mapped_column(Numeric)
     ebitda_cagr_5y: Mapped[Decimal | None] = mapped_column(Numeric)
     ebit_cagr_5y: Mapped[Decimal | None] = mapped_column(Numeric)
     net_income_cagr_5y: Mapped[Decimal | None] = mapped_column(Numeric)
+    earnings_yield: Mapped[Decimal | None] = mapped_column(Numeric)
     pe_basic: Mapped[Decimal | None] = mapped_column(Numeric)
     pe_diluted: Mapped[Decimal | None] = mapped_column(Numeric)
     pb: Mapped[Decimal | None] = mapped_column(Numeric)
@@ -114,11 +133,6 @@ class TickerAnalysisRow(Base):
     fcf: Mapped[Decimal | None] = mapped_column(Numeric)
     price_to_fcf: Mapped[Decimal | None] = mapped_column(Numeric)
     fcf_yield: Mapped[Decimal | None] = mapped_column(Numeric)
-    net_interest_margin: Mapped[Decimal | None] = mapped_column(Numeric)
-    efficiency_ratio: Mapped[Decimal | None] = mapped_column(Numeric)
-    cost_of_risk: Mapped[Decimal | None] = mapped_column(Numeric)
-    loss_ratio: Mapped[Decimal | None] = mapped_column(Numeric)
-    combined_ratio: Mapped[Decimal | None] = mapped_column(Numeric)
     revenue: Mapped[Decimal | None] = mapped_column(Numeric)
     net_income: Mapped[Decimal | None] = mapped_column(Numeric)
     net_income_total: Mapped[Decimal | None] = mapped_column(Numeric)
@@ -147,7 +161,6 @@ class TickerAnalysisRow(Base):
     # remain NULL until a subsequent ``smaug analyze`` run rebuilds the window.
     cpc41_window_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     # Contract metadata for any published bank-regulatory ratio (#261).
-    bank_regulatory_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     # FCA security-class identity and class-by-class cap ledger (#259). Legacy
     # rows remain readable with NULL and are backfilled by the next analyze run.
     share_class_mappings: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
@@ -178,3 +191,21 @@ class AnalysisOutcomeRow(Base):
     no_analysis_reason: Mapped[str | None] = mapped_column(String(64))
     detail: Mapped[str] = mapped_column(Text)
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PriceHistoryRow(Base):
+    """Append-only daily series; one atomic snapshot per CLI calculation."""
+
+    __tablename__ = "price_histories"
+    __table_args__ = (Index("ix_price_histories_latest", "ticker", "id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticker: Mapped[str] = mapped_column(String(12))
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    start_year: Mapped[int]
+    end_year: Mapped[int]
+    contract_version: Mapped[str] = mapped_column(String(48))
+    price_basis: Mapped[str] = mapped_column(String(32))
+    source: Mapped[str] = mapped_column(String(32))
+    points: Mapped[list[dict[str, str]]] = mapped_column(JSON)
+    gaps: Mapped[list[dict[str, str | int]]] = mapped_column(JSON)

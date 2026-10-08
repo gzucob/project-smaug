@@ -2,9 +2,8 @@ import { IndicatorChart } from "@/components/IndicatorChart";
 import { DASH, LAST_12M_SHORT, toNum, yearOf } from "@/lib/format";
 import { BASIS_HINT, BASIS_LABEL, valueFormatter } from "@/lib/indicators";
 import type { FormatKind } from "@/lib/indicators";
-import { reasonCopy } from "@/lib/null-reasons";
 import { sectorColor } from "@/lib/sectors";
-import type { Analysis, IndicatorKey, NullReason } from "@/lib/types";
+import type { Analysis, IndicatorKey } from "@/lib/types";
 
 type ChartSpec = {
   key: IndicatorKey;
@@ -62,14 +61,14 @@ const GROUPS: ChartGroup[] = [
       },
       {
         key: "fcf",
-        label: "Fluxo de caixa livre",
+        label: "FCL",
         hint: "Caixa operacional − CAPEX",
         kind: "money",
       },
     ],
   },
   {
-    title: "Balanço e alavancagem",
+    title: "Balanço e dívida",
     charts: [
       {
         key: "total_liabilities",
@@ -87,7 +86,7 @@ const GROUPS: ChartGroup[] = [
       },
       {
         key: "net_debt_to_ebitda",
-        label: "Dív. líquida / EBITDA",
+        label: "Dívida líquida/EBITDA",
         hint: "Anos de EBITDA para quitar a dívida líquida",
         kind: "multiple",
       },
@@ -131,7 +130,7 @@ export function HistoryCharts({
     <div className="flex flex-col gap-10">
       {groups.map((group) => (
         <div key={group.title} className="flex flex-col gap-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-copy-500">
             {group.title}
           </h3>
           <div className="grid gap-4 lg:grid-cols-3">
@@ -155,23 +154,23 @@ export function HistoryCharts({
               return (
                 <div key={c.key} className="panel flex flex-col gap-2 p-5" title={c.hint}>
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-copy-500">
                       {c.label}
                       {c.totalKey && (
-                        <span className="ml-1.5 font-normal normal-case tracking-normal text-ink-600">
+                        <span className="ml-1.5 font-normal normal-case tracking-normal text-copy-600">
                           · {BASIS_LABEL.controllers}
                         </span>
                       )}
                     </span>
                     {showTotal && total !== null && (
-                      <span className="text-[0.62rem] text-ink-600" title={BASIS_HINT.total}>
+                      <span className="text-[0.62rem] text-copy-600" title={BASIS_HINT.total}>
                         {BASIS_LABEL.total}{" "}
-                        <span className="nums text-ink-400">{format(total)}</span>
+                        <span className="nums text-copy-400">{format(total)}</span>
                       </span>
                     )}
                   </div>
                   {values.every((v) => v === null) ? (
-                    <EmptySeries reason={firstReason(periods, c.key)} />
+                    <EmptySeries />
                   ) : (
                     <IndicatorChart
                       labels={labels}
@@ -208,44 +207,14 @@ function inapplicable(periods: Analysis[], key: IndicatorKey): boolean {
   return periods.every((p) => p.indicators.null_reasons[key] === "inapplicable_regime");
 }
 
-/** The first recorded cause across the series — they agree in practice. */
-function firstReason(periods: Analysis[], key: IndicatorKey): NullReason | undefined {
-  for (const p of periods) {
-    const reason = p.indicators.null_reasons[key];
-    if (reason) return reason;
-  }
-  return undefined;
-}
-
-/**
- * A series with nothing in it says why, instead of drawing an empty axis.
- *
- * A chart card with grid lines, tick labels and no bars reads as a rendering
- * failure. It is also the one place the app would be flattering itself: an empty
- * frame hides that the gap is *ours* (WEGE3 files no dividend line in the DFC
- * our mapper reads, so the paid basis is `source_account_absent` while the
- * declared one is complete). The grid cells already name their nulls; so does
- * this.
- *
- * A cause that is a gap of ours is coloured as the warning it is, exactly as in
- * the grid — a deliberate n/d stays quiet.
- */
-function EmptySeries({ reason }: { reason: NullReason | undefined }) {
-  const copy = reasonCopy(reason);
+/** A series without data shows a single dash instead of an empty axis. */
+function EmptySeries() {
   return (
     <div
       className="flex flex-col items-center justify-center gap-1 text-center"
       style={{ height: 170 }}
     >
-      <span className="nums text-2xl text-ink-700">{DASH}</span>
-      <span
-        className={`text-[0.68rem] ${copy.intentional ? "text-ink-600" : "text-ember-400"}`}
-      >
-        {copy.short}
-      </span>
-      <span className="max-w-[26ch] text-[0.6rem] leading-snug text-ink-700">
-        {copy.long}
-      </span>
+      <span className="nums text-2xl text-copy-600">{DASH}</span>
     </div>
   );
 }

@@ -1,132 +1,148 @@
 import Link from "next/link";
-import { DragonMark } from "@/components/DragonMark";
-import { SectorBadge } from "@/components/SectorBadge";
+import { FiBarChart2, FiTag, FiTrendingUp } from "react-icons/fi";
+import type { IconType } from "react-icons";
 import { TickerSearch } from "@/components/TickerSearch";
-import { fetchPortfolioList } from "@/lib/api";
-import { SECTORS } from "@/lib/sectors";
+import { fetchPortfolio, fetchPortfolioList } from "@/lib/api";
+import { money, pct, toNum } from "@/lib/format";
+import type { Analysis, IndicatorKey } from "@/lib/types";
 
 export default async function HomePage() {
-  const portfolioResult = await fetchPortfolioList();
-  const shortcuts = portfolioResult.ok ? portfolioResult.data.slice(0, 5) : [];
+  const [portfolioResult, analysesResult] = await Promise.all([
+    fetchPortfolioList(),
+    fetchPortfolio(),
+  ]);
+  const analyses = analysesResult.ok ? analysesResult.data : [];
+  const marketLeaders = topBy(analyses, "market_cap");
+  const yieldLeaders = topBy(analyses, "dividend_yield");
+  const returnLeaders = topBy(analyses, "roe");
+  const favoriteTickers = portfolioResult.ok ? portfolioResult.data.slice(0, 5) : [];
+  const shortcuts =
+    favoriteTickers.length > 0
+      ? favoriteTickers.map((p) => p.ticker)
+      : marketLeaders.slice(0, 5).map((a) => a.ticker);
 
   return (
-    <div className="mx-auto max-w-6xl px-5">
+    <div className="mx-auto max-w-7xl px-5">
       {/* ---------------------------------------------------------- hero --- */}
       <section className="relative flex flex-col items-center pt-20 pb-16 text-center sm:pt-28">
-        <div className="rise mb-8" style={{ animationDelay: "0ms" }}>
-          <DragonMark size={120} />
-        </div>
-
         <p
-          className="rise mb-4 text-xs font-semibold uppercase tracking-[0.4em] text-gold-500"
-          style={{ animationDelay: "60ms" }}
+          className="rise mb-6 text-xs font-semibold uppercase tracking-[0.4em] text-accent-400"
+          style={{ animationDelay: "0ms" }}
         >
-          Análise da carteira
+          Análise fundamentalista
         </p>
 
         <h1
           className="rise font-brand text-5xl font-bold tracking-[0.18em] text-gold-molten sm:text-7xl"
-          style={{ animationDelay: "120ms" }}
+          style={{ animationDelay: "60ms" }}
         >
           SMAUG
         </h1>
 
-        <p
-          className="rise mt-6 max-w-xl font-display text-lg leading-relaxed text-ink-300 sm:text-xl"
-          style={{ animationDelay: "180ms" }}
-        >
-          O dragão que guarda a sua carteira. Cada ação é uma joia do tesouro —
-          avaliada em <em className="text-gold-300 not-italic">duas visões</em>: os
-          últimos 12 meses e o histórico de anos fechados.
-        </p>
-
-        <div className="rise mt-9 w-full max-w-md" style={{ animationDelay: "240ms" }}>
+        <div className="rise mt-7 w-full max-w-md" style={{ animationDelay: "120ms" }}>
           <TickerSearch />
         </div>
 
-        {shortcuts.length > 0 && (
-          <div className="rise mt-6 flex flex-wrap items-center justify-center gap-2" style={{ animationDelay: "300ms" }}>
-            <span className="text-xs text-ink-600">Atalhos:</span>
-            {shortcuts.map((p) => (
-              <Link
-                key={p.ticker}
-                href={`/ticker/${p.ticker}`}
-                className="pressable nums rounded-lg border border-gold-500/15 px-2.5 py-1 text-xs font-semibold tracking-wide text-ink-300 hover:border-gold-400/50 hover:text-gold-300"
-              >
-                {p.ticker}
-              </Link>
-            ))}
-            <Link
-              href="/portfolio"
-              className="pressable rounded-lg px-2.5 py-1 text-xs font-semibold text-gold-400 hover:text-gold-300"
-            >
-              ver carteira →
-            </Link>
-          </div>
-        )}
-      </section>
-
-      {/* ------------------------------------------------------ features --- */}
-      <section className="grid gap-4 pb-8 md:grid-cols-3">
-        <Feature
-          delay={360}
-          title="Duas visões"
-          body="Os últimos 12 meses, ao preço atual, lado a lado com o histórico de anos fechados. Comparação honesta entre o agora e a trajetória."
-          accent="var(--color-ember-500)"
-          glyph="◐"
-        />
-        <Feature
-          delay={420}
-          title="Sistema de gemas"
-          body="Cada setor da carteira tem sua própria pedra preciosa e cor viva — safira, ametista, esmeralda, ouro e rubi — para ler a alocação de relance."
-          accent="var(--color-gem-jade)"
-          glyph="◆"
-        />
-        <Feature
-          delay={480}
-          title="14 indicadores"
-          body="Rentabilidade, crescimento, alavancagem e múltiplos de mercado. Razões como fração fiel — a formatação é do front, o cálculo é do domínio."
-          accent="var(--color-gem-violet)"
-          glyph="⛭"
-        />
-      </section>
-
-      {/* -------------------------------------------------------- sectors --- */}
-      <section className="rise pb-4" style={{ animationDelay: "540ms" }}>
-        <div className="hairline mb-6" />
-        <div className="flex flex-wrap items-center justify-center gap-3">
-          {Object.values(SECTORS).map((s) => (
-            <SectorBadge key={s.key} sector={s.key} />
-          ))}
+        <div
+          className="rise mt-5 flex flex-wrap items-center justify-center gap-2"
+          style={{ animationDelay: "180ms" }}
+        >
+          {shortcuts.length > 0 && (
+            <>
+              <span className="text-xs text-ink-600">Acesso rápido:</span>
+              {shortcuts.map((ticker) => (
+                <Link
+                  key={ticker}
+                  href={`/ticker/${ticker}`}
+                  className="pressable nums rounded-lg border border-copy-200/15 px-2.5 py-1 text-xs font-semibold tracking-wide text-copy-300 hover:border-accent-400/50 hover:text-accent-300"
+                >
+                  {ticker}
+                </Link>
+              ))}
+            </>
+          )}
+          <Link
+            href="/portfolio"
+            className="pressable rounded-lg px-2.5 py-1 text-xs font-semibold text-accent-300 hover:text-accent-200"
+          >
+            Ver favoritos →
+          </Link>
         </div>
       </section>
+
+      {analyses.length > 0 && (
+        <section aria-labelledby="home-rankings" className="pb-12">
+          <div className="rise mb-5 flex items-center gap-3" style={{ animationDelay: "240ms" }}>
+            <h2 id="home-rankings" className="text-xs font-semibold uppercase tracking-[0.3em] text-ink-500">
+              Destaques
+            </h2>
+            <span className="h-px flex-1 bg-copy-200/10" />
+          </div>
+          <div className="grid gap-4 xl:grid-cols-3">
+            <RankingCard title="Maior valor de mercado" icon={FiBarChart2} items={marketLeaders} kind="money" metric="market_cap" />
+            <RankingCard title="Maior retorno sobre patrimônio" icon={FiTrendingUp} items={returnLeaders} kind="pct" metric="roe" />
+            <RankingCard title="Maior dividend yield" icon={FiTag} items={yieldLeaders} kind="pct" metric="dividend_yield" />
+          </div>
+        </section>
+      )}
+
     </div>
   );
 }
 
-function Feature({
+function topBy(analyses: Analysis[], key: IndicatorKey): Analysis[] {
+  return analyses
+    .filter((analysis) => toNum(analysis.indicators[key]) !== null)
+    .sort((left, right) => {
+      const a = toNum(left.indicators[key]) ?? Number.NEGATIVE_INFINITY;
+      const b = toNum(right.indicators[key]) ?? Number.NEGATIVE_INFINITY;
+      return b - a;
+    })
+    .slice(0, 5);
+}
+
+function RankingCard({
   title,
-  body,
-  accent,
-  glyph,
-  delay,
+  icon: Icon,
+  items,
+  kind,
+  metric,
 }: {
   title: string;
-  body: string;
-  accent: string;
-  glyph: string;
-  delay: number;
+  icon: IconType;
+  items: Analysis[];
+  kind: "money" | "pct";
+  metric: IndicatorKey;
 }) {
   return (
-    <div className="panel panel-hover rise p-6" style={{ animationDelay: `${delay}ms` }}>
-      <div
-        className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl text-xl"
-        style={{ color: accent, backgroundColor: `color-mix(in oklab, ${accent} 14%, transparent)` }}
-      >
-        {glyph}
-      </div>
-      <h3 className="mb-2 font-display text-xl text-ink-100">{title}</h3>
-      <p className="text-sm leading-relaxed text-ink-400">{body}</p>
+    <div className="panel rise p-5" style={{ animationDelay: "600ms" }}>
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-copy-200">{title}</p>
+        </div>
+        <Icon aria-hidden size={16} className="text-accent-400" />
+      </header>
+      <ol className="mt-4 divide-y divide-copy-200/10">
+        {items.map((analysis, index) => (
+          <li key={analysis.ticker}>
+            <Link
+              href={`/ticker/${analysis.ticker}`}
+              className="pressable flex items-center gap-3 py-3 first:pt-0 last:pb-0"
+            >
+              <span className="nums w-5 text-xs text-copy-600">{index + 1}</span>
+              <span className="min-w-0 flex-1">
+                <span className="nums block text-sm font-semibold text-copy-100">{analysis.ticker}</span>
+                <span className="block truncate text-[0.65rem] text-copy-600">
+                  {analysis.issuer ?? analysis.classification.segmento ?? "Ativo analisado"}
+                </span>
+              </span>
+              <span className="nums text-sm font-semibold text-copy-200">
+                {kind === "money" ? money(analysis.indicators[metric]) : pct(analysis.indicators[metric])}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

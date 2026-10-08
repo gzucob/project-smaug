@@ -1,37 +1,61 @@
 @import "tailwindcss";
 
 /*
-  Smaug — minimalist design system.
-  A flat, warm near-black surface. No background atmosphere: the vivid metal
-  (gold) and gemstone hues are reserved strictly for details — badges, accents,
-  data marks and values — so color always means something.
+  Smaug — minimalist research UI.
+  A flat near-black surface. The sector palette remains the visual source for
+  small accents, while the body and numeric values stay neutral.
 */
 
 @theme {
-  /* --- Vault (warm near-black surfaces) --- */
-  --color-vault-950: #0a0806;
-  --color-vault-900: #100c09;
-  --color-vault-850: #15100b;
-  --color-vault-800: #1c150f;
-  --color-vault-700: #2a1f16;
-  --color-vault-600: #3a2c1f;
-  --color-vault-500: #4d3b29;
+  /* --- Research UI preview / neutral dark system ------------------------- */
+  --color-canvas-950: #0b0e12;
+  --color-canvas-900: #11161c;
+  --color-canvas-850: #171d24;
+  --color-canvas-800: #202832;
+  --color-canvas-700: #2b3540;
+  --color-copy-50: #f4f7fa;
+  --color-copy-200: #d7dfe7;
+  --color-copy-300: #b8c3cd;
+  --color-copy-400: #97a4b0;
+  --color-copy-500: #74818d;
+  --color-copy-600: #788995;
+  --color-accent-300: #c5dcff;
+  --color-accent-400: #9ec2ff;
+  --color-accent-500: #78a8f4;
+  --color-positive: #71d2a4;
+  --color-negative: #f0838c;
+  --color-warning: #e6bb79;
 
-  /* --- Ink (warm parchment text) --- */
-  --color-ink-50: #f8f2e6;
-  --color-ink-200: #e8dcc6;
-  --color-ink-400: #bdac90;
-  --color-ink-500: #9a8867;
-  --color-ink-600: #6f6047;
+  /* --- Brand mark --------------------------------------------------------- */
+  --color-brand-300: #f6d48b;
+  --color-brand-400: #eab95e;
+  --color-brand-500: #d99734;
+  --color-brand-600: #b36d22;
 
-  /* --- Gold / ember (primary metal + heat) --- */
-  --color-gold-300: #ffe08a;
-  --color-gold-400: #ffcb52;
-  --color-gold-500: #f5a623;
-  --color-gold-600: #d4841a;
-  --color-ember-400: #ff8a4c;
-  --color-ember-500: #ff6a2b;
-  --color-ember-600: #e8481a;
+  /* --- Compatibility aliases for components being migrated --------------- */
+  --color-vault-950: var(--color-canvas-950);
+  --color-vault-900: var(--color-canvas-900);
+  --color-vault-850: var(--color-canvas-850);
+  --color-vault-800: var(--color-canvas-800);
+  --color-vault-700: var(--color-canvas-700);
+  --color-vault-600: #3a4652;
+  --color-vault-500: #4e5b68;
+  --color-ink-50: var(--color-copy-50);
+  --color-ink-100: var(--color-copy-50);
+  --color-ink-200: var(--color-copy-200);
+  --color-ink-300: var(--color-copy-300);
+  --color-ink-400: var(--color-copy-400);
+  --color-ink-500: var(--color-copy-500);
+  --color-ink-600: var(--color-copy-600);
+  --color-ink-700: #46535f;
+  --color-ink-900: var(--color-canvas-800);
+  --color-gold-300: var(--color-accent-300);
+  --color-gold-400: var(--color-accent-400);
+  --color-gold-500: var(--color-accent-500);
+  --color-gold-600: #5f84bd;
+  --color-ember-400: #f3a47e;
+  --color-ember-500: var(--color-negative);
+  --color-ember-600: #c45f6a;
 
   /* --- Gemstones: one vivid hue per sector --- */
   --color-gem-azure: #4ea8ff; /* bank */
@@ -40,18 +64,20 @@
   --color-gem-gold: #f5b31f; /* commodity */
   --color-gem-coral: #ff6a5f; /* industry */
 
-  /* --- Pastels: one muted hue per indicator group --------------------------
-     Lower chroma than the gemstones on purpose: these tint dozens of small
-     cells at once, so they classify without competing with the sector colour
-     or with the values themselves. */
-  --color-pastel-mint: #9fdcbb; /* Rentabilidade */
-  --color-pastel-sky: #a6c6ef; /* Por ação */
-  --color-pastel-amber: #f0cf9c; /* Crescimento */
-  --color-pastel-rose: #efa8a4; /* Alavancagem & Liquidez */
-  --color-pastel-lilac: #c3b1e8; /* Múltiplos de mercado */
-  --color-pastel-aqua: #9ed4d8; /* Fluxo de caixa */
-  --color-pastel-sage: #b6cf9e; /* Banco */
-  --color-pastel-peach: #e6b38f; /* Seguradora */
+  /* --- Group accents -------------------------------------------------------
+     Each tint is derived from the existing sector hues. Lower chroma keeps
+     the grouping useful in a dense panel without turning values into alerts. */
+  --color-pastel-mint: color-mix(in oklab, var(--color-gem-jade) 55%, var(--color-copy-50));
+  --color-pastel-sky: color-mix(in oklab, var(--color-gem-azure) 42%, var(--color-copy-50));
+  --color-pastel-amber: color-mix(in oklab, var(--color-gem-gold) 42%, var(--color-copy-50));
+  --color-pastel-rose: color-mix(in oklab, var(--color-gem-coral) 42%, var(--color-copy-50));
+  --color-pastel-lilac: color-mix(in oklab, var(--color-gem-violet) 38%, var(--color-copy-50));
+  --color-pastel-aqua: #9ed4d8; /* azure + jade tint */
+  --color-pastel-sage: color-mix(in oklab, var(--color-gem-jade) 32%, var(--color-copy-50));
+  --color-pastel-peach: color-mix(in oklab, var(--color-gem-coral) 30%, var(--color-copy-50));
+  --color-pastel-violet: color-mix(in oklab, var(--color-gem-violet) 26%, var(--color-copy-50));
+  --color-pastel-gold: color-mix(in oklab, var(--color-gem-gold) 30%, var(--color-copy-50));
+  --color-pastel-teal: #92cfc8; /* jade tint */
 
   /* --- Signal (up / down) -------------------------------------------------
      Blue and red, not green and red: protanopia and deuteranopia — the common
@@ -95,8 +121,8 @@ html {
 }
 
 body {
-  background-color: var(--color-vault-950);
-  color: var(--color-ink-200);
+  background-color: var(--color-canvas-950);
+  color: var(--color-copy-200);
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -107,22 +133,14 @@ body {
 
 /* Molten-gold gradient text — reserved for the wordmark and hero accents. */
 .text-gold-molten {
-  background: linear-gradient(
-    100deg,
-    var(--color-gold-300),
-    var(--color-gold-500) 50%,
-    var(--color-ember-500)
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--color-accent-300);
 }
 
 /* Flat vault panel — the primary card surface. Minimal: solid fill, hairline. */
 .panel {
-  background: var(--color-vault-900);
-  border: 1px solid color-mix(in oklab, var(--color-ink-400) 9%, transparent);
-  border-radius: 0.85rem;
+  background: var(--color-canvas-900);
+  border: 1px solid color-mix(in oklab, var(--color-copy-200) 10%, transparent);
+  border-radius: 0.6rem;
 }
 
 .panel-hover {
@@ -135,7 +153,7 @@ body {
 @media (hover: hover) and (pointer: fine) {
   .panel-hover:hover {
     transform: translateY(-2px);
-    border-color: color-mix(in oklab, var(--color-gold-500) 28%, transparent);
+    border-color: color-mix(in oklab, var(--color-accent-400) 42%, transparent);
   }
 }
 
@@ -170,7 +188,7 @@ body {
 /* Thin divider. */
 .hairline {
   height: 1px;
-  background: color-mix(in oklab, var(--color-ink-400) 12%, transparent);
+  background: color-mix(in oklab, var(--color-copy-200) 12%, transparent);
 }
 
 /* Tabular figures for all numeric data. */
@@ -292,18 +310,18 @@ body {
   height: 10px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--color-vault-950);
+  background: var(--color-canvas-950);
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-vault-600);
+  background: var(--color-canvas-700);
   border-radius: 999px;
-  border: 3px solid var(--color-vault-950);
+  border: 3px solid var(--color-canvas-950);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-gold-600);
+  background: var(--color-accent-500);
 }
 
 ::selection {
-  background: color-mix(in oklab, var(--color-gold-500) 40%, transparent);
-  color: var(--color-ink-50);
+  background: color-mix(in oklab, var(--color-accent-500) 40%, transparent);
+  color: var(--color-copy-50);
 }

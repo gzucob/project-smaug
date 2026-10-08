@@ -11,7 +11,7 @@ the presentation layer decides formatting.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from decimal import Decimal
 from enum import StrEnum
 from types import MappingProxyType
@@ -19,10 +19,60 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from smaug.analysis.domain.financials import (
-        BankRegulatoryProvenance,
         Cpc41WindowProvenance,
         SourceAccountEvidence,
     )
+
+
+LEGACY_CALCULATION_CONTRACT = "legacy_unversioned"
+EQUIVALENT_EVIDENCE_V1 = "equivalent_evidence_v1"
+EQUIVALENT_EVIDENCE_V2 = "equivalent_evidence_v2"
+EQUIVALENT_EVIDENCE_V3 = "equivalent_evidence_v3"
+CLOSING_CAPITAL_V1 = "closing_capital_v1"
+SIMPLIFIED_INDICATORS_V1 = "simplified_indicators_v1"
+CASH_FLOW_INDICATORS_V1 = "cash_flow_indicators_v1"
+GENERAL_INDICATORS_V1 = "general_indicators_v1"
+CALCULATION_CONTRACT_VERSION = "security_governance_v1"
+# Compatibility filters for historical JSON; these are no longer indicators.
+RETIRED_SECTOR_INDICATORS = frozenset(
+    {
+        "net_interest_margin",
+        "efficiency_ratio",
+        "cost_of_risk",
+        "loss_ratio",
+        "combined_ratio",
+    }
+)
+RETIRED_SECTOR_INPUTS = frozenset(
+    {
+        "bank_interest_result_annualized",
+        "average_earning_assets",
+        "bank_efficiency_expenses",
+        "bank_efficiency_income",
+        "credit_loss_expense_annualized",
+        "average_credit_portfolio",
+        "bank_net_interest",
+        "bank_earning_assets",
+        "bank_operating_expenses",
+        "bank_operating_income",
+        "bank_credit_loss",
+        "bank_gross_credit",
+        "bank_gross_credit_with_leases",
+        "earned_premium",
+        "claims_incurred",
+        "acquisition_costs",
+        "insurance_admin_expenses",
+        "insurance_underwriting_activity",
+    }
+)
+
+
+def is_retired_sector_input(name: str) -> bool:
+    """Identify old source-account roots, including dated TTM dependencies."""
+    return name.split("[", 1)[0] in RETIRED_SECTOR_INPUTS
+
+
+LEGACY_INDICATOR_NAMES = frozenset({"eps_basic_market", "pe_basic_market"})
 
 
 class NullReason(StrEnum):
@@ -69,11 +119,9 @@ class NullReason(StrEnum):
       is a fact about the world rather than a gap of ours, and it is the only
       price cause that is *deliberate*: the others are worth chasing, this one
       is not.
-    * ``INSUFFICIENT_COMPARABLE_HISTORY`` — the requested historical window
-      cannot be formed from consecutive closed exercises. For a five-year CAGR,
-      this means that fewer than six comparable annual filings exist or that the
-      sequence has a gap. The promised rate does not exist; the window is never
-      shortened or interpolated to manufacture one.
+    * ``INSUFFICIENT_COMPARABLE_HISTORY`` — fewer than two comparable closed
+      exercises exist within the maximum five-year CAGR window. Intermediate
+      gaps do not prevent endpoint compounding; the actual interval is used.
     * ``PRIOR_PERIOD_OUTSIDE_SOURCE_HISTORY`` — the immediately preceding
       comparable exercise predates CVM's structured-statement history. The
       primary filing source cannot supply it, as distinct from a mirrored period
@@ -97,6 +145,7 @@ class NullReason(StrEnum):
     """
 
     INAPPLICABLE_REGIME = "inapplicable_regime"
+    CURRENT_ONLY_INDICATOR = "current_only_indicator"
     SOURCE_ACCOUNT_UNMAPPED = "source_account_unmapped"
     SOURCE_ACCOUNT_ABSENT = "source_account_absent"
     MISSING_PRICE = "missing_price"
@@ -110,6 +159,9 @@ class NullReason(StrEnum):
     MISSING_TREASURY_COMPOSITION = "missing_treasury_composition"
     UNRESOLVED_SHARE_CLASS = "unresolved_share_class"
     MISSING_REGULATORY_DISCLOSURE = "missing_regulatory_disclosure"
+    MISSING_TAG_ALONG_EVIDENCE = "missing_tag_along_evidence"
+    UNRESOLVED_TAG_ALONG_CLASSES = "unresolved_tag_along_classes"
+    CONFLICTING_TAG_ALONG_EVIDENCE = "conflicting_tag_along_evidence"
     PARTIAL_REGULATORY_DISCLOSURE = "partial_regulatory_disclosure"
     INCOMPATIBLE_REGULATORY_DISCLOSURE = "incompatible_regulatory_disclosure"
     INCOMPLETE_DEBT_COVERAGE = "incomplete_debt_coverage"
@@ -159,12 +211,22 @@ NULL_DISPOSITION_BY_REASON = MappingProxyType(
     {
         # A formula has no economic meaning under the filed regime.
         NullReason.INAPPLICABLE_REGIME: NullDisposition.INAPPLICABLE,
+        NullReason.CURRENT_ONLY_INDICATOR: NullDisposition.INAPPLICABLE,
         # Inputs are present, but the requested arithmetic has no real result.
         NullReason.ZERO_DENOMINATOR: NullDisposition.MATHEMATICALLY_UNDEFINED,
         NullReason.NON_POSITIVE_ENDPOINT: NullDisposition.MATHEMATICALLY_UNDEFINED,
         # The applicable primary disclosure is absent or cannot prove the
         # required perimeter/basis.  There is no safe value to reconstruct.
         NullReason.SOURCE_ACCOUNT_ABSENT: NullDisposition.PRIMARY_SOURCE_UNAVAILABLE,
+        NullReason.MISSING_TAG_ALONG_EVIDENCE: (
+            NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
+        ),
+        NullReason.UNRESOLVED_TAG_ALONG_CLASSES: (
+            NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
+        ),
+        NullReason.CONFLICTING_TAG_ALONG_EVIDENCE: (
+            NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
+        ),
         NullReason.MISSING_REGULATORY_DISCLOSURE: (
             NullDisposition.PRIMARY_SOURCE_UNAVAILABLE
         ),
@@ -253,11 +315,9 @@ class IndicatorContract:
     provenance: tuple[str, ...]
 
 
-# The market-facing family needs a basis beyond a bare number. In particular,
-# ``company_pe``/``company_pb`` are useful market conventions, while the
-# per-security P/E fields retain the strict CPC 41 contract. The codes are stable
-# API vocabulary; the front-end localizes them for readers.
-INDICATOR_CONTRACT: dict[str, IndicatorContract] = {
+# Formula metadata from calculations predating explicit versioning. It remains
+# available for historical provenance and CLI audits, never as a second result.
+LEGACY_INDICATOR_CONTRACT: dict[str, IndicatorContract] = {
     "pe_basic": IndicatorContract(
         tier=IndicatorTier.STRICT,
         basis="security_cpc41",
@@ -306,26 +366,6 @@ INDICATOR_CONTRACT: dict[str, IndicatorContract] = {
         reference_period="reference_date_closing",
         price_basis="analysis.price_basis",
         share_basis="analysis.share_count_basis",
-        provenance=("cvm", "b3"),
-    ),
-    "company_pe": IndicatorContract(
-        tier=IndicatorTier.MARKET_CONVENTION,
-        basis="company_market_convention",
-        numerator="market_capitalization",
-        denominator="attributable_net_income",
-        reference_period="view_period",
-        price_basis="analysis.price_basis",
-        share_basis="listed_classes_outstanding",
-        provenance=("cvm", "b3"),
-    ),
-    "company_pb": IndicatorContract(
-        tier=IndicatorTier.MARKET_CONVENTION,
-        basis="company_market_convention",
-        numerator="market_capitalization",
-        denominator="current_attributable_equity",
-        reference_period="reference_date_closing",
-        price_basis="analysis.price_basis",
-        share_basis="listed_classes_outstanding",
         provenance=("cvm", "b3"),
     ),
     "psr": IndicatorContract(
@@ -388,36 +428,6 @@ INDICATOR_CONTRACT: dict[str, IndicatorContract] = {
         share_basis="not_applicable",
         provenance=("cvm",),
     ),
-    "payout_declared_in_period": IndicatorContract(
-        tier=IndicatorTier.STRICT,
-        basis="company_cvm_period_declared",
-        numerator="cvm_dividends_declared",
-        denominator="attributable_net_income",
-        reference_period="view_period",
-        price_basis="not_applicable",
-        share_basis="not_applicable",
-        provenance=("cvm",),
-    ),
-    "company_cash_yield_paid_in_period": IndicatorContract(
-        tier=IndicatorTier.MARKET_CONVENTION,
-        basis="company_market_convention",
-        numerator="cvm_dividends_paid",
-        denominator="market_capitalization",
-        reference_period="view_period",
-        price_basis="analysis.price_basis",
-        share_basis="listed_classes_outstanding",
-        provenance=("cvm", "b3"),
-    ),
-    "company_yield_declared_in_period": IndicatorContract(
-        tier=IndicatorTier.MARKET_CONVENTION,
-        basis="company_market_convention",
-        numerator="cvm_dividends_declared",
-        denominator="market_capitalization",
-        reference_period="view_period",
-        price_basis="analysis.price_basis",
-        share_basis="listed_classes_outstanding",
-        provenance=("cvm", "b3"),
-    ),
     "ev_ebitda": IndicatorContract(
         tier=IndicatorTier.MARKET_CONVENTION,
         basis="company_enterprise_value",
@@ -461,6 +471,211 @@ INDICATOR_CONTRACT: dict[str, IndicatorContract] = {
 }
 
 
+# Historical formulas remain available to explain historical rows.
+EQUIVALENT_INDICATOR_CONTRACT = {
+    key: contract
+    for key, contract in LEGACY_INDICATOR_CONTRACT.items()
+    if key not in LEGACY_INDICATOR_NAMES
+}
+EQUIVALENT_INDICATOR_CONTRACT["pe_basic"] = replace(
+    EQUIVALENT_INDICATOR_CONTRACT["pe_basic"],
+    basis="security_selected_evidence",
+    denominator="selected_basic_eps",
+    share_basis="selected_weighted_average_class_rights",
+)
+INDICATOR_CONTRACT = dict(EQUIVALENT_INDICATOR_CONTRACT)
+INDICATOR_CONTRACT["pe_basic"] = replace(
+    INDICATOR_CONTRACT["pe_basic"],
+    tier=IndicatorTier.MARKET_CONVENTION,
+    basis="security_closing_capital",
+    denominator="net_income_per_selected_closing_share",
+    share_basis="selected_closing_total_unit_equivalent",
+)
+
+
+CLOSING_INDICATOR_CONTRACT = dict(INDICATOR_CONTRACT)
+INDICATOR_CONTRACT["earnings_yield"] = replace(
+    INDICATOR_CONTRACT["pe_basic"],
+    numerator="net_income_per_selected_closing_share",
+    denominator="security_price",
+)
+
+
+SIMPLIFIED_INDICATOR_CONTRACT = dict(INDICATOR_CONTRACT)
+INDICATOR_CONTRACT["price_to_cfo"] = IndicatorContract(
+    tier=IndicatorTier.MARKET_CONVENTION,
+    basis="company_market_convention",
+    numerator="market_capitalization",
+    denominator="operating_cash_flow",
+    reference_period="view_period",
+    price_basis="analysis.price_basis",
+    share_basis="listed_classes_outstanding",
+    provenance=("cvm", "b3"),
+)
+INDICATOR_CONTRACT["price_to_ebitda"] = IndicatorContract(
+    tier=IndicatorTier.MARKET_CONVENTION,
+    basis="company_market_convention",
+    numerator="market_capitalization",
+    denominator="ebitda",
+    reference_period="view_period",
+    price_basis="analysis.price_basis",
+    share_basis="listed_classes_outstanding",
+    provenance=("cvm", "b3"),
+)
+INDICATOR_CONTRACT["ev_cfo"] = IndicatorContract(
+    tier=IndicatorTier.MARKET_CONVENTION,
+    basis="company_enterprise_value",
+    numerator="market_capitalization_plus_net_debt_plus_nci",
+    denominator="operating_cash_flow",
+    reference_period="view_period",
+    price_basis="analysis.price_basis",
+    share_basis="listed_classes_outstanding",
+    provenance=("cvm", "b3"),
+)
+INDICATOR_CONTRACT["ev_fcf"] = IndicatorContract(
+    tier=IndicatorTier.MARKET_CONVENTION,
+    basis="company_enterprise_value",
+    numerator="market_capitalization_plus_net_debt_plus_nci",
+    denominator="free_cash_flow",
+    reference_period="view_period",
+    price_basis="analysis.price_basis",
+    share_basis="listed_classes_outstanding",
+    provenance=("cvm", "b3"),
+)
+INDICATOR_CONTRACT["ev_revenue"] = IndicatorContract(
+    tier=IndicatorTier.MARKET_CONVENTION,
+    basis="company_enterprise_value",
+    numerator="market_capitalization_plus_net_debt_plus_nci",
+    denominator="revenue",
+    reference_period="view_period",
+    price_basis="analysis.price_basis",
+    share_basis="listed_classes_outstanding",
+    provenance=("cvm", "b3"),
+)
+INDICATOR_CONTRACT["cash_ratio"] = IndicatorContract(
+    tier=IndicatorTier.STRICT,
+    basis="company_closing",
+    numerator="cash_and_cash_equivalents",
+    denominator="current_liabilities",
+    reference_period="reference_date_closing",
+    price_basis="not_applicable",
+    share_basis="not_applicable",
+    provenance=("cvm",),
+)
+INDICATOR_CONTRACT["quick_ratio"] = IndicatorContract(
+    tier=IndicatorTier.STRICT,
+    basis="company_closing",
+    numerator="current_assets_less_inventories",
+    denominator="current_liabilities",
+    reference_period="reference_date_closing",
+    price_basis="not_applicable",
+    share_basis="not_applicable",
+    provenance=("cvm",),
+)
+INDICATOR_CONTRACT["free_float"] = IndicatorContract(
+    tier=IndicatorTier.STRICT,
+    basis="company_filed_distribution",
+    numerator="filed_total_free_float_percent",
+    denominator="one_hundred",
+    reference_period="latest_filed_assembly_on_or_before_reference_date",
+    price_basis="not_applicable",
+    share_basis="not_applicable",
+    provenance=("cvm",),
+)
+INDICATOR_CONTRACT["cfo_yield"] = IndicatorContract(
+    tier=IndicatorTier.MARKET_CONVENTION,
+    basis="company_market_convention",
+    numerator="operating_cash_flow",
+    denominator="market_capitalization",
+    reference_period="view_period",
+    price_basis="analysis.price_basis",
+    share_basis="listed_classes_outstanding",
+    provenance=("cvm", "b3"),
+)
+INDICATOR_CONTRACT["cfo_margin"] = IndicatorContract(
+    tier=IndicatorTier.STRICT,
+    basis="company_period_cash",
+    numerator="operating_cash_flow",
+    denominator="revenue",
+    reference_period="view_period",
+    price_basis="not_applicable",
+    share_basis="not_applicable",
+    provenance=("cvm",),
+)
+INDICATOR_CONTRACT["fcf_margin"] = IndicatorContract(
+    tier=IndicatorTier.STRICT,
+    basis="company_period_cash",
+    numerator="free_cash_flow",
+    denominator="revenue",
+    reference_period="view_period",
+    price_basis="not_applicable",
+    share_basis="not_applicable",
+    provenance=("cvm",),
+)
+INDICATOR_CONTRACT["cash_conversion"] = IndicatorContract(
+    tier=IndicatorTier.STRICT,
+    basis="company_period_cash",
+    numerator="operating_cash_flow",
+    denominator="attributable_net_income",
+    reference_period="view_period",
+    price_basis="not_applicable",
+    share_basis="not_applicable",
+    provenance=("cvm",),
+)
+INDICATOR_CONTRACT["capex_to_cfo"] = IndicatorContract(
+    tier=IndicatorTier.STRICT,
+    basis="company_period_cash",
+    numerator="gross_acquisition_capex",
+    denominator="operating_cash_flow",
+    reference_period="view_period",
+    price_basis="not_applicable",
+    share_basis="not_applicable",
+    provenance=("cvm",),
+)
+
+
+INDICATOR_CONTRACT["tag_along"] = IndicatorContract(
+    tier=IndicatorTier.STRICT,
+    basis="security_current_rights",
+    numerator="resolved_tag_along_percent",
+    denominator="one_hundred",
+    reference_period="current_security_rights",
+    price_basis="not_applicable",
+    share_basis="security_class_or_unit_components",
+    provenance=("cvm", "b3"),
+)
+
+
+def indicator_contracts(version: str) -> dict[str, IndicatorContract]:
+    """Describe the formula actually used by a persisted calculation version."""
+    if version == CALCULATION_CONTRACT_VERSION:
+        return INDICATOR_CONTRACT
+    if version in {GENERAL_INDICATORS_V1, CASH_FLOW_INDICATORS_V1}:
+        return {
+            key: value
+            for key, value in INDICATOR_CONTRACT.items()
+            if key != "tag_along"
+        }
+    if version == SIMPLIFIED_INDICATORS_V1:
+        return SIMPLIFIED_INDICATOR_CONTRACT
+    if version == CLOSING_CAPITAL_V1:
+        return CLOSING_INDICATOR_CONTRACT
+    if version in {
+        EQUIVALENT_EVIDENCE_V1,
+        EQUIVALENT_EVIDENCE_V2,
+        EQUIVALENT_EVIDENCE_V3,
+    }:
+        return EQUIVALENT_INDICATOR_CONTRACT
+    if version == LEGACY_CALCULATION_CONTRACT:
+        return {
+            key: contract
+            for key, contract in LEGACY_INDICATOR_CONTRACT.items()
+            if key not in LEGACY_INDICATOR_NAMES
+        }
+    # An unknown version has no verified formula metadata in this revision.
+    return {}
+
+
 @dataclass(frozen=True)
 class Indicators:
     """Fundamental + market indicators for one ticker at one point in time."""
@@ -486,15 +701,13 @@ class Indicators:
     ebitda_margin: Decimal | None = None
     asset_turnover: Decimal | None = None  # revenue / total assets
     # Per share
-    # ``eps`` remains the compatibility alias for the filed basic value. New
-    # consumers use the explicit fields so a P/E can state which CPC 41 basis it
-    # selected rather than silently mixing basic and diluted denominators.
+    # ``eps`` remains an internal compatibility alias. The public basic result
+    # divides period net income by selected closing shares; diluted EPS remains
+    # a distinct concept using the filed evidence.
     eps: Decimal | None = None
     eps_basic: Decimal | None = None
     eps_diluted: Decimal | None = None
-    # Market convention fallback: attributable earnings divided by closing
-    # outstanding shares. It remains separate from the CPC 41 fields; callers
-    # choose it only when the strict result is unavailable.
+    # Retired closing-share alternative retained only for historical reads.
     eps_basic_market: Decimal | None = None
     bvps: Decimal | None = None  # VPA — book value per share
     # Leverage / liquidity
@@ -511,34 +724,39 @@ class Indicators:
     liabilities_to_assets: Decimal | None = None  # (assets − equity_total) / assets
     equity_to_assets: Decimal | None = None  # controllers' equity / assets
     current_ratio: Decimal | None = None
+    price_to_cfo: Decimal | None = None
+    ev_cfo: Decimal | None = None
+    ev_fcf: Decimal | None = None
+    cash_ratio: Decimal | None = None
+    quick_ratio: Decimal | None = None
+    ev_revenue: Decimal | None = None
+    tag_along: Decimal | None = None
+    free_float: Decimal | None = None
+    price_to_ebitda: Decimal | None = None
+    cfo_yield: Decimal | None = None
+    cfo_margin: Decimal | None = None
+    fcf_margin: Decimal | None = None
+    cash_conversion: Decimal | None = None
+    capex_to_cfo: Decimal | None = None
     # Growth (needs a prior comparable period)
     revenue_growth: Decimal | None = None
     net_income_growth: Decimal | None = None
-    # Compounded annual growth over a *stated* window (#144). The year-on-year
-    # figures above let one atypical exercise dominate the reading — a profit
-    # that fell 40% and then grew 60% reads as a 60% grower. These take the ratio
-    # of two endpoints five exercises apart: ``(this year / five years back) **
-    # (1/5) - 1``. The window is in the name on purpose, because the reference
-    # platforms disagree on what "CAGR 5A" spans and a compounded rate over an
-    # unstated window is not a number this project publishes. Null — never
-    # silently shortened — when the closed-year series is shorter than six
-    # exercises, and null when the base endpoint is not positive
-    # (``NON_POSITIVE_BASE``). Closed exercises only: the TTM window is a moving
-    # 12 months, not one more of them.
+    # Compounded annual growth over at most five years of closed history.
+    # Select the latest closed exercise and its oldest positive comparable base
+    # within five years; use the actual elapsed years in the exponent. Missing
+    # intermediate years do not prevent endpoint compounding. A TTM remains a
+    # moving period, so its CAGR ends at the latest available closed exercise.
     revenue_cagr_5y: Decimal | None = None
     ebitda_cagr_5y: Decimal | None = None
     ebit_cagr_5y: Decimal | None = None
     net_income_cagr_5y: Decimal | None = None
-    # Per-security valuation multiples. P/E names its CPC 41 denominator; P/B
+    # Per-security valuation multiples. P/E uses the selected EPS; P/B
     # uses the security's own price and the documented closing BVPS allocation.
+    earnings_yield: Decimal | None = None  # selected basic EPS / security price
     pe_basic: Decimal | None = None
     pe_diluted: Decimal | None = None
     pb: Decimal | None = None
-    # Whole-company counterparts retained under an explicit scope. Sibling
-    # classes share these because both numerator and denominator cover the firm.
-    company_pe: Decimal | None = None
-    company_pb: Decimal | None = None
-    # Per-security market-convention multiple, paired with ``eps_basic_market``.
+    # Retired multiple paired with the historical ``eps_basic_market``.
     pe_basic_market: Decimal | None = None
     psr: Decimal | None = None  # P/Receita — price / sales
     price_to_assets: Decimal | None = None
@@ -547,29 +765,15 @@ class Indicators:
     # B3 cash rights per security over the view's stated ex-date window / the
     # analyzed security price on that view's stated price basis.
     dividend_yield: Decimal | None = None
-    # Company-level timing ratios. Neither claims exercise attribution: a
-    # post-closing AGM belongs to the period in which the DMPL records the
-    # declaration, while DFC follows when cash actually left.
+    # Cash paid to controllers / net income in the same period. Payments
+    # may distribute profit earned in an earlier period.
     payout_cash_paid_in_period: Decimal | None = None
-    payout_declared_in_period: Decimal | None = None
-    company_cash_yield_paid_in_period: Decimal | None = None
-    company_yield_declared_in_period: Decimal | None = None
     ev_ebitda: Decimal | None = None
     ev_ebit: Decimal | None = None
     # Free cash flow (CFO − capex)
     fcf: Decimal | None = None  # annualized free cash flow, in absolute reais
     price_to_fcf: Decimal | None = None
     fcf_yield: Decimal | None = None
-    # Bank-only ratios (ADR 0058). Each consumes an explicitly scoped pair from a
-    # public regulator/issuer disclosure. The CVM structured statements alone do
-    # not contain the required average stocks or complete managerial perimeter.
-    net_interest_margin: Decimal | None = None  # interest result / avg earning assets
-    efficiency_ratio: Decimal | None = None  # full expenses / full operating income
-    cost_of_risk: Decimal | None = None  # credit loss / avg credit portfolio
-    # Insurance-only underwriting ratios (ADR 0061). Expense inputs are filed as
-    # negative values and sign-reversed once by the calculator.
-    loss_ratio: Decimal | None = None  # claims / earned premium
-    combined_ratio: Decimal | None = None  # claims + acquisition + admin / premium
     # Headline financials (absolute reais, the period's own figure — not
     # annualized). Persisted alongside the ratios so the front-end can chart the
     # per-year evolution of revenue / earnings / dividends, which the ratios alone
@@ -579,7 +783,6 @@ class Indicators:
     net_income_total: Decimal | None = None  # consolidated, minority included
     distributions_per_security: Decimal | None = None
     company_distributions_paid_in_period: Decimal | None = None
-    company_distributions_declared_in_period: Decimal | None = None
     # Balance-sheet scale (absolute reais, at the period's closing instant).
     # Persisted for the same reason as the flows above: the ratios divide the two
     # sides away, so what the company owns against what it owes cannot be
@@ -609,7 +812,6 @@ class Indicators:
     # Strict CPC 41 TTM evidence is a window-level contract rather than one
     # latest-period account snapshot. It is metadata, not an indicator cell.
     cpc41_window_provenance: Cpc41WindowProvenance | None = None
-    bank_regulatory_provenance: BankRegulatoryProvenance | None = None
     # Why each null field is null, keyed by the field's name. Only null fields
     # appear; a null field with no entry is unclassified (see ``NullReason``).
     null_reasons: Mapping[str, NullReason] = field(default_factory=dict)
@@ -630,6 +832,11 @@ def indicator_names() -> tuple[str, ...]:
             "null_reasons",
             "source_account_evidence",
             "cpc41_window_provenance",
-            "bank_regulatory_provenance",
+            *LEGACY_INDICATOR_NAMES,
         }
     )
+
+
+def public_indicator_names() -> tuple[str, ...]:
+    """Selected public indicators, excluding the retained EPS compatibility alias."""
+    return tuple(name for name in indicator_names() if name != "eps")

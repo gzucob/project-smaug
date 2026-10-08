@@ -6,7 +6,7 @@ import type { Analysis, IndicatorKey } from "@/lib/types";
 const TRENDS: { key: IndicatorKey; label: string; format: (v: number | null) => string }[] = [
   { key: "roe", label: "ROE", format: (v) => (v === null ? DASH : pct(v)) },
   { key: "net_margin", label: "Margem líquida", format: (v) => (v === null ? DASH : pct(v)) },
-  { key: "dividend_yield", label: "Dividend yield", format: (v) => (v === null ? DASH : pct(v)) },
+  { key: "dividend_yield", label: "Dividend Yield", format: (v) => (v === null ? DASH : pct(v)) },
 ];
 
 /**
@@ -30,9 +30,9 @@ export function HistoryStrip({ history }: { history: Analysis[] }) {
           const first = series.find((v) => v !== null) ?? null;
           const delta = latest !== null && first !== null ? latest - first : null;
           return (
-            <div key={t.key} className="panel flex flex-col gap-3 p-5">
+            <div key={t.key} className="rounded-lg border border-copy-200/10 bg-canvas-900 p-5">
               <div className="flex items-baseline justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wide text-ink-500">{t.label}</span>
+                <span className="text-xs font-semibold leading-snug text-copy-500">{t.label}</span>
                 {delta !== null && (
                   <span
                     className="nums text-[0.7rem] font-semibold"
@@ -42,7 +42,7 @@ export function HistoryStrip({ history }: { history: Analysis[] }) {
                   </span>
                 )}
               </div>
-              <div className="nums text-2xl font-semibold text-ink-50">{t.format(latest)}</div>
+              <div className="nums mt-2 text-2xl font-semibold text-copy-50">{t.format(latest)}</div>
               {/* The trend line is data, so it takes the directional colour
                   like every other mark (#145); the sector hue stays on the
                   badge and the classification. */}

@@ -154,6 +154,10 @@ class CvmCapitalSource:
         """The yearly archive this source reads — what a mirrored document names."""
         return self._zip_name
 
+    async def archive_path(self) -> Path:
+        """Acquire the FRE archive for another parser sharing this transport."""
+        return await self._archive_path()
+
     async def artifact(self) -> SourceArtifact | None:
         """Acquire the FRE identity without parsing its members."""
         return await self._ensure_artifact()

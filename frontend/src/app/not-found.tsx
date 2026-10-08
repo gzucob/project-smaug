@@ -6,12 +6,10 @@ export default function NotFound() {
     <div className="mx-auto flex max-w-md flex-col items-center gap-6 px-5 py-28 text-center">
       <DragonMark size={80} withFlame />
       <h1 className="font-brand text-3xl tracking-[0.2em] text-gold-molten">404</h1>
-      <p className="text-ink-400">
-        O dragão não encontrou esta página no tesouro.
-      </p>
+      <p className="text-copy-400">A página que você procura não existe.</p>
       <Link
         href="/"
-        className="pressable rounded-xl border border-gold-500/30 px-5 py-2.5 text-sm font-semibold text-gold-300 hover:bg-gold-500/10"
+        className="pressable rounded-lg border border-accent-500/30 px-5 py-2.5 text-sm font-semibold text-accent-300 hover:bg-accent-500/10"
       >
         Voltar ao início
       </Link>

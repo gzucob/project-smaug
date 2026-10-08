@@ -27,9 +27,9 @@ const newsreader = Newsreader({
 });
 
 export const metadata: Metadata = {
-  title: "Smaug — análise da carteira",
+  title: "Smaug — análise de favoritos",
   description:
-    "O dragão que guarda a sua carteira. Indicadores fundamentalistas em duas visões: os últimos 12 meses e o histórico de anos fechados.",
+    "Análise fundamentalista dos seus favoritos, com período atual e histórico de anos fechados.",
 };
 
 export default function RootLayout({
