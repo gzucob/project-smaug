@@ -1,22 +1,30 @@
 import Link from "next/link";
+import { FiBriefcase } from "react-icons/fi";
 import { LAST_12M_SHORT, multiple, pct, price, yearOf } from "@/lib/format";
 import { sectorColor, sectorMeta } from "@/lib/sectors";
 import { listingSegmentLabel } from "@/lib/governance";
 import type { Analysis } from "@/lib/types";
 
 /** Portfolio tile for one ticker; muted when no analysis has been computed. */
-export function TickerCard({ ticker, sector, analysis }: { ticker: string; sector: string; analysis: Analysis | null }) {
-  const color = sectorColor(sector);
+export function TickerCard({ ticker, sector, analysis, unavailable = false }: { ticker: string; sector: string; analysis: Analysis | null; unavailable?: boolean }) {
+  const color = sector === "unclassified" ? "var(--color-copy-400)" : sectorColor(sector);
   const meta = sectorMeta(sector);
 
   if (!analysis) {
     return (
       <div className="panel flex flex-col gap-3 p-5 opacity-60">
         <div className="flex items-center justify-between">
-          <span className="nums text-lg font-bold tracking-wide text-copy-300">{ticker}</span>
+          <span className="flex items-center gap-2">
+            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-canvas-800 text-accent-300" aria-hidden>
+              <FiBriefcase size={16} />
+            </span>
+            <span className="card-title nums">{ticker}</span>
+          </span>
           <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color, opacity: 0.5 }} />
         </div>
-        <span className="text-xs text-copy-600">Ainda não calculado</span>
+        <span className="text-xs text-copy-600">
+          {unavailable ? "Análise indisponível no momento" : "Ainda não calculado"}
+        </span>
       </div>
     );
   }
@@ -33,7 +41,12 @@ export function TickerCard({ ticker, sector, analysis }: { ticker: string; secto
       />
       <div className="flex items-start justify-between">
         <div>
-          <div className="nums text-xl font-bold tracking-wide text-copy-50">{ticker}</div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-canvas-800 text-accent-300" aria-hidden>
+              <FiBriefcase size={16} />
+            </span>
+            <span className="card-title nums">{ticker}</span>
+          </div>
           <div className="mt-0.5 text-[0.7rem] font-medium" style={{ color }}>
             {meta.label}
           </div>

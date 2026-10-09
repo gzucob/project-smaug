@@ -164,6 +164,24 @@ def _by_code(accounts: Accounts, code: str) -> Decimal | None:
     return None
 
 
+def _income_tax_accounts(dre: Accounts) -> Accounts:
+    """Find the single filed top-level income-tax total across DRE regimes."""
+    return tuple(
+        account
+        for account in dre
+        if str(account.get("code", "")).count(".") == 1
+        and "imposto de renda" in _fold(str(account.get("name", "")))
+        and "contribuicao social" in _fold(str(account.get("name", "")))
+    )
+
+
+def _income_tax(dre: Accounts) -> Decimal | None:
+    matches = _income_tax_accounts(dre)
+    if len(matches) != 1:
+        return None
+    return _finite_account_value(matches[0])
+
+
 def _account_by_code(accounts: Accounts, code: str) -> Mapping[str, Any] | None:
     """Return the first raw account with an exact CVM code."""
     for account in accounts:
@@ -706,8 +724,15 @@ def _capex(dfc: Accounts) -> Decimal | None:
 
 _SOURCE_CONSUMERS: dict[str, tuple[str, ...]] = {
     "inventories": ("quick_ratio",),
-    "current_assets": ("current_ratio", "quick_ratio"),
-    "current_liabilities": ("current_ratio", "cash_ratio", "quick_ratio"),
+    "current_assets": ("current_assets", "current_ratio", "quick_ratio"),
+    "noncurrent_assets": ("noncurrent_assets",),
+    "current_liabilities": (
+        "current_liabilities",
+        "current_ratio",
+        "cash_ratio",
+        "quick_ratio",
+    ),
+    "noncurrent_liabilities": ("noncurrent_liabilities",),
     "cfo": (
         "fcf",
         "price_to_fcf",
@@ -977,7 +1002,9 @@ def _source_account_evidence(
     )
     for field, code in (
         ("revenue", "3.01"),
+        ("costs", "3.02"),
         ("gross_profit", "3.03"),
+        ("operating_expenses", "3.04"),
     ):
         add(
             _source_entry(
@@ -989,6 +1016,20 @@ def _source_account_evidence(
                 financials.unmapped_fields,
             )
         )
+    add(
+        _source_entry(
+            "income_tax_expense",
+            "DRE",
+            ("unique top-level label~imposto de renda e contribuicao social",),
+            _matching_refs(
+                dre,
+                dre_s,
+                lambda account: account in _income_tax_accounts(dre),
+            ),
+            financials.income_tax_expense,
+            financials.unmapped_fields,
+        )
+    )
     ebit_code = "3.07" if regime is AccountingRegime.INSURANCE else "3.05"
     add(
         _source_entry(
@@ -1187,11 +1228,31 @@ def _source_account_evidence(
         )
         add(
             _source_entry(
+                "noncurrent_assets",
+                "BPA",
+                ("code=1.02",),
+                _code_refs(bpa, bpa_s, "1.02"),
+                financials.noncurrent_assets,
+                financials.unmapped_fields,
+            )
+        )
+        add(
+            _source_entry(
                 "current_liabilities",
                 "BPP",
                 ("code=2.01",),
                 _code_refs(bpp, bpp_s, "2.01"),
                 financials.current_liabilities,
+                financials.unmapped_fields,
+            )
+        )
+        add(
+            _source_entry(
+                "noncurrent_liabilities",
+                "BPP",
+                ("code=2.02",),
+                _code_refs(bpp, bpp_s, "2.02"),
+                financials.noncurrent_liabilities,
                 financials.unmapped_fields,
             )
         )
@@ -2332,10 +2393,14 @@ def standardize(
         equity_total=_mul(_equity_total(bpp), bpp_s),
         net_income_total=_mul(_net_income_total(dre), dre_s),
         revenue=_mul(_by_code(dre, "3.01"), dre_s),
+        costs=_mul(_by_code(dre, "3.02"), dre_s),
         gross_profit=_mul(_by_code(dre, "3.03"), dre_s),
+        operating_expenses=_mul(_by_code(dre, "3.04"), dre_s),
+        income_tax_expense=_mul(_income_tax(dre), dre_s),
         dividends_paid=_mul(_dividends_paid(dfc), dfc_s),
         cfo=_mul(_by_code(dfc, "6.01"), dfc_s),  # net operating cash flow
         capex=_mul(_capex(dfc), dfc_s),
+        cash_flow_statement=_matching_refs(dfc, dfc_s, lambda _account: True),
         filed_regime=filed_regime,
     )
 
@@ -2379,9 +2444,9 @@ def _as_bank(
     ``gross_profit`` carries the bank's filed 3.03 intermediation result.
     ``ebit`` deliberately stays null: 3.05 is profit before tax, not earnings
     before interest and tax, and exposing it under an EBIT label was a category
-    error (ADR 0058). ``total_debt``,
-    ``current_assets`` and ``current_liabilities`` stay ``None`` because the
-    schema has no such lines — the calculator names those nulls inapplicable.
+    error (ADR 0058). ``total_debt`` and all current/non-current balance-sheet
+    splits stay ``None`` because the schema has no such lines — the calculator
+    names those nulls inapplicable.
 
     Everything below is read **by label, scoped to its parent** rather than by code,
     because the two banks do not agree on the codes: the loan-loss provision is
@@ -2488,8 +2553,10 @@ def _as_insurer(
         cash_equivalents=_cash_equivalents(bpa, bpa_s, AccountingRegime.CORPORATE),
         current_financial_investments=_mul(_by_code(bpa, "1.01.02"), bpa_s),
         current_assets=_mul(_by_code(bpa, "1.01"), bpa_s),
+        noncurrent_assets=_mul(_by_code(bpa, "1.02"), bpa_s),
         inventories=_mul(_inventories(bpa), bpa_s),
         current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),
+        noncurrent_liabilities=_mul(_by_code(bpp, "2.02"), bpp_s),
         total_debt=total_debt,
         debt_coverage_null_reason=debt_reason,
         debt_evidence=_debt_evidence(base, AccountingRegime.INSURANCE, assessment),
@@ -2526,8 +2593,10 @@ def _as_corporate(
         cash_equivalents=_cash_equivalents(bpa, bpa_s, AccountingRegime.CORPORATE),
         current_financial_investments=_mul(_by_code(bpa, "1.01.02"), bpa_s),
         current_assets=_mul(_by_code(bpa, "1.01"), bpa_s),
+        noncurrent_assets=_mul(_by_code(bpa, "1.02"), bpa_s),
         inventories=_mul(_inventories(bpa), bpa_s),
         current_liabilities=_mul(_by_code(bpp, "2.01"), bpp_s),
+        noncurrent_liabilities=_mul(_by_code(bpp, "2.02"), bpp_s),
         total_debt=total_debt,
         debt_coverage_null_reason=debt_reason,
         debt_evidence=_debt_evidence(base, AccountingRegime.CORPORATE, assessment),

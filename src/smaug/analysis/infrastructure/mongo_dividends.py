@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from datetime import date, timedelta
+from collections.abc import Mapping, Sequence
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Protocol
 
@@ -16,6 +16,7 @@ from smaug.shared.logging import get_logger
 logger = get_logger(__name__)
 
 CASH_DIVIDEND_B3_MODULE = "CASH_DIVIDEND_B3"
+LISTING_B3_MODULE = "LISTING_B3"
 
 # B3 files a payment once per class at rates that differ, so a plain ticker reads
 # only its own. A unit asks explicitly for each FCA component class and composes
@@ -73,6 +74,15 @@ class MongoCashEventReader:
         )
         if share_class is None:
             return ()
+        return await self.cash_events_for_class(ticker, share_class=share_class)
+
+    async def cash_events_for_class(
+        self, ticker: str, *, share_class: str
+    ) -> tuple[CashEvent, ...] | None:
+        """Every B3 cash event filed for one explicit instrument class code."""
+        share_class = share_class.strip().upper()
+        if not share_class:
+            return None
         # A quarantined or partially rejected latest batch must hide any mirror
         # rows from analysis. Returning an older/subset history would make a
         # source-validation failure look like a valid distribution history.
@@ -121,10 +131,69 @@ class MongoCashEventReader:
                 amount_per_share=amount_per_share,
                 last_with_right=prior,
                 approval_date=_br_date(payload.get("approval_date")),
+                event_type=_text(payload.get("event_type")) or None,
+                share_class=share_class,
             )
         if not mirrored:
             return () if await self._confirmed_empty(ticker) else None
         return tuple(sorted(seen.values(), key=lambda event: event.effective))
+
+    async def payment_dates(
+        self, ticker: str, events: Sequence[CashEvent]
+    ) -> tuple[tuple[date, ...], ...]:
+        """Match B3's recent payment schedule to events by security ISIN.
+
+        The paginated cash-history endpoint has no payment date. B3's listing
+        supplement carries a shorter schedule, which is safe to join only when
+        its exact security code resolves to one ISIN and the event's class,
+        cum-right date, type, and per-share rate all match.
+        """
+        if not events:
+            return ()
+
+        listing = await self._latest_listing_payload(ticker)
+        if listing is None:
+            return tuple(() for _ in events)
+        payload = listing.get("payload")
+        if not isinstance(payload, Mapping):
+            return tuple(() for _ in events)
+        detail = payload.get("detail")
+        supplement = payload.get("supplement")
+        if not isinstance(detail, Mapping) or not isinstance(supplement, Mapping):
+            return tuple(() for _ in events)
+
+        isins = _listing_isins(ticker, detail, supplement)
+        if len(isins) != 1:
+            return tuple(() for _ in events)
+        cash_dividends = supplement.get("cashDividends")
+        if not isinstance(cash_dividends, list):
+            return tuple(() for _ in events)
+
+        rows = [item for item in cash_dividends if isinstance(item, Mapping)]
+        security_isin = next(iter(isins))
+        return tuple(
+            _matching_payment_dates(event, rows, security_isin) for event in events
+        )
+
+    async def _latest_listing_payload(self, ticker: str) -> Mapping[str, object] | None:
+        cursor = self._collection.find(
+            mirror_filter(
+                ticker,
+                self._registrant,
+                source="b3",
+                module=LISTING_B3_MODULE,
+            )
+        )
+        latest: Mapping[str, object] | None = None
+        latest_at: datetime | None = None
+        async for document in cursor:  # type: ignore[attr-defined]
+            fetched_at = document.get("fetched_at")
+            if not isinstance(fetched_at, datetime):
+                continue
+            if latest_at is None or fetched_at > latest_at:
+                latest = document
+                latest_at = fetched_at
+        return latest
 
     async def _confirmed_empty(self, ticker: str) -> bool:
         """Whether B3 coverage succeeded and returned zero rows for the company."""
@@ -215,3 +284,91 @@ def _br_date(value: object) -> date | None:
         return date(year, month, day)
     except ValueError:
         return None
+
+
+def _listing_isins(
+    ticker: str,
+    detail: Mapping[str, object],
+    supplement: Mapping[str, object],
+) -> set[str]:
+    """ISINs B3 publishes against this exact security code."""
+    candidates: list[Mapping[str, object]] = [detail, supplement]
+    other_codes = detail.get("otherCodes")
+    if isinstance(other_codes, list):
+        candidates.extend(item for item in other_codes if isinstance(item, Mapping))
+    symbol = ticker.strip().upper()
+    return {
+        isin
+        for item in candidates
+        if _text(item.get("code")).strip().upper() == symbol
+        if (isin := _listing_isin(item))
+    }
+
+
+def _listing_isin(item: Mapping[str, object]) -> str | None:
+    for key in ("isin", "isinCode", "codIsi", "CODISI"):
+        value = _text(item.get(key)).strip().upper()
+        if value:
+            return value
+    return None
+
+
+def _matching_payment_dates(
+    event: CashEvent,
+    rows: Sequence[Mapping[str, object]],
+    security_isin: str,
+) -> tuple[date, ...]:
+    if event.last_with_right is None or event.amount_per_share is None:
+        return ()
+    dates: set[date] = set()
+    for row in rows:
+        row_isin = {
+            _text(row.get("isinCode")).strip().upper(),
+            _text(row.get("assetIssued")).strip().upper(),
+        }
+        if security_isin not in row_isin:
+            continue
+        if _source_date(row.get("lastDatePrior")) != event.last_with_right:
+            continue
+        row_type = _event_type(row.get("label"))
+        event_type = _event_type(event.event_type)
+        if row_type and event_type and row_type != event_type:
+            continue
+        if _source_decimal(row.get("rate")) != event.amount_per_share:
+            continue
+        payment_date = _source_date(row.get("paymentDate"))
+        if payment_date is not None:
+            dates.add(payment_date)
+    return tuple(sorted(dates))
+
+
+def _source_decimal(value: object) -> Decimal | None:
+    raw = _text(value).strip()
+    if not raw:
+        return None
+    normalized = raw.replace(".", "").replace(",", ".") if "," in raw else raw
+    try:
+        return Decimal(normalized)
+    except InvalidOperation:
+        return None
+
+
+def _source_date(value: object) -> date | None:
+    raw = _text(value).strip()
+    if not raw:
+        return None
+    if "/" in raw:
+        return _br_date(raw)
+    try:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+
+
+def _event_type(value: object) -> str:
+    raw = _text(value).strip().upper()
+    if "JRS" in raw or "JCP" in raw or "JUROS" in raw:
+        return "JRS CAP PROPRIO"
+    if "DIVID" in raw:
+        return "DIVIDENDO"
+    return raw

@@ -73,6 +73,14 @@ export function IndicatorDetail({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      // Focused widgets own their arrow keys; the shortcut only navigates the reading.
+      if (
+        e.target instanceof HTMLElement &&
+        e.target.closest(
+          'input, textarea, select, [role="tablist"], [role="listbox"], [role="combobox"], [role="slider"], [role="radiogroup"], [contenteditable]:not([contenteditable="false"])',
+        )
+      ) return;
       // While the picker's list is open the arrows are its own.
       if (document.querySelector('[role="listbox"]')) return;
       // A `_total` column is not in the grid's list; walk from its controllers'
@@ -162,7 +170,6 @@ export function IndicatorDetail({
         <div className="lg:min-h-0 lg:overflow-y-auto lg:pr-1">
         <header className="flex items-start justify-between gap-4 pr-12">
           <div className="flex items-start gap-3">
-            <span className="mt-1.5 h-8 w-[3px] rounded-full" style={{ backgroundColor: accent }} />
             <div>
               {/* Lists grid indicators only, so while reading a `_total` column
                   it shows that column's controllers' sibling — the basis toggle

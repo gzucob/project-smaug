@@ -51,10 +51,13 @@ from smaug.analysis.domain.indicators import NullReason
 # statements use different period bases in the CVM files.
 _DRE_FLOW_FIELDS = (
     "revenue",
+    "costs",
     "net_income",
     "net_income_total",
     "ebit",
     "gross_profit",
+    "operating_expenses",
+    "income_tax_expense",
     # Regime-specific CVM DRE lines (ADR 0015) — flows like any other income
     # line, and left signed as filed: summing preserves the sign the CVM used.
     # Complete bank ratios are resolved separately from their own CVM roots
@@ -1288,7 +1291,16 @@ def _build_ttm(
         tuple(
             s
             for s in stock_source.source_account_evidence
-            if s.field in {"inventories", "free_float", "tag_along"}
+            if s.field
+            in {
+                "current_assets",
+                "noncurrent_assets",
+                "current_liabilities",
+                "noncurrent_liabilities",
+                "inventories",
+                "free_float",
+                "tag_along",
+            }
         ),
     )
 
@@ -1312,18 +1324,23 @@ def _build_ttm(
         eps_basic_null_reason=eps_basic_reason,
         eps_diluted_null_reason=eps_diluted_reason,
         revenue=summed["revenue"],
+        costs=summed["costs"],
         gross_profit=summed["gross_profit"],
+        operating_expenses=summed["operating_expenses"],
+        income_tax_expense=summed["income_tax_expense"],
         ebit=summed["ebit"],
         ebitda=_add(summed["ebit"], summed["dep_amort"]),
         dep_amort=summed["dep_amort"],
         cash_equivalents=stock_source.cash_equivalents,
         current_financial_investments=(stock_source.current_financial_investments),
         current_assets=stock_source.current_assets,
+        noncurrent_assets=stock_source.noncurrent_assets,
         inventories=stock_source.inventories,
         free_float=stock_source.free_float,
         tag_along=stock_source.tag_along,
         tag_along_null_reason=stock_source.tag_along_null_reason,
         current_liabilities=stock_source.current_liabilities,
+        noncurrent_liabilities=stock_source.noncurrent_liabilities,
         total_debt=stock_source.total_debt,
         debt_coverage_null_reason=stock_source.debt_coverage_null_reason,
         debt_evidence=stock_source.debt_evidence,

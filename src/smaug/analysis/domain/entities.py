@@ -12,8 +12,10 @@ from smaug.analysis.domain.financials import (
     ClassMarketValue,
     DebtCoverageEvidence,
     DebtEvidenceSnapshot,
+    IncomeStatementSummary,
     RegimeSource,
     ShareCountProvenance,
+    SourceAccountRef,
 )
 from smaug.analysis.domain.governance import Governance
 from smaug.analysis.domain.indicators import LEGACY_CALCULATION_CONTRACT, Indicators
@@ -86,6 +88,8 @@ class TickerAnalysis:
     cnpj: str | None = None
     debt_evidence: DebtCoverageEvidence | None = None
     debt_evidence_snapshot: DebtEvidenceSnapshot | None = None
+    income_statement: IncomeStatementSummary | None = None
+    cash_flow_statement: tuple[SourceAccountRef, ...] = ()
     # FCA class identity and historical code evidence used by the market-cap
     # calculation. Empty on legacy rows created before #259.
     share_class_mappings: tuple[ShareClassMapping, ...] = ()

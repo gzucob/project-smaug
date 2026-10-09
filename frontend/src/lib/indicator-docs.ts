@@ -1046,6 +1046,24 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
       },
     ],
   },
+  costs: {
+    formula: "DRE 3.02, como arquivada, com o sinal informado pela companhia",
+    what: "Valor da linha 3.02 da demonstração do resultado. O conteúdo contábil dessa linha varia conforme o regime da companhia; não é estimado como receita menos resultado bruto.",
+    strongIn: [
+      {
+        where: "Acompanhamento histórico da mesma companhia",
+        why: "preserva o valor e o sinal apresentados na DRE de cada exercício",
+      },
+    ],
+    weakIn: [
+      {
+        where: "Comparação direta entre regimes contábeis diferentes",
+        why: "a linha 3.02 pode representar categorias de despesas distintas em cada regime",
+      },
+    ],
+    caveat:
+      "A série usa a conta CVM 3.02 diretamente. Em geral, custos e despesas aparecem negativos; o sinal publicado é mantido.",
+  },
   net_income: {
     formula: "Lucro líquido atribuído aos controladores",
     what: "O resultado final do exercício, já descontada a parcela dos acionistas minoritários das controladas. É a fatia que pareia com o LPA; o total consolidado é o net_income_total (ADR 0026).",
@@ -1111,6 +1129,34 @@ export const INDICATOR_DOCS: Record<IndicatorKey, IndicatorDoc> = {
     ],
     caveat:
       "Subtraímos o patrimônio consolidado, não o dos controladores: a participação dos minoritários é patrimônio, não capital de terceiros. Por isso este número não é exatamente o numerador do Passivo/Ativo, que subtrai a fatia dos controladores — os dois diferem justamente pelos minoritários (#149).",
+  },
+  current_assets: {
+    formula: "Ativo circulante (BPA 1.01, como arquivado)",
+    what: "Bens e direitos classificados pela companhia para realização ou consumo no curto prazo, incluindo caixa, aplicações, recebíveis e estoques quando divulgados.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "É o agregado divulgado no balanço; a ausência da linha permanece n/d.",
+  },
+  noncurrent_assets: {
+    formula: "Ativo não circulante (BPA 1.02, como arquivado)",
+    what: "Bens e direitos classificados pela companhia para realização no longo prazo, incluindo investimentos, imobilizado e intangível.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "É o agregado divulgado no balanço; não é reconstruído a partir do ativo total.",
+  },
+  current_liabilities: {
+    formula: "Passivo circulante (BPP 2.01, como arquivado)",
+    what: "Obrigações classificadas pela companhia para liquidação no curto prazo.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "É o agregado divulgado no balanço; a ausência da linha permanece n/d.",
+  },
+  noncurrent_liabilities: {
+    formula: "Passivo não circulante (BPP 2.02, como arquivado)",
+    what: "Obrigações classificadas pela companhia para liquidação no longo prazo.",
+    strongIn: [],
+    weakIn: [],
+    caveat: "É o agregado divulgado no balanço; não é reconstruído a partir do passivo total.",
   },
   equity: {
     formula: "Patrimônio líquido atribuído aos controladores (BPP 2.03, como arquivado)",

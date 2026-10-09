@@ -55,6 +55,8 @@ class CashEvent:
     amount_per_share: Decimal | None = None
     last_with_right: date | None = None
     approval_date: date | None = None
+    event_type: str | None = None
+    share_class: str | None = None
 
 
 def dividend_factor(events: Sequence[CashEvent], session: date) -> Decimal:

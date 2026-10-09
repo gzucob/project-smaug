@@ -108,6 +108,19 @@ export interface SourceAccountRef {
   column: string | null;
 }
 
+/** Selected DRE line items for one period, in absolute reais. */
+export interface IncomeStatementSummary {
+  revenue: Decimalish;
+  costs: Decimalish;
+  gross_profit: Decimalish;
+  operating_expenses: Decimalish;
+  ebitda: Decimalish;
+  dep_amort: Decimalish;
+  ebit: Decimalish;
+  income_tax_expense: Decimalish;
+  net_income_total: Decimalish;
+}
+
 /** Mapping/absence evidence for one calculator input. */
 export interface SourceAccountEvidence {
   field: string;
@@ -251,6 +264,7 @@ export interface Indicators {
   // Bank-only (ADR 0058): null under every other accounting regime.
   // Insurance-only underwriting ratios (ADR 0061).
   revenue: Decimalish;
+  costs: Decimalish;
   net_income: Decimalish;
   net_income_total: Decimalish;
   distributions_per_security: Decimalish;
@@ -259,6 +273,10 @@ export interface Indicators {
   // so a chart of the two sides of the balance sheet needs the sides themselves.
   total_assets: Decimalish;
   total_liabilities: Decimalish;
+  current_assets: Decimalish;
+  noncurrent_assets: Decimalish;
+  current_liabilities: Decimalish;
+  noncurrent_liabilities: Decimalish;
   equity: Decimalish;
   equity_total: Decimalish;
   market_cap: Decimalish;
@@ -360,6 +378,8 @@ export interface Analysis {
   share_class_mappings?: ShareClassMapping[];
   class_market_values?: ClassMarketValue[];
   capital_provenance?: ShareCountProvenance | null;
+  income_statement?: IncomeStatementSummary | null;
+  cash_flow_statement?: SourceAccountRef[];
   indicators: Indicators;
   /** Present for market-facing indicators; older API versions may omit it. */
   indicator_contract?: Partial<Record<IndicatorKey, IndicatorContract>>;
@@ -369,6 +389,29 @@ export interface TickerViews {
   ticker: string;
   ttm: Analysis | null;
   history: Analysis[]; // closed years, oldest → newest
+}
+
+export type CashDividendCoverage =
+  | "available"
+  | "empty"
+  | "unavailable"
+  | "unresolved";
+
+export interface CashDividendEvent {
+  event_type: string | null;
+  share_class: string;
+  effective_date: string;
+  last_with_right: string | null;
+  approval_date: string | null;
+  amount_per_share: Decimalish;
+  payment_dates: string[];
+}
+
+export interface CashDividendHistory {
+  ticker: string;
+  coverage: CashDividendCoverage;
+  reason: string | null;
+  events: CashDividendEvent[];
 }
 
 /** One favorited ticker (#151), mirroring `PortfolioTickerResponse`. */

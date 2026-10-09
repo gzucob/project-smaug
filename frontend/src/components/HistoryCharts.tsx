@@ -1,9 +1,15 @@
+import { Fragment } from "react";
+import { FiBarChart2, FiColumns } from "react-icons/fi";
 import { IndicatorChart } from "@/components/IndicatorChart";
+import type { ChartSeries } from "@/components/IndicatorChart";
+import { BalanceSheetTable } from "@/components/BalanceSheetTable";
+import type { BalanceSheetPeriod } from "@/components/BalanceSheetTable";
+import { FinancialStatementsSection } from "@/components/FinancialStatementsSection";
 import { DASH, LAST_12M_SHORT, toNum, yearOf } from "@/lib/format";
 import { BASIS_HINT, BASIS_LABEL, valueFormatter } from "@/lib/indicators";
 import type { FormatKind } from "@/lib/indicators";
 import { sectorColor } from "@/lib/sectors";
-import type { Analysis, IndicatorKey } from "@/lib/types";
+import type { Analysis, CashDividendHistory, IndicatorKey } from "@/lib/types";
 
 type ChartSpec = {
   key: IndicatorKey;
@@ -23,72 +29,22 @@ type ChartSpec = {
   envelope?: { key: IndicatorKey; label: string };
   /** Names `key`'s own series in a paired tooltip, where the card title cannot. */
   seriesLabel?: string;
+  /** Show the balance sheet as independently selectable component series. */
+  balanceSheet?: boolean;
 };
 
-/**
- * The charts, grouped by the statement they come from rather than by the figure
- * that happened to be available.
- *
- * The page used to carry six per-figure bar charts that had accreted one at a
- * time, and **net debt appeared in none of them** — the figure that decides
- * whether a good year is durable (#142). Grouping by statement pairs the filed
- * figures that are read together.
- *
- * Ratios are deliberately absent here: they have a drill-down of their own with
- * a scale, the asset's own average and the min/max (#31/#34). What belongs on
- * this section is the statement itself, in reais.
- */
-type ChartGroup = { title: string; charts: ChartSpec[] };
+/** Historical balance series, with statement detail below the chart. */
+type ChartGroup = { charts: ChartSpec[] };
 
 const GROUPS: ChartGroup[] = [
   {
-    title: "Resultado",
     charts: [
       {
-        key: "net_income",
-        label: "Receita e lucro líquido",
-        hint: "Receita líquida do exercício, com o lucro dos controladores dentro dela",
+        key: "total_assets",
+        label: "Ativos e passivos",
+        hint: "Saldos patrimoniais por período; clique na legenda para ocultar ou exibir séries",
         kind: "money",
-        totalKey: "net_income_total",
-        envelope: { key: "revenue", label: "Receita" },
-        seriesLabel: "Lucro líquido",
-      },
-      {
-        key: "distributions_per_security",
-        label: "Proventos por papel",
-        hint: "Direitos de caixa B3 com data ex no exercício",
-        kind: "price",
-      },
-      {
-        key: "fcf",
-        label: "FCL",
-        hint: "Caixa operacional − CAPEX",
-        kind: "money",
-      },
-    ],
-  },
-  {
-    title: "Balanço e dívida",
-    charts: [
-      {
-        key: "total_liabilities",
-        label: "Ativo e passivo",
-        hint: "Ativo total, com o passivo com terceiros dentro dele — o vão é o patrimônio",
-        kind: "money",
-        envelope: { key: "total_assets", label: "Ativo total" },
-        seriesLabel: "Passivo",
-      },
-      {
-        key: "net_debt",
-        label: "Dívida líquida",
-        hint: "Dívida total − caixa e equivalentes CPC 03",
-        kind: "money",
-      },
-      {
-        key: "net_debt_to_ebitda",
-        label: "Dívida líquida/EBITDA",
-        hint: "Anos de EBITDA para quitar a dívida líquida",
-        kind: "multiple",
+        balanceSheet: true,
       },
     ],
   },
@@ -100,22 +56,74 @@ const GROUPS: ChartGroup[] = [
  * most recent reading sits next to the trajectory that produced it — without
  * ever passing for a closed exercise.
  *
- * This stays a Server Component: only `IndicatorChart` is a client boundary,
- * and it receives plain serializable data.
+ * This stays a Server Component: the chart and balance table are client
+ * boundaries, and they receive plain serializable data.
  */
 export function HistoryCharts({
   history,
   sector,
   ttm,
+  balanceHistory,
+  showStatements,
+  cashHistory,
 }: {
   history: Analysis[];
   sector: string;
   ttm: Analysis | null;
+  balanceHistory: BalanceSheetPeriod[];
+  showStatements: boolean;
+  cashHistory: CashDividendHistory | null;
 }) {
   const color = sectorColor(sector);
   const labels = history.map((h) => yearOf(h.reference_date));
   if (ttm) labels.push(LAST_12M_SHORT);
   const periods = ttm ? [...history, ttm] : history;
+  const balanceSheetPeriods =
+    ttm && history[history.length - 1]?.reference_date !== ttm.reference_date
+      ? [...history, ttm]
+      : history;
+  const balanceSheetLabels = balanceSheetPeriods.map((period, index) => {
+    const year = yearOf(period.reference_date);
+    const previous = balanceSheetPeriods[index - 1];
+    return period === ttm && previous && yearOf(previous.reference_date) === year
+      ? `${year} TTM`
+      : year;
+  });
+  const incomeYears = history.map((period) =>
+    Number(period.reference_date.slice(0, 4)),
+  );
+  const incomeSeries: ChartSeries[] = [
+    {
+      key: "costs",
+      label: "Custos",
+      type: "bar",
+      values: history.map((period) => toNum(period.indicators.costs)),
+      color: "var(--color-series-costs)",
+      xAxisId: "costs",
+      barSize: 32,
+    },
+    {
+      key: "revenue",
+      label: "Receita líquida",
+      type: "bar",
+      values: history.map((period) => toNum(period.indicators.revenue)),
+      color: "var(--color-gem-azure)",
+      xAxisId: "revenue",
+      barSize: 32,
+    },
+    {
+      key: "net_income",
+      label: "Lucro líquido",
+      type: "line",
+      values: history.map((period) => toNum(period.indicators.net_income)),
+      color: "var(--color-up)",
+      showDots: true,
+      lineType: "linear",
+    },
+  ];
+  const hasIncomeHistory = incomeSeries.some((item) =>
+    item.values.some((value) => value !== null),
+  );
 
   const groups = GROUPS.map((group) => ({
     ...group,
@@ -127,65 +135,150 @@ export function HistoryCharts({
   })).filter((group) => group.charts.length > 0);
 
   return (
-    <div className="flex flex-col gap-10">
+    <div className="flex flex-col gap-20">
       {groups.map((group) => (
-        <div key={group.title} className="flex flex-col gap-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-copy-500">
-            {group.title}
-          </h3>
-          <div className="grid gap-4 lg:grid-cols-3">
+        <div
+          key={group.charts.map((chart) => chart.key).join(":")}
+          className="flex flex-col gap-8"
+        >
+          <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
             {group.charts.map((c) => {
-              const values = periods.map((p) => toNum(p.indicators[c.key]));
+              const chartPeriods = c.balanceSheet ? balanceSheetPeriods : periods;
+              const chartLabels = c.balanceSheet ? balanceSheetLabels : labels;
+              const periodYears = c.balanceSheet
+                ? chartPeriods.map((period) => Number(period.reference_date.slice(0, 4)))
+                : [];
+              const values = chartPeriods.map((p) => toNum(p.indicators[c.key]));
               const envelope = c.envelope
                 ? {
-                    values: periods.map((p) => toNum(p.indicators[c.envelope!.key])),
+                    values: chartPeriods.map((p) => toNum(p.indicators[c.envelope!.key])),
                     label: c.envelope.label,
                   }
                 : null;
+              const series = c.balanceSheet ? balanceSheetSeries(chartPeriods) : null;
+              const hasData = series
+                ? series.some((item) => item.values.some((v) => v !== null))
+                : values.some((v) => v !== null) ||
+                  (envelope?.values.some((v) => v !== null) ?? false);
               // The bars chart the controllers' slice; the consolidated total is
               // named beside it for the latest period, and only when it reads
               // differently there (ADR 0026).
-              const latest = periods[periods.length - 1];
+              const latest = chartPeriods[chartPeriods.length - 1];
               const format = valueFormatter(c.kind);
               const own = latest ? toNum(latest.indicators[c.key]) : null;
               const total = c.totalKey && latest ? toNum(latest.indicators[c.totalKey]) : null;
               const showTotal =
                 own !== null && total !== null && format(total) !== format(own);
               return (
-                <div key={c.key} className="panel flex flex-col gap-2 p-5" title={c.hint}>
-                  <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-copy-500">
-                      {c.label}
-                      {c.totalKey && (
-                        <span className="ml-1.5 font-normal normal-case tracking-normal text-copy-600">
-                          · {BASIS_LABEL.controllers}
+                <Fragment key={c.key}>
+                  <div
+                    className={`panel flex min-w-0 flex-col gap-2 p-5 ${
+                      c.balanceSheet ? "lg:col-span-3" : ""
+                    }`}
+                    title={c.hint}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-x-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-canvas-800 text-accent-300" aria-hidden>
+                          <FiColumns size={16} />
+                        </span>
+                        <span className="card-title">
+                          {c.label}
+                          {c.totalKey && (
+                            <span className="ml-1.5 font-normal normal-case tracking-normal text-copy-600">
+                              · {BASIS_LABEL.controllers}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      {showTotal && total !== null && (
+                        <span className="text-[0.62rem] text-copy-600" title={BASIS_HINT.total}>
+                          {BASIS_LABEL.total}{" "}
+                          <span className="nums text-copy-400">{format(total)}</span>
                         </span>
                       )}
-                    </span>
-                    {showTotal && total !== null && (
-                      <span className="text-[0.62rem] text-copy-600" title={BASIS_HINT.total}>
-                        {BASIS_LABEL.total}{" "}
-                        <span className="nums text-copy-400">{format(total)}</span>
-                      </span>
+                    </div>
+                    {!hasData ? (
+                      <EmptySeries />
+                    ) : (
+                      <IndicatorChart
+                        key={`${c.key}:${latest?.ticker ?? ""}`}
+                        labels={chartLabels}
+                        values={values}
+                        color={color}
+                        formatKind={c.kind}
+                        ghostLast={!c.balanceSheet && ttm !== null}
+                        mode="bars"
+                        average={null}
+                        height={c.balanceSheet ? 264 : 170}
+                        envelope={envelope}
+                        seriesLabel={c.seriesLabel}
+                        series={series}
+                        periodYears={periodYears}
+                      />
                     )}
                   </div>
-                  {values.every((v) => v === null) ? (
-                    <EmptySeries />
-                  ) : (
-                    <IndicatorChart
-                      labels={labels}
-                      values={values}
-                      color={color}
-                      formatKind={c.kind}
-                      ghostLast={ttm !== null}
-                      mode="bars"
-                      average={null}
-                      height={170}
-                      envelope={envelope}
-                      seriesLabel={c.seriesLabel}
-                    />
+                  {c.balanceSheet && (
+                    <>
+                      <section
+                        id="balanco"
+                        aria-labelledby="ticker-balance-sheet-heading"
+                        className="scroll-mt-32 lg:col-span-3"
+                      >
+                        <BalanceSheetTable history={balanceHistory} />
+                      </section>
+                      <section
+                        aria-labelledby="ticker-profit-revenue-heading"
+                        className="lg:col-span-3"
+                      >
+                        <div className="panel flex flex-col gap-2 p-5">
+                          <h4
+                            id="ticker-profit-revenue-heading"
+                            className="card-title flex items-center gap-2"
+                          >
+                            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-canvas-800 text-accent-300" aria-hidden>
+                              <FiBarChart2 size={16} />
+                            </span>
+                            Histórico de lucro e receita
+                          </h4>
+                          {hasIncomeHistory ? (
+                            <IndicatorChart
+                              key={`profit-revenue:${
+                                history[history.length - 1]?.reference_date ?? ""
+                              }`}
+                              labels={history.map((period) =>
+                                yearOf(period.reference_date),
+                              )}
+                              values={history.map((period) =>
+                                toNum(period.indicators.net_income),
+                              )}
+                              color={color}
+                              formatKind="money"
+                              ghostLast={false}
+                              mode="bars"
+                              average={null}
+                              height={250}
+                              series={incomeSeries}
+                              periodYears={incomeYears}
+                              frequencyLabel="ANUAL"
+                            />
+                          ) : (
+                            <EmptySeries />
+                          )}
+                        </div>
+                      </section>
+                      {showStatements && (
+                        <div className="lg:col-span-3">
+                          <FinancialStatementsSection
+                            history={history}
+                            ttm={ttm}
+                            cashHistory={cashHistory}
+                          />
+                        </div>
+                      )}
+                    </>
                   )}
-                </div>
+                </Fragment>
               );
             })}
           </div>
@@ -193,6 +286,62 @@ export function HistoryCharts({
       ))}
     </div>
   );
+}
+
+function balanceSheetSeries(periods: Analysis[]): ChartSeries[] {
+  const records = periods.map((period) => ({
+    totalAssets: toNum(period.indicators.total_assets),
+    currentAssets: toNum(period.indicators.current_assets),
+    noncurrentAssets: toNum(period.indicators.noncurrent_assets),
+    currentLiabilities: toNum(period.indicators.current_liabilities),
+    noncurrentLiabilities: toNum(period.indicators.noncurrent_liabilities),
+    equityTotal: toNum(period.indicators.equity_total),
+  }));
+  const series: ChartSeries[] = [
+    {
+      key: "total_assets",
+      label: "Ativo/Passivo total",
+      type: "line",
+      values: records.map((row) => row.totalAssets),
+      color: "var(--color-gem-violet)",
+    },
+    {
+      key: "equity_total",
+      label: "Patrimônio líquido consolidado",
+      type: "bar",
+      values: records.map((row) => row.equityTotal),
+      color: "var(--color-gem-gold)",
+    },
+    {
+      key: "current_assets",
+      label: "Ativo circulante",
+      type: "bar",
+      values: records.map((row) => row.currentAssets),
+      color: "var(--color-ember-400)",
+    },
+    {
+      key: "noncurrent_assets",
+      label: "Ativo não circulante",
+      type: "bar",
+      values: records.map((row) => row.noncurrentAssets),
+      color: "var(--color-gem-azure)",
+    },
+    {
+      key: "current_liabilities",
+      label: "Passivo circulante",
+      type: "bar",
+      values: records.map((row) => row.currentLiabilities),
+      color: "var(--color-gem-jade)",
+    },
+    {
+      key: "noncurrent_liabilities",
+      label: "Passivo não circulante",
+      type: "bar",
+      values: records.map((row) => row.noncurrentLiabilities),
+      color: "var(--color-pastel-rose)",
+    },
+  ];
+  return series.filter((item) => item.values.some((value) => value !== null));
 }
 
 /**

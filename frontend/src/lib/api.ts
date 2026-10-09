@@ -13,7 +13,13 @@
  * Every call returns an `ApiResult` rather than throwing, so pages can render
  * a clear offline state when the backend isn't running.
  */
-import type { Analysis, PortfolioTicker, PriceHistory, TickerViews } from "@/lib/types";
+import type {
+  Analysis,
+  CashDividendHistory,
+  PortfolioTicker,
+  PriceHistory,
+  TickerViews,
+} from "@/lib/types";
 
 const BASE = (process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000").replace(/\/$/, "");
 
@@ -52,6 +58,15 @@ export function fetchPortfolio(): Promise<ApiResult<Analysis[]>> {
 /** Both perspectives (current rolling period + closed-year history) for one ticker. */
 export function fetchTicker(symbol: string): Promise<ApiResult<TickerViews>> {
   return get<TickerViews>(`/analysis/${encodeURIComponent(symbol.toUpperCase())}`);
+}
+
+/** B3 cash-event history for the ticker's resolved share class. */
+export function fetchDividendHistory(
+  symbol: string,
+): Promise<ApiResult<CashDividendHistory>> {
+  return get<CashDividendHistory>(
+    `/dividends/${encodeURIComponent(symbol.toUpperCase())}/history`,
+  );
 }
 
 /** Daily closing history prepared by the CLI, fetched only on the server. */

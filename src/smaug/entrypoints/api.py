@@ -12,12 +12,16 @@ thing this API is allowed to write, since it is not computed, only chosen.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from pymongo import AsyncMongoClient
 
 from smaug.analysis.application.price_history import ReadPriceHistoryUseCase
 from smaug.analysis.domain.entities import VIEW_TTM, TickerAnalysis
@@ -50,11 +54,16 @@ from smaug.analysis.domain.indicators import (
     public_indicator_names,
 )
 from smaug.analysis.domain.price_history import PriceHistory
+from smaug.analysis.infrastructure.mongo_dividends import MongoCashEventReader
 from smaug.analysis.infrastructure.sql_price_history import SqlPriceHistoryRepository
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
 from smaug.portfolio.application.manage_portfolio import ManagePortfolioUseCase
 from smaug.portfolio.domain.entities import PortfolioTicker
-from smaug.portfolio.domain.share_classes import ShareClassMapping
+from smaug.portfolio.domain.share_classes import (
+    EconomicRightsStatus,
+    ShareClassMapping,
+    ShareClassMappingStatus,
+)
 from smaug.portfolio.infrastructure.sql_repository import SqlAlchemyPortfolioRepository
 from smaug.shared.config import get_settings
 from smaug.shared.errors import UnknownTickerError
@@ -66,7 +75,21 @@ _repository = SqlAlchemyAnalysisRepository(_session_factory)
 _price_history = ReadPriceHistoryUseCase(SqlPriceHistoryRepository(_session_factory))
 _portfolio = ManagePortfolioUseCase(SqlAlchemyPortfolioRepository(_session_factory))
 
-app = FastAPI(title="smaug — análise fundamentalista", version="0.1.0")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Open the raw mirror for read-only event history requests."""
+    client: AsyncMongoClient[dict[str, Any]] = AsyncMongoClient(_settings.mongo_uri)
+    _app.state.mongo_database = client[_settings.mongo_db]
+    try:
+        yield
+    finally:
+        await client.close()
+
+
+app = FastAPI(
+    title="smaug — análise fundamentalista", version="0.1.0", lifespan=_lifespan
+)
 # The only cross-origin caller is PR 2's Next.js Route Handler proxying the
 # favorite-ticker toggle — every read stays server-side (RULES_FRONTEND), so
 # this never needs to admit a browser origin, only that one server.
@@ -298,12 +321,17 @@ class IndicatorsResponse(BaseModel):
     price_to_fcf: Decimal | None
     fcf_yield: Decimal | None
     revenue: Decimal | None
+    costs: Decimal | None
     net_income: Decimal | None
     net_income_total: Decimal | None
     distributions_per_security: Decimal | None
     company_distributions_paid_in_period: Decimal | None
     total_assets: Decimal | None
     total_liabilities: Decimal | None
+    current_assets: Decimal | None
+    noncurrent_assets: Decimal | None
+    current_liabilities: Decimal | None
+    noncurrent_liabilities: Decimal | None
     equity: Decimal | None
     equity_total: Decimal | None
     market_cap: Decimal | None
@@ -342,6 +370,20 @@ class SourceAccountRefResponse(BaseModel):
     name: str
     value: Decimal | None
     column: str | None = None
+
+
+class IncomeStatementResponse(BaseModel):
+    """Selected DRE line items for the analysis period, in absolute reais."""
+
+    revenue: Decimal | None
+    costs: Decimal | None
+    gross_profit: Decimal | None
+    operating_expenses: Decimal | None
+    ebitda: Decimal | None
+    dep_amort: Decimal | None
+    ebit: Decimal | None
+    income_tax_expense: Decimal | None
+    net_income_total: Decimal | None
 
 
 class SourceAccountEvidenceResponse(BaseModel):
@@ -426,6 +468,8 @@ class AnalysisResponse(BaseModel):
     share_class_mappings: list[ShareClassMappingResponse]
     class_market_values: list[ClassMarketValueResponse]
     capital_provenance: ShareCountProvenanceResponse | None
+    income_statement: IncomeStatementResponse | None
+    cash_flow_statement: list[SourceAccountRefResponse]
     indicators: IndicatorsResponse
     indicator_contract: dict[str, IndicatorContractResponse]
 
@@ -771,6 +815,22 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
             for value in analysis.class_market_values
         ],
         capital_provenance=_capital_provenance_response(analysis.capital_provenance),
+        income_statement=(
+            None
+            if analysis.income_statement is None
+            else IncomeStatementResponse.model_validate(
+                analysis.income_statement, from_attributes=True
+            )
+        ),
+        cash_flow_statement=[
+            SourceAccountRefResponse(
+                code=item.code,
+                name=item.name,
+                value=item.value,
+                column=item.column,
+            )
+            for item in analysis.cash_flow_statement
+        ],
         indicators=indicator_response,
         indicator_contract=_to_indicator_contract(analysis),
     )
@@ -797,6 +857,109 @@ async def get_analysis(ticker: str) -> TickerViewsResponse:
         ticker=symbol,
         ttm=_to_response(ttm) if ttm is not None else None,
         history=[_to_response(a) for a in history],
+    )
+
+
+class CashDividendEventResponse(BaseModel):
+    """One B3 cash event, kept on the share base B3 filed at the time."""
+
+    event_type: str | None
+    share_class: str
+    effective_date: date
+    last_with_right: date | None
+    approval_date: date | None
+    amount_per_share: Decimal | None
+    payment_dates: list[date]
+
+
+class CashDividendHistoryResponse(BaseModel):
+    ticker: str
+    coverage: Literal["available", "empty", "unavailable", "unresolved"]
+    reason: str | None
+    events: list[CashDividendEventResponse]
+
+
+def _b3_cash_share_class(analysis: TickerAnalysis, ticker: str) -> str | None:
+    """Resolve the ticker's filed B3 class before reading its cash history."""
+    matches = [
+        mapping
+        for mapping in analysis.share_class_mappings
+        if mapping.symbol == ticker
+        or any(item.symbol == ticker for item in mapping.code_evidence)
+    ]
+    if matches:
+        if len(matches) != 1:
+            return None
+        mapping = matches[0]
+        if (
+            mapping.status is not ShareClassMappingStatus.RESOLVED
+            or mapping.economic_rights is not EconomicRightsStatus.RESOLVED
+        ):
+            return None
+        return (
+            mapping.per_share_class.value
+            if mapping.per_share_class is not None
+            else None
+        )
+
+    return None
+
+
+@app.get("/dividends/{ticker}/history", response_model=CashDividendHistoryResponse)
+async def get_dividend_history(
+    ticker: str, request: Request
+) -> CashDividendHistoryResponse:
+    """Read one share class's B3 cash events without calculating or persisting."""
+    symbol = ticker.strip().upper()
+    analysis = await _repository.latest(symbol)
+    if analysis is None:
+        history = await _repository.history(symbol)
+        analysis = history[-1] if history else None
+    if analysis is None:
+        raise HTTPException(status_code=404, detail=f"No analysis for {ticker}")
+
+    share_class = _b3_cash_share_class(analysis, symbol)
+    if share_class is None:
+        return CashDividendHistoryResponse(
+            ticker=symbol,
+            coverage="unresolved",
+            reason="unresolved_share_class",
+            events=[],
+        )
+
+    database = request.app.state.mongo_database
+    reader = MongoCashEventReader(
+        database["raw_ingestions"],
+        registrant_resolver=lambda _ticker: analysis.cd_cvm,
+        validation_collection=database["ingestion_validations"],
+    )
+    events = await reader.cash_events_for_class(symbol, share_class=share_class)
+    if events is None:
+        return CashDividendHistoryResponse(
+            ticker=symbol,
+            coverage="unavailable",
+            reason="cash_distribution_coverage_unavailable",
+            events=[],
+        )
+
+    ordered = tuple(sorted(events, key=lambda item: item.effective, reverse=True))
+    payment_dates = await reader.payment_dates(symbol, ordered)
+    return CashDividendHistoryResponse(
+        ticker=symbol,
+        coverage="available" if ordered else "empty",
+        reason=None,
+        events=[
+            CashDividendEventResponse(
+                event_type=event.event_type,
+                share_class=event.share_class or share_class,
+                effective_date=event.effective,
+                last_with_right=event.last_with_right,
+                approval_date=event.approval_date,
+                amount_per_share=event.amount_per_share,
+                payment_dates=list(payment_dates[index]),
+            )
+            for index, event in enumerate(ordered)
+        ],
     )
 
 

@@ -14,11 +14,11 @@
  * it is a 12-month window, not one more closed exercise, and averaging it into
  * the reference line would quietly change what the line means.
  *
- * **Colour marks direction, not identity** (#145): a bar or line is blue above
- * zero and red below it, in every chart. `color` is left for the things that
- * have no direction — the average's reference line — where the group or sector
- * hue still says which family the reader is looking at.
+ * **Colour marks direction, not identity** (#145): single-value bars and lines
+ * are blue above zero and red below it. Balance-sheet series use fixed colors
+ * for each filed statement category, not as a judgement about direction.
  */
+import { useState } from "react";
 import {
   Bar,
   CartesianGrid,
@@ -54,6 +54,7 @@ interface Point {
   /** The current window and the exercise before it — the dashed tail. */
   live: number | null;
   ghost: boolean;
+  [key: string]: string | number | boolean | null | undefined;
 }
 
 /**
@@ -75,6 +76,23 @@ export interface EnvelopeSeries {
   label: string;
 }
 
+/** One plotted series in a multi-series statement chart. */
+export interface ChartSeries {
+  key: string;
+  label: string;
+  type: "bar" | "line";
+  values: (number | null)[];
+  color: string;
+  /** Separate category axes keep paired bars centred on the same year. */
+  xAxisId?: string;
+  barSize?: number;
+  maxBarSize?: number;
+  showDots?: boolean;
+  lineType?: "linear" | "monotone";
+}
+
+type HistoryRange = "5" | "10" | "max";
+
 export function IndicatorChart({
   labels,
   values,
@@ -86,7 +104,10 @@ export function IndicatorChart({
   height = 264,
   envelope = null,
   seriesLabel,
+  series = null,
+  periodYears = [],
   dateLabels = false,
+  frequencyLabel,
 }: {
   labels: string[];
   values: (number | null)[];
@@ -101,18 +122,47 @@ export function IndicatorChart({
   height?: number;
   /** The containing quantity, drawn around `values` as a hollow outer bar. */
   envelope?: EnvelopeSeries | null;
+  /** Independent bars and lines with a clickable legend and year range. */
+  series?: ChartSeries[] | null;
+  /** Calendar year for each corresponding point; used by the range selector. */
+  periodYears?: number[];
   /** Names `values` in the tooltip — only needed when a pair makes it ambiguous. */
   seriesLabel?: string;
   /** ISO session labels retain the full date in tooltips. */
   dateLabels?: boolean;
+  /** Labels custom-series frequency when only one filed period type is available. */
+  frequencyLabel?: string;
 }) {
+  const [enabledSeries, setEnabledSeries] = useState<string[]>(() =>
+    (series ?? []).map((item) => item.key),
+  );
+  const [historyRange, setHistoryRange] = useState<HistoryRange>("5");
   const format = axisFormatter(formatKind);
   const readable = valueFormatter(formatKind);
-  const lastIndex = values.length - 1;
-  const data: Point[] = labels.map((label, i) => {
+  const chartSeries = series ?? [];
+  const seriesXAxisIds = Array.from(
+    new Set(
+      chartSeries.flatMap((item) => (item.xAxisId ? [item.xAxisId] : [])),
+    ),
+  );
+  const visibleSeries = chartSeries.filter((item) => enabledSeries.includes(item.key));
+  const hasCustomSeries = chartSeries.length > 0;
+  const latestYear = Math.max(...periodYears, 0);
+  const firstVisibleYear =
+    historyRange === "max"
+      ? Number.NEGATIVE_INFINITY
+      : latestYear - Number(historyRange) + 1;
+  const visibleIndexes = labels.flatMap((_, index) => {
+    if (!hasCustomSeries || historyRange === "max") return [index];
+    const year = periodYears[index];
+    return year !== undefined && year >= firstVisibleYear ? [index] : [];
+  });
+  const data: Point[] = visibleIndexes.map((index) => {
+    const label = labels[index] ?? "";
+    const i = index;
     const value = values[i] ?? null;
-    const ghost = ghostLast && i === lastIndex;
-    const tail = ghostLast && i >= lastIndex - 1;
+    const ghost = ghostLast && i === labels.length - 1;
+    const tail = ghostLast && i >= labels.length - 2;
     return {
       label,
       value,
@@ -120,27 +170,103 @@ export function IndicatorChart({
       closed: ghost ? null : value,
       live: tail ? value : null,
       ghost,
+      ...Object.fromEntries(
+        chartSeries.map((item) => [
+          item.key,
+          item.values[i] ?? null,
+        ]),
+      ),
     };
   });
 
-  // The axis has to contain both series, or the envelope would be clipped by a
-  // scale built for the smaller figure inside it.
-  const present = [...values, ...(envelope?.values ?? [])].filter(
-    (v): v is number => v !== null,
-  );
+  // The custom-series chart uses only the currently visible series and years
+  // to set its ruler. The ordinary single-series charts retain their existing
+  // value + envelope scale.
+  const present = hasCustomSeries
+    ? visibleSeries.flatMap((item) =>
+        visibleIndexes
+          .map((index) => item.values[index] ?? null)
+          .filter((value): value is number => value !== null),
+      )
+    : [...values, ...(envelope?.values ?? [])].filter(
+        (value): value is number => value !== null,
+      );
   // The axis always contains zero: a bar cut off below its baseline overstates
   // the variation, and on the line it is the difference between "fell" and
   // "fell to near nothing".
   const max = Math.max(0, ...present);
   const min = Math.min(0, ...present);
   const { domain, ticks } = axisScale(min, max);
+  const hasVisibleData = visibleSeries.some((item) =>
+    visibleIndexes.some((index) => item.values[index] != null),
+  );
+  const toggleSeries = (key: string) => {
+    setEnabledSeries((enabled) =>
+      enabled.includes(key)
+        ? enabled.filter((item) => item !== key)
+        : [...enabled, key],
+    );
+  };
 
   return (
     <div className="w-full">
-      <ResponsiveContainer width="100%" height={height}>
-        {/* The right margin holds the last x label ("Atual"), which sits on
-            the plot edge in line mode and would otherwise be clipped. */}
-        <ComposedChart data={data} margin={{ top: 10, right: 34, bottom: 2, left: 2 }}>
+      {hasCustomSeries && (
+        <div
+          className={`mb-2 flex items-center gap-3 ${frequencyLabel ? "justify-between" : "justify-end"}`}
+        >
+          {frequencyLabel && (
+            <span
+              aria-label="Periodicidade dos dados"
+              className="rounded-full border border-accent-400 px-3 py-1 text-[0.65rem] font-semibold tracking-wide text-accent-300"
+            >
+              {frequencyLabel}
+            </span>
+          )}
+          <div
+            className="inline-flex items-center border-b border-vault-700"
+            role="group"
+            aria-label="Intervalo do gráfico"
+          >
+            {([
+              ["5", "5 anos"],
+              ["10", "10 anos"],
+              ["max", "Máx"],
+            ] as const).map(([range, label]) => {
+              const selected = historyRange === range;
+              return (
+                <button
+                  key={range}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => setHistoryRange(range)}
+                  className={`border-b-2 px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-up ${
+                    selected
+                      ? "border-up text-copy-50"
+                      : "border-transparent text-copy-500 hover:text-copy-200"
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {hasCustomSeries && !hasVisibleData ? (
+        <div
+          className="flex items-center justify-center text-center text-xs text-copy-500"
+          style={{ height }}
+          role="status"
+        >
+          {visibleSeries.length === 0
+            ? "Selecione uma série na legenda para exibi-la."
+            : "Sem dados para as séries selecionadas neste intervalo."}
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={height}>
+          {/* The right margin holds the last x label ("Atual"), which sits on
+              the plot edge in line mode and would otherwise be clipped. */}
+          <ComposedChart data={data} margin={{ top: 10, right: 34, bottom: 2, left: 2 }}>
           <CartesianGrid
             stroke="var(--color-vault-700)"
             strokeDasharray="3 4"
@@ -157,6 +283,9 @@ export function IndicatorChart({
             minTickGap={dateLabels ? 24 : 4}
             tickFormatter={dateLabels ? (value: string) => value.split("-").reverse().join("/") : undefined}
           />
+          {seriesXAxisIds.map((axisId) => (
+            <XAxis key={axisId} dataKey="label" xAxisId={axisId} hide />
+          ))}
           <YAxis
             domain={domain}
             ticks={ticks}
@@ -181,6 +310,7 @@ export function IndicatorChart({
                 format={readable}
                 seriesLabel={seriesLabel}
                 envelopeLabel={envelope?.label}
+                series={hasCustomSeries ? visibleSeries : null}
               />
             )}
           />
@@ -191,8 +321,8 @@ export function IndicatorChart({
               category on its own, concentric with the inner bar. Bars sharing an
               axis are laid out side by side, and no `barGap` makes two different
               widths share a centre — they end up offset from the tick instead. */}
-          {envelope && <XAxis dataKey="label" xAxisId="envelope" hide />}
-          {mode === "bars" && envelope && (
+          {!hasCustomSeries && envelope && <XAxis dataKey="label" xAxisId="envelope" hide />}
+          {mode === "bars" && !hasCustomSeries && envelope && (
             <Bar
               dataKey="envelope"
               xAxisId="envelope"
@@ -218,7 +348,61 @@ export function IndicatorChart({
             </Bar>
           )}
 
-          {mode === "bars" && (
+          {mode === "bars" && hasCustomSeries &&
+            visibleSeries
+              .filter((item) => item.type === "bar")
+              .map((item) => (
+                <Bar
+                  key={item.key}
+                  dataKey={item.key}
+                  xAxisId={item.xAxisId}
+                  isAnimationActive={false}
+                  barSize={item.barSize}
+                  maxBarSize={item.maxBarSize ?? 34}
+                  radius={[2, 2, 0, 0]}
+                  stroke="var(--color-vault-950)"
+                  strokeWidth={1}
+                >
+                  {data.map((point) => (
+                    <Cell
+                      key={point.label}
+                      fill={item.color}
+                      fillOpacity={point.ghost ? 0.16 : 0.9}
+                      stroke={item.color}
+                      strokeOpacity={point.ghost ? 0.55 : 0.8}
+                      strokeDasharray={point.ghost ? "3 2" : undefined}
+                    />
+                  ))}
+                </Bar>
+              ))}
+
+          {mode === "bars" && hasCustomSeries &&
+            visibleSeries
+              .filter((item) => item.type === "line")
+              .map((item) => (
+                <Line
+                  key={item.key}
+                  dataKey={item.key}
+                  type={item.lineType ?? "monotone"}
+                  stroke={item.color}
+                  strokeWidth={2.25}
+                  dot={
+                    item.showDots
+                      ? {
+                          r: 3.5,
+                          fill: item.color,
+                          stroke: "var(--color-vault-950)",
+                          strokeWidth: 1,
+                        }
+                      : false
+                  }
+                  activeDot={{ r: 4.5 }}
+                  isAnimationActive={false}
+                  connectNulls={false}
+                />
+              ))}
+
+          {mode === "bars" && !hasCustomSeries && (
             <Bar
               dataKey="value"
               isAnimationActive={false}
@@ -284,8 +468,51 @@ export function IndicatorChart({
               strokeDasharray="6 4"
             />
           )}
-        </ComposedChart>
-      </ResponsiveContainer>
+          </ComposedChart>
+        </ResponsiveContainer>
+      )}
+      {hasCustomSeries && (
+        <div
+          className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-2"
+          role="group"
+          aria-label="Séries do gráfico"
+        >
+          {chartSeries.map((item) => {
+            const selected = enabledSeries.includes(item.key);
+            return (
+              <button
+                key={item.key}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => toggleSeries(item.key)}
+                className={`flex items-center gap-1.5 text-xs transition-opacity focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-up ${
+                  selected ? "text-copy-200" : "text-copy-600 opacity-55"
+                }`}
+              >
+                {item.type === "line" ? (
+                  <span
+                    aria-hidden="true"
+                    className="relative h-px w-3"
+                    style={{ backgroundColor: item.color }}
+                  >
+                    <span
+                      className="absolute -top-[3px] left-1 h-1.5 w-1.5 rounded-full border border-vault-950"
+                      style={{ backgroundColor: item.color }}
+                    />
+                  </span>
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    className="h-2.5 w-2.5 rounded-[1px]"
+                    style={{ backgroundColor: item.color }}
+                  />
+                )}
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -323,12 +550,14 @@ function ChartTooltip({
   format,
   seriesLabel,
   envelopeLabel,
+  series,
 }: {
   label: string;
   value: Point | undefined;
   format: (n: number) => string;
   seriesLabel?: string;
   envelopeLabel?: string;
+  series?: ChartSeries[] | null;
 }) {
   if (!value) return null;
   const mark = (value.value ?? 0) < 0 ? "var(--color-down)" : "var(--color-up)";
@@ -338,15 +567,48 @@ function ChartTooltip({
   return (
     <div className="rounded-lg border border-copy-200/10 bg-canvas-900 px-3 py-2 text-xs shadow-lg">
       <div className="text-[0.68rem] uppercase tracking-wide text-ink-500">{label}</div>
-      {paired && (
+      {series && series.length > 0 ? (
+        <div className="mt-1 space-y-0.5">
+          {series.map((item) => {
+            const raw = value[item.key];
+            const amount = typeof raw === "number" ? raw : null;
+            return (
+              <div
+                key={item.key}
+                className="flex items-baseline justify-between gap-4"
+              >
+                <span className="flex items-center gap-1.5 text-[0.62rem] text-ink-500">
+                  {item.type === "line" ? (
+                    <span
+                      aria-hidden="true"
+                      className="h-px w-3"
+                      style={{ backgroundColor: item.color }}
+                    />
+                  ) : (
+                    <span
+                      aria-hidden="true"
+                      className="h-1.5 w-1.5 rounded-[1px]"
+                      style={{ backgroundColor: item.color }}
+                    />
+                  )}
+                  {item.label}
+                </span>
+                <span className="nums text-ink-200">
+                  {amount === null ? DASH : format(amount)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      ) : paired ? (
         <div className="mt-1 flex items-baseline justify-between gap-4">
           <span className="text-[0.62rem] text-ink-500">{envelopeLabel}</span>
           <span className="nums text-ink-200">
             {value.envelope === null ? DASH : format(value.envelope)}
           </span>
         </div>
-      )}
-      {paired ? (
+      ) : null}
+      {series && series.length > 0 ? null : paired ? (
         <div className="flex items-baseline justify-between gap-4">
           <span className="text-[0.62rem] text-ink-500">{seriesLabel}</span>
           <span className="nums font-semibold" style={{ color: mark }}>

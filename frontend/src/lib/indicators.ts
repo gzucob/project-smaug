@@ -164,6 +164,28 @@ export const INDICATORS: IndicatorSpec[] = [
   { key: "net_income_cagr_5y", label: "CAGR Lucro (5 anos)", hint: "Crescimento anual composto do lucro líquido em 5 anos", group: "Crescimento", format: signedPct },
 ];
 
+/**
+ * Absolute company-size metrics belong in the historical selector, while the
+ * ticker overview already presents them in its summary. Keeping them out of
+ * `INDICATORS` prevents duplicate cards in the current indicator grid.
+ */
+export const HISTORY_ONLY_INDICATORS: IndicatorSpec[] = [
+  {
+    key: "enterprise_value",
+    label: "Enterprise value",
+    hint: "Valor de mercado + dívida líquida + participação de não controladores",
+    group: "Valuation",
+    format: money,
+  },
+  {
+    key: "market_cap",
+    label: "Valor de mercado",
+    hint: "Soma do valor das classes de ações listadas em circulação",
+    group: "Valuation",
+    format: money,
+  },
+];
+
 export const INDICATOR_GROUPS: IndicatorGroup[] = [
   "Valuation",
   "Endividamento",
@@ -319,5 +341,9 @@ export function specsByGroup(group: IndicatorGroup): IndicatorSpec[] {
 }
 
 export function specByKey(key: IndicatorKey): IndicatorSpec | undefined {
-  return INDICATORS.find((s) => s.key === key) ?? TOTAL_SPECS.find((s) => s.key === key);
+  return (
+    INDICATORS.find((s) => s.key === key) ??
+    TOTAL_SPECS.find((s) => s.key === key) ??
+    HISTORY_ONLY_INDICATORS.find((s) => s.key === key)
+  );
 }

@@ -37,6 +37,7 @@ from smaug.analysis.domain.financials import (
     DebtInstrument,
     DebtLineEvidence,
     DebtLineRole,
+    IncomeStatementSummary,
     RegimeSource,
     ShareCountProvenance,
     ShareCounts,
@@ -295,6 +296,88 @@ def _source_account_evidence_from_json(
                 ),
             )
         )
+    return tuple(parsed)
+
+
+def _income_statement_to_json(
+    statement: IncomeStatementSummary | None,
+) -> dict[str, str | None] | None:
+    if statement is None:
+        return None
+    return {
+        name: None if value is None else str(value)
+        for name, value in (
+            ("revenue", statement.revenue),
+            ("costs", statement.costs),
+            ("gross_profit", statement.gross_profit),
+            ("operating_expenses", statement.operating_expenses),
+            ("ebitda", statement.ebitda),
+            ("dep_amort", statement.dep_amort),
+            ("ebit", statement.ebit),
+            ("income_tax_expense", statement.income_tax_expense),
+            ("net_income_total", statement.net_income_total),
+        )
+    }
+
+
+def _income_statement_from_json(value: object) -> IncomeStatementSummary | None:
+    if not isinstance(value, Mapping):
+        return None
+    parsed: dict[str, Decimal | None] = {}
+    for name in (
+        "revenue",
+        "costs",
+        "gross_profit",
+        "operating_expenses",
+        "ebitda",
+        "dep_amort",
+        "ebit",
+        "income_tax_expense",
+        "net_income_total",
+    ):
+        raw = value.get(name)
+        try:
+            parsed[name] = None if raw is None else Decimal(str(raw))
+        except (InvalidOperation, ValueError, TypeError):
+            parsed[name] = None
+    return IncomeStatementSummary(**parsed)
+
+
+def _source_account_refs_to_json(
+    refs: tuple[SourceAccountRef, ...],
+) -> list[dict[str, str | None]]:
+    return [
+        {
+            "code": item.code,
+            "name": item.name,
+            "value": None if item.value is None else str(item.value),
+            "column": item.column,
+        }
+        for item in refs
+    ]
+
+
+def _source_account_refs_from_json(value: object) -> tuple[SourceAccountRef, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    parsed: list[SourceAccountRef] = []
+    for raw in value:
+        if not isinstance(raw, Mapping):
+            continue
+        raw_value = raw.get("value")
+        try:
+            parsed.append(
+                SourceAccountRef(
+                    code=str(raw.get("code", "")),
+                    name=str(raw.get("name", "")),
+                    value=None if raw_value is None else Decimal(str(raw_value)),
+                    column=(
+                        None if raw.get("column") is None else str(raw.get("column"))
+                    ),
+                )
+            )
+        except (InvalidOperation, ValueError, TypeError):
+            continue
     return tuple(parsed)
 
 
@@ -964,6 +1047,8 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
             else None
         ),
         debt_evidence=_debt_evidence_to_json(analysis.debt_evidence),
+        income_statement=_income_statement_to_json(analysis.income_statement),
+        cash_flow_statement=_source_account_refs_to_json(analysis.cash_flow_statement),
         reference_date=analysis.reference_date,
         computed_at=analysis.computed_at,
         calculation_contract_version=analysis.calculation_contract_version,
@@ -1052,12 +1137,17 @@ def _to_row(analysis: TickerAnalysis) -> TickerAnalysisRow:
         price_to_fcf=i.price_to_fcf,
         fcf_yield=i.fcf_yield,
         revenue=i.revenue,
+        costs=i.costs,
         net_income=i.net_income,
         net_income_total=i.net_income_total,
         distributions_per_security=i.distributions_per_security,
         company_distributions_paid_in_period=(i.company_distributions_paid_in_period),
         total_assets=i.total_assets,
         total_liabilities=i.total_liabilities,
+        current_assets=i.current_assets,
+        noncurrent_assets=i.noncurrent_assets,
+        current_liabilities=i.current_liabilities,
+        noncurrent_liabilities=i.noncurrent_liabilities,
         equity=i.equity,
         equity_total=i.equity_total,
         market_cap=i.market_cap,
@@ -1104,6 +1194,8 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
             if row.debt_evidence_snapshot is not None
             else None
         ),
+        income_statement=_income_statement_from_json(row.income_statement),
+        cash_flow_statement=_source_account_refs_from_json(row.cash_flow_statement),
         price=row.price,
         price_source_code=row.price_source_code,
         price_source_session=row.price_source_session,
@@ -1178,6 +1270,7 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
             price_to_fcf=row.price_to_fcf,
             fcf_yield=row.fcf_yield,
             revenue=row.revenue,
+            costs=row.costs,
             net_income=row.net_income,
             net_income_total=row.net_income_total,
             distributions_per_security=row.distributions_per_security,
@@ -1186,6 +1279,10 @@ def _to_entity(row: TickerAnalysisRow) -> TickerAnalysis:
             ),
             total_assets=row.total_assets,
             total_liabilities=row.total_liabilities,
+            current_assets=row.current_assets,
+            noncurrent_assets=row.noncurrent_assets,
+            current_liabilities=row.current_liabilities,
+            noncurrent_liabilities=row.noncurrent_liabilities,
             equity=row.equity,
             equity_total=row.equity_total,
             market_cap=row.market_cap,
