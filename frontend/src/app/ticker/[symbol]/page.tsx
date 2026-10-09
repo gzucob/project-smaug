@@ -1,20 +1,29 @@
 import type { IconType } from "react-icons";
 import {
+  FiColumns,
   FiDatabase,
+  FiFileText,
   FiInfo,
   FiTrendingUp,
 } from "react-icons/fi";
+import { BalanceSheetTable } from "@/components/BalanceSheetTable";
+import type { BalanceSheetPeriod } from "@/components/BalanceSheetTable";
 import { CompanyOverview } from "@/components/CompanyOverview";
 import { ClassificationBadge } from "@/components/ClassificationBadge";
 import { FavoriteButton } from "@/components/FavoriteButton";
+import { FinancialStatementsSection } from "@/components/FinancialStatementsSection";
 import { HistoryCharts } from "@/components/HistoryCharts";
-import { HistoryStrip } from "@/components/HistoryStrip";
 import { PriceHistoryChart } from "@/components/PriceHistoryChart";
 import { ViewPanel } from "@/components/ViewPanel";
 import { VaultOffline } from "@/components/VaultOffline";
-import { fetchPortfolioList, fetchPriceHistory, fetchTicker } from "@/lib/api";
-import { price, yearOf } from "@/lib/format";
-import { gemKey, sectorColor } from "@/lib/sectors";
+import {
+  fetchDividendHistory,
+  fetchPortfolioList,
+  fetchPriceHistory,
+  fetchTicker,
+} from "@/lib/api";
+import { price } from "@/lib/format";
+import { gemKey } from "@/lib/sectors";
 import type { Analysis } from "@/lib/types";
 
 export async function generateMetadata({ params }: { params: Promise<{ symbol: string }> }) {
@@ -24,10 +33,11 @@ export async function generateMetadata({ params }: { params: Promise<{ symbol: s
 
 export default async function TickerPage({ params }: { params: Promise<{ symbol: string }> }) {
   const { symbol } = await params;
-  const [result, portfolioResult, priceHistoryResult] = await Promise.all([
+  const [result, portfolioResult, priceHistoryResult, dividendHistoryResult] = await Promise.all([
     fetchTicker(symbol),
     fetchPortfolioList(),
     fetchPriceHistory(symbol),
+    fetchDividendHistory(symbol),
   ]);
 
   if (!result.ok) {
@@ -46,8 +56,16 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
   }
 
   const { ttm, history } = result.data;
+  const cashHistory = dividendHistoryResult.ok ? dividendHistoryResult.data : null;
   const latestClosed = history.length > 0 ? history[history.length - 1] : null;
   const reference: Analysis | null = ttm ?? latestClosed;
+  const showStatements = Boolean(
+    ttm?.income_statement ||
+      history.some(
+        (period) =>
+          period.income_statement || (period.cash_flow_statement?.length ?? 0) > 0,
+      ),
+  );
 
   if (!reference) {
     return (
@@ -64,13 +82,27 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
     portfolioResult.ok &&
     portfolioResult.data.some((p) => p.ticker === result.data.ticker.toUpperCase());
   const sector = gemKey(reference.classification);
-  const accent = sectorColor(sector);
+  const balanceHistory: BalanceSheetPeriod[] = history.map(({ reference_date, indicators }) => ({
+    reference_date,
+    indicators: {
+      total_assets: indicators.total_assets,
+      current_assets: indicators.current_assets,
+      noncurrent_assets: indicators.noncurrent_assets,
+      current_liabilities: indicators.current_liabilities,
+      noncurrent_liabilities: indicators.noncurrent_liabilities,
+      equity_total: indicators.equity_total,
+    },
+  }));
 
   return (
     <>
       <div className="sticky top-16 z-40 border-b border-copy-200/10 bg-canvas-950/95 backdrop-blur-sm">
         <div className="mx-auto max-w-[1480px] px-4 sm:px-6 lg:px-8">
-          <AnalysisNavigation showHistory={history.length >= 2} />
+          <AnalysisNavigation
+            showBalanceSheet={history.length === 1}
+            showStatements={showStatements}
+            showHistory={history.length >= 2}
+          />
         </div>
       </div>
 
@@ -100,81 +132,95 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
             </div>
           </header>
 
-          <section id="visao-geral" className="scroll-mt-32 border-b border-copy-200/10 py-8">
-            <SectionHeading
-              title="Visão geral"
-              accent={accent}
-            />
-            <div className="mt-5">
-              <CompanyOverview analysis={reference} />
-            </div>
+          <section id="visao-geral" aria-label="Visão geral" className="scroll-mt-32 border-b border-copy-200/10 py-16">
+            <CompanyOverview analysis={reference} />
           </section>
 
-          <section id="cotacao" className="scroll-mt-32 border-b border-copy-200/10 py-8">
-            <SectionHeading
-              title="Cotação histórica"
-              accent={accent}
-            />
-            <div className="mt-5">
-              {priceHistoryResult.ok ? (
-                <PriceHistoryChart history={priceHistoryResult.data} />
-              ) : (
-                <p className="text-sm text-copy-600">
-                  {priceHistoryResult.status === 404
-                    ? "O histórico de cotação deste ativo ainda não está disponível."
-                    : "Não foi possível carregar o histórico de cotação agora."}
-                </p>
-              )}
-            </div>
+          {history.length === 1 && (
+            <section
+              id="balanco"
+              aria-labelledby="ticker-balance-sheet-heading"
+              className="scroll-mt-32 border-b border-copy-200/10 py-16"
+            >
+              <BalanceSheetTable history={balanceHistory} />
+            </section>
+          )}
+
+          <section id="cotacao" aria-label="Cotação histórica" className="scroll-mt-32 border-b border-copy-200/10 py-16">
+            {priceHistoryResult.ok ? (
+              <PriceHistoryChart history={priceHistoryResult.data} />
+            ) : (
+              <p className="text-sm text-copy-600">
+                {priceHistoryResult.status === 404
+                  ? "O histórico de cotação deste ativo ainda não está disponível."
+                  : "Não foi possível carregar o histórico de cotação agora."}
+              </p>
+            )}
           </section>
 
           <section
             id="indicadores"
-            aria-labelledby="ticker-indicators-heading"
-            className="scroll-mt-32 border-b border-copy-200/10 py-8"
+            aria-label="Indicadores e histórico de indicadores"
+            className="scroll-mt-32 border-b border-copy-200/10 py-16"
           >
             <ViewPanel
               analysis={reference}
               compare={ttm ? latestClosed : null}
               history={history}
               ttm={ttm}
-              sectionAccent={accent}
               primary
             />
           </section>
 
-          {history.length >= 2 && (
-            <section id="historico" className="scroll-mt-32 border-b border-copy-200/10 py-8">
-              <SectionHeading
-                title="Evolução dos fundamentos"
-                description={`${yearOf(history[0].reference_date)}–${yearOf(history[history.length - 1].reference_date)} · períodos fechados${ttm ? " e período atual" : ""}`}
-                accent={accent}
+          {showStatements && history.length < 2 && (
+            <section className="border-b border-copy-200/10 py-16">
+              <FinancialStatementsSection
+                history={history}
+                ttm={ttm}
+                cashHistory={cashHistory}
               />
-              <div className="mt-5">
-                <HistoryCharts history={history} sector={sector} ttm={ttm} />
-                {ttm && (
-                  <p className="mt-3 text-xs text-copy-600">
-                    O período atual é móvel e não corresponde a um exercício fechado.
-                  </p>
-                )}
-              </div>
-              <div className="mt-8">
-                <HistoryStrip history={history} />
-              </div>
             </section>
           )}
 
+          {history.length >= 2 && (
+            <section id="historico" className="scroll-mt-32 border-b border-copy-200/10 py-16">
+              <div>
+                <HistoryCharts
+                  history={history}
+                  sector={sector}
+                  ttm={ttm}
+                  balanceHistory={balanceHistory}
+                  showStatements={showStatements}
+                  cashHistory={cashHistory}
+                />
+              </div>
+            </section>
+          )}
         </div>
       </div>
     </>
   );
 }
 
-function AnalysisNavigation({ showHistory }: { showHistory: boolean }) {
+function AnalysisNavigation({
+  showBalanceSheet,
+  showStatements,
+  showHistory,
+}: {
+  showBalanceSheet: boolean;
+  showStatements: boolean;
+  showHistory: boolean;
+}) {
   return (
     <nav aria-label="Seções da análise" className="min-w-0 overflow-x-auto">
       <div className="flex w-max min-w-full items-center justify-center gap-1 py-2">
         <SectionLink href="#visao-geral" icon={FiInfo} label="Visão geral" />
+        {showStatements ? (
+          <SectionLink href="#demonstrativos" icon={FiFileText} label="Demonstrativos" />
+        ) : null}
+        {showBalanceSheet ? (
+          <SectionLink href="#balanco" icon={FiColumns} label="Balanço" />
+        ) : null}
         <SectionLink href="#cotacao" icon={FiTrendingUp} label="Cotação" />
         <SectionLink href="#indicadores" icon={FiTrendingUp} label="Indicadores" />
         {showHistory ? <SectionLink href="#historico" icon={FiDatabase} label="Histórico" /> : null}
@@ -200,25 +246,5 @@ function SectionLink({
       <Icon aria-hidden size={14} />
       {label}
     </a>
-  );
-}
-
-function SectionHeading({
-  title,
-  description,
-  accent,
-}: {
-  title: string;
-  description?: string;
-  accent: string;
-}) {
-  return (
-    <div className="flex items-start gap-3">
-      <span className="mt-1 h-8 w-1 shrink-0 rounded-full" style={{ backgroundColor: accent }} aria-hidden />
-      <div className="min-w-0">
-        <h2 className="text-xl font-semibold tracking-tight text-copy-100">{title}</h2>
-        {description && <p className="mt-1 max-w-3xl text-sm leading-relaxed text-copy-600">{description}</p>}
-      </div>
-    </div>
   );
 }

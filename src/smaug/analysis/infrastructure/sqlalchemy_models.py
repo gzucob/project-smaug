@@ -134,6 +134,7 @@ class TickerAnalysisRow(Base):
     price_to_fcf: Mapped[Decimal | None] = mapped_column(Numeric)
     fcf_yield: Mapped[Decimal | None] = mapped_column(Numeric)
     revenue: Mapped[Decimal | None] = mapped_column(Numeric)
+    costs: Mapped[Decimal | None] = mapped_column(Numeric)
     net_income: Mapped[Decimal | None] = mapped_column(Numeric)
     net_income_total: Mapped[Decimal | None] = mapped_column(Numeric)
     distributions_per_security: Mapped[Decimal | None] = mapped_column(Numeric)
@@ -145,6 +146,10 @@ class TickerAnalysisRow(Base):
     )
     total_assets: Mapped[Decimal | None] = mapped_column(Numeric)
     total_liabilities: Mapped[Decimal | None] = mapped_column(Numeric)
+    current_assets: Mapped[Decimal | None] = mapped_column(Numeric)
+    noncurrent_assets: Mapped[Decimal | None] = mapped_column(Numeric)
+    current_liabilities: Mapped[Decimal | None] = mapped_column(Numeric)
+    noncurrent_liabilities: Mapped[Decimal | None] = mapped_column(Numeric)
     equity: Mapped[Decimal | None] = mapped_column(Numeric)
     equity_total: Mapped[Decimal | None] = mapped_column(Numeric)
     market_cap: Mapped[Decimal | None] = mapped_column(Numeric)
@@ -166,6 +171,8 @@ class TickerAnalysisRow(Base):
     share_class_mappings: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
     class_market_values: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
     capital_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    income_statement: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    cash_flow_statement: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
 
 
 class AnalysisOutcomeRow(Base):

@@ -779,6 +779,7 @@ class Indicators:
     # per-year evolution of revenue / earnings / dividends, which the ratios alone
     # cannot reconstruct.
     revenue: Decimal | None = None
+    costs: Decimal | None = None  # DRE 3.02, as filed
     net_income: Decimal | None = None  # controllers' slice — pairs with eps
     net_income_total: Decimal | None = None  # consolidated, minority included
     distributions_per_security: Decimal | None = None
@@ -793,6 +794,10 @@ class Indicators:
     # liability; the two disagree by exactly that amount (#149).
     total_assets: Decimal | None = None
     total_liabilities: Decimal | None = None
+    current_assets: Decimal | None = None
+    noncurrent_assets: Decimal | None = None
+    current_liabilities: Decimal | None = None
+    noncurrent_liabilities: Decimal | None = None
     equity: Decimal | None = None  # controllers' slice — the bvps numerator
     equity_total: Decimal | None = None  # consolidated, minority included
     # Scale figures (absolute reais / a share count) — the market-side inputs the

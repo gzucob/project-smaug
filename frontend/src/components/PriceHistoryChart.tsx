@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { FiTrendingUp } from "react-icons/fi";
 import { IndicatorChart } from "@/components/IndicatorChart";
 import { price, toNum } from "@/lib/format";
 import type { PriceHistory } from "@/lib/types";
@@ -46,7 +47,12 @@ export function PriceHistoryChart({ history }: { history: PriceHistory }) {
     <div className="panel p-4 sm:p-6">
       <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs text-copy-600">Último fechamento · {last.session.split("-").reverse().join("/")}</p>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-canvas-800 text-accent-300" aria-hidden>
+              <FiTrendingUp size={16} />
+            </span>
+            <p className="card-title">Último fechamento · {last.session.split("-").reverse().join("/")}</p>
+          </div>
           <p className="nums mt-1 text-2xl font-semibold text-copy-100">{price(last.adjusted)}</p>
         </div>
         <div className="flex flex-wrap gap-1" role="group" aria-label="Período da cotação">

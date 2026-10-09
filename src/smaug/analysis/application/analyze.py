@@ -38,6 +38,7 @@ from smaug.analysis.domain.entities import (
 from smaug.analysis.domain.financials import (
     ClassMarketValue,
     DebtEvidenceSnapshot,
+    IncomeStatementSummary,
     MarketData,
     ShareCountProvenance,
     ShareCounts,
@@ -155,6 +156,35 @@ def _default_classification(ticker: str) -> Classification:
     if classification is None:
         raise UnknownTickerError(ticker)
     return classification
+
+
+def _income_statement_summary(
+    financials: StandardizedFinancials,
+) -> IncomeStatementSummary | None:
+    values = (
+        financials.revenue,
+        financials.costs,
+        financials.gross_profit,
+        financials.operating_expenses,
+        financials.ebitda,
+        financials.dep_amort,
+        financials.ebit,
+        financials.income_tax_expense,
+        financials.net_income_total,
+    )
+    if not any(value is not None for value in values):
+        return None
+    return IncomeStatementSummary(
+        revenue=financials.revenue,
+        costs=financials.costs,
+        gross_profit=financials.gross_profit,
+        operating_expenses=financials.operating_expenses,
+        ebitda=financials.ebitda,
+        dep_amort=financials.dep_amort,
+        ebit=financials.ebit,
+        income_tax_expense=financials.income_tax_expense,
+        net_income_total=financials.net_income_total,
+    )
 
 
 def _unknown_ipo_date(_ticker: str) -> date | None:
@@ -625,6 +655,7 @@ class AnalyzePortfolioUseCase:
             cnpj=current.cnpj,
             debt_evidence=current.debt_evidence,
             debt_evidence_snapshot=DebtEvidenceSnapshot.CURRENT,
+            income_statement=_income_statement_summary(current),
             share_class_mappings=self._class_mappings(ticker),
             class_market_values=market.class_market_values,
             capital_provenance=market.capital_provenance,
@@ -689,6 +720,8 @@ class AnalyzePortfolioUseCase:
             cnpj=annual.cnpj,
             debt_evidence=annual.debt_evidence,
             debt_evidence_snapshot=DebtEvidenceSnapshot.HISTORICAL,
+            income_statement=_income_statement_summary(annual),
+            cash_flow_statement=annual.cash_flow_statement,
             share_class_mappings=self._class_mappings(ticker),
             class_market_values=market.class_market_values,
             capital_provenance=market.capital_provenance,

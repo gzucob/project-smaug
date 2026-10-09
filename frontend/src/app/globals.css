@@ -63,6 +63,7 @@
   --color-gem-jade: #2fd6a0; /* utility */
   --color-gem-gold: #f5b31f; /* commodity */
   --color-gem-coral: #ff6a5f; /* industry */
+  --color-series-costs: #e45191;
 
   /* --- Group accents -------------------------------------------------------
      Each tint is derived from the existing sector hues. Lower chroma keeps
@@ -189,6 +190,16 @@ body {
 .hairline {
   height: 1px;
   background: color-mix(in oklab, var(--color-copy-200) 12%, transparent);
+}
+
+/* Shared typography for card headings. */
+@utility card-title {
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--color-copy-50);
 }
 
 /* Tabular figures for all numeric data. */

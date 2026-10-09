@@ -14,7 +14,6 @@ export function ViewPanel({
   compare,
   history,
   ttm,
-  sectionAccent,
   primary = false,
 }: {
   analysis: Analysis;
@@ -22,7 +21,6 @@ export function ViewPanel({
   compare: Analysis | null;
   history: Analysis[];
   ttm: Analysis | null;
-  sectionAccent: string;
   primary?: boolean;
 }) {
   // A changed calculation contract is not a comparable statistical window.
@@ -56,7 +54,6 @@ export function ViewPanel({
         compareLabel={comparableExercise ? yearOf(comparableExercise.reference_date) : null}
         history={comparableHistory}
         ttm={comparableTtm}
-        sectionAccent={sectionAccent}
       />
 
       {comparableHistory.length < history.length && (

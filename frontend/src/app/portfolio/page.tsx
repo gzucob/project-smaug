@@ -29,12 +29,20 @@ export default async function PortfolioPage() {
 
   const computed = favorites.filter((p) => byTicker.has(p.ticker)).length;
   const sectorsInOrder = Object.keys(SECTORS) as SectorKey[];
-  // Not yet computed has no classification to read a sector from — the same
-  // "industry" default the backend falls back to for an unmatched CVM label.
-  const sectorOf = (p: PortfolioTicker): SectorKey => {
+  const sectorOf = (p: PortfolioTicker): SectorKey | "unclassified" => {
     const analysis = byTicker.get(p.ticker);
-    return analysis ? gemKey(analysis.classification) : "industry";
+    return analysis ? gemKey(analysis.classification) : "unclassified";
   };
+  const groups = [
+    ...sectorsInOrder.map((key) => ({
+      key,
+      label: SECTORS[key].label,
+    })),
+    { key: "unclassified", label: "Sem classificação" },
+  ].map((group) => ({
+    ...group,
+    tickers: favorites.filter((favorite) => sectorOf(favorite) === group.key),
+  })).filter((group) => group.tickers.length > 0);
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-14">
@@ -46,56 +54,48 @@ export default async function PortfolioPage() {
           <h1 className="text-4xl font-semibold tracking-tight text-copy-50">Favoritos</h1>
         </div>
         <p className="nums text-sm text-ink-500">
-          <span className="text-accent-300">{computed}</span> de{" "}
-          {favorites.length} favoritos analisados
+          {analysesResult.ok ? (
+            <><span className="text-accent-300">{computed}</span> de {favorites.length} favoritos analisados</>
+          ) : (
+            <>{favorites.length} favoritos · análises indisponíveis</>
+          )}
         </p>
       </header>
 
-      <div className="flex flex-col gap-12">
-        {sectorsInOrder
-          .filter((key) => favorites.some((p) => sectorOf(p) === key))
-          .map((key, index) => {
-            const tickers = favorites.filter((p) => sectorOf(p) === key);
-            const meta = SECTORS[key];
-            const color = `var(${meta.colorVar})`;
-            return (
-              // Staggered per SECTION, not per card: 45 cards at the app's 60ms
-              // step would take 2.6s to settle, far past any entrance's welcome.
-              // The filter above runs before the index so an empty sector cannot
-              // leave a hole in the cascade (#136).
-              <section
-                key={key}
-                className="rise"
-                style={{ animationDelay: `${(index + 1) * 60}ms` }}
-              >
-                <div className="mb-5 flex items-center gap-3">
-                  <span
-                    className="h-6 w-1 rounded-full"
-                    style={{ backgroundColor: color }}
+      {!analysesResult.ok && (
+        <p role="status" className="panel mb-6 p-4 text-sm text-copy-400">
+          Não foi possível carregar as análises agora. Seus favoritos continuam salvos.
+          Tente novamente mais tarde.
+        </p>
+      )}
+
+      <div className="flex flex-col gap-24">
+        {groups.map(({ key, label, tickers }, index) => {
+          return (
+            // Staggered per SECTION, not per card: 45 cards at the app's 60ms
+            // step would take 2.6s to settle, far past any entrance's welcome.
+            // The filter above runs before the index so an empty sector cannot
+            // leave a hole in the cascade (#136).
+            <section
+              key={key}
+              aria-label={label}
+              className="rise"
+              style={{ animationDelay: `${(index + 1) * 60}ms` }}
+            >
+              <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+                {tickers.map((p) => (
+                  <TickerCard
+                    key={p.ticker}
+                    ticker={p.ticker}
+                    sector={key}
+                    analysis={byTicker.get(p.ticker) ?? null}
+                    unavailable={!analysesResult.ok}
                   />
-                  <h2 className="text-xl font-semibold tracking-tight text-copy-100">
-                    {meta.label}
-                  </h2>
-                  <span
-                    className="ml-auto h-px flex-1"
-                    style={{
-                      background: `linear-gradient(90deg, ${color}40, transparent)`,
-                    }}
-                  />
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {tickers.map((p) => (
-                    <TickerCard
-                      key={p.ticker}
-                      ticker={p.ticker}
-                      sector={key}
-                      analysis={byTicker.get(p.ticker) ?? null}
-                    />
-                  ))}
-                </div>
-              </section>
-            );
-          })}
+                ))}
+              </div>
+            </section>
+          );
+        })}
       </div>
     </div>
   );

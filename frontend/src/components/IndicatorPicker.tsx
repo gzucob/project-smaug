@@ -15,7 +15,13 @@
  */
 import { Listbox, ListboxButton, ListboxOption, ListboxOptions } from "@headlessui/react";
 import { FiChevronDown } from "react-icons/fi";
-import { INDICATOR_GROUPS, groupColor, indicatorGroupMeta, specsByGroup } from "@/lib/indicators";
+import {
+  HISTORY_ONLY_INDICATORS,
+  INDICATOR_GROUPS,
+  groupColor,
+  indicatorGroupMeta,
+  specsByGroup,
+} from "@/lib/indicators";
 import type { IndicatorKey } from "@/lib/types";
 
 export function IndicatorPicker({
@@ -57,19 +63,24 @@ export function IndicatorPicker({
             >
               {indicatorGroupMeta(group).title}
             </div>
-            {specsByGroup(group).filter((s) => isCurrent || s.key !== "tag_along").map((spec) => (
-              <ListboxOption
-                key={spec.key}
-                value={spec.key}
-                className="cursor-pointer px-3 py-1.5 text-sm text-copy-200 transition-colors data-focus:bg-canvas-800"
-              >
-                {({ selected }) => (
-                  <span style={selected ? { color: groupColor(group) } : undefined}>
-                    {spec.label}
-                  </span>
-                )}
-              </ListboxOption>
-            ))}
+            {[
+              ...specsByGroup(group),
+              ...HISTORY_ONLY_INDICATORS.filter((spec) => spec.group === group),
+            ]
+              .filter((s) => isCurrent || s.key !== "tag_along")
+              .map((spec) => (
+                <ListboxOption
+                  key={spec.key}
+                  value={spec.key}
+                  className="cursor-pointer px-3 py-1.5 text-sm text-copy-200 transition-colors data-focus:bg-canvas-800"
+                >
+                  {({ selected }) => (
+                    <span style={selected ? { color: groupColor(group) } : undefined}>
+                      {spec.label}
+                    </span>
+                  )}
+                </ListboxOption>
+              ))}
           </div>
         ))}
       </ListboxOptions>

@@ -133,6 +133,21 @@ class SourceAccountRef:
 
 
 @dataclass(frozen=True, slots=True)
+class IncomeStatementSummary:
+    """Public DRE lines selected from one filed period, in absolute reais."""
+
+    revenue: Decimal | None = None
+    costs: Decimal | None = None
+    gross_profit: Decimal | None = None
+    operating_expenses: Decimal | None = None
+    ebitda: Decimal | None = None
+    dep_amort: Decimal | None = None
+    ebit: Decimal | None = None
+    income_tax_expense: Decimal | None = None
+    net_income_total: Decimal | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SourceAccountEvidence:
     """Evidence for one mapped, missing, skipped, or derived input.
 
@@ -366,7 +381,10 @@ class StandardizedFinancials:
     net_income_total: Decimal | None = None
     equity_total: Decimal | None = None
     revenue: Decimal | None = None
+    costs: Decimal | None = None  # DRE 3.02, signed as filed
     gross_profit: Decimal | None = None
+    operating_expenses: Decimal | None = None  # DRE 3.04, signed as filed
+    income_tax_expense: Decimal | None = None  # filed income-tax total
     ebit: Decimal | None = None
     ebitda: Decimal | None = None
     dep_amort: Decimal | None = None
@@ -377,11 +395,13 @@ class StandardizedFinancials:
     cash_equivalents: Decimal | None = None
     current_financial_investments: Decimal | None = None
     current_assets: Decimal | None = None
+    noncurrent_assets: Decimal | None = None
     inventories: Decimal | None = None
     tag_along: Decimal | None = None
     tag_along_null_reason: NullReason | None = None
     free_float: Decimal | None = None  # filed company-wide fraction
     current_liabilities: Decimal | None = None
+    noncurrent_liabilities: Decimal | None = None
     total_debt: Decimal | None = None
     # ``total_debt`` is published only when the CVM BPP establishes a complete
     # interest-bearing-liability perimeter. This paired cause distinguishes an
@@ -392,6 +412,8 @@ class StandardizedFinancials:
     # Cash-flow flows (DFC, year-to-date basis — isolated on ``dfc_period_start``).
     cfo: Decimal | None = None  # net cash from operating activities (DFC 6.01)
     capex: Decimal | None = None  # purchases of PP&E + intangibles (positive outflow)
+    # Selected DFC accounts, kept in source order for the statement view.
+    cash_flow_statement: tuple[SourceAccountRef, ...] = ()
     # Signed CVM bank statement facts, preserved independently of ratios.
     loan_loss_provision: Decimal | None = None
     fee_income: Decimal | None = None

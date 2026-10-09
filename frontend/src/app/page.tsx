@@ -70,6 +70,12 @@ export default async function HomePage() {
         </div>
       </section>
 
+      {!analysesResult.ok && (
+        <p role="status" className="panel mb-12 p-4 text-sm text-copy-400">
+          Não foi possível carregar os destaques agora. Tente novamente mais tarde.
+        </p>
+      )}
+
       {analyses.length > 0 && (
         <section aria-labelledby="home-rankings" className="pb-12">
           <div className="rise mb-5 flex items-center gap-3" style={{ animationDelay: "240ms" }}>
@@ -78,7 +84,7 @@ export default async function HomePage() {
             </h2>
             <span className="h-px flex-1 bg-copy-200/10" />
           </div>
-          <div className="grid gap-4 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-8 xl:grid-cols-3">
             <RankingCard title="Maior valor de mercado" icon={FiBarChart2} items={marketLeaders} kind="money" metric="market_cap" />
             <RankingCard title="Maior retorno sobre patrimônio" icon={FiTrendingUp} items={returnLeaders} kind="pct" metric="roe" />
             <RankingCard title="Maior dividend yield" icon={FiTag} items={yieldLeaders} kind="pct" metric="dividend_yield" />
@@ -115,10 +121,10 @@ function RankingCard({
   metric: IndicatorKey;
 }) {
   return (
-    <div className="panel rise p-5" style={{ animationDelay: "600ms" }}>
+    <div className="panel min-w-0 p-5">
       <header className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-copy-200">{title}</p>
+          <p className="card-title">{title}</p>
         </div>
         <Icon aria-hidden size={16} className="text-accent-400" />
       </header>

@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import type { IconType } from "react-icons";
+import { FiBriefcase, FiPieChart } from "react-icons/fi";
 import { count, dateOnly, money, multiple, pct } from "@/lib/format";
 import { listingSegmentLabel } from "@/lib/governance";
 import type { Analysis } from "@/lib/types";
@@ -9,8 +11,8 @@ export function CompanyOverview({ analysis }: { analysis: Analysis }) {
   const current = analysis.view === "ttm_live";
 
   return (
-    <div className="grid items-start gap-4 xl:grid-cols-2">
-      <OverviewPanel title="Dados da empresa">
+    <div className="grid items-start gap-8 xl:grid-cols-2">
+      <OverviewPanel title="Dados da empresa" icon={FiBriefcase}>
         <dl className="divide-y divide-copy-200/5">
           <OverviewRow label="CNPJ" value={analysis.cnpj ?? "Não informado"} />
           <OverviewRow label="Data do IPO" value={dateOnly(governance?.ipo_date)} />
@@ -24,7 +26,7 @@ export function CompanyOverview({ analysis }: { analysis: Analysis }) {
         </dl>
       </OverviewPanel>
 
-      <OverviewPanel title="Resumo financeiro" href="#indicadores" linkLabel="Ver indicadores">
+      <OverviewPanel title="Resumo financeiro" icon={FiPieChart} href="#indicadores" linkLabel="Ver indicadores">
         <dl className="divide-y divide-copy-200/5">
           <OverviewRow label="P/L" value={multiple(indicators.pe_basic)} />
           <OverviewRow label="P/VP" value={multiple(indicators.pb)} />
@@ -39,11 +41,16 @@ export function CompanyOverview({ analysis }: { analysis: Analysis }) {
   );
 }
 
-function OverviewPanel({ title, href, linkLabel, children }: { title: string; href?: string; linkLabel?: string; children: ReactNode }) {
+function OverviewPanel({ title, icon: Icon, href, linkLabel, children }: { title: string; icon: IconType; href?: string; linkLabel?: string; children: ReactNode }) {
   return (
     <section className="min-w-0 rounded-lg border border-copy-200/10 bg-canvas-900 p-4 sm:p-5" aria-label={title}>
       <header className="mb-2 flex items-center justify-between gap-3 border-b border-copy-200/10 pb-4">
-        <h3 className="text-sm font-semibold text-copy-100">{title}</h3>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-canvas-800 text-accent-300" aria-hidden>
+            <Icon size={16} />
+          </span>
+          <h3 className="card-title">{title}</h3>
+        </div>
         {href && linkLabel ? (
           <a href={href} className="pressable shrink-0 rounded text-xs font-medium text-accent-300 hover:text-accent-400 focus-visible:outline-2 focus-visible:outline-accent-400">
             {linkLabel}
