@@ -328,6 +328,7 @@ function balanceSheetSeries(periods: Analysis[]): ChartSeries[] {
     },
     {
       key: "current_liabilities",
+      outlined: true,
       label: "Passivo circulante",
       type: "bar",
       values: records.map((row) => row.currentLiabilities),
@@ -335,6 +336,7 @@ function balanceSheetSeries(periods: Analysis[]): ChartSeries[] {
     },
     {
       key: "noncurrent_liabilities",
+      outlined: true,
       label: "Passivo não circulante",
       type: "bar",
       values: records.map((row) => row.noncurrentLiabilities),
