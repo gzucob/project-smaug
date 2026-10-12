@@ -367,6 +367,7 @@ export interface Analysis {
   price: Decimalish;
   price_source_code?: string | null;
   price_source_session?: string | null;
+  price_as_traded?: Decimalish;
   price_adjusted: Decimalish; // total-return basis; null on the live view
   price_basis: string | null;
   share_count_basis: string | null;

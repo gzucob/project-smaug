@@ -580,7 +580,9 @@ class CotahistArchive:
         base_url: str = B3_SERIES_BASE_URL,
         sleep: Sleeper = asyncio.sleep,
         today: Callable[[], date] = date.today,
+        refresh_current_year: bool = False,
     ) -> None:
+        self._refresh_current_year = refresh_current_year
         self._http = http_client
         self._cache_dir = Path(cache_dir)
         self._base_url = base_url.rstrip("/")
@@ -660,13 +662,13 @@ class CotahistArchive:
     def _is_fresh(self, built_on: date, year: int, today: date) -> bool:
         """Whether a cached artifact for ``year`` can still be trusted.
 
-        A closed year is immutable, so any copy of it is current forever. The
+        A closed year is immutable only if downloaded after it ended. The
         running year is republished every session, so a copy built before today
         is missing sessions and gets replaced.
         """
         if year < today.year:
-            return True
-        return built_on >= today
+            return built_on.year > year
+        return not self._refresh_current_year and built_on >= today
 
 
 class B3PriceHistory:
@@ -712,10 +714,9 @@ class B3QuoteProvider:
     session's close are the same number to every decimal that reaches a screen —
     while the close makes a run *reproducible*, which a moving quote never was.
 
-    The last close comes from the running year's archive rather than the latest
-    session's, so a share that did not trade today still reports what it last
-    traded at. One that has not traded at all this year reports nothing, which is
-    the honest answer for a code the market has stopped pricing.
+    Search back to 2010, the beginning of the supported CVM/BRL adjustment
+    evidence. Absence in the current year does not establish delisting. Keep the
+    actual session and code; the outer restatement provider adjusts its base.
     """
 
     def __init__(
@@ -725,21 +726,17 @@ class B3QuoteProvider:
         self._today = today
 
     async def get(self, ticker: str) -> MarketData:
-        quotes = (await self._archive.year(self._today().year)).get(
-            ticker.strip().upper()
-        )
-        if quotes is None:
-            logger.warning(
-                "B3 has no %d session for %s; its price will be null",
-                self._today().year,
-                ticker,
-            )
-            return MarketData(price_null_reason=NullReason.MISSING_PRICE)
-        return MarketData(
-            price=quotes.last_close,
-            price_source_code=ticker.strip().upper(),
-            price_source_session=quotes.last_session,
-        )
+        symbol = ticker.strip().upper()
+        for year in range(self._today().year, 2009, -1):
+            quotes = (await self._archive.year(year)).get(symbol)
+            if quotes is not None:
+                return MarketData(
+                    price=quotes.last_close,
+                    price_as_traded=quotes.last_close,
+                    price_source_code=symbol,
+                    price_source_session=quotes.last_session,
+                )
+        return MarketData(price_null_reason=NullReason.MISSING_PRICE)
 
 
 def _opened_base_change(before: frozenset[str], after: frozenset[str]) -> bool:

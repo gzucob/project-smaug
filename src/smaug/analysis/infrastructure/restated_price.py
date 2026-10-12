@@ -35,6 +35,7 @@ running it through here would adjust it twice.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
@@ -49,8 +50,8 @@ logger = get_logger(__name__)
 class RestatedPriceProvider:
     """A ``PriceProvider`` that divides an as-traded year price by its restatement.
 
-    The live quote passes through untouched: it is already on today's base, which
-    is the base everything is restated *to*.
+    The last quote is adjusted at its actual session, including a close retained
+    from an earlier year when the security has no recent trades.
     """
 
     def __init__(
@@ -60,7 +61,14 @@ class RestatedPriceProvider:
         self._shares = shares_reader
 
     async def get(self, ticker: str) -> MarketData:
-        return await self._inner.get(ticker)
+        quote = await self._inner.get(ticker)
+        if quote.price is None or quote.price_source_session is None:
+            return quote
+        timeline = await self._shares.restatement_timeline(ticker)
+        divisor = factor_at(timeline, quote.price_source_session)
+        if divisor <= 0:
+            raise ValueError("restatement factors must be positive")
+        return replace(quote, price=quote.price / divisor)
 
     async def year_sessions(self, ticker: str, year: int) -> tuple[SessionClose, ...]:
         """Expose the B3 sessions used to decide accounting-period eligibility."""

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import (
     JSON,
@@ -58,6 +58,7 @@ class TickerAnalysisRow(Base):
     price: Mapped[Decimal | None] = mapped_column(Numeric)
     price_source_code: Mapped[str | None] = mapped_column(String(12))
     price_source_session: Mapped[date | None] = mapped_column(Date)
+    price_as_traded: Mapped[Decimal | None] = mapped_column(Numeric)
     price_adjusted: Mapped[Decimal | None] = mapped_column(Numeric)
     price_basis: Mapped[str | None] = mapped_column(String(24))
     share_count_basis: Mapped[str | None] = mapped_column(String(48))
@@ -216,3 +217,20 @@ class PriceHistoryRow(Base):
     source: Mapped[str] = mapped_column(String(32))
     points: Mapped[list[dict[str, str]]] = mapped_column(JSON)
     gaps: Mapped[list[dict[str, str | int]]] = mapped_column(JSON)
+
+
+class PriceRefreshRow(Base):
+    """Singleton status; analysis and price snapshots remain append-only."""
+
+    __tablename__ = "price_refresh_status"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    state: Mapped[Literal["idle", "running", "completed", "failed"]] = mapped_column(
+        String(16)
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_count: Mapped[int | None]
+    unchanged_count: Mapped[int | None]
+    issues: Mapped[list[dict[str, str]] | None] = mapped_column(JSON)

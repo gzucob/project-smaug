@@ -64,6 +64,7 @@ class TickerAnalysis:
     # another code than the requested ticker, so both fields are persisted.
     price_source_code: str | None = None
     price_source_session: date | None = None
+    price_as_traded: Decimal | None = None
     # The same year's dividend-adjusted average: a total-return ruler, not a
     # valuation one. Kept for return comparisons; ``None`` for the live view, which
     # has had no payout since to adjust for.

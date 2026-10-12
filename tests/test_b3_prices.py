@@ -303,11 +303,14 @@ async def test_the_quote_is_the_last_close_of_the_running_year(
     assert quote.market_cap is None
 
 
-async def test_a_code_absent_from_the_running_year_has_no_quote(
+async def test_a_code_absent_from_all_supported_years_has_no_quote(
     tmp_path: Path,
 ) -> None:
     _write_archive(tmp_path)
     archive, http = _archive(tmp_path, today=date(2015, 6, 1))
+
+    for year in range(2010, 2015):
+        archive._years[year] = {}
 
     async with http:
         quote = await B3QuoteProvider(archive, today=lambda: date(2015, 6, 1)).get(
@@ -891,3 +894,19 @@ async def test_a_year_the_exchange_has_not_published_is_never_asked_for(
 
     assert changes == ()
     assert transport.requests == 0
+
+
+async def test_quote_retains_last_negotiated_price_from_a_prior_year(
+    tmp_path: Path,
+) -> None:
+    _write_archive(tmp_path, year=2015)
+    archive, http = _archive(tmp_path, today=date(2016, 6, 1))
+    archive._years[2016] = {}
+    async with http:
+        quote = await B3QuoteProvider(archive, today=lambda: date(2016, 6, 1)).get(
+            "VALE3"
+        )
+    assert quote.price == Decimal("20.96")
+    assert quote.price_as_traded == Decimal("20.96")
+    assert quote.price_source_code == "VALE3"
+    assert quote.price_source_session == date(2015, 1, 5)

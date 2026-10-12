@@ -467,6 +467,7 @@ class MarketData:
     # requested ticker is not sufficient provenance.
     price_source_code: str | None = None
     price_source_session: date | None = None
+    price_as_traded: Decimal | None = None
     market_cap: Decimal | None = None
     shares: Decimal | None = None
     # B3 cash rights whose ex dates fall inside this view's explicit window,

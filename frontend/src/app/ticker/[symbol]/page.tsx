@@ -22,7 +22,7 @@ import {
   fetchPriceHistory,
   fetchTicker,
 } from "@/lib/api";
-import { price } from "@/lib/format";
+import { dateOnly, price } from "@/lib/format";
 import { gemKey } from "@/lib/sectors";
 import type { Analysis } from "@/lib/types";
 
@@ -77,7 +77,13 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
     );
   }
 
-  const headlinePrice = ttm?.price ?? latestClosed?.price ?? null;
+  const retainedQuote = priceHistoryResult.ok
+    ? priceHistoryResult.data.points.at(-1)
+    : null;
+  const headlinePrice = ttm?.price_as_traded ?? retainedQuote?.as_traded ?? ttm?.price ?? latestClosed?.price ?? null;
+  const headlineSession = ttm?.price_as_traded != null
+    ? ttm.price_source_session
+    : retainedQuote?.session ?? ttm?.price_source_session ?? latestClosed?.price_source_session;
   const favorited =
     portfolioResult.ok &&
     portfolioResult.data.some((p) => p.ticker === result.data.ticker.toUpperCase());
@@ -123,6 +129,11 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
                   </span>
                 </div>
               </div>
+              {headlineSession && (
+                <p className="mt-2 text-right text-xs text-copy-500">
+                  Último negócio em <time className="nums" dateTime={headlineSession}>{dateOnly(headlineSession)}</time>
+                </p>
+              )}
               <p className="mt-2 max-w-xl text-base font-medium text-copy-200">
                 {reference.issuer ?? "Análise fundamentalista"}
               </p>
