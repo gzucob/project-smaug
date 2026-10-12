@@ -144,6 +144,10 @@ from smaug.ingestion.infrastructure.cvm_free_float import (
     FREE_FLOAT_MODULE,
     CvmFreeFloatSource,
 )
+from smaug.ingestion.infrastructure.cvm_shareholder_position import (
+    SHAREHOLDER_POSITION_MODULE,
+    CvmShareholderPositionSource,
+)
 from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, CvmDocument
 from smaug.ingestion.infrastructure.cvm_tag_along import (
     TAG_ALONG_MODULE,
@@ -987,6 +991,13 @@ def _build_data_source(
                 year=cvm_year,
                 validation_reporter=validation_reporter,
             ),
+            SHAREHOLDER_POSITION_MODULE: CvmShareholderPositionSource(
+                free_float_archive,
+                ticker_to_cnpj,
+                ticker_to_code,
+                year=cvm_year,
+                validation_reporter=validation_reporter,
+            ),
             TREASURY_MODULE: treasury,
             CAPITAL_EVENT_MODULE: events,
             CAPITAL_EVENT_B3_MODULE: exchange_events,
@@ -1425,6 +1436,10 @@ _MODULE_ADAPTERS = {
     B3_LISTING_MODULE: (B3ListingSource.parser_identity, B3ListingSource.source),
     CAPITAL_MODULE: (CvmCapitalSource.parser_identity, CvmCapitalSource.source),
     FREE_FLOAT_MODULE: (CvmFreeFloatSource.parser_identity, CvmFreeFloatSource.source),
+    SHAREHOLDER_POSITION_MODULE: (
+        CvmShareholderPositionSource.parser_identity,
+        CvmShareholderPositionSource.source,
+    ),
     TREASURY_MODULE: (CvmTreasurySource.parser_identity, CvmTreasurySource.source),
     CAPITAL_EVENT_MODULE: (
         CvmCapitalEventSource.parser_identity,

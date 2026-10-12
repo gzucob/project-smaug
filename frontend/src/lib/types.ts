@@ -415,6 +415,36 @@ export interface CashDividendHistory {
   events: CashDividendEvent[];
 }
 
+export interface ShareholderClassPosition {
+  share_class: string;
+  shares: Decimalish;
+  percent: Decimalish;
+}
+
+export interface ShareholderPosition {
+  name: string;
+  shareholder_type: string | null;
+  is_controller: boolean | null;
+  ordinary_shares: Decimalish;
+  ordinary_percent: Decimalish;
+  preferred_shares: Decimalish;
+  preferred_percent: Decimalish;
+  total_shares: Decimalish;
+  total_percent: Decimalish;
+  last_change_date: string | null;
+  class_positions: ShareholderClassPosition[];
+}
+
+export interface ShareholdingPosition {
+  ticker: string;
+  coverage: "available" | "unavailable";
+  reason: string | null;
+  reference_date: string | null;
+  version: number | null;
+  archive_year: number | null;
+  positions: ShareholderPosition[];
+}
+
 /** One favorited ticker (#151), mirroring `PortfolioTickerResponse`. */
 export interface PortfolioTicker {
   ticker: string;

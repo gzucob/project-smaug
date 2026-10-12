@@ -33,6 +33,8 @@ DEFAULT_CVM_MODULES: tuple[str, ...] = (
     "DRA",
     "CAPITAL",
     "FREE_FLOAT",
+    # Direct and related shareholder positions disclosed in FRE items 6.1/6.2.
+    "SHAREHOLDER_POSITION",
     "TAG_ALONG",
     "LISTING_B3",
     "CAPITAL_DFP",
