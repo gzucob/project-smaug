@@ -19,12 +19,14 @@
  * for each filed statement category, not as a judgement about direction.
  */
 import { useState } from "react";
+import { FiTarget } from "react-icons/fi";
 import {
   Bar,
   CartesianGrid,
   Cell,
   ComposedChart,
   Line,
+  ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -38,7 +40,7 @@ import type { FormatKind } from "@/lib/indicators";
 export type ChartMode = "bars" | "line";
 
 const AXIS_TICK = {
-  fill: "var(--color-ink-500)",
+  fill: "var(--color-copy-400)",
   fontSize: 11,
   fontFamily: "var(--font-mono)",
 };
@@ -89,6 +91,7 @@ export interface ChartSeries {
   maxBarSize?: number;
   showDots?: boolean;
   lineType?: "linear" | "monotone";
+  outlined?: boolean;
 }
 
 type HistoryRange = "5" | "10" | "max";
@@ -108,6 +111,8 @@ export function IndicatorChart({
   periodYears = [],
   dateLabels = false,
   frequencyLabel,
+  reference = null,
+  showExtremes = false,
 }: {
   labels: string[];
   values: (number | null)[];
@@ -132,10 +137,15 @@ export function IndicatorChart({
   dateLabels?: boolean;
   /** Labels custom-series frequency when only one filed period type is available. */
   frequencyLabel?: string;
+  /** A named comparison value, such as the first close in a selected range. */
+  reference?: { value: number; label: string } | null;
+  showExtremes?: boolean;
 }) {
   const [enabledSeries, setEnabledSeries] = useState<string[]>(() =>
     (series ?? []).map((item) => item.key),
   );
+  const [highlightedSeries, setHighlightedSeries] = useState<string | null>(null);
+  const [previewSeries, setPreviewSeries] = useState<string | null>(null);
   const [historyRange, setHistoryRange] = useState<HistoryRange>("5");
   const format = axisFormatter(formatKind);
   const readable = valueFormatter(formatKind);
@@ -147,6 +157,10 @@ export function IndicatorChart({
   );
   const visibleSeries = chartSeries.filter((item) => enabledSeries.includes(item.key));
   const hasCustomSeries = chartSeries.length > 0;
+  const activeSeries = [previewSeries, highlightedSeries].find((key) =>
+    key !== null && visibleSeries.some((item) => item.key === key)) ?? null;
+  const resolvedPoints = dataExtremes(labels, values);
+  const seriesOpacity = (key: string) => !activeSeries || activeSeries === key ? 1 : 0.25;
   const latestYear = Math.max(...periodYears, 0);
   const firstVisibleYear =
     historyRange === "max"
@@ -191,16 +205,17 @@ export function IndicatorChart({
     : [...values, ...(envelope?.values ?? [])].filter(
         (value): value is number => value !== null,
       );
-  // The axis always contains zero: a bar cut off below its baseline overstates
-  // the variation, and on the line it is the difference between "fell" and
-  // "fell to near nothing".
-  const max = Math.max(0, ...present);
-  const min = Math.min(0, ...present);
-  const { domain, ticks } = axisScale(min, max);
+  // Financial bars retain their zero baseline. Daily prices frame the observed
+  // range so that changes within the selected period remain readable.
+  const extrema = [...present, ...(reference ? [reference.value] : [])];
+  const max = extrema.length ? Math.max(...extrema) : 0;
+  const min = extrema.length ? Math.min(...extrema) : 0;
+  const { domain, ticks } = axisScale(min, max, !dateLabels);
   const hasVisibleData = visibleSeries.some((item) =>
     visibleIndexes.some((index) => item.values[index] != null),
   );
   const toggleSeries = (key: string) => {
+    if (highlightedSeries === key) setHighlightedSeries(null);
     setEnabledSeries((enabled) =>
       enabled.includes(key)
         ? enabled.filter((item) => item !== key)
@@ -239,7 +254,7 @@ export function IndicatorChart({
                   type="button"
                   aria-pressed={selected}
                   onClick={() => setHistoryRange(range)}
-                  className={`border-b-2 px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-up ${
+                  className={`min-h-11 border-b-2 px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-up ${
                     selected
                       ? "border-up text-copy-50"
                       : "border-transparent text-copy-500 hover:text-copy-200"
@@ -266,9 +281,10 @@ export function IndicatorChart({
         <ResponsiveContainer width="100%" height={height}>
           {/* The right margin holds the last x label ("Atual"), which sits on
               the plot edge in line mode and would otherwise be clipped. */}
-          <ComposedChart data={data} margin={{ top: 10, right: 34, bottom: 2, left: 2 }}>
+          <ComposedChart data={data} accessibilityLayer margin={{ top: showExtremes ? 28 : 10, right: 34, bottom: showExtremes ? 14 : 2, left: 2 }}>
           <CartesianGrid
-            stroke="var(--color-vault-700)"
+            stroke="var(--color-copy-200)"
+            strokeOpacity={0.1}
             strokeDasharray="3 4"
             vertical={false}
           />
@@ -280,8 +296,15 @@ export function IndicatorChart({
             // Default interval, not `0`: on a phone the year labels would
             // otherwise run into each other. Recharts drops the ones that do
             // not fit and always keeps the trailing period.
-            minTickGap={dateLabels ? 24 : 4}
-            tickFormatter={dateLabels ? (value: string) => value.split("-").reverse().join("/") : undefined}
+            ticks={dateLabels ? data
+              .filter((point, index) => index === 0 ||
+                point.label.slice(0, 7) !== data[index - 1].label.slice(0, 7))
+              .map((point) => point.label) : undefined}
+            minTickGap={dateLabels ? 40 : 12}
+            tickFormatter={dateLabels ? (value: string) =>
+              new Date(`${value}T00:00:00Z`).toLocaleDateString("pt-BR", {
+                month: "short", year: "2-digit", timeZone: "UTC",
+              }) : undefined}
           />
           {seriesXAxisIds.map((axisId) => (
             <XAxis key={axisId} dataKey="label" xAxisId={axisId} hide />
@@ -293,12 +316,12 @@ export function IndicatorChart({
             tickLine={false}
             axisLine={false}
             width={58}
-            tickFormatter={format}
+            tickFormatter={(value: number) => format(value)}
           />
           <Tooltip
             // A composed chart draws a line cursor, not a band — keep it a
             // hairline so it points without competing with the bars.
-            cursor={{ stroke: "var(--color-ink-400)", strokeOpacity: 0.28, strokeWidth: 1 }}
+            cursor={{ stroke: "var(--color-copy-400)", strokeOpacity: 0.6, strokeWidth: 1, strokeDasharray: "2 3" }}
             content={(props) => (
               <ChartTooltip
                 label={typeof props.label === "string"
@@ -311,6 +334,7 @@ export function IndicatorChart({
                 seriesLabel={seriesLabel}
                 envelopeLabel={envelope?.label}
                 series={hasCustomSeries ? visibleSeries : null}
+                highlightedSeries={activeSeries}
               />
             )}
           />
@@ -362,14 +386,15 @@ export function IndicatorChart({
                   radius={[2, 2, 0, 0]}
                   stroke="var(--color-vault-950)"
                   strokeWidth={1}
+                  opacity={seriesOpacity(item.key)}
                 >
                   {data.map((point) => (
                     <Cell
                       key={point.label}
                       fill={item.color}
-                      fillOpacity={point.ghost ? 0.16 : 0.9}
+                      fillOpacity={point.ghost ? 0.16 : item.outlined ? 0.15 : 0.9}
                       stroke={item.color}
-                      strokeOpacity={point.ghost ? 0.55 : 0.8}
+                      strokeOpacity={point.ghost ? 0.55 : 1}
                       strokeDasharray={point.ghost ? "3 2" : undefined}
                     />
                   ))}
@@ -383,9 +408,10 @@ export function IndicatorChart({
                 <Line
                   key={item.key}
                   dataKey={item.key}
-                  type={item.lineType ?? "monotone"}
+                  type={item.lineType ?? "linear"}
                   stroke={item.color}
-                  strokeWidth={2.25}
+                  strokeWidth={activeSeries === item.key ? 2.5 : 2}
+                  opacity={seriesOpacity(item.key)}
                   dot={
                     item.showDots
                       ? {
@@ -429,17 +455,17 @@ export function IndicatorChart({
             <>
               <Line
                 dataKey="closed"
-                type={dateLabels ? "linear" : "monotone"}
+                type="linear"
                 stroke="var(--color-up)"
                 strokeWidth={2}
-                dot={dateLabels && values.length > 1 ? false : { r: 3, fill: "var(--color-up)", stroke: "none" }}
+                dot={values.length >= 7 ? false : { r: 2, fill: "var(--color-up)", stroke: "none" }}
                 activeDot={{ r: 4.5 }}
                 isAnimationActive={false}
                 connectNulls={false}
               />
               <Line
                 dataKey="live"
-                type="monotone"
+                type="linear"
                 stroke="var(--color-up)"
                 strokeWidth={2}
                 strokeDasharray="5 4"
@@ -457,6 +483,27 @@ export function IndicatorChart({
             </>
           )}
 
+          {reference && (
+            <ReferenceLine
+              y={reference.value}
+              stroke="var(--color-copy-400)"
+              strokeDasharray="2 4"
+
+            />
+          )}
+
+          {showExtremes && resolvedPoints && (
+            <>
+              <ReferenceDot x={resolvedPoints.high.label} y={resolvedPoints.high.value} r={3}
+                fill="var(--color-up)" stroke="var(--color-canvas-900)"
+                label={{ value: "Máx.", position: "top", fill: "var(--color-copy-200)", fontSize: 11 }} />
+              {resolvedPoints.low.label !== resolvedPoints.high.label && <ReferenceDot
+                x={resolvedPoints.low.label} y={resolvedPoints.low.value} r={3}
+                fill="var(--color-up)" stroke="var(--color-canvas-900)"
+                label={{ value: "Mín.", position: "bottom", fill: "var(--color-copy-200)", fontSize: 11 }} />}
+            </>
+          )}
+
           {/* Last, so it reads over the bars. It carries no inline label: the
               text would sit behind a bar — the dashed swatch on the "média"
               stat is the legend. */}
@@ -471,62 +518,98 @@ export function IndicatorChart({
           </ComposedChart>
         </ResponsiveContainer>
       )}
-      {hasCustomSeries && (
-        <div
-          className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-2"
-          role="group"
-          aria-label="Séries do gráfico"
-        >
-          {chartSeries.map((item) => {
-            const selected = enabledSeries.includes(item.key);
-            return (
-              <button
-                key={item.key}
-                type="button"
-                aria-pressed={selected}
-                onClick={() => toggleSeries(item.key)}
-                className={`flex items-center gap-1.5 text-xs transition-opacity focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-up ${
-                  selected ? "text-copy-200" : "text-copy-600 opacity-55"
-                }`}
-              >
-                {item.type === "line" ? (
-                  <span
-                    aria-hidden="true"
-                    className="relative h-px w-3"
-                    style={{ backgroundColor: item.color }}
-                  >
-                    <span
-                      className="absolute -top-[3px] left-1 h-1.5 w-1.5 rounded-full border border-vault-950"
-                      style={{ backgroundColor: item.color }}
-                    />
-                  </span>
-                ) : (
-                  <span
-                    aria-hidden="true"
-                    className="h-2.5 w-2.5 rounded-[1px]"
-                    style={{ backgroundColor: item.color }}
-                  />
-                )}
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
+      {(reference || average !== null || values.some((value) => value === null)) && (
+        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-copy-400">
+          {reference && <span className="inline-flex items-center gap-2" title="Primeiro valor disponível no intervalo selecionado">
+            <span aria-hidden="true" className="w-5 border-t border-dotted border-copy-400" />
+            Primeiro fechamento: <span className="nums text-copy-200">{readable(reference.value)}</span>
+          </span>}
+          {average !== null && <span className="inline-flex items-center gap-2">
+            <span aria-hidden="true" className="w-5 border-t border-dashed" style={{ borderColor: color }} />
+            Média dos exercícios: <span className="nums text-copy-200">{readable(average)}</span>
+          </span>}
+          {!hasCustomSeries && values.some((value) => value === null) && <span>Lacunas: dados não disponíveis</span>}
         </div>
       )}
+      {showExtremes && resolvedPoints && <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-xs text-copy-400">
+        {([['Máximo', resolvedPoints.high], ['Mínimo', resolvedPoints.low]] as const).map(([label, point]) => (
+          <span key={label}>{label}: <span className="nums text-copy-200">{readable(point.value)}</span>
+            {' · '}{dateLabels ? point.label.split('-').reverse().join('/') : point.label}
+          </span>
+        ))}
+      </div>}
+      {hasCustomSeries && <div className="mt-3 flex flex-wrap justify-center gap-2" role="group" aria-label="Séries do gráfico">
+        {chartSeries.map((item) => {
+          const selected = enabledSeries.includes(item.key);
+          return <div key={item.key} className="inline-flex items-center">
+            <button type="button" aria-pressed={selected} onClick={() => toggleSeries(item.key)}
+              onMouseEnter={() => setPreviewSeries(item.key)} onMouseLeave={() => setPreviewSeries(null)}
+              onFocus={() => setPreviewSeries(item.key)} onBlur={() => setPreviewSeries(null)}
+              className={`min-h-11 flex items-center gap-2 rounded px-2 text-xs focus-visible:outline-2 focus-visible:outline-up ${selected ? "text-copy-200" : "text-copy-400 line-through"}`}>
+              <span aria-hidden="true" className={item.type === 'line' ? 'w-4 border-t-2' : 'h-2.5 w-2.5 border'}
+                style={{ borderColor: item.color, backgroundColor: item.type === 'bar' && !item.outlined ? item.color : undefined }} />
+              {item.label}
+            </button>
+            <button type="button" aria-label={`Destacar ${item.label}`} title={`Destacar ${item.label}`}
+              aria-pressed={highlightedSeries === item.key} disabled={!selected}
+              onClick={() => setHighlightedSeries((current) => current === item.key ? null : item.key)}
+              className={`min-h-11 min-w-11 flex items-center justify-center rounded focus-visible:outline-2 focus-visible:outline-up disabled:opacity-30 ${highlightedSeries === item.key ? "text-accent-300 bg-accent-400/10" : "text-copy-400"}`}>
+              <FiTarget size={14} aria-hidden="true" />
+            </button>
+          </div>;
+        })}
+      </div>}
+      <details className="mt-2 text-xs text-copy-400">
+        <summary className="min-h-11 cursor-pointer py-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400">
+          Ver valores do gráfico
+        </summary>
+        <div className="max-h-64 overflow-auto">
+          <table className="w-full text-xs">
+            <caption className="sr-only">Valores por período, nas mesmas unidades do gráfico</caption>
+            <thead>
+              <tr className="border-b border-copy-200/10">
+                <th scope="col" className="py-2 pr-4 text-left font-medium">Período</th>
+                {(hasCustomSeries ? visibleSeries.map((item) => item.label) : [
+                  ...(envelope ? [envelope.label] : []), seriesLabel ?? "Valor",
+                ]).map((label) => <th key={label} scope="col" className="px-2 text-right font-medium">{label}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {(dateLabels ? [...data].reverse() : data).map((point) => (
+                <tr key={point.label}>
+                  <th scope="row" className="whitespace-nowrap py-2 pr-4 text-left font-normal">
+                    {dateLabels ? point.label.split("-").reverse().join("/") : point.label}
+                    {point.ghost ? " · 12 meses" : ""}
+                  </th>
+                  {(hasCustomSeries ? visibleSeries.map((item) => {
+                    const amount = point[item.key];
+                    return typeof amount === "number" ? amount : null;
+                  }) : [...(envelope ? [point.envelope] : []), point.value]).map((amount, index) => (
+                    <td key={index} className="nums whitespace-nowrap px-2 text-right text-copy-200">
+                      {amount === null ? DASH : readable(amount)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
     </div>
   );
 }
 
 /**
- * A value axis on round numbers, spanning zero.
+ * A value axis on round numbers, spanning zero for financial indicators.
  *
  * Recharts' own ticks land on the raw data extremes ("+53,5%"), which reads as
  * a measurement rather than a ruler. Snapping the domain to a 1/2/5 step gives
  * grid lines a reader can subtract in their head, and puts zero exactly on one.
  */
-function axisScale(min: number, max: number): { domain: [number, number]; ticks: number[] } {
-  const lo = Math.min(0, min);
-  const hi = Math.max(0, max);
+function axisScale(min: number, max: number, includeZero = true): { domain: [number, number]; ticks: number[] } {
+  const padding = (max - min || Math.abs(max) || 1) * 0.05;
+  const lo = includeZero ? Math.min(0, min) : min - padding;
+  const hi = includeZero ? Math.max(0, max) : max + padding;
   const span = hi - lo || Math.abs(hi) || 1;
   const rough = span / 5;
   const mag = 10 ** Math.floor(Math.log10(rough));
@@ -551,6 +634,7 @@ function ChartTooltip({
   seriesLabel,
   envelopeLabel,
   series,
+  highlightedSeries,
 }: {
   label: string;
   value: Point | undefined;
@@ -558,6 +642,7 @@ function ChartTooltip({
   seriesLabel?: string;
   envelopeLabel?: string;
   series?: ChartSeries[] | null;
+  highlightedSeries?: string | null;
 }) {
   if (!value) return null;
   const mark = (value.value ?? 0) < 0 ? "var(--color-down)" : "var(--color-up)";
@@ -565,8 +650,8 @@ function ChartTooltip({
   // quantity, and reading it before the part makes the difference legible.
   const paired = envelopeLabel !== undefined;
   return (
-    <div className="rounded-lg border border-copy-200/10 bg-canvas-900 px-3 py-2 text-xs shadow-lg">
-      <div className="text-[0.68rem] uppercase tracking-wide text-ink-500">{label}</div>
+    <div className="bg-canvas-900 px-3 py-2 text-xs">
+      <div className="text-[0.68rem] text-copy-400">{label}</div>
       {series && series.length > 0 ? (
         <div className="mt-1 space-y-0.5">
           {series.map((item) => {
@@ -575,9 +660,9 @@ function ChartTooltip({
             return (
               <div
                 key={item.key}
-                className="flex items-baseline justify-between gap-4"
+                className={`grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-5 ${highlightedSeries === item.key ? "font-semibold" : ""}`}
               >
-                <span className="flex items-center gap-1.5 text-[0.62rem] text-ink-500">
+                <span className="flex items-center gap-1.5 text-[0.68rem] text-copy-400">
                   {item.type === "line" ? (
                     <span
                       aria-hidden="true"
@@ -602,7 +687,7 @@ function ChartTooltip({
         </div>
       ) : paired ? (
         <div className="mt-1 flex items-baseline justify-between gap-4">
-          <span className="text-[0.62rem] text-ink-500">{envelopeLabel}</span>
+          <span className="text-[0.68rem] text-copy-400">{envelopeLabel}</span>
           <span className="nums text-ink-200">
             {value.envelope === null ? DASH : format(value.envelope)}
           </span>
@@ -610,7 +695,7 @@ function ChartTooltip({
       ) : null}
       {series && series.length > 0 ? null : paired ? (
         <div className="flex items-baseline justify-between gap-4">
-          <span className="text-[0.62rem] text-ink-500">{seriesLabel}</span>
+          <span className="text-[0.68rem] text-copy-400">{seriesLabel}</span>
           <span className="nums font-semibold" style={{ color: mark }}>
             {value.value === null ? DASH : format(value.value)}
           </span>
@@ -621,8 +706,21 @@ function ChartTooltip({
         </div>
       )}
       {value.ghost && (
-        <div className="mt-1 text-[0.62rem] text-copy-600">período atual</div>
+        <div className="mt-1 text-[0.62rem] text-copy-600">período atual · 12 meses</div>
       )}
     </div>
   );
+}
+
+/** Observed extrema only: gaps never contribute a synthetic zero. */
+function dataExtremes(labels: string[], values: (number | null)[]) {
+  let low: { label: string; value: number } | null = null;
+  let high: { label: string; value: number } | null = null;
+  for (const [index, value] of values.entries()) {
+    if (value === null || !Number.isFinite(value)) continue;
+    const point = { label: labels[index], value };
+    if (!low || value < low.value) low = point;
+    if (!high || value > high.value) high = point;
+  }
+  return low && high ? { low, high } : null;
 }
