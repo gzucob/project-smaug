@@ -57,6 +57,7 @@ from smaug.analysis.domain.indicators import (
 from smaug.analysis.domain.price_history import PriceHistory
 from smaug.analysis.domain.price_refresh import RefreshIssueReason
 from smaug.analysis.infrastructure.mongo_dividends import MongoCashEventReader
+from smaug.analysis.infrastructure.mongo_shareholding import MongoShareholdingReader
 from smaug.analysis.infrastructure.sql_price_history import SqlPriceHistoryRepository
 from smaug.analysis.infrastructure.sql_price_refresh import SqlPriceRefreshRepository
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
@@ -82,7 +83,7 @@ _portfolio = ManagePortfolioUseCase(SqlAlchemyPortfolioRepository(_session_facto
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Open the raw mirror for read-only event history requests."""
+    """Open the raw mirror for read-only history and filing requests."""
     client: AsyncMongoClient[dict[str, Any]] = AsyncMongoClient(_settings.mongo_uri)
     _app.state.mongo_database = client[_settings.mongo_db]
     worker = (
@@ -896,6 +897,36 @@ class CashDividendHistoryResponse(BaseModel):
     events: list[CashDividendEventResponse]
 
 
+class ShareholderClassPositionResponse(BaseModel):
+    share_class: str
+    shares: Decimal | None
+    percent: Decimal | None
+
+
+class ShareholderPositionResponse(BaseModel):
+    name: str
+    shareholder_type: str | None
+    is_controller: bool | None
+    ordinary_shares: Decimal | None
+    ordinary_percent: Decimal | None
+    preferred_shares: Decimal | None
+    preferred_percent: Decimal | None
+    total_shares: Decimal | None
+    total_percent: Decimal | None
+    last_change_date: date | None
+    class_positions: list[ShareholderClassPositionResponse]
+
+
+class ShareholdingResponse(BaseModel):
+    ticker: str
+    coverage: Literal["available", "unavailable"]
+    reason: str | None
+    reference_date: date | None
+    version: int | None
+    archive_year: int | None
+    positions: list[ShareholderPositionResponse]
+
+
 def _b3_cash_share_class(analysis: TickerAnalysis, ticker: str) -> str | None:
     """Resolve the ticker's filed B3 class before reading its cash history."""
     matches = [
@@ -976,6 +1007,70 @@ async def get_dividend_history(
                 payment_dates=list(payment_dates[index]),
             )
             for index, event in enumerate(ordered)
+        ],
+    )
+
+
+@app.get("/shareholders/{ticker}/position", response_model=ShareholdingResponse)
+async def get_shareholding_position(
+    ticker: str, request: Request
+) -> ShareholdingResponse:
+    """Read direct positions from the latest mirrored CVM FRE filing."""
+    symbol = ticker.strip().upper()
+    analysis = await _repository.latest(symbol)
+    if analysis is None:
+        history = await _repository.history(symbol)
+        analysis = history[-1] if history else None
+    if analysis is None:
+        raise HTTPException(status_code=404, detail=f"No analysis for {ticker}")
+
+    database = request.app.state.mongo_database
+    reader = MongoShareholdingReader(
+        database["raw_ingestions"],
+        registrant_resolver=lambda _ticker: analysis.cd_cvm,
+        validation_collection=database["ingestion_validations"],
+    )
+    snapshot = await reader.latest(symbol)
+    if snapshot is None:
+        return ShareholdingResponse(
+            ticker=symbol,
+            coverage="unavailable",
+            reason="position_filing_missing_or_invalid",
+            reference_date=None,
+            version=None,
+            archive_year=None,
+            positions=[],
+        )
+
+    return ShareholdingResponse(
+        ticker=symbol,
+        coverage="available",
+        reason=None,
+        reference_date=snapshot.reference_date,
+        version=snapshot.version,
+        archive_year=snapshot.archive_year,
+        positions=[
+            ShareholderPositionResponse(
+                name=position.name,
+                shareholder_type=position.shareholder_type,
+                is_controller=position.is_controller,
+                ordinary_shares=position.ordinary_shares,
+                ordinary_percent=position.ordinary_percent,
+                preferred_shares=position.preferred_shares,
+                preferred_percent=position.preferred_percent,
+                total_shares=position.total_shares,
+                total_percent=position.total_percent,
+                last_change_date=position.last_change_date,
+                class_positions=[
+                    ShareholderClassPositionResponse(
+                        share_class=item.share_class,
+                        shares=item.shares,
+                        percent=item.percent,
+                    )
+                    for item in position.class_positions
+                ],
+            )
+            for position in snapshot.direct_positions
         ],
     )
 

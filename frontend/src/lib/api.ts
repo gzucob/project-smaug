@@ -18,6 +18,7 @@ import type {
   CashDividendHistory,
   PortfolioTicker,
   PriceHistory,
+  ShareholdingPosition,
   TickerViews,
 } from "@/lib/types";
 
@@ -66,6 +67,15 @@ export function fetchDividendHistory(
 ): Promise<ApiResult<CashDividendHistory>> {
   return get<CashDividendHistory>(
     `/dividends/${encodeURIComponent(symbol.toUpperCase())}/history`,
+  );
+}
+
+/** Direct shareholder positions from the latest mirrored CVM FRE. */
+export function fetchShareholdingPosition(
+  symbol: string,
+): Promise<ApiResult<ShareholdingPosition>> {
+  return get<ShareholdingPosition>(
+    `/shareholders/${encodeURIComponent(symbol.toUpperCase())}/position`,
   );
 }
 

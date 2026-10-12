@@ -5,6 +5,7 @@ import {
   FiFileText,
   FiInfo,
   FiTrendingUp,
+  FiUsers,
 } from "react-icons/fi";
 import { BalanceSheetTable } from "@/components/BalanceSheetTable";
 import type { BalanceSheetPeriod } from "@/components/BalanceSheetTable";
@@ -14,12 +15,14 @@ import { FavoriteButton } from "@/components/FavoriteButton";
 import { FinancialStatementsSection } from "@/components/FinancialStatementsSection";
 import { HistoryCharts } from "@/components/HistoryCharts";
 import { PriceHistoryChart } from "@/components/PriceHistoryChart";
+import { ShareholderComposition } from "@/components/ShareholderComposition";
 import { ViewPanel } from "@/components/ViewPanel";
 import { VaultOffline } from "@/components/VaultOffline";
 import {
   fetchDividendHistory,
   fetchPortfolioList,
   fetchPriceHistory,
+  fetchShareholdingPosition,
   fetchTicker,
 } from "@/lib/api";
 import { dateOnly, price } from "@/lib/format";
@@ -33,11 +36,18 @@ export async function generateMetadata({ params }: { params: Promise<{ symbol: s
 
 export default async function TickerPage({ params }: { params: Promise<{ symbol: string }> }) {
   const { symbol } = await params;
-  const [result, portfolioResult, priceHistoryResult, dividendHistoryResult] = await Promise.all([
+  const [
+    result,
+    portfolioResult,
+    priceHistoryResult,
+    dividendHistoryResult,
+    shareholdingResult,
+  ] = await Promise.all([
     fetchTicker(symbol),
     fetchPortfolioList(),
     fetchPriceHistory(symbol),
     fetchDividendHistory(symbol),
+    fetchShareholdingPosition(symbol),
   ]);
 
   if (!result.ok) {
@@ -57,6 +67,7 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
 
   const { ttm, history } = result.data;
   const cashHistory = dividendHistoryResult.ok ? dividendHistoryResult.data : null;
+  const shareholding = shareholdingResult.ok ? shareholdingResult.data : null;
   const latestClosed = history.length > 0 ? history[history.length - 1] : null;
   const reference: Analysis | null = ttm ?? latestClosed;
   const showStatements = Boolean(
@@ -207,6 +218,14 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
               </div>
             </section>
           )}
+
+          <section
+            id="composicao-acionaria"
+            aria-label="Composição acionária declarada"
+            className="scroll-mt-32 py-16"
+          >
+            <ShareholderComposition position={shareholding} />
+          </section>
         </div>
       </div>
     </>
@@ -235,6 +254,7 @@ function AnalysisNavigation({
         <SectionLink href="#cotacao" icon={FiTrendingUp} label="Cotação" />
         <SectionLink href="#indicadores" icon={FiTrendingUp} label="Indicadores" />
         {showHistory ? <SectionLink href="#historico" icon={FiDatabase} label="Histórico" /> : null}
+        <SectionLink href="#composicao-acionaria" icon={FiUsers} label="Acionistas" />
       </div>
     </nav>
   );
