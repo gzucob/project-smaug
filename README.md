@@ -109,7 +109,9 @@ O `.env.example` contém os valores padrão. Os principais parâmetros são:
   universo listado. É independente de `CVM_YEAR`; o padrão é `2026`.
 - `CVM_MODULES`: módulos CVM/B3 a coletar; por padrão inclui demonstrações,
   capital, eventos societários e dividendos.
-- `MONGO_URI` e `MONGO_DB`: conexão do espelho cru.
+- `MONGO_URI` e `MONGO_DB`: conexão do espelho cru. Se outro projeto usar a
+  porta `27017`, defina `MONGO_PORT=27018` e
+  `MONGO_URI=mongodb://localhost:27018` no `.env` antes de subir o Docker.
 - `POSTGRES_URI`: conexão dos indicadores derivados.
 - `CVM_CACHE_DIR`, `B3_CACHE_DIR` e `SOURCE_ARTIFACT_DIR`: caches locais e
   armazenamento Bronze dos artefatos de origem.
@@ -257,8 +259,56 @@ uv run uvicorn smaug.entrypoints.api:app --reload --host 0.0.0.0 --port 8000
 
 A documentação interativa fica em <http://localhost:8000/docs>.
 
+Ao iniciar a API, um processo CLI atualiza as cotações em segundo plano para
+os ativos que já possuem análises. A verificação se repete a cada seis horas
+enquanto a API estiver aberta; uma conclusão recente evita trabalho duplicado
+após reiniciar. Não exige VPS, cron nem serviço externo. Execute
+`uv run alembic upgrade head` antes de iniciar a versão atualizada.
+
+Se o projeto ficar semanas ou meses desligado, a próxima verificação consulta
+os arquivos anuais COTAHIST da B3 e recupera os pregões do intervalo, inclusive
+quando atravessa a virada do ano. Históricos são reconstruídos na base de ações
+resolvida pelo espelho CVM existente; preços alterados também provocam a
+recomputação dos indicadores dependentes. Essa rotina não atualiza os
+fundamentos CVM: a ingestão continua sendo uma etapa própria.
+
+Os dados salvos continuam acessíveis durante a atualização. Falhas são
+registradas sem marcar a execução como concluída; o próximo ciclo tenta de novo.
+Atualizações de cada ativo são retomadas por comparação com o que foi salvo,
+sem apagar snapshots anteriores. Uma primeira instalação ainda precisa executar
+a ingestão e `smaug analyze` para preparar seus ativos.
+
+A atualização é silenciosa: a home exibe os dados persistidos sem painel de
+progresso, lista de falhas ou alertas por ticker. Enquanto a aplicação está
+aberta, as páginas consultam os dados salvos em segundo plano a cada minuto;
+ao voltar para a aba, consultam novamente. Essa leitura não dispara downloads
+nem cálculos. A data do último negócio aparece discretamente junto à cotação
+na página do ativo. Falhas ficam nos logs e no diagnóstico operacional da API.
+Para desativar o worker, defina `AUTO_PRICE_REFRESH=false`; para alterar o
+intervalo de verificação da B3, use `PRICE_REFRESH_INTERVAL_SECONDS` (padrão
+`21600`).
+Também é possível executar uma verificação avulsa com `uv run smaug sync-prices`.
+Use `--force` para verificar imediatamente, sem aguardar o intervalo.
+
+A cotação pode vir de um ano anterior: a busca do último negócio cobre o período
+suportado desde 2010. Sua data original é preservada. A interface distingue o
+preço negociado da base ajustada por desdobramentos, grupamentos e bonificações
+usada nos indicadores. Uma consulta sem novos negócios é uma verificação válida.
+
+A rotina tenta atualizar os ativos já analisados, sem classificá-los por
+liquidez, free float ou situação cadastral. Registra apenas as falhas por ativo,
+preserva os dados salvos quando uma tentativa falha e volta a tentar no próximo
+ciclo. Quando não há negócio recente, usa o último preço negociado disponível,
+com sua data original. Se nenhum preço estiver disponível, a interface mostra
+`n/d`, sem alerta.
+Os indicadores continuam usando a base ajustada por eventos de capital e o
+espelho CVM disponível; a rotina não faz ingestão dos fundamentos.
+
+
+
 | Método | Endpoint | Função |
 |---|---|---|
+| `GET` | `/prices/refresh-status` | Estado e última conclusão da atualização automática. |
 | `GET` | `/analysis` | Última análise persistida de cada ticker. |
 | `GET` | `/analysis/{ticker}` | Visão TTM e histórico anual de um ticker. |
 | `GET` | `/portfolio` | Lista de tickers favoritados. |

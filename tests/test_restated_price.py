@@ -219,8 +219,8 @@ async def test_a_missing_price_is_not_restated_and_costs_no_mirror_read() -> Non
     assert shares.timeline_calls == []
 
 
-async def test_the_live_quote_is_never_restated() -> None:
-    # It is already on today's base — the base everything else is restated *to*.
+async def test_quote_without_a_source_session_is_not_rebased() -> None:
+    # Without a dated observation, no capital-event factor can be applied.
     shares = FakeShares((BONUS_2024,))
     inner = FakeAsTradedPrices(YearPrices(), MarketData(price=Decimal("21.35")))
     provider = RestatedPriceProvider(inner, shares)
@@ -250,3 +250,19 @@ async def test_the_cap_is_invariant_under_the_restatement() -> None:
     assert restated is not None
 
     assert restated * (count * factor) == as_traded * count
+
+
+async def test_old_quote_is_restated_without_changing_its_negotiated_value() -> None:
+    quote = MarketData(
+        price=Decimal("60"),
+        price_as_traded=Decimal("60"),
+        price_source_code="TEST3",
+        price_source_session=date(2023, 12, 28),
+    )
+    inner = FakeAsTradedPrices(YearPrices(), quote=quote)
+    provider = RestatedPriceProvider(inner, FakeShares((BONUS_2024,)))
+    result = await provider.get("TEST3")
+    assert result.price == Decimal("30")
+    assert result.price_as_traded == Decimal("60")
+    assert result.price_source_code == "TEST3"
+    assert result.price_source_session == date(2023, 12, 28)

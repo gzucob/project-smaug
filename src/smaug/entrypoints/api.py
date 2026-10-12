@@ -12,8 +12,9 @@ thing this API is allowed to write, since it is not computed, only chosen.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
@@ -54,8 +55,10 @@ from smaug.analysis.domain.indicators import (
     public_indicator_names,
 )
 from smaug.analysis.domain.price_history import PriceHistory
+from smaug.analysis.domain.price_refresh import RefreshIssueReason
 from smaug.analysis.infrastructure.mongo_dividends import MongoCashEventReader
 from smaug.analysis.infrastructure.sql_price_history import SqlPriceHistoryRepository
+from smaug.analysis.infrastructure.sql_price_refresh import SqlPriceRefreshRepository
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
 from smaug.portfolio.application.manage_portfolio import ManagePortfolioUseCase
 from smaug.portfolio.domain.entities import PortfolioTicker
@@ -67,6 +70,7 @@ from smaug.portfolio.domain.share_classes import (
 from smaug.portfolio.infrastructure.sql_repository import SqlAlchemyPortfolioRepository
 from smaug.shared.config import get_settings
 from smaug.shared.errors import UnknownTickerError
+from smaug.shared.price_worker import supervise_price_worker
 from smaug.shared.sql_db import create_engine, create_session_factory
 
 _settings = get_settings()
@@ -81,9 +85,20 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Open the raw mirror for read-only event history requests."""
     client: AsyncMongoClient[dict[str, Any]] = AsyncMongoClient(_settings.mongo_uri)
     _app.state.mongo_database = client[_settings.mongo_db]
+    worker = (
+        asyncio.create_task(
+            supervise_price_worker(_settings.price_refresh_interval_seconds)
+        )
+        if _settings.auto_price_refresh
+        else None
+    )
     try:
         yield
     finally:
+        if worker is not None:
+            worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker
         await client.close()
 
 
@@ -457,6 +472,7 @@ class AnalysisResponse(BaseModel):
     price: Decimal | None
     price_source_code: str | None
     price_source_session: date | None
+    price_as_traded: Decimal | None
     price_adjusted: Decimal | None
     price_basis: str | None
     share_count_basis: str | None
@@ -798,6 +814,7 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
         price=analysis.price,
         price_source_code=analysis.price_source_code,
         price_source_session=analysis.price_source_session,
+        price_as_traded=analysis.price_as_traded,
         price_adjusted=analysis.price_adjusted,
         price_basis=analysis.price_basis,
         share_count_basis=analysis.share_count_basis,
@@ -1051,3 +1068,38 @@ async def add_to_portfolio(ticker: str) -> PortfolioTickerResponse:
 async def remove_from_portfolio(ticker: str) -> None:
     """Un-favorite a ticker. Idempotent — removing one already absent is a no-op."""
     await _portfolio.remove(ticker)
+
+
+class PriceRefreshIssueResponse(BaseModel):
+    ticker: str
+    reason: RefreshIssueReason
+
+
+class PriceRefreshResponse(BaseModel):
+    enabled: bool
+    state: Literal["idle", "running", "completed", "failed"]
+    started_at: datetime | None
+    checked_at: datetime | None
+    completed_at: datetime | None
+    updated_count: int | None
+    unchanged_count: int | None
+    issues: list[PriceRefreshIssueResponse]
+
+
+@app.get("/prices/refresh-status", response_model=PriceRefreshResponse)
+async def price_refresh_status() -> PriceRefreshResponse:
+    """Read CLI status without starting any calculation or download."""
+    status = await SqlPriceRefreshRepository(_session_factory).read()
+    return PriceRefreshResponse(
+        enabled=_settings.auto_price_refresh,
+        state=status.state,
+        started_at=status.started_at,
+        checked_at=status.checked_at,
+        completed_at=status.completed_at,
+        updated_count=status.updated_count,
+        unchanged_count=status.unchanged_count,
+        issues=[
+            PriceRefreshIssueResponse(ticker=item.ticker, reason=item.reason)
+            for item in status.issues
+        ],
+    )

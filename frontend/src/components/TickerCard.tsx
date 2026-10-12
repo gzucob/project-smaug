@@ -66,7 +66,7 @@ export function TickerCard({ ticker, sector, analysis, unavailable = false }: { 
       </div>
 
       <div className="mt-auto flex items-center justify-between border-t border-copy-200/10 pt-3">
-        <span className="nums text-sm font-semibold text-copy-100">{price(analysis.price)}</span>
+        <span className="nums text-sm font-semibold text-copy-100">{price(analysis.price_as_traded ?? analysis.price)}</span>
         <span className="text-xs text-copy-500 transition-colors group-hover:text-accent-300">abrir análise →</span>
       </div>
     </Link>

@@ -477,3 +477,15 @@ async def test_latest_reads_select_current_null_without_legacy_fallback() -> Non
         assert (
             "ORDER BY ticker_analysis.computed_at DESC, ticker_analysis.id DESC" in sql
         )
+
+
+def test_negotiated_quote_is_preserved_separately_from_the_rebased_price() -> None:
+    analysis = replace(_analysis(), price=Decimal("30"), price_as_traded=Decimal("60"))
+    row = _to_row(analysis)
+    assert row.price == Decimal("30")
+    assert row.price_as_traded == Decimal("60")
+    restored = _to_entity(row)
+    assert restored.price == analysis.price
+    assert restored.price_as_traded == analysis.price_as_traded
+    assert restored.price_source_code == analysis.price_source_code
+    assert restored.price_source_session == analysis.price_source_session

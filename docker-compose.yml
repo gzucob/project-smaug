@@ -4,7 +4,7 @@ services:
     container_name: smaug-mongo
     restart: unless-stopped
     ports:
-      - "27017:27017"
+      - "${MONGO_PORT:-27017}:27017"
     volumes:
       - smaug-mongo-data:/data/db
 

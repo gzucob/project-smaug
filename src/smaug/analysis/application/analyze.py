@@ -639,6 +639,7 @@ class AnalyzePortfolioUseCase:
             price=quote.price,
             price_source_code=quote.price_source_code,
             price_source_session=quote.price_source_session,
+            price_as_traded=quote.price_as_traded,
             # A live quote has no adjusted counterpart: nothing has been paid out
             # since it, so there is nothing to adjust it by.
             price_adjusted=None,
@@ -706,6 +707,7 @@ class AnalyzePortfolioUseCase:
             price=market.price,
             price_source_code=market.price_source_code,
             price_source_session=market.price_source_session,
+            price_as_traded=market.price_as_traded,
             price_adjusted=adjusted_avg,
             price_basis=_CLOSED_YEAR_BASIS,
             share_count_basis=_CLOSED_YEAR_SHARE_BASIS,
@@ -871,6 +873,7 @@ class AnalyzePortfolioUseCase:
             price=quote.price,
             price_source_code=quote.price_source_code,
             price_source_session=quote.price_source_session,
+            price_as_traded=quote.price_as_traded,
             market_cap=cap,
             shares=shares,
             cash_distributions=distributions,

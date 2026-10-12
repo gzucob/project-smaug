@@ -27,7 +27,12 @@ class BuildPriceHistoryUseCase:
         self._repository = repository
 
     async def execute(
-        self, ticker: str, start_year: int = 2010, end_year: int | None = None
+        self,
+        ticker: str,
+        start_year: int = 2010,
+        end_year: int | None = None,
+        *,
+        persist: bool = True,
     ) -> PriceHistory:
         end = end_year if end_year is not None else date.today().year
         # CVM inputs begin in 2010. Older tape includes earlier currencies and
@@ -66,7 +71,8 @@ class BuildPriceHistoryUseCase:
             points=tuple(points),
             gaps=tuple(gaps),
         )
-        await self._repository.save(history)
+        if persist:
+            await self._repository.save(history)
         return history
 
 

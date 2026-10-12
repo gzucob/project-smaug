@@ -112,6 +112,9 @@ class Settings(BaseSettings):
         default="postgresql+asyncpg://smaug:smaug@localhost:5432/smaug"
     )
 
+    auto_price_refresh: bool = Field(default=True)
+    price_refresh_interval_seconds: int = Field(default=21600, ge=60)
+
     # ---- API (Phase 2 read API + the portfolio's write surface, #151) ----
     # Every existing read is fetched server-side by the frontend (RULES_FRONTEND:
     # "no CORS surface"). The one exception is the favorite-ticker toggle, proxied

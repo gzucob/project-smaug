@@ -572,20 +572,15 @@ class SuccessionPriceProvider:
 
     async def get(self, ticker: str) -> MarketData:
         original = await self._inner.get(ticker)
-        # B3 already proved the requested code and session.  This is the normal
-        # path: do not resolve a historical chain (or ask for another archive)
-        # just to rediscover an observation whose provenance is complete.
-        if (
-            original.price is not None
-            and original.price_source_code is not None
-            and original.price_source_session is not None
-        ):
-            return original
         current = await self._succession.current_code(ticker)
         if current is None or current == ticker.strip().upper():
             return original
         successor = await self._inner.get(current)
-        if successor.price is None:
+        if successor.price is None or (
+            original.price_source_session is not None
+            and successor.price_source_session is not None
+            and original.price_source_session >= successor.price_source_session
+        ):
             # The succession is evidence about identity, not a second price
             # source. Keep the source's own null when it cannot serve the chosen
             # B3 code.

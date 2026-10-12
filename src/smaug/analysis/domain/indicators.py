@@ -32,7 +32,8 @@ CLOSING_CAPITAL_V1 = "closing_capital_v1"
 SIMPLIFIED_INDICATORS_V1 = "simplified_indicators_v1"
 CASH_FLOW_INDICATORS_V1 = "cash_flow_indicators_v1"
 GENERAL_INDICATORS_V1 = "general_indicators_v1"
-CALCULATION_CONTRACT_VERSION = "security_governance_v1"
+SECURITY_GOVERNANCE_V1 = "security_governance_v1"
+CALCULATION_CONTRACT_VERSION = "last_traded_price_v1"
 # Compatibility filters for historical JSON; these are no longer indicators.
 RETIRED_SECTOR_INDICATORS = frozenset(
     {
@@ -648,7 +649,7 @@ INDICATOR_CONTRACT["tag_along"] = IndicatorContract(
 
 def indicator_contracts(version: str) -> dict[str, IndicatorContract]:
     """Describe the formula actually used by a persisted calculation version."""
-    if version == CALCULATION_CONTRACT_VERSION:
+    if version in {CALCULATION_CONTRACT_VERSION, SECURITY_GOVERNANCE_V1}:
         return INDICATOR_CONTRACT
     if version in {GENERAL_INDICATORS_V1, CASH_FLOW_INDICATORS_V1}:
         return {

@@ -505,19 +505,18 @@ async def test_recovered_current_quote_keeps_successor_code_and_session() -> Non
     assert quote.price_source_session == date(2026, 1, 2)
 
 
-async def test_current_quote_fast_path_does_not_resolve_or_read_the_archive() -> None:
-    archive = _FakeArchive({})
-    succession = CodeSuccession(
-        archive,  # type: ignore[arg-type]
-        siblings=lambda ticker: (_ for _ in ()).throw(AssertionError("resolved")),
-        today=lambda: TODAY,
+async def test_proven_quote_is_preserved_when_no_successor_exists() -> None:
+    archive = _FakeArchive(
+        {2026: {"ARZZ3": _quotes(_sessions(date(2026, 5, 29), ["42"]))}}
     )
+    succession = CodeSuccession(archive, today=lambda: TODAY)  # type: ignore[arg-type]
     provider = SuccessionPriceProvider(_ProvenancePrices(), succession)  # type: ignore[arg-type]
 
     quote = await provider.get("ARZZ3")
 
     assert quote.price == Decimal("42")
-    assert archive.calls == []
+    assert quote.price_source_code == "ARZZ3"
+    assert archive.calls == [2026]
 
 
 async def test_current_quote_bound_comes_from_the_seam_not_a_fixed_lookback() -> None:
@@ -1091,3 +1090,31 @@ async def test_two_codes_retiring_the_same_day_are_told_apart() -> None:
     succession = _tape_succession(archive, frozenset({name_key("TRACTEBEL ENERGIA")}))
 
     assert await succession.candidates("EGIE3", 2015) == ("TBLE3", "EGIE3")
+
+
+async def test_retained_prior_year_quote_follows_a_proven_newer_successor() -> None:
+    class RetainedPrices(_SuccessorProvenancePrices):
+        async def get(self, ticker: str) -> MarketData:
+            if ticker == "NINJ3":
+                return MarketData(
+                    price=Decimal("70"),
+                    price_source_code=ticker,
+                    price_source_session=date(2025, 12, 29),
+                )
+            return await super().get(ticker)
+
+    archive = _FakeArchive(
+        {
+            2025: {"NINJ3": _quotes(_sessions(date(2025, 12, 29), ["70"]))},
+            2026: {"ARND3": _quotes(_sessions(date(2026, 1, 2), ["71"]))},
+        }
+    )
+    succession = CodeSuccession(
+        archive,
+        siblings=lambda ticker: ("ARND3",) if ticker == "NINJ3" else ("NINJ3",),
+        today=lambda: TODAY,
+    )  # type: ignore[arg-type]
+    quote = await SuccessionPriceProvider(RetainedPrices(), succession).get("NINJ3")
+    assert quote.price == Decimal("71")
+    assert quote.price_source_code == "ARND3"
+    assert quote.price_source_session == date(2026, 1, 2)

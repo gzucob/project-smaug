@@ -11,7 +11,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from time import perf_counter
 from typing import Annotated, Any, cast
@@ -40,6 +40,10 @@ from smaug.analysis.application.doctor import (
 )
 from smaug.analysis.application.drift import AccountDriftUseCase, DriftReport
 from smaug.analysis.application.price_history import BuildPriceHistoryUseCase
+from smaug.analysis.application.refresh_prices import (
+    CheckPricesUseCase,
+    RefreshPricesUseCase,
+)
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.financials import IssuerIdentity
 from smaug.analysis.domain.indicators import NullReason
@@ -48,6 +52,7 @@ from smaug.analysis.domain.ports import (
     PriceProvider,
     SharesReader,
 )
+from smaug.analysis.domain.price_refresh import PriceRefreshStatusRepository
 from smaug.analysis.infrastructure.b3_prices import (
     B3BaseChanges,
     B3PriceProvider,
@@ -62,6 +67,10 @@ from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsRe
 from smaug.analysis.infrastructure.mongo_governance import MongoGovernanceReader
 from smaug.analysis.infrastructure.restated_price import RestatedPriceProvider
 from smaug.analysis.infrastructure.sql_price_history import SqlPriceHistoryRepository
+from smaug.analysis.infrastructure.sql_price_refresh import (
+    SqlPriceRefreshRepository,
+    price_refresh_lock,
+)
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
 from smaug.analysis.infrastructure.succession import (
     CodeSuccession,
@@ -1641,6 +1650,41 @@ def analyze(
     raise typer.Exit(code=exit_code)
 
 
+@app.command()
+def sync_prices(
+    force: bool = typer.Option(
+        False, "--force", help="Check now despite the interval."
+    ),
+) -> None:
+    """Check B3 once; recover missed sessions for already analyzed securities."""
+    raise typer.Exit(code=_guarded(_run_price_check(force=force)))
+
+
+async def _run_price_check(*, force: bool = False) -> int:
+    settings = get_settings()
+    engine = create_engine(settings)
+    try:
+        async with price_refresh_lock(engine) as locked:
+            if not locked:
+                return 0
+            repository = SqlAlchemyAnalysisRepository(create_session_factory(engine))
+            if not await repository.all_latest():
+                return 0
+            refresh_status = SqlPriceRefreshRepository(create_session_factory(engine))
+            return await CheckPricesUseCase(
+                refresh_status,
+                lambda: _run_analyze(
+                    (),
+                    whole_exchange=True,
+                    refresh_prices=True,
+                    refresh_status_repository=refresh_status,
+                ),
+                timedelta(seconds=settings.price_refresh_interval_seconds),
+            ).execute(force=force)
+    finally:
+        await engine.dispose()
+
+
 async def _security_resolvers(
     settings: Settings,
     http: httpx.AsyncClient,
@@ -1680,7 +1724,9 @@ async def _security_resolvers(
     )
 
 
-def _build_archive(settings: Settings, http: httpx.AsyncClient) -> CotahistArchive:
+def _build_archive(
+    settings: Settings, http: httpx.AsyncClient, *, refresh: bool = False
+) -> CotahistArchive:
     """B3's quote series — the only thing that prices the analysis (ADR 0041).
 
     One instance for the whole run: the share side reads the corporate-action
@@ -1690,6 +1736,7 @@ def _build_archive(settings: Settings, http: httpx.AsyncClient) -> CotahistArchi
     return CotahistArchive(
         http,
         cache_dir=settings.b3_cache_dir,
+        refresh_current_year=refresh,
         base_url=settings.b3_series_base_url,
     )
 
@@ -1917,6 +1964,8 @@ async def _run_analyze(
     whole_exchange: bool = False,
     verbose: bool = False,
     price_history_since: int | None = None,
+    refresh_prices: bool = False,
+    refresh_status_repository: PriceRefreshStatusRepository | None = None,
 ) -> int:
     settings = get_settings()
     mongo = await init_database(settings)
@@ -1943,6 +1992,19 @@ async def _run_analyze(
                     artifact_store=artifact_store,
                     fca_provenance=fca_provenance,
                 )
+            if refresh_prices:
+                existing = await SqlAlchemyAnalysisRepository(
+                    session_factory
+                ).all_latest()
+                tickers = tuple(sorted(a.ticker for a in existing))
+                registry = CvmCompanyRegistry(
+                    http,
+                    year=settings.cvm_fca_year,
+                    cache_dir=settings.cvm_cache_dir,
+                    artifact_store=artifact_store,
+                )
+                _configure_placeholder_recovery(registry, settings, http)
+                identities = await registry.resolve_all(tickers)
             # The reader keeps a five-value Sector (the internal regime hint); the
             # stored analysis carries the B3 Classification (ADR 0024). Both are
             # built from the same resolved identities.
@@ -1952,7 +2014,7 @@ async def _run_analyze(
             # the as-traded price by the very same restatement (ADR 0027). The
             # archive is built first because the reader dates that restatement
             # off it, and the price provider then shares the same instance.
-            archive = _build_archive(settings, http)
+            archive = _build_archive(settings, http, refresh=refresh_prices)
             # One chain of trading codes per security, shared by the two readers
             # that must not disagree about it: the price averages the joined
             # sessions and the base-change reader dates the actions filed under
@@ -2052,6 +2114,27 @@ async def _run_analyze(
                 per_share_resolver=_per_share_resolver(identities),
                 outcome_repository=analysis_repository,
             )
+            if refresh_prices:
+                histories = SqlPriceHistoryRepository(session_factory)
+                builder = BuildPriceHistoryUseCase(
+                    SuccessionPriceProvider(
+                        B3PriceProvider(archive),
+                        succession,
+                        timeline=shares_reader.restatement_timeline,
+                    ),
+                    shares_reader,
+                    histories,
+                )
+                return await RefreshPricesUseCase(
+                    builder,
+                    histories,
+                    analysis_repository,
+                    _build_price_provider(
+                        shares_reader, archive, cash_events, succession, units
+                    ),
+                    use_case,
+                    status_repository=refresh_status_repository,
+                ).execute(tickers)
             run = await use_case.execute(tickers)
     finally:
         await mongo.close()
