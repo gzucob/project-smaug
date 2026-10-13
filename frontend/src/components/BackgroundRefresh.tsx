@@ -2,6 +2,7 @@
 
 import { useEffect, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { fetchClientDataRevision } from "@/lib/data-revision-api";
 
 /** Read fresh saved data without exposing the worker's progress or failures. */
 export function BackgroundRefresh({
@@ -50,15 +51,9 @@ export function BackgroundRefresh({
       controller = new AbortController();
       const timeout = window.setTimeout(() => controller?.abort(), 3000);
       try {
-        const response = await fetch("/api/data-revision", {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok || disposed) return;
-        const { revision } = (await response.json()) as {
-          revision: string | null;
-        };
-        if (revision && revision !== initialRevision) refreshWhenIdle();
+        const revision = await fetchClientDataRevision(controller.signal);
+        if (!revision || disposed) return;
+        if (revision !== initialRevision) refreshWhenIdle();
       } catch {
         // Keep the saved screen on transient failures; a later probe retries.
       } finally {
