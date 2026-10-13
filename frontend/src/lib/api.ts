@@ -13,8 +13,11 @@
  * Every call returns an `ApiResult` rather than throwing, so pages can render
  * a clear offline state when the backend isn't running.
  */
+import { cache } from "react";
 import type {
   Analysis,
+  AnalysisSummary,
+  DataRevision,
   CashDividendHistory,
   PortfolioTicker,
   PriceHistory,
@@ -28,9 +31,12 @@ export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; status: number; message: string };
 
-async function get<T>(path: string): Promise<ApiResult<T>> {
+async function get<T>(path: string, timeoutMs = 10000): Promise<ApiResult<T>> {
   try {
-    const res = await fetch(`${BASE}${path}`, { cache: "no-store" });
+    const res = await fetch(`${BASE}${path}`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     if (!res.ok) {
       return {
         ok: false,
@@ -55,6 +61,14 @@ async function get<T>(path: string): Promise<ApiResult<T>> {
 export function fetchPortfolio(): Promise<ApiResult<Analysis[]>> {
   return get<Analysis[]>("/analysis");
 }
+
+/** Deduplicate the home sections within one render, keeping saved data fresh. */
+export const fetchAnalysisSummaries = cache(() =>
+  get<AnalysisSummary[]>("/analysis/summary"),
+);
+
+/** Small token for committed data changes, also proxied through our own origin. */
+export const fetchDataRevision = cache(() => get<DataRevision>("/data/revision", 2000));
 
 /** Both perspectives (current rolling period + closed-year history) for one ticker. */
 export function fetchTicker(symbol: string): Promise<ApiResult<TickerViews>> {
@@ -85,9 +99,7 @@ export function fetchPriceHistory(symbol: string): Promise<ApiResult<PriceHistor
 }
 
 /** Every ticker the user has favorited (#151) — membership, not analysis. */
-export function fetchPortfolioList(): Promise<ApiResult<PortfolioTicker[]>> {
-  return get<PortfolioTicker[]>("/portfolio");
-}
+export const fetchPortfolioList = cache(() => get<PortfolioTicker[]>("/portfolio"));
 
 async function mutatePortfolio(
   ticker: string,

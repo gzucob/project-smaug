@@ -455,9 +455,10 @@ async def test_latest_reads_select_current_null_without_legacy_fallback() -> Non
                 roe=None, null_reasons={"roe": NullReason.SOURCE_ACCOUNT_ABSENT}
             ),
         )
-        newer_row, older_row = _to_row(current), _to_row(legacy)
-        newer_row.id, older_row.id = 2, 1
-        session = _AnalysisSession([newer_row, older_row])
+        newer_row = _to_row(current)
+        newer_row.id = 2
+        # Current-retention indexes allow only the selected result to remain.
+        session = _AnalysisSession([newer_row])
         repository = SqlAlchemyAnalysisRepository(  # type: ignore[arg-type]
             _ScopeSessionFactory(session)
         )
@@ -474,9 +475,13 @@ async def test_latest_reads_select_current_null_without_legacy_fallback() -> Non
         )
         assert session.statement is not None
         sql = str(session.statement.compile(dialect=postgresql.dialect()))
-        assert (
-            "ORDER BY ticker_analysis.computed_at DESC, ticker_analysis.id DESC" in sql
-        )
+        if method == "history":
+            assert "ORDER BY ticker_analysis.reference_date" in sql
+        else:
+            assert (
+                "ORDER BY ticker_analysis.computed_at DESC, ticker_analysis.id DESC"
+                in sql
+            )
 
 
 def test_negotiated_quote_is_preserved_separately_from_the_rebased_price() -> None:

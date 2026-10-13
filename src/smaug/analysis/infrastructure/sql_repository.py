@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, NamedTuple, cast
 
 from sqlalchemy import and_, case, delete, func, or_, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -1321,15 +1322,19 @@ class _RunKey(NamedTuple):
 
 
 def _latest_ids(runs: Iterable[_RunKey]) -> set[int]:
-    """The row ids to keep: the newest run per (ticker, view, reference_date).
+    """Keep one current TTM and one newest run per closed exercise.
 
     Mirrors the reads' latest-per-cell rule (newest ``computed_at``), with the row
     ``id`` as a deterministic tie-break so pruning is reproducible even in the
     (practically impossible — ``computed_at`` is one instant per run) case of a tie.
     """
-    best: dict[tuple[str, str, date], tuple[datetime, int]] = {}
+    best: dict[tuple[str, str, date | None], tuple[datetime, int]] = {}
     for run in runs:
-        cell = (run.ticker, run.view, run.reference_date)
+        cell = (
+            run.ticker,
+            run.view,
+            run.reference_date if run.view == VIEW_CLOSED_YEAR else None,
+        )
         candidate = (run.computed_at, run.id)
         if cell not in best or candidate > best[cell]:
             best[cell] = candidate
@@ -1365,8 +1370,30 @@ class SqlAlchemyAnalysisRepository:
         self._session_factory = session_factory
 
     async def save(self, analysis: TickerAnalysis) -> None:
+        row = _to_row(analysis)
+        statement = insert(TickerAnalysisRow).values(
+            {
+                column.name: getattr(row, column.name)
+                for column in TickerAnalysisRow.__table__.columns
+                if column.name != "id"
+            }
+        )
+        keys = ["ticker"]
+        if analysis.view == VIEW_CLOSED_YEAR:
+            keys.append("reference_date")
+        statement = statement.on_conflict_do_update(
+            index_elements=keys,
+            index_where=TickerAnalysisRow.view == analysis.view,
+            set_={
+                column.name: statement.excluded[column.name]
+                for column in TickerAnalysisRow.__table__.columns
+                if column.name != "id"
+            },
+            # An older concurrent calculation must not overwrite a newer one.
+            where=TickerAnalysisRow.computed_at <= statement.excluded.computed_at,
+        )
         async with self._session_factory() as session:
-            session.add(_to_row(analysis))
+            await session.execute(statement)
             await session.commit()
 
     async def save_outcome(self, outcome: AnalysisOutcome) -> None:
@@ -1433,13 +1460,7 @@ class SqlAlchemyAnalysisRepository:
         )
         async with self._session_factory() as session:
             rows = (await session.execute(stmt)).scalars().all()
-        seen: set[str] = set()
-        latest: list[TickerAnalysis] = []
-        for row in rows:
-            if row.ticker not in seen:
-                seen.add(row.ticker)
-                latest.append(_to_entity(row))
-        return latest
+        return [_to_entity(row) for row in rows]
 
     async def history(self, ticker: str) -> list[TickerAnalysis]:
         """Latest computation per closed fiscal year, oldest → newest."""
@@ -1449,17 +1470,11 @@ class SqlAlchemyAnalysisRepository:
                 TickerAnalysisRow.ticker == ticker,
                 TickerAnalysisRow.view == VIEW_CLOSED_YEAR,
             )
-            .order_by(TickerAnalysisRow.computed_at.desc(), TickerAnalysisRow.id.desc())
+            .order_by(TickerAnalysisRow.reference_date)
         )
         async with self._session_factory() as session:
             rows = (await session.execute(stmt)).scalars().all()
-        seen: set[date] = set()
-        by_year: list[TickerAnalysis] = []
-        for row in rows:  # newest computation first → keep the first per year
-            if row.reference_date not in seen:
-                seen.add(row.reference_date)
-                by_year.append(_to_entity(row))
-        return sorted(by_year, key=lambda a: a.reference_date)
+        return [_to_entity(row) for row in rows]
 
     async def storage_scope(self, tickers: Sequence[str]) -> AnalysisStorageScope:
         """Count current, stale, and legacy rows for a doctor request.
@@ -1484,7 +1499,13 @@ class SqlAlchemyAnalysisRepository:
             partition_by=(
                 TickerAnalysisRow.ticker,
                 TickerAnalysisRow.view,
-                TickerAnalysisRow.reference_date,
+                case(
+                    (
+                        TickerAnalysisRow.view == VIEW_CLOSED_YEAR,
+                        TickerAnalysisRow.reference_date,
+                    ),
+                    else_=None,
+                ),
             ),
             order_by=(
                 TickerAnalysisRow.computed_at.desc(),
@@ -1516,9 +1537,8 @@ class SqlAlchemyAnalysisRepository:
     async def prune(self) -> PruneResult:
         """Delete every superseded run, keeping only the latest per cell (#71).
 
-        The keep set is computed in Python (``_latest_ids``) from a lean projection
-        of the table rather than in SQL — the table is small (hundreds of rows) and
-        a pure helper is unit-testable without a database, which CI has none of.
+        Normal writes already replace recalculations. This compatibility command
+        reads only identity columns and can clean a database before migration.
         """
         keys = select(
             TickerAnalysisRow.id,

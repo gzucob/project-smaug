@@ -256,7 +256,13 @@ class CashEventReader(Protocol):
 class AnalysisRepository(Protocol):
     """Persists and reads back computed analyses."""
 
-    async def save(self, analysis: TickerAnalysis) -> None: ...
+    async def save(self, analysis: TickerAnalysis) -> None:
+        """Replace the current TTM or closed-year result atomically.
+
+        Preserve a newer saved computation if an older concurrent run finishes
+        later. Closed exercises remain separate historical periods.
+        """
+        ...
 
     async def latest(self, ticker: str) -> TickerAnalysis | None:
         """The latest live TTM analysis for a ticker (the principal view)."""
@@ -274,10 +280,8 @@ class AnalysisRepository(Protocol):
     async def prune(self) -> PruneResult:
         """Delete superseded runs, keeping only the latest per cell (#71).
 
-        A cell is one (ticker, view, reference_date); the kept row is its newest
-        ``computed_at`` — exactly what the reads above already surface, so pruning
-        reclaims space without changing any read. A deliberate maintenance action,
-        never a side effect of ``analyze``."""
+        Normal saves already replace recalculations. This remains a maintenance
+        surface for databases predating the current-retention migration."""
         ...
 
 

@@ -19,9 +19,16 @@ export function FavoriteButton({
   favorited: boolean;
 }) {
   const [favorited, setFavorited] = useState(initial);
+  const [serverValue, setServerValue] = useState(initial);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("");
+
+  // A silent server refresh can bring a membership change from another tab.
+  if (serverValue !== initial) {
+    setServerValue(initial);
+    setFavorited(initial);
+  }
 
   function toggle() {
     setError(null);

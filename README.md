@@ -185,6 +185,12 @@ uv run smaug analyze --ticker PETR4 --ticker VALE3
 uv run smaug analyze --all --verbose
 ```
 
+Cada recalculação substitui atomicamente a análise anterior: fica um TTM atual
+por ticker e uma análise por exercício fechado. O histórico anual continua
+disponível; versões anteriores do cálculo não são retidas. A migração `0044`
+remove essas versões de bancos existentes, mantendo os resultados selecionados
+pelas leituras atuais. Os dados de origem no MongoDB continuam preservados.
+
 `doctor` é uma verificação somente leitura da análise persistida. Para cada
 indicador, informa valor, `null` com causa nomeada ou `null` não classificado.
 Ele retorna código diferente de zero quando encontra nulos não classificados.
@@ -224,8 +230,9 @@ uv run smaug prune
 ```
 
 `taxonomy --write`, `relink` e `prune` são operações deliberadas de
-manutenção. `prune` remove dados derivados antigos que já não são usados pelas
-leituras atuais; não é executado automaticamente pelo `analyze`.
+manutenção. `prune` permanece como compatibilidade para bancos anteriores à
+migração de retenção; nas gravações atuais, recalculações já substituem o
+resultado anterior.
 
 ## Indicadores e bases de análise
 
@@ -339,6 +346,26 @@ O front-end fica em <http://localhost:3000>. O `.env.local` usa:
 ```dotenv
 NEXT_PUBLIC_API_BASE=http://localhost:8000
 ```
+
+Para uso cotidiano local, execute em modo de produção:
+
+```bash
+cd frontend
+npm run local
+```
+
+Esse comando compila e inicia o frontend em `0.0.0.0:3000`. A compilação usa
+`.next-local/`, separada do cache de desenvolvimento. Depois da primeira
+compilação, `npm run start:local` inicia novamente a versão compilada; após
+alterações de código, rode `npm run local` outra vez. Encerre a instância anterior
+antes de recompilar essa mesma versão. `npm run dev` continua disponível para
+desenvolvimento; apenas um servidor pode ocupar a porta 3000.
+
+Início e Favoritos usam uma projeção compacta dos indicadores persistidos.
+Na tela do ticker, seções independentes carregam progressivamente. A atualização
+silenciosa consulta um token de mudanças a cada minuto e ao retornar à aba;
+ela só refaz a página quando os dados mudam e aguarda o fechamento de um modal
+ou o término de uma edição antes de aplicar a atualização.
 
 Rotas principais:
 

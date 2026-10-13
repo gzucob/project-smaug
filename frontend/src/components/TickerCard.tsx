@@ -3,10 +3,10 @@ import { FiBriefcase } from "react-icons/fi";
 import { LAST_12M_SHORT, multiple, pct, price, yearOf } from "@/lib/format";
 import { sectorColor, sectorMeta } from "@/lib/sectors";
 import { listingSegmentLabel } from "@/lib/governance";
-import type { Analysis } from "@/lib/types";
+import type { AnalysisSummary } from "@/lib/types";
 
 /** Portfolio tile for one ticker; muted when no analysis has been computed. */
-export function TickerCard({ ticker, sector, analysis, unavailable = false }: { ticker: string; sector: string; analysis: Analysis | null; unavailable?: boolean }) {
+export function TickerCard({ ticker, sector, analysis, unavailable = false }: { ticker: string; sector: string; analysis: AnalysisSummary | null; unavailable?: boolean }) {
   const color = sector === "unclassified" ? "var(--color-copy-400)" : sectorColor(sector);
   const meta = sectorMeta(sector);
 

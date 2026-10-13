@@ -1,30 +1,51 @@
 import Link from "next/link";
 import { TickerCard } from "@/components/TickerCard";
 import { VaultOffline } from "@/components/VaultOffline";
-import { fetchPortfolio, fetchPortfolioList } from "@/lib/api";
+import { BackgroundRefresh } from "@/components/BackgroundRefresh";
+import {
+  fetchAnalysisSummaries,
+  fetchDataRevision,
+  fetchPortfolioList,
+} from "@/lib/api";
 import { SECTORS, gemKey } from "@/lib/sectors";
-import type { Analysis, PortfolioTicker, SectorKey } from "@/lib/types";
+import type { AnalysisSummary, PortfolioTicker, SectorKey } from "@/lib/types";
 
 export const metadata = { title: "Favoritos — Smaug" };
 
 export default async function PortfolioPage() {
+  const revision = await fetchDataRevision();
   const [portfolioResult, analysesResult] = await Promise.all([
     fetchPortfolioList(),
-    fetchPortfolio(),
+    fetchAnalysisSummaries(),
   ]);
 
   if (!portfolioResult.ok) {
-    return <VaultOffline message={portfolioResult.message} />;
+    return (
+      <>
+        <BackgroundRefresh
+          initialRevision={revision.ok ? revision.data.revision : null}
+        />
+        <VaultOffline message={portfolioResult.message} />
+      </>
+    );
   }
   const favorites = portfolioResult.data;
 
-  const byTicker = new Map<string, Analysis>();
+  const byTicker = new Map<string, AnalysisSummary>();
   if (analysesResult.ok) {
-    for (const a of analysesResult.data) byTicker.set(a.ticker.toUpperCase(), a);
+    for (const a of analysesResult.data)
+      byTicker.set(a.ticker.toUpperCase(), a);
   }
 
   if (favorites.length === 0) {
-    return <EmptyPortfolio />;
+    return (
+      <>
+        <BackgroundRefresh
+          initialRevision={revision.ok ? revision.data.revision : null}
+        />
+        <EmptyPortfolio />
+      </>
+    );
   }
 
   const computed = favorites.filter((p) => byTicker.has(p.ticker)).length;
@@ -39,23 +60,33 @@ export default async function PortfolioPage() {
       label: SECTORS[key].label,
     })),
     { key: "unclassified", label: "Sem classificação" },
-  ].map((group) => ({
-    ...group,
-    tickers: favorites.filter((favorite) => sectorOf(favorite) === group.key),
-  })).filter((group) => group.tickers.length > 0);
+  ]
+    .map((group) => ({
+      ...group,
+      tickers: favorites.filter((favorite) => sectorOf(favorite) === group.key),
+    }))
+    .filter((group) => group.tickers.length > 0);
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-14">
+      <BackgroundRefresh
+        initialRevision={revision.ok ? revision.data.revision : null}
+      />
       <header
         className="rise mb-10 flex flex-wrap items-end justify-between gap-4"
         style={{ animationDelay: "0ms" }}
       >
         <div>
-          <h1 className="text-4xl font-semibold tracking-tight text-copy-50">Favoritos</h1>
+          <h1 className="text-4xl font-semibold tracking-tight text-copy-50">
+            Favoritos
+          </h1>
         </div>
         <p className="nums text-sm text-ink-500">
           {analysesResult.ok ? (
-            <><span className="text-accent-300">{computed}</span> de {favorites.length} favoritos analisados</>
+            <>
+              <span className="text-accent-300">{computed}</span> de{" "}
+              {favorites.length} favoritos analisados
+            </>
           ) : (
             <>{favorites.length} favoritos · análises indisponíveis</>
           )}
@@ -64,8 +95,8 @@ export default async function PortfolioPage() {
 
       {!analysesResult.ok && (
         <p role="status" className="panel mb-6 p-4 text-sm text-copy-400">
-          Não foi possível carregar as análises agora. Seus favoritos continuam salvos.
-          Tente novamente mais tarde.
+          Não foi possível carregar as análises agora. Seus favoritos continuam
+          salvos. Tente novamente mais tarde.
         </p>
       )}
 
@@ -108,7 +139,8 @@ function EmptyPortfolio() {
         Você ainda não tem favoritos
       </h1>
       <p className="rise mt-4 text-ink-400">
-        Busque um ticker e adicione-o aos favoritos para começar a acompanhar seus ativos.
+        Busque um ticker e adicione-o aos favoritos para começar a acompanhar
+        seus ativos.
       </p>
       <Link
         href="/"

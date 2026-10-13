@@ -7,6 +7,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "build:local": "SMAUG_FRONTEND_MODE=local next build",
+    "start:local": "SMAUG_FRONTEND_MODE=local next start --hostname 0.0.0.0",
+    "local": "npm run build:local && npm run start:local",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },

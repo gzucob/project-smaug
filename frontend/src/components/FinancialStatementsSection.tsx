@@ -10,19 +10,45 @@ export function FinancialStatementsSection({
 }: {
   history: Analysis[];
   ttm: Analysis | null;
-  cashHistory: CashDividendHistory | null;
+  cashHistory: Promise<CashDividendHistory | null>;
 }) {
   return (
-    <div id="demonstrativos" aria-label="Demonstrativos financeiros" className="scroll-mt-32">
+    <div
+      id="demonstrativos"
+      aria-label="Demonstrativos financeiros"
+      className="scroll-mt-32"
+    >
       <div className="flex flex-col gap-10">
         <IncomeStatementTable history={history} ttm={ttm} />
         <CashFlowStatementTable history={history} />
-        <DividendHistoryPanel
-          history={history}
-          ttm={ttm}
-          cashHistory={cashHistory}
-        />
+        <Suspense fallback={<SectionPlaceholder label="Proventos" tall />}>
+          <CashDividends
+            history={history}
+            ttm={ttm}
+            cashHistory={cashHistory}
+          />
+        </Suspense>
       </div>
     </div>
+  );
+}
+import { Suspense } from "react";
+import { SectionPlaceholder } from "@/components/SectionPlaceholder";
+
+async function CashDividends({
+  history,
+  ttm,
+  cashHistory,
+}: {
+  history: Analysis[];
+  ttm: Analysis | null;
+  cashHistory: Promise<CashDividendHistory | null>;
+}) {
+  return (
+    <DividendHistoryPanel
+      history={history}
+      ttm={ttm}
+      cashHistory={await cashHistory}
+    />
   );
 }
