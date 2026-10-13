@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Newsreader } from "next/font/google";
 import "./globals.css";
-import { BackgroundRefresh } from "@/components/BackgroundRefresh";
 import { Navbar } from "@/components/Navbar";
 import { SiteFooter } from "@/components/SiteFooter";
 
@@ -42,7 +41,6 @@ export default function RootLayout({
       className={`${geist.variable} ${geistMono.variable} ${newsreader.variable}`}
     >
       <body className="font-body antialiased">
-        <BackgroundRefresh />
         <div className="relative flex min-h-dvh flex-col">
           <Navbar />
           <main className="flex-1">{children}</main>

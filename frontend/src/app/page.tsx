@@ -1,28 +1,27 @@
 import Link from "next/link";
+import { Suspense } from "react";
+import { BackgroundRefresh } from "@/components/BackgroundRefresh";
+import { SectionPlaceholder } from "@/components/SectionPlaceholder";
 import { FiBarChart2, FiTag, FiTrendingUp } from "react-icons/fi";
 import type { IconType } from "react-icons";
 import { TickerSearch } from "@/components/TickerSearch";
-import { fetchPortfolio, fetchPortfolioList } from "@/lib/api";
+import {
+  fetchAnalysisSummaries,
+  fetchDataRevision,
+  fetchPortfolioList,
+} from "@/lib/api";
 import { money, pct, toNum } from "@/lib/format";
-import type { Analysis, IndicatorKey } from "@/lib/types";
+import type { AnalysisSummary } from "@/lib/types";
+type SummaryIndicatorKey = keyof AnalysisSummary["indicators"];
 
 export default async function HomePage() {
-  const [portfolioResult, analysesResult] = await Promise.all([
-    fetchPortfolioList(),
-    fetchPortfolio(),
-  ]);
-  const analyses = analysesResult.ok ? analysesResult.data : [];
-  const marketLeaders = topBy(analyses, "market_cap");
-  const yieldLeaders = topBy(analyses, "dividend_yield");
-  const returnLeaders = topBy(analyses, "roe");
-  const favoriteTickers = portfolioResult.ok ? portfolioResult.data.slice(0, 5) : [];
-  const shortcuts =
-    favoriteTickers.length > 0
-      ? favoriteTickers.map((p) => p.ticker)
-      : marketLeaders.slice(0, 5).map((a) => a.ticker);
+  const revision = await fetchDataRevision();
 
   return (
     <div className="mx-auto max-w-7xl px-5">
+      <BackgroundRefresh
+        initialRevision={revision.ok ? revision.data.revision : null}
+      />
       {/* ---------------------------------------------------------- hero --- */}
       <section className="relative flex flex-col items-center pt-20 pb-16 text-center sm:pt-28">
         <p
@@ -39,7 +38,10 @@ export default async function HomePage() {
           SMAUG
         </h1>
 
-        <div className="rise mt-7 w-full max-w-md" style={{ animationDelay: "120ms" }}>
+        <div
+          className="rise mt-7 w-full max-w-md"
+          style={{ animationDelay: "120ms" }}
+        >
           <TickerSearch />
         </div>
 
@@ -47,20 +49,9 @@ export default async function HomePage() {
           className="rise mt-5 flex flex-wrap items-center justify-center gap-2"
           style={{ animationDelay: "180ms" }}
         >
-          {shortcuts.length > 0 && (
-            <>
-              <span className="text-xs text-ink-600">Acesso rápido:</span>
-              {shortcuts.map((ticker) => (
-                <Link
-                  key={ticker}
-                  href={`/ticker/${ticker}`}
-                  className="pressable nums rounded-lg border border-copy-200/15 px-2.5 py-1 text-xs font-semibold tracking-wide text-copy-300 hover:border-accent-400/50 hover:text-accent-300"
-                >
-                  {ticker}
-                </Link>
-              ))}
-            </>
-          )}
+          <Suspense fallback={null}>
+            <Shortcuts />
+          </Suspense>
           <Link
             href="/portfolio"
             className="pressable rounded-lg px-2.5 py-1 text-xs font-semibold text-accent-300 hover:text-accent-200"
@@ -70,33 +61,108 @@ export default async function HomePage() {
         </div>
       </section>
 
+      <Suspense fallback={<SectionPlaceholder label="Destaques" tall />}>
+        <Rankings />
+      </Suspense>
+    </div>
+  );
+}
+
+async function Shortcuts() {
+  const [portfolioResult, analysesResult] = await Promise.all([
+    fetchPortfolioList(),
+    fetchAnalysisSummaries(),
+  ]);
+  const favorites = portfolioResult.ok ? portfolioResult.data.slice(0, 5) : [];
+  const shortcuts =
+    favorites.length > 0
+      ? favorites.map((item) => item.ticker)
+      : topBy(analysesResult.ok ? analysesResult.data : [], "market_cap").map(
+          (item) => item.ticker,
+        );
+  return (
+    <>
+      {" "}
+      {shortcuts.length > 0 && (
+        <>
+          <span className="text-xs text-ink-600">Acesso rápido:</span>
+          {shortcuts.map((ticker) => (
+            <Link
+              key={ticker}
+              href={`/ticker/${ticker}`}
+              className="pressable nums rounded-lg border border-copy-200/15 px-2.5 py-1 text-xs font-semibold tracking-wide text-copy-300 hover:border-accent-400/50 hover:text-accent-300"
+            >
+              {ticker}
+            </Link>
+          ))}
+        </>
+      )}
+    </>
+  );
+}
+
+async function Rankings() {
+  const analysesResult = await fetchAnalysisSummaries();
+  const analyses = analysesResult.ok ? analysesResult.data : [];
+  const marketLeaders = topBy(analyses, "market_cap");
+  const yieldLeaders = topBy(analyses, "dividend_yield");
+  const returnLeaders = topBy(analyses, "roe");
+  return (
+    <>
+      {" "}
       {!analysesResult.ok && (
         <p role="status" className="panel mb-12 p-4 text-sm text-copy-400">
-          Não foi possível carregar os destaques agora. Tente novamente mais tarde.
+          Não foi possível carregar os destaques agora. Tente novamente mais
+          tarde.
         </p>
       )}
-
       {analyses.length > 0 && (
         <section aria-labelledby="home-rankings" className="pb-12">
-          <div className="rise mb-5 flex items-center gap-3" style={{ animationDelay: "240ms" }}>
-            <h2 id="home-rankings" className="text-xs font-semibold uppercase tracking-[0.3em] text-ink-500">
+          <div
+            className="rise mb-5 flex items-center gap-3"
+            style={{ animationDelay: "240ms" }}
+          >
+            <h2
+              id="home-rankings"
+              className="text-xs font-semibold uppercase tracking-[0.3em] text-ink-500"
+            >
               Destaques
             </h2>
             <span className="h-px flex-1 bg-copy-200/10" />
           </div>
           <div className="grid grid-cols-1 gap-8 xl:grid-cols-3">
-            <RankingCard title="Maior valor de mercado" icon={FiBarChart2} items={marketLeaders} kind="money" metric="market_cap" />
-            <RankingCard title="Maior retorno sobre patrimônio" icon={FiTrendingUp} items={returnLeaders} kind="pct" metric="roe" />
-            <RankingCard title="Maior dividend yield" icon={FiTag} items={yieldLeaders} kind="pct" metric="dividend_yield" />
+            <RankingCard
+              title="Maior valor de mercado"
+              icon={FiBarChart2}
+              items={marketLeaders}
+              kind="money"
+              metric="market_cap"
+            />
+            <RankingCard
+              title="Maior retorno sobre patrimônio"
+              icon={FiTrendingUp}
+              items={returnLeaders}
+              kind="pct"
+              metric="roe"
+            />
+            <RankingCard
+              title="Maior dividend yield"
+              icon={FiTag}
+              items={yieldLeaders}
+              kind="pct"
+              metric="dividend_yield"
+            />
           </div>
         </section>
       )}
-
-    </div>
+    </>
   );
 }
 
-function topBy(analyses: Analysis[], key: IndicatorKey): Analysis[] {
+function topBy(
+  analyses: AnalysisSummary[],
+  key: SummaryIndicatorKey,
+): AnalysisSummary[] {
   return analyses
     .filter((analysis) => toNum(analysis.indicators[key]) !== null)
     .sort((left, right) => {
@@ -116,9 +182,9 @@ function RankingCard({
 }: {
   title: string;
   icon: IconType;
-  items: Analysis[];
+  items: AnalysisSummary[];
   kind: "money" | "pct";
-  metric: IndicatorKey;
+  metric: SummaryIndicatorKey;
 }) {
   return (
     <div className="panel min-w-0 p-5">
@@ -135,15 +201,23 @@ function RankingCard({
               href={`/ticker/${analysis.ticker}`}
               className="pressable flex items-center gap-3 py-3 first:pt-0 last:pb-0"
             >
-              <span className="nums w-5 text-xs text-copy-600">{index + 1}</span>
+              <span className="nums w-5 text-xs text-copy-600">
+                {index + 1}
+              </span>
               <span className="min-w-0 flex-1">
-                <span className="nums block text-sm font-semibold text-copy-100">{analysis.ticker}</span>
+                <span className="nums block text-sm font-semibold text-copy-100">
+                  {analysis.ticker}
+                </span>
                 <span className="block truncate text-[0.65rem] text-copy-600">
-                  {analysis.issuer ?? analysis.classification.segmento ?? "Ativo analisado"}
+                  {analysis.issuer ??
+                    analysis.classification.segmento ??
+                    "Ativo analisado"}
                 </span>
               </span>
               <span className="nums text-sm font-semibold text-copy-200">
-                {kind === "money" ? money(analysis.indicators[metric]) : pct(analysis.indicators[metric])}
+                {kind === "money"
+                  ? money(analysis.indicators[metric])
+                  : pct(analysis.indicators[metric])}
               </span>
             </Link>
           </li>

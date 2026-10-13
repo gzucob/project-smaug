@@ -72,7 +72,7 @@ export function HistoryCharts({
   ttm: Analysis | null;
   balanceHistory: BalanceSheetPeriod[];
   showStatements: boolean;
-  cashHistory: CashDividendHistory | null;
+  cashHistory: Promise<CashDividendHistory | null>;
 }) {
   const color = sectorColor(sector);
   const labels = history.map((h) => yearOf(h.reference_date));

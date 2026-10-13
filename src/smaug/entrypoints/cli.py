@@ -2393,11 +2393,9 @@ async def _run_relink() -> int:
 def prune() -> None:
     """Delete superseded analysis runs, keeping only the latest per cell (#71).
 
-    ``ticker_analysis`` is append-only: every ``analyze`` inserts fresh rows and the
-    reads already take the latest per (ticker, view, reference_date). This reclaims
-    the space the older, shadowed runs hold. ``doctor`` and the API are unchanged —
-    they ignore those rows anyway. A deliberate maintenance action, never a side
-    effect of ``analyze``.
+    Normal saves replace recalculations atomically. This compatibility command
+    cleans databases predating the retention migration, preserving one current
+    TTM and one latest analysis per closed exercise.
     """
     exit_code = _guarded(_run_prune())
     raise typer.Exit(code=exit_code)

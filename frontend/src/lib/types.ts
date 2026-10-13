@@ -16,6 +16,19 @@ export type SectorKey =
 
 export type ViewKind = "ttm_live" | "closed_year";
 
+/** Compact persisted fields used by home rankings and favorite cards. */
+export type AnalysisSummary = Pick<
+  Analysis,
+  "ticker" | "view" | "reference_date" | "classification" | "issuer" | "price" | "price_as_traded"
+> & {
+  governance: { listing_segment: string | null };
+  indicators: Pick<Indicators, "market_cap" | "roe" | "dividend_yield" | "pe_basic">;
+};
+
+export interface DataRevision {
+  revision: string;
+}
+
 /**
  * B3 economic taxonomy (setor → subsetor → segmento), mirroring the API's
  * `ClassificationResponse`. `subsetor`/`segmento` are null under the CVM

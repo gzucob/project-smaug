@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { IconType } from "react-icons";
 import {
   FiColumns,
@@ -7,6 +8,8 @@ import {
   FiTrendingUp,
   FiUsers,
 } from "react-icons/fi";
+import { BackgroundRefresh } from "@/components/BackgroundRefresh";
+import { SectionPlaceholder } from "@/components/SectionPlaceholder";
 import { BalanceSheetTable } from "@/components/BalanceSheetTable";
 import type { BalanceSheetPeriod } from "@/components/BalanceSheetTable";
 import { CompanyOverview } from "@/components/CompanyOverview";
@@ -19,6 +22,7 @@ import { ShareholderComposition } from "@/components/ShareholderComposition";
 import { ViewPanel } from "@/components/ViewPanel";
 import { VaultOffline } from "@/components/VaultOffline";
 import {
+  fetchDataRevision,
   fetchDividendHistory,
   fetchPortfolioList,
   fetchPriceHistory,
@@ -27,92 +31,105 @@ import {
 } from "@/lib/api";
 import { dateOnly, price } from "@/lib/format";
 import { gemKey } from "@/lib/sectors";
-import type { Analysis } from "@/lib/types";
+import type { Analysis, PriceHistory, ShareholdingPosition } from "@/lib/types";
+import type { ApiResult } from "@/lib/api";
 
-export async function generateMetadata({ params }: { params: Promise<{ symbol: string }> }) {
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ symbol: string }>;
+}) {
   const { symbol } = await params;
   return { title: `${symbol.toUpperCase()} — Smaug` };
 }
 
-export default async function TickerPage({ params }: { params: Promise<{ symbol: string }> }) {
+export default async function TickerPage({
+  params,
+}: {
+  params: Promise<{ symbol: string }>;
+}) {
   const { symbol } = await params;
-  const [
-    result,
-    portfolioResult,
-    priceHistoryResult,
-    dividendHistoryResult,
-    shareholdingResult,
-  ] = await Promise.all([
-    fetchTicker(symbol),
-    fetchPortfolioList(),
-    fetchPriceHistory(symbol),
-    fetchDividendHistory(symbol),
-    fetchShareholdingPosition(symbol),
-  ]);
+  const revision = await fetchDataRevision();
+  const resultPromise = fetchTicker(symbol);
+  const portfolioPromise = fetchPortfolioList();
+  const priceHistoryPromise = fetchPriceHistory(symbol);
+  const cashHistoryPromise = fetchDividendHistory(symbol).then((result) =>
+    result.ok ? result.data : null,
+  );
+  const shareholdingPromise = fetchShareholdingPosition(symbol);
+  const result = await resultPromise;
 
   if (!result.ok) {
     const notFound = result.status === 404;
     return (
-      <VaultOffline
-        title={notFound ? "Ticker não encontrado" : "Não foi possível carregar a análise"}
-        message={
-          notFound
-            ? `Não há análise computada para ${symbol.toUpperCase()}. Rode o comando \`analyze\` para esse ticker.`
-            : result.message
-        }
-        showBackHome
-      />
+      <>
+        <BackgroundRefresh
+          initialRevision={revision.ok ? revision.data.revision : null}
+        />
+        <VaultOffline
+          title={
+            notFound
+              ? "Ticker não encontrado"
+              : "Não foi possível carregar a análise"
+          }
+          message={
+            notFound
+              ? `Não há análise computada para ${symbol.toUpperCase()}. Rode o comando \`analyze\` para esse ticker.`
+              : result.message
+          }
+          showBackHome
+        />
+      </>
     );
   }
 
   const { ttm, history } = result.data;
-  const cashHistory = dividendHistoryResult.ok ? dividendHistoryResult.data : null;
-  const shareholding = shareholdingResult.ok ? shareholdingResult.data : null;
   const latestClosed = history.length > 0 ? history[history.length - 1] : null;
   const reference: Analysis | null = ttm ?? latestClosed;
   const showStatements = Boolean(
     ttm?.income_statement ||
-      history.some(
-        (period) =>
-          period.income_statement || (period.cash_flow_statement?.length ?? 0) > 0,
-      ),
+    history.some(
+      (period) =>
+        period.income_statement ||
+        (period.cash_flow_statement?.length ?? 0) > 0,
+    ),
   );
 
   if (!reference) {
     return (
-      <VaultOffline
-        title="Sem dados disponíveis"
-        message="Este ticker ainda não tem um período atual nem um ano fechado para exibir."
-        showBackHome
-      />
+      <>
+        <BackgroundRefresh
+          initialRevision={revision.ok ? revision.data.revision : null}
+        />
+        <VaultOffline
+          title="Sem dados disponíveis"
+          message="Este ticker ainda não tem um período atual nem um ano fechado para exibir."
+          showBackHome
+        />
+      </>
     );
   }
 
-  const retainedQuote = priceHistoryResult.ok
-    ? priceHistoryResult.data.points.at(-1)
-    : null;
-  const headlinePrice = ttm?.price_as_traded ?? retainedQuote?.as_traded ?? ttm?.price ?? latestClosed?.price ?? null;
-  const headlineSession = ttm?.price_as_traded != null
-    ? ttm.price_source_session
-    : retainedQuote?.session ?? ttm?.price_source_session ?? latestClosed?.price_source_session;
-  const favorited =
-    portfolioResult.ok &&
-    portfolioResult.data.some((p) => p.ticker === result.data.ticker.toUpperCase());
   const sector = gemKey(reference.classification);
-  const balanceHistory: BalanceSheetPeriod[] = history.map(({ reference_date, indicators }) => ({
-    reference_date,
-    indicators: {
-      total_assets: indicators.total_assets,
-      current_assets: indicators.current_assets,
-      noncurrent_assets: indicators.noncurrent_assets,
-      current_liabilities: indicators.current_liabilities,
-      noncurrent_liabilities: indicators.noncurrent_liabilities,
-      equity_total: indicators.equity_total,
-    },
-  }));
+  const balanceHistory: BalanceSheetPeriod[] = history.map(
+    ({ reference_date, indicators }) => ({
+      reference_date,
+      indicators: {
+        total_assets: indicators.total_assets,
+        current_assets: indicators.current_assets,
+        noncurrent_assets: indicators.noncurrent_assets,
+        current_liabilities: indicators.current_liabilities,
+        noncurrent_liabilities: indicators.noncurrent_liabilities,
+        equity_total: indicators.equity_total,
+      },
+    }),
+  );
 
   return (
     <>
+      <BackgroundRefresh
+        initialRevision={revision.ok ? revision.data.revision : null}
+      />
       <div className="sticky top-16 z-40 border-b border-copy-200/10 bg-canvas-950/95 backdrop-blur-sm">
         <div className="mx-auto max-w-[1480px] px-4 sm:px-6 lg:px-8">
           <AnalysisNavigation
@@ -125,36 +142,24 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
 
       <div className="mx-auto max-w-[1480px] px-4 py-8 sm:px-6 lg:px-8">
         <div className="min-w-0">
-          <header className="border-b border-copy-200/10 pb-7">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
-                <div className="flex items-center gap-3">
-                  <h1 className="nums text-5xl font-semibold tracking-[-0.06em] text-copy-50 sm:text-6xl">
-                    {result.data.ticker}
-                  </h1>
-                  <FavoriteButton ticker={result.data.ticker} favorited={favorited} />
-                </div>
-                <div className="ml-auto flex items-baseline gap-2">
-                  <span className="nums text-2xl font-semibold tracking-tight text-copy-50 sm:text-3xl">
-                    {price(headlinePrice)}
-                  </span>
-                </div>
-              </div>
-              {headlineSession && (
-                <p className="mt-2 text-right text-xs text-copy-500">
-                  Último negócio em <time className="nums" dateTime={headlineSession}>{dateOnly(headlineSession)}</time>
-                </p>
-              )}
-              <p className="mt-2 max-w-xl text-base font-medium text-copy-200">
-                {reference.issuer ?? "Análise fundamentalista"}
-              </p>
-              <div className="mt-4">
-                <ClassificationBadge classification={reference.classification} />
-              </div>
-            </div>
-          </header>
+          <Suspense
+            fallback={<SectionPlaceholder label={result.data.ticker} />}
+          >
+            <TickerHeader
+              ticker={result.data.ticker}
+              reference={reference}
+              ttm={ttm}
+              latestClosed={latestClosed}
+              priceHistory={priceHistoryPromise}
+              portfolio={portfolioPromise}
+            />
+          </Suspense>
 
-          <section id="visao-geral" aria-label="Visão geral" className="scroll-mt-32 border-b border-copy-200/10 py-16">
+          <section
+            id="visao-geral"
+            aria-label="Visão geral"
+            className="scroll-mt-32 border-b border-copy-200/10 py-16"
+          >
             <CompanyOverview analysis={reference} />
           </section>
 
@@ -168,16 +173,16 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
             </section>
           )}
 
-          <section id="cotacao" aria-label="Cotação histórica" className="scroll-mt-32 border-b border-copy-200/10 py-16">
-            {priceHistoryResult.ok ? (
-              <PriceHistoryChart history={priceHistoryResult.data} />
-            ) : (
-              <p className="text-sm text-copy-600">
-                {priceHistoryResult.status === 404
-                  ? "O histórico de cotação deste ativo ainda não está disponível."
-                  : "Não foi possível carregar o histórico de cotação agora."}
-              </p>
-            )}
+          <section
+            id="cotacao"
+            aria-label="Cotação histórica"
+            className="scroll-mt-32 border-b border-copy-200/10 py-16"
+          >
+            <Suspense
+              fallback={<SectionPlaceholder label="Cotação histórica" tall />}
+            >
+              <PriceSection result={priceHistoryPromise} />
+            </Suspense>
           </section>
 
           <section
@@ -199,13 +204,16 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
               <FinancialStatementsSection
                 history={history}
                 ttm={ttm}
-                cashHistory={cashHistory}
+                cashHistory={cashHistoryPromise}
               />
             </section>
           )}
 
           {history.length >= 2 && (
-            <section id="historico" className="scroll-mt-32 border-b border-copy-200/10 py-16">
+            <section
+              id="historico"
+              className="scroll-mt-32 border-b border-copy-200/10 py-16"
+            >
               <div>
                 <HistoryCharts
                   history={history}
@@ -213,7 +221,7 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
                   ttm={ttm}
                   balanceHistory={balanceHistory}
                   showStatements={showStatements}
-                  cashHistory={cashHistory}
+                  cashHistory={cashHistoryPromise}
                 />
               </div>
             </section>
@@ -224,7 +232,13 @@ export default async function TickerPage({ params }: { params: Promise<{ symbol:
             aria-label="Composição acionária declarada"
             className="scroll-mt-32 py-16"
           >
-            <ShareholderComposition position={shareholding} />
+            <Suspense
+              fallback={
+                <SectionPlaceholder label="Composição acionária" tall />
+              }
+            >
+              <ShareholdingSection result={shareholdingPromise} />
+            </Suspense>
           </section>
         </div>
       </div>
@@ -246,15 +260,29 @@ function AnalysisNavigation({
       <div className="flex w-max min-w-full items-center justify-center gap-1 py-2">
         <SectionLink href="#visao-geral" icon={FiInfo} label="Visão geral" />
         {showStatements ? (
-          <SectionLink href="#demonstrativos" icon={FiFileText} label="Demonstrativos" />
+          <SectionLink
+            href="#demonstrativos"
+            icon={FiFileText}
+            label="Demonstrativos"
+          />
         ) : null}
         {showBalanceSheet ? (
           <SectionLink href="#balanco" icon={FiColumns} label="Balanço" />
         ) : null}
         <SectionLink href="#cotacao" icon={FiTrendingUp} label="Cotação" />
-        <SectionLink href="#indicadores" icon={FiTrendingUp} label="Indicadores" />
-        {showHistory ? <SectionLink href="#historico" icon={FiDatabase} label="Histórico" /> : null}
-        <SectionLink href="#composicao-acionaria" icon={FiUsers} label="Acionistas" />
+        <SectionLink
+          href="#indicadores"
+          icon={FiTrendingUp}
+          label="Indicadores"
+        />
+        {showHistory ? (
+          <SectionLink href="#historico" icon={FiDatabase} label="Histórico" />
+        ) : null}
+        <SectionLink
+          href="#composicao-acionaria"
+          icon={FiUsers}
+          label="Acionistas"
+        />
       </div>
     </nav>
   );
@@ -277,5 +305,110 @@ function SectionLink({
       <Icon aria-hidden size={14} />
       {label}
     </a>
+  );
+}
+
+async function TickerHeader({
+  ticker,
+  reference,
+  ttm,
+  latestClosed,
+  priceHistory,
+  portfolio,
+}: {
+  ticker: string;
+  reference: Analysis;
+  ttm: Analysis | null;
+  latestClosed: Analysis | null;
+  priceHistory: ReturnType<typeof fetchPriceHistory>;
+  portfolio: ReturnType<typeof fetchPortfolioList>;
+}) {
+  const [priceHistoryResult, portfolioResult] = await Promise.all([
+    priceHistory,
+    portfolio,
+  ]);
+  const retainedQuote = priceHistoryResult.ok
+    ? priceHistoryResult.data.points.at(-1)
+    : null;
+  const headlinePrice =
+    ttm?.price_as_traded ??
+    retainedQuote?.as_traded ??
+    ttm?.price ??
+    latestClosed?.price ??
+    null;
+  const headlineSession =
+    ttm?.price_as_traded != null
+      ? ttm.price_source_session
+      : (retainedQuote?.session ??
+        ttm?.price_source_session ??
+        latestClosed?.price_source_session);
+  const favorited =
+    portfolioResult.ok &&
+    portfolioResult.data.some((p) => p.ticker === ticker.toUpperCase());
+  return (
+    <header className="border-b border-copy-200/10 pb-7">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
+          <div className="flex items-center gap-3">
+            <h1 className="nums text-5xl font-semibold tracking-[-0.06em] text-copy-50 sm:text-6xl">
+              {ticker}
+            </h1>
+              <FavoriteButton key={ticker} ticker={ticker} favorited={favorited} />
+          </div>
+          <div className="ml-auto flex items-baseline gap-2">
+            <span className="nums text-2xl font-semibold tracking-tight text-copy-50 sm:text-3xl">
+              {price(headlinePrice)}
+            </span>
+          </div>
+        </div>
+        {headlineSession && (
+          <p className="mt-2 text-right text-xs text-copy-500">
+            Último negócio em{" "}
+            <time className="nums" dateTime={headlineSession}>
+              {dateOnly(headlineSession)}
+            </time>
+          </p>
+        )}
+        <p className="mt-2 max-w-xl text-base font-medium text-copy-200">
+          {reference.issuer ?? "Análise fundamentalista"}
+        </p>
+        <div className="mt-4">
+          <ClassificationBadge classification={reference.classification} />
+        </div>
+      </div>
+    </header>
+  );
+}
+
+async function PriceSection({
+  result,
+}: {
+  result: Promise<ApiResult<PriceHistory>>;
+}) {
+  const priceHistoryResult = await result;
+  return (
+    <>
+      {" "}
+      {priceHistoryResult.ok ? (
+        <PriceHistoryChart history={priceHistoryResult.data} />
+      ) : (
+        <p className="text-sm text-copy-600">
+          {priceHistoryResult.status === 404
+            ? "O histórico de cotação deste ativo ainda não está disponível."
+            : "Não foi possível carregar o histórico de cotação agora."}
+        </p>
+      )}
+    </>
+  );
+}
+
+async function ShareholdingSection({
+  result,
+}: {
+  result: Promise<ApiResult<ShareholdingPosition>>;
+}) {
+  const response = await result;
+  return (
+    <ShareholderComposition position={response.ok ? response.data : null} />
   );
 }

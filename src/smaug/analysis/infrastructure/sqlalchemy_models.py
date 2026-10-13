@@ -1,8 +1,8 @@
 """SQLAlchemy ORM for the derived indicators (Phase 2 persistence).
 
-One row per (ticker, computation): each ``analyze`` run inserts a fresh row with
-its ``computed_at``, so history is preserved and "latest" is just the newest row
-per ticker. Every indicator is a nullable ``Numeric`` — nulls are meaningful
+One current TTM per ticker and one current computation per closed exercise.
+Recalculations atomically replace the prior result. Every indicator is a
+nullable ``Numeric`` — nulls are meaningful
 (not applicable to the sector, or input missing).
 """
 
@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     CheckConstraint,
     Date,
     DateTime,
@@ -21,6 +22,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -175,6 +177,32 @@ class TickerAnalysisRow(Base):
     income_statement: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     cash_flow_statement: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
 
+    __table_args__ = (
+        Index(
+            "uq_ticker_analysis_current_ttm",
+            "ticker",
+            unique=True,
+            postgresql_where=text("view = 'ttm_live'"),
+        ),
+        Index(
+            "uq_ticker_analysis_current_year",
+            "ticker",
+            "reference_date",
+            unique=True,
+            postgresql_where=text("view = 'closed_year'"),
+        ),
+    )
+
+
+class UiDataRevisionRow(Base):
+    """Generation advanced transactionally by changes to displayed SQL data."""
+
+    __tablename__ = "ui_data_revision"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_ui_data_revision_singleton"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    generation: Mapped[int] = mapped_column(BigInteger)
+
 
 class AnalysisOutcomeRow(Base):
     """Durable ticker/run status, separate from computed analysis cells."""
@@ -220,7 +248,7 @@ class PriceHistoryRow(Base):
 
 
 class PriceRefreshRow(Base):
-    """Singleton status; analysis and price snapshots remain append-only."""
+    """Singleton status for the automatic price refresh worker."""
 
     __tablename__ = "price_refresh_status"
 

@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from pymongo import AsyncMongoClient
 
 from smaug.analysis.application.price_history import ReadPriceHistoryUseCase
+from smaug.analysis.application.read_summaries import ReadAnalysisSummariesUseCase
 from smaug.analysis.domain.entities import VIEW_TTM, TickerAnalysis
 from smaug.analysis.domain.financials import (
     AccountingRegime,
@@ -61,6 +62,7 @@ from smaug.analysis.infrastructure.mongo_shareholding import MongoShareholdingRe
 from smaug.analysis.infrastructure.sql_price_history import SqlPriceHistoryRepository
 from smaug.analysis.infrastructure.sql_price_refresh import SqlPriceRefreshRepository
 from smaug.analysis.infrastructure.sql_repository import SqlAlchemyAnalysisRepository
+from smaug.analysis.infrastructure.sql_summary import SqlAnalysisSummaryReader
 from smaug.portfolio.application.manage_portfolio import ManagePortfolioUseCase
 from smaug.portfolio.domain.entities import PortfolioTicker
 from smaug.portfolio.domain.share_classes import (
@@ -73,10 +75,12 @@ from smaug.shared.config import get_settings
 from smaug.shared.errors import UnknownTickerError
 from smaug.shared.price_worker import supervise_price_worker
 from smaug.shared.sql_db import create_engine, create_session_factory
+from smaug.shared.ui_revision import UiRevisionReader
 
 _settings = get_settings()
 _session_factory = create_session_factory(create_engine(_settings))
 _repository = SqlAlchemyAnalysisRepository(_session_factory)
+_summaries = ReadAnalysisSummariesUseCase(SqlAnalysisSummaryReader(_session_factory))
 _price_history = ReadPriceHistoryUseCase(SqlPriceHistoryRepository(_session_factory))
 _portfolio = ManagePortfolioUseCase(SqlAlchemyPortfolioRepository(_session_factory))
 
@@ -86,6 +90,9 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Open the raw mirror for read-only history and filing requests."""
     client: AsyncMongoClient[dict[str, Any]] = AsyncMongoClient(_settings.mongo_uri)
     _app.state.mongo_database = client[_settings.mongo_db]
+    _app.state.ui_revision = UiRevisionReader(
+        _session_factory, _app.state.mongo_database
+    )
     worker = (
         asyncio.create_task(
             supervise_price_worker(_settings.price_refresh_interval_seconds)
@@ -858,6 +865,68 @@ def _to_response(analysis: TickerAnalysis) -> AnalysisResponse:
 async def list_analysis() -> list[AnalysisResponse]:
     """Latest analysis for every ticker that has one."""
     return [_to_response(a) for a in await _repository.all_latest()]
+
+
+class SummaryIndicatorsResponse(BaseModel):
+    """Stored indicators displayed by rankings and portfolio cards."""
+
+    market_cap: Decimal | None
+    roe: Decimal | None
+    dividend_yield: Decimal | None
+    pe_basic: Decimal | None
+
+
+class SummaryGovernanceResponse(BaseModel):
+    listing_segment: str | None
+
+
+class AnalysisSummaryResponse(BaseModel):
+    """Current analysis without statements and internal evidence."""
+
+    ticker: str
+    view: Literal["ttm_live"] = "ttm_live"
+    reference_date: date
+    classification: ClassificationResponse
+    issuer: str | None
+    price: Decimal | None
+    price_as_traded: Decimal | None
+    governance: SummaryGovernanceResponse
+    indicators: SummaryIndicatorsResponse
+
+
+@app.get("/analysis/summary", response_model=list[AnalysisSummaryResponse])
+async def list_analysis_summaries() -> list[AnalysisSummaryResponse]:
+    return [
+        AnalysisSummaryResponse(
+            ticker=item.ticker,
+            reference_date=item.reference_date,
+            classification=ClassificationResponse(
+                setor=item.classification.setor,
+                subsetor=item.classification.subsetor,
+                segmento=item.classification.segmento,
+            ),
+            issuer=item.issuer,
+            price=item.price,
+            price_as_traded=item.price_as_traded,
+            governance=SummaryGovernanceResponse(listing_segment=item.listing_segment),
+            indicators=SummaryIndicatorsResponse(
+                market_cap=item.market_cap,
+                roe=item.roe,
+                dividend_yield=item.dividend_yield,
+                pe_basic=item.pe_basic,
+            ),
+        )
+        for item in await _summaries.execute()
+    ]
+
+
+class DataRevisionResponse(BaseModel):
+    revision: str
+
+
+@app.get("/data/revision", response_model=DataRevisionResponse)
+async def get_data_revision(request: Request) -> DataRevisionResponse:
+    return DataRevisionResponse(revision=await request.app.state.ui_revision.latest())
 
 
 @app.get("/analysis/{ticker}", response_model=TickerViewsResponse)

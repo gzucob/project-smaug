@@ -45,3 +45,16 @@ def test_ties_on_computed_at_break_by_id() -> None:
 
 def test_empty_table_keeps_nothing() -> None:
     assert _latest_ids([]) == set()
+
+
+def test_ttm_replaces_the_prior_window_but_closed_exercises_survive() -> None:
+    older_ttm = _run(1, view="ttm_live", ref=date(2026, 3, 31))
+    newer_ttm = _run(
+        2,
+        view="ttm_live",
+        ref=date(2026, 6, 30),
+        at=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+    year_2023 = _run(3, ref=date(2023, 12, 31))
+    year_2024 = _run(4, ref=date(2024, 12, 31))
+    assert _latest_ids([older_ttm, newer_ttm, year_2023, year_2024]) == {2, 3, 4}
