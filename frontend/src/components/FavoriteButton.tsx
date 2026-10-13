@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { FiHeart, FiLoader } from "react-icons/fi";
-import { addFavorite, removeFavorite } from "@/lib/api";
+import { addFavorite, removeFavorite } from "@/lib/favorites-api";
 
 /**
  * Heart toggle for the portfolio (#151). Initial state is server-rendered

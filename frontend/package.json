@@ -11,7 +11,8 @@
     "start:local": "SMAUG_FRONTEND_MODE=local next start --hostname 0.0.0.0",
     "local": "npm run build:local && npm run start:local",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "npm run check:client-data-boundary && tsc --noEmit",
+    "check:client-data-boundary": "node scripts/check-client-data-boundary.mjs"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.10",

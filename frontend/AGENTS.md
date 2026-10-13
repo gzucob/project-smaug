@@ -94,13 +94,18 @@ not in the fonts.
 - **Fetch server-side, in Server Components**, through `src/lib/api.ts`. The
   base URL is `NEXT_PUBLIC_API_BASE` (default `http://localhost:8000`). Because
   fetching is server-side there is **no CORS surface** — do not add
-  client-side calls to the FastAPI base URL. The one deliberate exception is
-  the favorite-ticker toggle (`FavoriteButton`, #151): a click has
-  nowhere else to originate from, so it calls this app's own same-origin
-  `app/api/portfolio/[ticker]/route.ts`, which is what proxies to FastAPI —
-  the browser itself never gains a cross-origin surface. A new mutation
-  follows the same shape; it does not get its own reason to call FastAPI
-  directly from the client.
+  client-side calls to the FastAPI base URL. Two deliberate browser requests
+  go to same-origin Next.js routes: the favorite toggle (`FavoriteButton`,
+  #151) calls `app/api/portfolio/[ticker]/route.ts`, and the silent revision
+  probe (`BackgroundRefresh`) calls `app/api/data-revision/route.ts`. Those
+  routes proxy to FastAPI server-side, so the browser never gains a
+  cross-origin surface. A new mutation follows the favorite route shape; it
+  does not get its own reason to call FastAPI directly from the client.
+- `npm run typecheck` enforces this boundary across each `"use client"`
+  component's local import graph: client code cannot reach `src/lib/api.ts` or
+  make a network call directly. The only permitted client network calls live
+  in `src/lib/favorites-api.ts` and `src/lib/data-revision-api.ts`, each
+  targeting its corresponding same-origin route above.
 - **The ticker page carries one indicator grid**, the twelve-month window. It
   used to stack a second, identical grid for the latest closed exercise;
   comparing 29 numbers by eye is not a comparison (#32).

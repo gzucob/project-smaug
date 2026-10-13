@@ -1,16 +1,12 @@
 /**
  * Typed client for the FastAPI read API (`smaug.entrypoints.api`).
  *
- * Reads run from Server Components, so those requests hit the API's own base
- * URL directly (no CORS concern — server to server). The favorite-ticker
- * toggle (#151) is the one *write*, and it is the one call that runs
- * client-side (a button click has nowhere else to originate from) — routed
- * through this app's own same-origin `/api/portfolio/[ticker]` Route Handler
- * rather than at the FastAPI base URL directly, so the browser itself never
- * gains a cross-origin surface (`RULES_FRONTEND`: reads stay server-side;
- * ADR 0049 covers the backend's matching CORS allowance for that one proxy).
+ * This module is for Server Components and server-only routes. Client
+ * components must not import it or call the FastAPI API directly; see the
+ * data boundary in `frontend/AGENTS.md`. The favorite toggle uses the separate
+ * same-origin proxy client in `favorites-api.ts`.
  *
- * Every call returns an `ApiResult` rather than throwing, so pages can render
+ * Every read returns an `ApiResult` rather than throwing, so pages can render
  * a clear offline state when the backend isn't running.
  */
 import { cache } from "react";
@@ -24,12 +20,11 @@ import type {
   ShareholdingPosition,
   TickerViews,
 } from "@/lib/types";
+import type { ApiResult } from "@/lib/api-result";
+
+export type { ApiResult } from "@/lib/api-result";
 
 const BASE = (process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000").replace(/\/$/, "");
-
-export type ApiResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; status: number; message: string };
 
 async function get<T>(path: string, timeoutMs = 10000): Promise<ApiResult<T>> {
   try {
@@ -100,35 +95,5 @@ export function fetchPriceHistory(symbol: string): Promise<ApiResult<PriceHistor
 
 /** Every ticker the user has favorited (#151) — membership, not analysis. */
 export const fetchPortfolioList = cache(() => get<PortfolioTicker[]>("/portfolio"));
-
-async function mutatePortfolio(
-  ticker: string,
-  method: "POST" | "DELETE",
-): Promise<ApiResult<null>> {
-  try {
-    // Same-origin: this app's own proxy route, never the FastAPI base URL —
-    // see the module docstring.
-    const res = await fetch(`/api/portfolio/${encodeURIComponent(ticker.toUpperCase())}`, {
-      method,
-      cache: "no-store",
-    });
-    if (!res.ok) {
-      return { ok: false, status: res.status, message: `A API respondeu ${res.status}.` };
-    }
-    return { ok: true, data: null };
-  } catch {
-    return { ok: false, status: 0, message: "Não foi possível favoritar agora." };
-  }
-}
-
-/** Favorite a ticker. Idempotent — safe to call on one already favorited. */
-export function addFavorite(ticker: string): Promise<ApiResult<null>> {
-  return mutatePortfolio(ticker, "POST");
-}
-
-/** Un-favorite a ticker. Idempotent — safe to call on one not favorited. */
-export function removeFavorite(ticker: string): Promise<ApiResult<null>> {
-  return mutatePortfolio(ticker, "DELETE");
-}
 
 export const API_BASE = BASE;
