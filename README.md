@@ -406,6 +406,93 @@ cache temporário:
 UV_CACHE_DIR=/tmp/project-smaug-uv-cache uv run pytest
 ```
 
+## MCP local
+
+O servidor MCP permite consultar os dados do Smaug em clientes como Codex e
+Claude Desktop. Ele usa `stdio` e consome a API existente, que deve estar em
+execução com acesso aos bancos necessários. A configuração é manual.
+
+Prepare as dependências com `uv sync`. Em um terminal, inicie a API:
+
+```bash
+uv run uvicorn smaug.entrypoints.api:app --host 127.0.0.1 --port 8000
+```
+
+O cliente MCP inicia o processo usando este comando:
+
+```bash
+uv --directory /caminho/para/project-smaug run smaug-mcp
+```
+
+Executado diretamente no terminal, o processo aguarda mensagens MCP em stdin.
+Stdout contém apenas mensagens do protocolo; os logs usam stderr. A MCP pode
+iniciar e listar ferramentas sem a API, mas as consultas falham enquanto ela
+estiver indisponível. Ela não inicia a API ou comandos de atualização. A API
+continua seguindo sua própria configuração de atualização automática de preços.
+
+Configuração do Codex, em `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.smaug]
+command = "uv"
+args = ["--directory", "/caminho/para/project-smaug", "run", "smaug-mcp"]
+
+[mcp_servers.smaug.env]
+MCP_API_BASE_URL = "http://127.0.0.1:8000"
+MCP_API_TIMEOUT_SECONDS = "30"
+```
+
+Configuração do Claude Desktop, no arquivo `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "smaug": {
+      "command": "uv",
+      "args": ["--directory", "/caminho/para/project-smaug", "run", "smaug-mcp"],
+      "env": {
+        "MCP_API_BASE_URL": "http://127.0.0.1:8000",
+        "MCP_API_TIMEOUT_SECONDS": "30"
+      }
+    }
+  }
+}
+```
+
+Substitua o caminho pelo checkout local e preserve as outras configurações do
+cliente. Se `uv` não estiver no PATH do cliente, use o caminho absoluto do
+executável. Quando o cliente roda no Windows e o projeto no WSL, use
+`command = "wsl.exe"` e coloque `"--", "/caminho/absoluto/do/uv"` antes dos
+argumentos acima; use os caminhos Linux do projeto e do uv dentro do WSL.
+
+| Ferramenta | Dados retornados |
+|---|---|
+| `list_portfolio` | Tickers favoritos |
+| `list_analysis_summaries` | Resumos TTM persistidos |
+| `get_ticker_analysis` | TTM completo e histórico anual, com contratos e proveniência |
+| `get_price_history` | Fechamentos B3, bases negociada/ajustada e lacunas |
+| `get_dividend_history` | Eventos de proventos, datas de pagamento e cobertura |
+| `get_shareholding_position` | Posições acionárias e metadados do documento CVM |
+
+Todas as ferramentas aceitam `offset` (padrão 0) e `limit` (padrão 100, máximo
+500). As ferramentas `get_*` também exigem `ticker`, por exemplo `BBAS3`.
+Listas retornam `items`, `total`, `offset`, `limit` e `next_offset`. Consultas por
+ticker mantêm os campos da API e acrescentam `pagination`; a página limita
+`history`, `points`, `events` ou `positions`, conforme a ferramenta. O TTM é
+retornado completo em cada página de análises.
+
+A paginação preserva a ordem da API e é aplicada localmente após cada consulta
+HTTP completa. Use `next_offset` até receber `null`; páginas sucessivas podem
+refletir atualizações ocorridas entre as chamadas. Os resultados têm JSON
+estruturado e texto equivalente, preservando datas, valores nulos e suas causas.
+Valores decimais são strings para manter a precisão. Esses dados são os
+persistidos pelo projeto, não cotações em tempo real.
+
+`MCP_API_BASE_URL` e `MCP_API_TIMEOUT_SECONDS` também podem ser definidos no
+`.env`. Erros MCP identificam `api_unavailable`, `api_timeout`,
+`invalid_api_response` ou `api_http_error`; erros HTTP preservam o status e o
+campo `detail`, incluindo causas como `price_history_not_prepared`.
+
 ## Estrutura do repositório
 
 ```text
@@ -414,7 +501,7 @@ src/smaug/
 ├── analysis/      # domínio, cálculo e persistência dos indicadores
 ├── portfolio/     # favoritos, identidade, classes e taxonomia
 ├── shared/        # configuração, conexões, artefatos e eventos
-└── entrypoints/   # CLI e API FastAPI
+└── entrypoints/   # CLI, API FastAPI e MCP local
 
 frontend/          # aplicação Next.js
 alembic/           # migrações do PostgreSQL

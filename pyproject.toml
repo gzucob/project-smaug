@@ -14,10 +14,12 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.30",
     "alembic>=1.14",
+    "mcp>=2,<3",
 ]
 
 [project.scripts]
 smaug = "smaug.entrypoints.cli:main"
+smaug-mcp = "smaug.entrypoints.mcp:main"
 
 [dependency-groups]
 dev = [

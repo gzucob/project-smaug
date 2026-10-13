@@ -124,6 +124,10 @@ class Settings(BaseSettings):
     # one server, never the browser directly.
     api_cors_origins: tuple[str, ...] = Field(default=("http://localhost:3000",))
 
+    # ---- Local MCP read adapter ----
+    mcp_api_base_url: str = Field(default="http://127.0.0.1:8000")
+    mcp_api_timeout_seconds: float = Field(default=30.0, gt=0)
+
 
 def get_settings() -> Settings:
     """Build a fresh Settings instance (composition-root helper)."""
