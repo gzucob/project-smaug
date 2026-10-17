@@ -1,0 +1,15 @@
+.git
+.venv
+.env*
+.cache
+.artifacts
+.mypy_cache
+.ruff_cache
+.pytest_cache
+__pycache__
+frontend
+installer
+node_modules
+tmp
+dist
+build

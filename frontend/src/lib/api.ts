@@ -24,7 +24,7 @@ import type { ApiResult } from "@/lib/api-result";
 
 export type { ApiResult } from "@/lib/api-result";
 
-const BASE = (process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000").replace(/\/$/, "");
+const BASE = (process.env.SMAUG_API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000").replace(/\/$/, "");
 
 async function get<T>(path: string, timeoutMs = 10000): Promise<ApiResult<T>> {
   try {

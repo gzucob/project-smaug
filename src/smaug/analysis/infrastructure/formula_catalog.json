@@ -1,0 +1,541 @@
+{
+  "price_to_cfo": {
+    "formula": "Valor de mercado ÷ fluxo de caixa operacional",
+    "meaning": "Quantas vezes o valor de mercado da companhia representa sua geração operacional de caixa anualizada.",
+    "caveat": "FCO da DFC; múltiplo agregado da companhia.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "price_to_ebitda": {
+    "formula": "Valor de mercado ÷ EBITDA",
+    "meaning": "Quantas vezes o valor de mercado da companhia representa seu EBITDA anualizado.",
+    "caveat": "Usa o mesmo EBITDA dos indicadores existentes e as mesmas regras de aplicabilidade.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "ev_cfo": {
+    "formula": "Valor da firma ÷ fluxo de caixa operacional",
+    "meaning": "Quantas vezes o valor da empresa representa sua geração operacional de caixa anualizada.",
+    "caveat": "O FCO é o caixa operacional divulgado na DFC; sua classificação de juros permanece a divulgada pela companhia.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "ev_fcf": {
+    "formula": "Valor da firma ÷ fluxo de caixa livre",
+    "meaning": "Quantas vezes o valor da empresa representa o caixa livre anualizado após os investimentos em imobilizado e intangíveis.",
+    "caveat": "FCL segue a definição existente: FCO menos CAPEX de imobilizado e intangíveis.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "ev_revenue": {
+    "formula": "Valor da firma ÷ receita líquida",
+    "meaning": "Quantas vezes o valor da empresa representa sua receita líquida anualizada.",
+    "caveat": "Receita segue o perímetro das demonstrações CVM selecionadas para a companhia.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "tag_along": {
+    "formula": "Percentual de proteção na alienação de controle ÷ 100",
+    "meaning": "Parcela do preço pago ao controlador assegurada ao titular desta espécie ou classe de ação, na hipótese de alienação de controle.",
+    "caveat": "A origem identifica a declaração do FRE ou a garantia do segmento de listagem da B3. Um dado antigo não comprova o estatuto atual. Units só recebem um percentual quando todos os componentes têm a mesma proteção comprovada.",
+    "unit": "ratio",
+    "period": "current_filing"
+  },
+  "free_float": {
+    "formula": "Percentual total de ações em circulação informado no FRE da companhia",
+    "meaning": "A participação do capital social que a companhia informa como ações em circulação no FRE, convertida de percentual para fração.",
+    "caveat": "Percentual da companhia inteira, incluindo as classes; a data da assembleia e a versão do FRE estão na origem dos dados. Não representa uma contagem de negócios ou a liquidez diária.",
+    "unit": "ratio",
+    "period": "current_filing"
+  },
+  "cash_ratio": {
+    "formula": "Caixa e equivalentes ÷ passivo circulante",
+    "meaning": "Quanto do passivo circulante pode ser coberto pelo caixa e seus equivalentes disponíveis no fechamento.",
+    "caveat": "Inclui apenas caixa e equivalentes; aplicações financeiras classificadas separadamente não entram automaticamente.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "quick_ratio": {
+    "formula": "(Ativo circulante − estoques) ÷ passivo circulante",
+    "meaning": "Quanto do passivo circulante pode ser coberto pelo ativo circulante após excluir os estoques.",
+    "caveat": "Adotamos a variante que exclui estoques. Despesas antecipadas permanecem no ativo circulante; uma conta ausente não é tratada como estoque zero.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "cfo_yield": {
+    "formula": "Fluxo de caixa operacional ÷ valor de mercado",
+    "meaning": "A geração operacional de caixa anualizada como percentual do valor de mercado da companhia.",
+    "caveat": "O fluxo da companhia é comparado com seu valor de mercado; resultado negativo é preservado.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "cfo_margin": {
+    "formula": "Fluxo de caixa operacional ÷ receita",
+    "meaning": "Quanto da receita do período corresponde ao caixa gerado pelas atividades operacionais.",
+    "caveat": "O FCO inclui movimentos do capital de giro. Em bancos, movimentos de crédito e depósitos exigem uma leitura própria.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "fcf_margin": {
+    "formula": "Fluxo de caixa livre ÷ receita",
+    "meaning": "Quanto da receita do período corresponde ao caixa livre após os investimentos em imobilizado e intangíveis.",
+    "caveat": "Usa FCO menos aquisições de imobilizado e intangíveis; preserva as regras de aplicabilidade do FCL.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "cash_conversion": {
+    "formula": "Fluxo de caixa operacional ÷ lucro líquido",
+    "meaning": "Compara o caixa gerado pela operação com o lucro líquido dos controladores no mesmo período.",
+    "caveat": "Pagamentos, recebimentos e movimentos de capital de giro podem se referir a outros períodos. Lucro zero impede a divisão; prejuízo não é descartado.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "capex_to_cfo": {
+    "formula": "Investimentos em imobilizado e intangíveis ÷ fluxo de caixa operacional",
+    "meaning": "Quanto do caixa operacional do período corresponde aos investimentos em imobilizado e intangíveis.",
+    "caveat": "CAPEX corresponde às saídas para aquisição de ativos identificadas na DFC, apresentado positivo; não inclui aquisições de empresas nem compensa vendas de ativos.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "roe": {
+    "formula": "Lucro líquido (anualizado) ÷ Patrimônio líquido",
+    "meaning": "Quanto de lucro a empresa extrai de cada real de capital próprio. É a medida mais direta da eficiência do capital dos sócios.",
+    "caveat": "Smaug divide pelo PL de fechamento do período, não pelo PL médio do período. Em anos de forte emissão ou recompra, as duas fórmulas respondem perguntas diferentes. Este ROE usa a fatia dos controladores nos dois lados da fração; a variante consolidada é o roe_total (ADR 0026).",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "roe_total": {
+    "formula": "Lucro líquido consolidado (anualizado) ÷ Patrimônio líquido consolidado",
+    "meaning": "O mesmo ROE, medido sobre o grupo inteiro: lucro e patrimônio incluem a participação dos acionistas minoritários das controladas.",
+    "caveat": "Numerador e denominador vêm da mesma fatia (o total consolidado), nunca misturados com a fatia dos controladores — a regra de pareamento do ADR 0026.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "roa": {
+    "formula": "Lucro líquido (anualizado) ÷ Ativo total",
+    "meaning": "Retorno gerado por cada real de ativo, independente de como esse ativo foi financiado (dívida ou capital próprio).",
+    "caveat": "Este ROA divide o lucro dos controladores pelo ativo total consolidado — fatias diferentes nos dois lados. A variante de fatia única é o roa_total (ADR 0026).",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "roa_total": {
+    "formula": "Lucro líquido consolidado (anualizado) ÷ Ativo total",
+    "meaning": "O ROA em fatia única: o lucro do grupo inteiro (minoritários incluídos) sobre o ativo que esse mesmo grupo inteiro opera. Como o ativo total só existe consolidado, esta é a versão internamente consistente do índice.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "roic_statutory": {
+    "formula": "EBIT consolidado anualizado × (1 − 34%) ÷ (PL consolidado + Dívida líquida)",
+    "meaning": "Proxy padronizada do retorno sobre todo o capital investido no grupo, próprio e de terceiros. O nome estatutário explicita que o imposto é normalizado, não o efetivamente reconhecido pela companhia.",
+    "caveat": "O NOPAT usa a alíquota estatutária fixa de 34% (IRPJ 25% + CSLL 9%), não a alíquota efetiva da empresa. EBIT e patrimônio são consolidados e a dívida líquida desconta apenas caixa e equivalentes CPC 03 (ADR 0057).",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "net_margin": {
+    "formula": "Lucro líquido ÷ Receita líquida (mesmo período, sem anualizar)",
+    "meaning": "Quanto sobra de cada real vendido depois de tudo — custos, despesas, juros e impostos.",
+    "caveat": "Esta margem usa o lucro dos controladores sobre a receita consolidada — fatias diferentes. A versão que pareia a fatia consolidada nos dois lados é a net_margin_total (ADR 0026).",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "net_margin_total": {
+    "formula": "Lucro líquido consolidado ÷ Receita líquida (mesmo período, sem anualizar)",
+    "meaning": "A margem líquida em fatia única: o lucro do grupo inteiro (minoritários incluídos) sobre a receita, que só existe consolidada.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "gross_margin": {
+    "formula": "Lucro bruto ÷ Receita líquida",
+    "meaning": "O que sobra depois apenas do custo do produto ou serviço vendido. Mede o poder de precificação puro, antes de qualquer despesa de estrutura.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "ebit_margin": {
+    "formula": "EBIT (lucro operacional) ÷ Receita líquida",
+    "meaning": "Margem da operação depois das despesas de estrutura, mas antes de juros e impostos. Mostra a rentabilidade do negócio em si, sem o efeito da dívida.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "ebitda_margin": {
+    "formula": "EBITDA ÷ Receita líquida",
+    "meaning": "Margem operacional antes também de depreciação e amortização — uma aproximação da geração de caixa da operação.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "asset_turnover": {
+    "formula": "Receita líquida (anualizada) ÷ Ativo total",
+    "meaning": "Quantas vezes o ativo se converte em vendas no ano. É a outra metade do ROA: margem × giro = retorno sobre ativo.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "eps_basic": {
+    "formula": "Lucro líquido do período ÷ quantidade total de ações",
+    "meaning": "O lucro líquido atribuível aos acionistas da companhia dividido pela quantidade de ações selecionada para a análise. Para units, o resultado corresponde às ações que compõem cada pacote.",
+    "caveat": "Usa o lucro dos últimos 12 meses na visão TTM e a quantidade de ações selecionada, sem reconstruir uma média ponderada. Fica n/d quando falta lucro ou quantidade de ações.",
+    "unit": "BRL_per_security",
+    "period": "view_period"
+  },
+  "bvps": {
+    "formula": "Patrimônio líquido ÷ Número de ações",
+    "meaning": "O capital contábil que lastreia cada ação. Comparado ao preço, produz o P/VP.",
+    "caveat": "Usa a quantidade de ações selecionada para a análise, com ajuste da composição para units.",
+    "unit": "BRL_per_security",
+    "period": "view_period"
+  },
+  "revenue_growth": {
+    "formula": "(Receita atual − Receita anterior) ÷ |Receita anterior|",
+    "meaning": "Variação da receita frente ao período anterior comparável. Crescimento de receita sem crescimento de lucro costuma indicar compressão de margem.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "revenue_cagr_5y": {
+    "formula": "(Receita do exercício ÷ Receita de 5 exercícios antes) ^ (1/5) − 1",
+    "meaning": "O crescimento anual composto da receita ao longo de cinco anos: a taxa constante que levaria da receita de cinco exercícios atrás até a de hoje. Responde o que o crescimento ano a ano não responde — se a trajetória sobe, ou se um ano atípico só desfez a queda do anterior.",
+    "caveat": "Aqui os extremos ficam a cinco exercícios de distância (seis pontos), e só os exercícios fechados entram — o período atual não é um ano fechado. Só os dois extremos entram na conta: o caminho entre eles é invisível, e uma queda seguida de recuperação lê igual a um crescimento constante.",
+    "unit": "ratio",
+    "period": "five_fiscal_years"
+  },
+  "ebitda_cagr_5y": {
+    "formula": "(EBITDA do exercício ÷ EBITDA de 5 exercícios antes) ^ (1/5) − 1",
+    "meaning": "O crescimento anual composto do EBITDA em cinco anos. Comparado ao da receita, diz se o crescimento veio acompanhado de ganho de margem operacional ou apesar da perda dela.",
+    "caveat": "Herda a ressalva do EBITDA: nosso EBITDA soma a depreciação e amortização da DFC ao EBIT, então onde essa linha falta na origem os dois extremos podem não ser calculados da mesma forma.",
+    "unit": "ratio",
+    "period": "five_fiscal_years"
+  },
+  "ebit_cagr_5y": {
+    "formula": "(EBIT do exercício ÷ EBIT de 5 exercícios antes) ^ (1/5) − 1",
+    "meaning": "O crescimento anual composto do lucro operacional em cinco anos — a versão do CAGR de EBITDA que já carrega o custo do ativo imobilizado.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "five_fiscal_years"
+  },
+  "net_income_cagr_5y": {
+    "formula": "(Lucro líquido do exercício ÷ Lucro de 5 exercícios antes) ^ (1/5) − 1",
+    "meaning": "O crescimento anual composto do lucro dos controladores em cinco anos. É a taxa que mais se aproxima do que o acionista de longo prazo experimentou.",
+    "caveat": "Como só os extremos contam, um ano-base deprimido infla a taxa permanentemente: uma empresa que saiu de um ano ruim aparece como grande crescedora até esse ano sair da janela.",
+    "unit": "ratio",
+    "period": "five_fiscal_years"
+  },
+  "net_income_growth": {
+    "formula": "(Lucro atual − Lucro anterior) ÷ |Lucro anterior|",
+    "meaning": "Variação do lucro líquido frente ao período anterior comparável.",
+    "caveat": "Divide pelo valor absoluto do lucro anterior, de modo que a saída de um prejuízo aparece como crescimento positivo em vez de sinal invertido.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "net_debt": {
+    "formula": "Dívida total − Caixa e equivalentes de caixa (CVM 1.01.01)",
+    "meaning": "A dívida que sobraria se a empresa usasse o caixa e os equivalentes que atendem à classificação do CPC 03. Aplicações financeiras correntes mais amplas ficam visíveis em campo separado e não reduzem esta conta.",
+    "caveat": "A linha agregada 1.01.02 não prova conversibilidade imediata, vencimento curto e risco insignificante de valor. A dívida exige os dois vencimentos e inclui passivos de arrendamento ou instrumentos explicitamente identificados fora das contas fixas (ADRs 0057/0059).",
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "net_debt_to_ebitda": {
+    "formula": "Dívida líquida ÷ EBITDA anualizado",
+    "meaning": "Quantos anos de geração operacional seriam necessários para zerar a dívida líquida. É a métrica que os próprios covenants bancários usam.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "net_debt_to_ebit": {
+    "formula": "Dívida líquida ÷ EBIT anualizado",
+    "meaning": "Quantos anos de lucro operacional seriam necessários para zerar a dívida líquida. Mais conservador que a versão sobre EBITDA, porque o EBIT já desconta a depreciação — o desgaste que um dia vira CAPEX.",
+    "caveat": "Só existe quando empréstimos, financiamentos, arrendamentos e instrumentos de dívida estão explicitamente cobertos; reservas técnicas e contratos de seguro ficam fora.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "net_debt_to_equity": {
+    "formula": "Dívida líquida ÷ Patrimônio líquido",
+    "meaning": "Alavancagem líquida do caixa: quanto de dívida (já descontado o caixa) a empresa carrega para cada real de capital próprio.",
+    "caveat": "Um valor negativo significa caixa líquido somente quando dívida zero ou o total da dívida foram comprovados no BPP; ausência nunca vira zero.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "debt_to_equity": {
+    "formula": "Dívida total ÷ Patrimônio líquido",
+    "meaning": "Quanto de capital de terceiros a empresa usa para cada real de capital próprio. Alavancagem financeira em sua forma mais crua.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "liabilities_to_assets": {
+    "formula": "(Ativo total − Patrimônio líquido consolidado) ÷ Ativo total",
+    "meaning": "Fatia dos ativos financiada por capital de terceiros — é exatamente o Passivo total sobre o Ativo total. Desconta o patrimônio consolidado, e não só o dos controladores: a participação dos minoritários é patrimônio, não dívida. É o indicador de alavancagem que sobrevive a qualquer estrutura de balanço.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "equity_to_assets": {
+    "formula": "Patrimônio líquido dos controladores ÷ Ativo total",
+    "meaning": "Fatia dos ativos que cabe aos acionistas da empresa listada. Quanto maior, menos ela depende de capital de terceiros. Não é o complemento do Passivo/Ativo: somados, os dois não dão 100% — o que falta é a participação dos minoritários nas controladas, que não é dívida nem é dos controladores.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "current_ratio": {
+    "formula": "Ativo circulante ÷ Passivo circulante",
+    "meaning": "Capacidade de honrar as obrigações dos próximos doze meses com os recursos que se convertem em caixa no mesmo prazo.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "pe_basic": {
+    "formula": "Preço do papel ÷ lucro por ação",
+    "meaning": "Quantas vezes o preço do papel representa o lucro por ação calculado com o lucro líquido do período e a quantidade total de ações. Para units, preço e lucro correspondem ao mesmo pacote de ações.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "pb": {
+    "formula": "Preço do papel ÷ Valor patrimonial por papel",
+    "meaning": "Quanto o mercado paga, neste papel, por cada real de capital contábil alocado a ele. Classes com preços diferentes deixam de receber artificialmente o mesmo P/VP.",
+    "caveat": "O VPA aloca o patrimônio dos controladores igualmente por ação subjacente em circulação; uma unit soma as quantidades do pacote FCA.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "psr": {
+    "formula": "Valor de mercado ÷ Receita líquida anualizada",
+    "meaning": "Quanto o mercado paga por real de receita. Útil exatamente onde o lucro ainda não existe ou não é representativo.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "price_to_assets": {
+    "formula": "Valor de mercado ÷ Ativo total",
+    "meaning": "Quanto o mercado paga por real de ativo, sem descontar o passivo. Um primo grosseiro do P/VP.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "price_to_ebit": {
+    "formula": "Valor de mercado ÷ EBIT anualizado",
+    "meaning": "P/L calculado antes de juros e impostos. Isola o preço pago pela operação, sem o efeito do regime tributário nem da dívida no numerador do lucro.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "price_to_working_capital": {
+    "formula": "Valor de mercado ÷ (Ativo circulante − Passivo circulante)",
+    "meaning": "Múltiplo sobre o capital de giro líquido, na tradição de Graham: procura empresas negociadas perto (ou abaixo) do seu capital circulante.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "payout_cash_paid_in_period": {
+    "formula": "Caixa pago no período (DFC) ÷ Lucro do mesmo período",
+    "meaning": "Compara duas grandezas do mesmo intervalo sem afirmar que o caixa pago nasceu daquele lucro. Os pagamentos podem se referir a lucros de períodos anteriores.",
+    "caveat": "Não é payout por exercício de origem: dividendos aprovados na AGO após o fechamento e pagamentos de declarações anteriores permanecem no período em que o caixa saiu.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "earnings_yield": {
+    "formula": "Lucro por ação (LPA) ÷ Preço do papel",
+    "meaning": "O lucro por ação em relação ao preço pago pela ação, expresso em percentual. É o inverso do P/L quando ambos são diferentes de zero.",
+    "caveat": "Lucro negativo produz Earnings Yield negativo. Com lucro zero e preço válido, o resultado é zero; preço zero ou dados insuficientes impedem o cálculo.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "dividend_yield": {
+    "formula": "Proventos B3 por papel com data ex na janela ÷ Preço do papel",
+    "meaning": "O retorno em proventos do instrumento efetivamente analisado. ON, PN, PNA e PNB usam seus próprios direitos; units somam os componentes do pacote FCA.",
+    "caveat": "No histórico, numerador e preço médio nominal são restatados para a mesma base de ações. No período atual, somamos as datas ex da janela móvel até o cálculo e dividimos pelo preço atual.",
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "ev_ebitda": {
+    "formula": "(Valor de mercado + Dívida líquida + Participação de não controladores) ÷ EBITDA anualizado",
+    "meaning": "Quanto custa a empresa inteira — sócios e credores — por real de geração operacional. É o múltiplo neutro à estrutura de capital.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "ev_ebit": {
+    "formula": "(Valor de mercado + Dívida líquida + Participação de não controladores) ÷ EBIT anualizado",
+    "meaning": "Quanto custa a empresa inteira por real de lucro operacional. Como o EV/EBITDA, é neutro à estrutura de capital — mas o EBIT já desconta a depreciação, então pune menos quem precisa reinvestir pouco e expõe quem precisa reinvestir muito.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "fcf": {
+    "formula": "(Caixa operacional − CAPEX), anualizado",
+    "meaning": "O caixa que sobra depois de manter o negócio de pé. É o que efetivamente pode virar dividendo, recompra ou amortização de dívida.",
+    "caveat": "Smaug não distingue CAPEX de manutenção de CAPEX de expansão — um ano de investimento pesado em crescimento aparece como FCL deprimido. Além disso, alguns exercícios fechados antigos vêm como n/d porque a linha de CAPEX muda de rótulo no arquivo da CVM (issue #22).",
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "price_to_fcf": {
+    "formula": "Valor de mercado ÷ Fluxo de caixa livre anualizado",
+    "meaning": "Quantos anos de caixa livre o mercado está pagando. O P/L do caixa, imune a artifícios contábeis.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "fcf_yield": {
+    "formula": "Fluxo de caixa livre anualizado ÷ Valor de mercado",
+    "meaning": "O inverso do P/FCL: o retorno em caixa que a empresa gera sobre o preço pago por ela. Comparável direto com a taxa livre de risco.",
+    "caveat": null,
+    "unit": "ratio",
+    "period": "view_period"
+  },
+  "revenue": {
+    "formula": "Receita líquida do período (sem anualizar)",
+    "meaning": "O topo da demonstração de resultado: quanto a empresa vendeu, líquido de devoluções e impostos sobre venda.",
+    "caveat": null,
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "costs": {
+    "formula": "DRE 3.02, como arquivada, com o sinal informado pela companhia",
+    "meaning": "Valor da linha 3.02 da demonstração do resultado. O conteúdo contábil dessa linha varia conforme o regime da companhia; não é estimado como receita menos resultado bruto.",
+    "caveat": "A série usa a conta CVM 3.02 diretamente. Em geral, custos e despesas aparecem negativos; o sinal publicado é mantido.",
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "net_income": {
+    "formula": "Lucro líquido atribuído aos controladores",
+    "meaning": "O resultado final do exercício, já descontada a parcela dos acionistas minoritários das controladas. É a fatia que pareia com o LPA; o total consolidado é o net_income_total (ADR 0026).",
+    "caveat": null,
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "net_income_total": {
+    "formula": "Lucro líquido consolidado do período (DRE 3.11, como arquivado)",
+    "meaning": "O resultado do grupo inteiro, incluindo a parcela dos acionistas minoritários das controladas. É o numerador das variantes _total (ADR 0026); em grupos integrais coincide com o net_income.",
+    "caveat": null,
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "total_assets": {
+    "formula": "Ativo total do balanço (BPA 1), no instante de fechamento",
+    "meaning": "Tudo que a empresa controla: caixa, recebíveis, estoques, imobilizado e intangível. É o denominador do ROA, do giro do ativo e do P/Ativo, publicado em reais para que a série possa ser lida por si.",
+    "caveat": null,
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "total_liabilities": {
+    "formula": "Ativo total − Patrimônio líquido consolidado",
+    "meaning": "O que a empresa deve a terceiros: fornecedores, dívida financeira, tributos, provisões. Lido contra o ativo total, mostra que fatia do que a empresa controla foi financiada por fora.",
+    "caveat": "Subtraímos o patrimônio consolidado, não o dos controladores: a participação dos minoritários é patrimônio, não capital de terceiros. Por isso este número não é exatamente o numerador do Passivo/Ativo, que subtrai a fatia dos controladores — os dois diferem justamente pelos minoritários (#149).",
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "current_assets": {
+    "formula": "Ativo circulante (BPA 1.01, como arquivado)",
+    "meaning": "Bens e direitos classificados pela companhia para realização ou consumo no curto prazo, incluindo caixa, aplicações, recebíveis e estoques quando divulgados.",
+    "caveat": "É o agregado divulgado no balanço; a ausência da linha permanece n/d.",
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "noncurrent_assets": {
+    "formula": "Ativo não circulante (BPA 1.02, como arquivado)",
+    "meaning": "Bens e direitos classificados pela companhia para realização no longo prazo, incluindo investimentos, imobilizado e intangível.",
+    "caveat": "É o agregado divulgado no balanço; não é reconstruído a partir do ativo total.",
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "current_liabilities": {
+    "formula": "Passivo circulante (BPP 2.01, como arquivado)",
+    "meaning": "Obrigações classificadas pela companhia para liquidação no curto prazo.",
+    "caveat": "É o agregado divulgado no balanço; a ausência da linha permanece n/d.",
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "noncurrent_liabilities": {
+    "formula": "Passivo não circulante (BPP 2.02, como arquivado)",
+    "meaning": "Obrigações classificadas pela companhia para liquidação no longo prazo.",
+    "caveat": "É o agregado divulgado no balanço; não é reconstruído a partir do passivo total.",
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "equity": {
+    "formula": "Patrimônio líquido atribuído aos controladores (BPP 2.03, como arquivado)",
+    "meaning": "O capital dos sócios da empresa listada: o que sobraria depois de quitar todo o passivo, já descontada a parcela dos minoritários das controladas. É o numerador do VPA e o denominador do ROE.",
+    "caveat": null,
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "equity_total": {
+    "formula": "Patrimônio líquido consolidado, minoritários incluídos",
+    "meaning": "O capital próprio do grupo inteiro. É o denominador das variantes _total (ADR 0026) e o que subtraímos do ativo para chegar ao passivo total; em grupos integrais coincide com o equity.",
+    "caveat": null,
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "cash_equivalents": {
+    "formula": "Caixa e equivalentes de caixa (CVM 1.01.01)",
+    "meaning": "Disponibilidades que a companhia classificou no balanço na base do CPC 03. É exatamente a liquidez descontada da dívida bruta para formar a dívida líquida.",
+    "caveat": null,
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "current_financial_investments": {
+    "formula": "Aplicações financeiras correntes (CVM 1.01.02)",
+    "meaning": "Investimentos financeiros no ativo circulante que permanecem separados do caixa. O campo preserva liquidez adicional sem afirmar que todo o saldo satisfaz o CPC 03.",
+    "caveat": null,
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "distributions_per_security": {
+    "formula": "Σ proventos B3 por papel cujas datas ex caem na janela",
+    "meaning": "Quanto uma unidade do papel adquiriu em direitos de caixa na janela. A escala 1/1.000 da B3 e as mudanças posteriores da base de ações são normalizadas antes da soma.",
+    "caveat": null,
+    "unit": "BRL_per_security",
+    "period": "view_period"
+  },
+  "company_distributions_paid_in_period": {
+    "formula": "Proventos pagos no período (DFC da companhia)",
+    "meaning": "O caixa agregado que saiu da companhia para os acionistas durante o período, sem alocação por classe nem por exercício de origem.",
+    "caveat": null,
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "market_cap": {
+    "formula": "Σ (preço da classe × ações da classe em circulação)",
+    "meaning": "Quanto o mercado paga pela empresa inteira: a soma sobre cada classe listada, cada uma ao seu próprio preço, contando só as ações em circulação (líquidas de tesouraria).",
+    "caveat": null,
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "enterprise_value": {
+    "formula": "Valor de mercado + dívida líquida + participação de não controladores",
+    "meaning": "Valor do grupo operacional no mesmo perímetro consolidado do EBIT e do EBITDA: ações da controladora, dívida líquida de equivalentes CPC 03 e capital dos não controladores.",
+    "caveat": "Nulo para um banco: depósito é funding, não dívida, então não há dívida líquida a somar (ADR 0022).",
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "non_controlling_interests": {
+    "formula": "PL consolidado − PL atribuído aos controladores",
+    "meaning": "Parcela do patrimônio das controladas que pertence a outros acionistas. Entra no enterprise value porque o EBIT e o EBITDA consolidados incluem 100% dessas operações.",
+    "caveat": null,
+    "unit": "BRL",
+    "period": "view_period"
+  },
+  "shares": {
+    "formula": "Ações emitidas − ações em tesouraria",
+    "meaning": "A quantidade de ações selecionada para a análise, usada no LPA e no VPA. Parte do total emitido e desconta a tesouraria quando ela pode ser conciliada; para units, a quantidade é expressa em pacotes equivalentes.",
+    "caveat": null,
+    "unit": "shares",
+    "period": "view_period"
+  },
+  "eps_diluted": {
+    "formula": "Lucro diluído por ação divulgado conforme CPC 41",
+    "meaning": "Resultado diluído por ação com evidência regulatória selecionada para o período.",
+    "caveat": "Depende de evidência CPC 41 compatível; ausência ou janela TTM não resolvida permanece nula com causa nomeada.",
+    "unit": "BRL_per_security",
+    "period": "view_period"
+  },
+  "pe_diluted": {
+    "formula": "Preço do papel ÷ lucro diluído por ação",
+    "meaning": "Preço em múltiplos do lucro diluído por ação selecionado.",
+    "caveat": "Preserva a base de preço e a evidência CPC 41 da análise; não substitui evidência ausente por outro LPA.",
+    "unit": "ratio",
+    "period": "view_period"
+  }
+}

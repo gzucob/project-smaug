@@ -15,12 +15,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from dataclasses import asdict
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pymongo import AsyncMongoClient
 
@@ -50,6 +52,7 @@ from smaug.analysis.domain.financials import (
     SourceAccountStatus,
 )
 from smaug.analysis.domain.indicators import (
+    IndicatorContract,
     NullReason,
     indicator_contracts,
     is_retired_sector_input,
@@ -57,6 +60,7 @@ from smaug.analysis.domain.indicators import (
 )
 from smaug.analysis.domain.price_history import PriceHistory
 from smaug.analysis.domain.price_refresh import RefreshIssueReason
+from smaug.analysis.infrastructure.formulas import formula_references
 from smaug.analysis.infrastructure.mongo_dividends import MongoCashEventReader
 from smaug.analysis.infrastructure.mongo_shareholding import MongoShareholdingReader
 from smaug.analysis.infrastructure.sql_price_history import SqlPriceHistoryRepository
@@ -71,9 +75,11 @@ from smaug.portfolio.domain.share_classes import (
     ShareClassMappingStatus,
 )
 from smaug.portfolio.infrastructure.sql_repository import SqlAlchemyPortfolioRepository
+from smaug.shared.build import application_commit
 from smaug.shared.config import get_settings
 from smaug.shared.errors import UnknownTickerError
 from smaug.shared.price_worker import supervise_price_worker
+from smaug.shared.readiness import ReadinessReader
 from smaug.shared.sql_db import create_engine, create_session_factory
 from smaug.shared.ui_revision import UiRevisionReader
 
@@ -122,6 +128,43 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
+
+
+class FormulaResponse(BaseModel):
+    indicator: str
+    formula: str
+    meaning: str
+    unit: str
+    period: str
+    caveat: str | None
+    calculation_contract_version: str
+    contract: IndicatorContract | None
+
+
+@app.get("/formulas", response_model=list[FormulaResponse])
+def get_formulas() -> list[FormulaResponse]:
+    return [FormulaResponse(**asdict(item)) for item in formula_references()]
+
+
+@app.get("/formulas/{indicator}", response_model=FormulaResponse)
+def get_formula(indicator: str) -> FormulaResponse:
+    for item in formula_references():
+        if item.indicator == indicator:
+            return FormulaResponse(**asdict(item))
+    raise HTTPException(status_code=404, detail="unknown_indicator")
+
+
+@app.get("/health")
+def get_health() -> dict[str, str]:
+    return {"status": "ok", "commit": application_commit()}
+
+
+@app.get("/ready")
+async def get_readiness(request: Request) -> JSONResponse:
+    status = await ReadinessReader(
+        _session_factory, request.app.state.mongo_database
+    ).read()
+    return JSONResponse(status, status_code=200 if status["ready"] else 503)
 
 
 class TickerCodeEvidenceResponse(BaseModel):

@@ -9,6 +9,20 @@ on:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826
+        env:
+          POSTGRES_USER: smaug
+          POSTGRES_PASSWORD: smaug
+          POSTGRES_DB: smaug
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smaug -d smaug"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    env:
+      SMAUG_TEST_POSTGRES_URI: postgresql+asyncpg://smaug:smaug@127.0.0.1:5432/smaug
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
@@ -27,3 +41,66 @@ jobs:
         run: uv run mypy src
       - name: Pytest
         run: uv run pytest
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  manager:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: installer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - run: go test ./...
+      - run: go vet ./...
+      - name: Validate PowerShell launcher syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'install.ps1'), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count) { throw ($errors | Out-String) }
+      - name: Validate Bash launcher syntax
+        if: runner.os != 'Windows'
+        run: bash -n install.sh ../scripts/installer/ci-smoke.sh
+
+  installer:
+    needs: [quality, frontend, manager]
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - run: uv sync --frozen
+      - run: bash scripts/installer/ci-smoke.sh
