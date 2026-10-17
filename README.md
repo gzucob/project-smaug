@@ -13,6 +13,162 @@ organizado em duas fases:
 O front-end Next.js consome a API e apresenta as análises em TTM e exercícios
 fechados. A análise qualitativa por critérios/IA ainda não foi implementada.
 
+## Instalação com Docker
+
+As distribuições ficam em [Releases](https://github.com/gzucob/project-smaug/releases):
+**backend** inclui ingestão CVM/B3, cálculo dos indicadores, fórmulas, doctor,
+API, MongoDB e PostgreSQL; **full** acrescenta o frontend. As duas usam a mesma
+imagem de backend. Há suporte a computadores amd64 e arm64 em Linux, macOS e
+Windows com Docker Desktop em modo de containers Linux.
+
+Pré-requisito: Docker com Compose v2 instalado, iniciado e acessível pelo seu
+usuário. Não é necessário instalar Git, Python, Node, Go ou uv. A primeira
+instalação baixa imagens e prepara os bancos, sem coletar CVM/B3 nem analisar
+tickers. Os downloads e a coleta posterior precisam de internet.
+
+Baixe o pacote da modalidade desejada e seu arquivo `.sha256`. No Linux,
+verifique o arquivo antes de extrair:
+
+```bash
+sha256sum --check smaug-backend-VERSAO.tar.gz.sha256
+mkdir smaug-installer
+tar -xzf smaug-backend-VERSAO.tar.gz -C smaug-installer
+bash smaug-installer/install.sh
+```
+
+No macOS, use `shasum -a 256 --check` no lugar de `sha256sum --check`.
+Para a modalidade completa, substitua `backend` por `full` no nome do arquivo.
+No Windows, baixe o `.zip` e o `.zip.sha256`, compare o resultado de
+`Get-FileHash -Algorithm SHA256` com o checksum, extraia o ZIP e execute:
+
+```powershell
+& .\smaug-installer\install.ps1
+```
+
+Os scripts também verificam os arquivos extraídos antes de executar o
+gerenciador. Políticas locais do PowerShell podem exigir a liberação do script
+baixado, conforme a política da sua máquina; o instalador não a altera.
+
+Por padrão, a instalação fica em `~/.config/smaug` no Linux (ou no
+`XDG_CONFIG_HOME`), `~/Library/Application Support/smaug` no macOS e
+`%APPDATA%\smaug` no Windows. É possível escolher diretório e portas:
+
+```bash
+bash smaug-installer/install.sh --dir "$HOME/Meu Smaug" --api-port 18000 --web-port 13000
+```
+
+O diretório contém `smaugctl` e `smaugctl.ps1`. Execute o gerenciador pelo
+caminho completo, pelo diretório da instalação ou adicione esse diretório ao
+seu PATH. Os exemplos abaixo usam o nome `smaugctl`; no PowerShell, use
+`& 'CAMINHO\smaugctl.ps1'`.
+
+```bash
+smaugctl status
+smaugctl check
+smaugctl cli formulas
+smaugctl cli formulas pe_basic --json
+smaugctl cli ingest --ticker PETR4
+smaugctl cli analyze --ticker PETR4
+smaugctl cli doctor --ticker PETR4
+smaugctl stop
+smaugctl start
+smaugctl logs api
+```
+
+A API fica em <http://127.0.0.1:8000/docs>; na modalidade completa, o frontend
+fica em <http://127.0.0.1:3000>. Somente a própria máquina tem acesso às portas
+publicadas. Os bancos não publicam portas. O ambiente instalado tem volumes
+próprios e não reutiliza os bancos do checkout de desenvolvimento.
+
+`smaugctl check` verifica os serviços e a prontidão da API. Um banco preparado
+sem ingestão aparece como `data: empty`, sem ser considerado falha. O
+`smaug doctor` continua sendo o diagnóstico dos dados de análise, com suas
+causas de nulos e códigos de saída existentes; não substitui o diagnóstico da
+instalação. `GET /health` verifica o processo e identifica seu commit;
+`GET /ready` verifica bancos e revisão Alembic, sem coletar fontes.
+`GET /formulas` e `GET /formulas/{indicator}` expõem a referência do cálculo
+da versão instalada. Fórmulas são descrições, nunca expressões executadas.
+
+### Atualização e recuperação
+
+Cada push da `main` decorrente de squash merge passa pelo CI. Depois de todos
+os gates aprovados, o workflow publica as imagens e valida os dois pacotes em
+amd64 e arm64 antes de publicar a release. A versão usa a data UTC do commit
+e os primeiros 12 caracteres do SHA; o manifesto registra o SHA completo,
+a revisão Alembic, os digests das imagens e os checksums dos arquivos.
+Uma publicação parcial não se torna a versão mais recente.
+
+```bash
+smaugctl update
+smaugctl edition full
+smaugctl edition backend
+smaugctl backup
+smaugctl restore --backup CAMINHO_DO_BACKUP
+```
+
+`update` consulta a última release completa, verifica o pacote e baixa as
+imagens antes de parar serviços. Também aceita `--source DIRETORIO_EXTRAIDO`
+para selecionar um pacote já baixado. A troca de modalidade preserva dados;
+remover o frontend da execução não exclui seus bancos.
+
+Antes de uma migração, o gerenciador para os escritores e cria um backup
+PostgreSQL. Falha no backup impede a migração. Atualizações simultâneas e
+atualizações com uma CLI ativa são recusadas. A revisão anterior permanece no
+disco; uma falha após a migração não reinicia automaticamente software antigo
+contra um schema possivelmente incompatível.
+
+O estado `pending.json` bloqueia o início normal durante uma recuperação.
+Use `smaugctl update` para repetir a operação pendente ou `restore --backup`
+para selecionar explicitamente o backup a restaurar. A restauração substitui
+o estado dos bancos dessa instalação. Se a primeira instalação falhar, os
+gerenciadores no diretório escolhido também permitem repetir com `update`.
+Após uma interrupção abrupta, pode restar `operation.lock`: confira se nenhum
+gerenciador ou container CLI continua ativo antes de remover esse diretório.
+
+O comando `backup` cria uma cópia completa de PostgreSQL, MongoDB,
+configuração e artefatos de origem; caches ficam fora. O backup automático
+pré-migração contém PostgreSQL e configuração. Os backups ficam no diretório
+`backups` e não são removidos automaticamente. Artefatos Bronze posteriores
+não são apagados ao restaurar os arquivados. Para proteção contra perda da
+máquina, copie os backups para outro armazenamento.
+
+Reexecutar o instalador preserva a instalação existente. Configuração de
+portas e atualização de preços fica em `config.json`; edite-a com os serviços
+parados e mantenha o identificador `project`. Parar serviços, atualizar ou
+reinstalar não apaga volumes. O gerenciador não oferece exclusão de dados.
+Mudanças nas imagens dos bancos exigem um procedimento próprio de upgrade e
+são bloqueadas pela atualização comum.
+
+### Publicação e desenvolvimento do instalador
+
+O `smaugctl` é escrito em Go 1.27.2, sem dependências externas; Go é necessário
+apenas para desenvolver e compilar o gerenciador. O backend continua Python
+3.13 e o frontend continua Next.js/React. O CI roda os testes do gerenciador
+em Windows, macOS e Linux, além dos testes Compose completos em Linux amd64
+e arm64. A experiência Docker Desktop em Windows/macOS ainda precisa de
+validação manual em máquinas reais antes de anunciar esses sistemas como
+validados de ponta a ponta, acompanhada na
+[issue #338](https://github.com/gzucob/project-smaug/issues/338).
+
+Na primeira publicação, os dois pacotes GHCR `project-smaug-backend` e
+`project-smaug-frontend` precisam estar públicos. O GitHub cria novos pacotes
+como privados: ajuste a visibilidade nas configurações de cada pacote e
+reexecute o workflow de release caso a verificação anônima tenha falhado.
+Esse é um ajuste inicial da plataforma; as publicações seguintes são
+automáticas. A release não é disponibilizada enquanto suas imagens exigirem
+login. [Visibilidade de pacotes no GitHub](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility).
+O ajuste inicial é acompanhado na
+[issue #339](https://github.com/gzucob/project-smaug/issues/339).
+
+```bash
+cd installer
+go test ./...
+go vet ./...
+cd ..
+# Requer Go, uv e Docker; cria apenas ambientes descartáveis de teste.
+GITHUB_SHA=$(git rev-parse HEAD) bash scripts/installer/ci-smoke.sh
+```
+
 ## Fluxo
 
 ```text

@@ -1,0 +1,86 @@
+# Release images are supplied by smaugctl from the verified manifest.
+services:
+  mongo:
+    image: ${SMAUG_MONGO_IMAGE:?manifest required}
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: [CMD, mongosh, --quiet, --eval, "quit(db.adminCommand('ping').ok ? 0 : 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  postgres:
+    image: ${SMAUG_POSTGRES_IMAGE:?manifest required}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: smaug
+      POSTGRES_PASSWORD: smaug
+      POSTGRES_DB: smaug
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U smaug -d smaug]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  api:
+    image: ${SMAUG_BACKEND_IMAGE:?manifest required}
+    restart: unless-stopped
+    environment: &backend-env
+      MONGO_URI: mongodb://mongo:27017
+      POSTGRES_URI: postgresql+asyncpg://smaug:smaug@postgres:5432/smaug
+      CVM_CACHE_DIR: /data/cache/cvm
+      B3_CACHE_DIR: /data/cache/b3
+      SOURCE_ARTIFACT_DIR: /data/sources
+      AUTO_PRICE_REFRESH: ${AUTO_PRICE_REFRESH:-true}
+      PRICE_REFRESH_INTERVAL_SECONDS: ${PRICE_REFRESH_INTERVAL_SECONDS:-21600}
+    volumes: &backend-volumes
+      - sources:/data/sources
+      - cache:/data/cache
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=15)"]
+      interval: 10s
+      timeout: 20s
+      retries: 12
+      start_period: 10s
+  cli:
+    image: ${SMAUG_BACKEND_IMAGE:?manifest required}
+    profiles: [tools]
+    environment: *backend-env
+    volumes: *backend-volumes
+    entrypoint: [smaug]
+  migrate:
+    image: ${SMAUG_BACKEND_IMAGE:?manifest required}
+    profiles: [tools]
+    environment: *backend-env
+    entrypoint: [alembic]
+    command: [upgrade, head]
+  frontend:
+    image: ${SMAUG_FRONTEND_IMAGE:?manifest required}
+    profiles: [full]
+    restart: unless-stopped
+    environment:
+      SMAUG_API_BASE: http://api:8000
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+volumes:
+  mongo-data:
+  postgres-data:
+  sources:
+  cache:

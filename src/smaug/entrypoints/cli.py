@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import date, timedelta
 from decimal import Decimal
 from time import perf_counter
@@ -61,6 +61,7 @@ from smaug.analysis.infrastructure.b3_prices import (
 from smaug.analysis.infrastructure.dividend_adjusted_price import (
     DividendAdjustedPriceProvider,
 )
+from smaug.analysis.infrastructure.formulas import formula_references
 from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
 from smaug.analysis.infrastructure.mongo_dividends import MongoCashEventReader
 from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsReader
@@ -224,6 +225,33 @@ from smaug.shared.logging import get_logger
 from smaug.shared.sql_db import create_engine, create_session_factory
 
 app = typer.Typer(help="smaug — CVM/B3 ingestion and indicator analysis.")
+
+
+@app.command()
+def formulas(
+    indicator: Annotated[str | None, typer.Argument()] = None,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """List formulas or explain one public indicator, without databases."""
+    references = formula_references()
+    if indicator is not None:
+        references = tuple(item for item in references if item.indicator == indicator)
+        if not references:
+            raise typer.BadParameter(f"Unknown public indicator: {indicator}")
+    if as_json:
+        values = [asdict(item) for item in references]
+        typer.echo(json.dumps(values[0] if indicator else values, ensure_ascii=False))
+        return
+    for item in references:
+        typer.echo(f"{item.indicator}: {item.formula}")
+        if indicator:
+            typer.echo(f"{item.meaning}\nUnit: {item.unit}\nPeriod: {item.period}")
+            if item.caveat:
+                typer.echo(item.caveat)
+            if item.contract:
+                typer.echo(json.dumps(asdict(item.contract), ensure_ascii=False))
+
+
 logger = get_logger("smaug.cli")
 
 _FAILED_STATUSES = frozenset(
