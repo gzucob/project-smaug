@@ -58,7 +58,23 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
+  manager-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Windows Git rejects NTFS stream names even outside a sparse checkout.
+      # Transfer only the portable manager sources from the same checked ref.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manager-source
+          path: |
+            installer/
+            scripts/installer/
+          retention-days: 1
+          if-no-files-found: error
+
   manager:
+    needs: manager-source
     strategy:
       fail-fast: false
       matrix:
@@ -68,13 +84,10 @@ jobs:
       run:
         working-directory: installer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          # Tracked skill downloads contain NTFS stream names. Manager tests
-          # need only these portable paths, including on Windows runners.
-          sparse-checkout: |
-            installer
-            scripts/installer
+          name: manager-source
+          path: .
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.2'
