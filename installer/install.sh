@@ -20,9 +20,14 @@ else
   (cd "$bundle" && shasum -a 256 --check checksums.txt)
 fi
 chmod u+x "$binary"
-# Optional --dir DIRECTORY must precede install; remaining flags belong to it.
+# The standalone bundle installs only the MCP connector.
+operation=(install)
+if [[ $(cat "$bundle/edition.txt") == mcp ]]; then
+  operation=(mcp setup)
+fi
+# Optional --dir DIRECTORY precedes the operation; remaining flags belong to it.
 if [[ ${1:-} == --dir ]]; then
   target=$2; shift 2
-  exec "$binary" --dir "$target" install --source "$bundle" "$@"
+  exec "$binary" --dir "$target" "${operation[@]}" --source "$bundle" "$@"
 fi
-exec "$binary" install --source "$bundle" "$@"
+exec "$binary" "${operation[@]}" --source "$bundle" "$@"

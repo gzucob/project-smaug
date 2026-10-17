@@ -95,7 +95,7 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
-      - name: Build both release bundles
+      - name: Build application and MCP release bundles
         env:
           BACKEND_IMAGE: ${{ steps.names.outputs.backend }}@${{ steps.backend.outputs.digest }}
           FRONTEND_IMAGE: ${{ steps.names.outputs.frontend }}@${{ steps.frontend.outputs.digest }}
@@ -152,7 +152,7 @@ jobs:
         with:
           name: installers
           path: dist/installers
-      - name: Publish both installers together
+      - name: Publish application and MCP installers together
         shell: bash
         run: |
           set -euo pipefail
@@ -163,11 +163,13 @@ jobs:
             exit 0
           fi
           cat > "$RUNNER_TEMP/release-notes.md" <<EOF_NOTES
-          Docker installers for backend and full Smaug, built from commit $RELEASE_COMMIT.
+          Docker installers for backend, full Smaug and the standalone MCP connector, built from commit $RELEASE_COMMIT.
 
-          Download either edition, verify its SHA-256 checksum and extract it. Run install.sh on Linux/macOS or install.ps1 on Windows. Docker with Compose v2 is required. No data is collected automatically.
+          Download the chosen package, verify its SHA-256 checksum and extract it. Run install.sh on Linux/macOS or install.ps1 on Windows. Docker is required; backend/full also require Compose v2. No data is collected automatically.
 
-          Existing installations: run smaugctl update. Read the [installation guide](https://github.com/$GITHUB_REPOSITORY/blob/$RELEASE_COMMIT/README.md) for backup and recovery commands.
+          Standalone MCP: select the mcp archive and use --api-base-url URL to select an existing API. No database or API is started by this package. Optional --client codex|claude|both registers the connector locally.
+
+          Existing backend/full installations: run smaugctl update. Standalone MCP: run smaugctl mcp update. Read the [installation guide](https://github.com/$GITHUB_REPOSITORY/blob/$RELEASE_COMMIT/README.md) for backup and recovery commands.
           EOF_NOTES
           if [[ "$existing" != true ]]; then
             gh release create "$version" --draft --target "$RELEASE_COMMIT" --title "Smaug $version" --notes-file "$RUNNER_TEMP/release-notes.md"

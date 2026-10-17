@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,9 @@ func TestDockerProcess(t *testing.T) {
 	log.Close()
 	if failed := os.Getenv("SMAUG_DOCKER_FAIL"); failed != "" && strings.Contains(args, failed) {
 		os.Exit(7)
+	}
+	if strings.Contains(args, "smaug-mcp") || strings.HasSuffix(args, "-T mcp") {
+		io.Copy(os.Stdout, os.Stdin)
 	}
 	if strings.Contains(args, "pg_dump") {
 		fmt.Print("binary-sql-backup")

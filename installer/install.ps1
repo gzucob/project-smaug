@@ -8,11 +8,12 @@ foreach ($line in Get-Content -LiteralPath (Join-Path $PSScriptRoot 'checksums.t
 }
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'arm64' } else { 'amd64' }
 $binary = Join-Path $PSScriptRoot "smaugctl-windows-$arch.exe"
+$operation = if ((Get-Content -LiteralPath (Join-Path $PSScriptRoot 'edition.txt') -Raw).Trim() -eq 'mcp') { @('mcp', 'setup') } else { @('install') }
 if ($args.Count -ge 2 -and $args[0] -eq '--dir') {
     $target = $args[1]
     $remaining = @($args | Select-Object -Skip 2)
-    & $binary --dir $target install --source $PSScriptRoot @remaining
+    & $binary --dir $target @operation --source $PSScriptRoot @remaining
 } else {
-    & $binary install --source $PSScriptRoot @args
+    & $binary @operation --source $PSScriptRoot @args
 }
 exit $LASTEXITCODE

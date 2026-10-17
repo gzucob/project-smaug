@@ -47,6 +47,12 @@ async def test_setup_tool_and_resources_work_without_http(
             ("windows", "### Windows"),
         ):
             assert (heading in guide) == (platform in ("all", name))
+        for name, instruction in (
+            ("linux", "sha256sum --check smaug-mcp-"),
+            ("macos", "shasum -a 256 --check smaug-mcp-"),
+            ("windows", "$smaugArchive = 'smaug-mcp-"),
+        ):
+            assert (instruction in guide) == (platform in ("all", name))
         for command in ("start", "check", "update", "backup", "restore"):
             assert f"smaugctl {command}" in guide
         assert "cli formulas" in guide

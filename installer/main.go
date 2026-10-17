@@ -76,16 +76,22 @@ func main() {
 	os.Exit(exitCode)
 }
 func run(args []string) error {
+	if handled, err := dispatchNativeLauncher(args); handled || err != nil {
+		return err
+	}
 	home, err := os.UserConfigDir()
 	if err != nil {
 		return err
 	}
 	root := filepath.Join(home, "smaug")
+	if len(args) > 1 && args[0] == "mcp" && args[1] == "setup" {
+		root = filepath.Join(home, "smaug-mcp")
+	}
 	if len(args) >= 2 && args[0] == "--dir" {
 		root, args = args[1], args[2:]
 	}
 	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
-		fmt.Println("smaugctl [--dir DIRECTORY] install --source BUNDLE [--edition backend|full] [--api-port 8000] [--web-port 3000]\nCommands: start, stop, status, logs [service], check, update, edition backend|full, backup, restore --backup DIRECTORY, cli COMMAND [ARGS]")
+		fmt.Println("smaugctl [--dir DIRECTORY] install --source BUNDLE [--edition backend|full] [--api-port 8000] [--web-port 3000]\nCommands: start, stop, status, logs [service], check, update, edition backend|full, backup, restore --backup DIRECTORY, cli COMMAND [ARGS], mcp setup|run|register|config|status|update")
 		return nil
 	}
 	root, err = filepath.Abs(root)
@@ -95,6 +101,9 @@ func run(args []string) error {
 	m := &Manager{Root: root}
 	command := args[0]
 	args = args[1:]
+	if command == "mcp" {
+		return m.mcp(args)
+	}
 	if err = prerequisites(); err != nil {
 		return err
 	}
@@ -391,8 +400,15 @@ func (m *Manager) install(args []string) error {
 	edition := flags.String("edition", "", "backend or full")
 	api := flags.Int("api-port", 8000, "local API port")
 	web := flags.Int("web-port", 3000, "local frontend port")
+	mcpClient := flags.String("mcp-client", "", "register codex, claude or both after install")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	if *mcpClient != "" && *mcpClient != "codex" && *mcpClient != "claude" && *mcpClient != "both" {
+		return errors.New("mcp-client must be codex, claude or both")
+	}
+	if exists(m.file("mcp.json")) {
+		return errors.New("standalone MCP already exists here; select a separate --dir for backend/full")
 	}
 	if exists(m.file("config.json")) {
 		if err := readJSON(m.file("config.json"), &m.Config); err != nil {
@@ -404,7 +420,13 @@ func (m *Manager) install(args []string) error {
 		if err := readJSON(m.file("current.json"), &m.State); err != nil {
 			return errors.New("installation incomplete; retry with its original bundle or recover pending.json")
 		}
-		return m.start(m.State)
+		if err := m.start(m.State); err != nil {
+			return err
+		}
+		if *mcpClient != "" {
+			return m.configureMCP("register", []string{"--client", *mcpClient})
+		}
+		return nil
 	}
 	if *source == "" {
 		return errors.New("install requires --source BUNDLE")
@@ -466,6 +488,9 @@ func (m *Manager) install(args []string) error {
 		fmt.Printf("Frontend: http://127.0.0.1:%d\n", m.Config.WebPort)
 	}
 	fmt.Println("No data collected. Next: smaugctl cli ingest --ticker PETR4; smaugctl cli analyze --ticker PETR4")
+	if *mcpClient != "" {
+		return m.configureMCP("register", []string{"--client", *mcpClient})
+	}
 	return nil
 }
 func safePath(name string) bool {
@@ -601,7 +626,10 @@ exit $LASTEXITCODE
 	if err := os.WriteFile(m.file("smaugctl"), []byte(sh), 0700); err != nil {
 		return err
 	}
-	return os.WriteFile(m.file("smaugctl.ps1"), []byte(ps), 0600)
+	if err := os.WriteFile(m.file("smaugctl.ps1"), []byte(ps), 0600); err != nil {
+		return err
+	}
+	return m.nativeLauncher()
 }
 func (m *Manager) transition(target State) error {
 	if err := m.noCLI(); err != nil {
@@ -904,9 +932,22 @@ func (m *Manager) update() error {
 		}
 		return m.transition(p.Target)
 	}
-	data, err := getURL("https://api.github.com/repos/" + repository + "/releases/latest")
+	v, err := m.downloadLatest(m.State.Edition, m.State.Version)
 	if err != nil {
 		return err
+	}
+	if v.Version == m.State.Version {
+		fmt.Println("Already up to date.")
+		return nil
+	}
+	return m.transition(State{v.Version, m.State.Edition})
+}
+
+func (m *Manager) downloadLatest(edition, currentVersion string) (Manifest, error) {
+	var empty Manifest
+	data, err := getURL("https://api.github.com/repos/" + repository + "/releases/latest")
+	if err != nil {
+		return empty, err
 	}
 	var release struct {
 		Tag    string `json:"tag_name"`
@@ -916,16 +957,15 @@ func (m *Manager) update() error {
 		} `json:"assets"`
 	}
 	if err = json.Unmarshal(data, &release); err != nil {
-		return err
+		return empty, err
 	}
 	if !releasePattern.MatchString(release.Tag) {
-		return errors.New("invalid release tag")
+		return empty, errors.New("invalid release tag")
 	}
-	if release.Tag == m.State.Version {
-		fmt.Println("Already up to date.")
-		return nil
+	if release.Tag == currentVersion {
+		return Manifest{Version: currentVersion}, nil
 	}
-	name := "smaug-" + m.State.Edition + "-" + release.Tag + ".zip"
+	name := "smaug-" + edition + "-" + release.Tag + ".zip"
 	urls := map[string]string{}
 	for _, a := range release.Assets {
 		urls[a.Name] = a.URL
@@ -934,39 +974,39 @@ func (m *Manager) update() error {
 	prefix := "https://github.com/" + repository + "/releases/download/" + release.Tag + "/"
 	for _, key := range []string{name, name + ".sha256"} {
 		if !strings.HasPrefix(urls[key], prefix) {
-			return errors.New("incomplete release assets")
+			return empty, errors.New("incomplete release assets")
 		}
 	}
 	checksum, err := getURL(urls[name+".sha256"])
 	if err != nil {
-		return err
+		return empty, err
 	}
 	parts := strings.Fields(string(checksum))
 	if len(parts) == 0 {
-		return errors.New("empty checksum")
+		return empty, errors.New("empty checksum")
 	}
 	archive, err := getURL(urls[name])
 	if err != nil {
-		return err
+		return empty, err
 	}
 	sum := sha256.Sum256(archive)
 	if hex.EncodeToString(sum[:]) != parts[0] {
-		return errors.New("release archive checksum mismatch")
+		return empty, errors.New("release archive checksum mismatch")
 	}
 	temp, err := os.MkdirTemp(m.Root, "download-")
 	if err != nil {
-		return err
+		return empty, err
 	}
 	defer os.RemoveAll(temp)
 	if err = unpackZip(archive, temp); err != nil {
-		return err
+		return empty, err
 	}
 	v, err := m.stage(temp)
 	if err != nil {
-		return err
+		return empty, err
 	}
 	if v.Version != release.Tag {
-		return errors.New("downloaded release version mismatch")
+		return empty, errors.New("downloaded release version mismatch")
 	}
-	return m.transition(State{v.Version, m.State.Edition})
+	return v, nil
 }

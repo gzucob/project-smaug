@@ -25,6 +25,26 @@ def render_setup_guide(
         raise ValueError("Unsupported setup platform")
     if edition not in ("backend", "full"):
         raise ValueError("Unsupported setup edition")
+    sections = _guide_sections()
+    selected = (
+        text.strip()
+        for name, text in sections.items()
+        if name not in {"linux", "macos", "windows"} or platform in {"all", name}
+    )
+    return (
+        _select_platform("\n\n".join(selected), platform).replace(
+            "@@EDITION@@", edition
+        )
+        + "\n"
+    )
+
+
+def render_mcp_install_guide() -> str:
+    """Return the same MCP instructions offline inside the standalone bundle."""
+    return _select_platform(_guide_sections()["mcp"].strip(), "all") + "\n"
+
+
+def _guide_sections() -> dict[str, str]:
     source = files("smaug.shared").joinpath("setup_guide.md").read_text("utf-8")
     parts = re.split(r"^<!-- section:(\w+) -->\n", source, flags=re.MULTILINE)
     sections = dict(zip(parts[1::2], parts[2::2], strict=True))
@@ -39,9 +59,17 @@ def render_setup_guide(
         "mcp",
     }:
         raise ValueError("Invalid setup guide sections")
-    selected = (
-        text.strip()
-        for name, text in sections.items()
-        if name not in {"linux", "macos", "windows"} or platform in {"all", name}
+    return sections
+
+
+def _select_platform(source: str, platform: SetupPlatform) -> str:
+    def select(match: re.Match[str]) -> str:
+        return match[2].strip() if platform in ("all", match[1]) else ""
+
+    selected = re.sub(
+        r"<!-- platform:(linux|macos|windows) -->\n(.*?)<!-- /platform -->",
+        select,
+        source,
+        flags=re.DOTALL,
     )
-    return "\n\n".join(selected).replace("@@EDITION@@", edition) + "\n"
+    return re.sub(r"\n{3,}", "\n\n", selected).strip()
