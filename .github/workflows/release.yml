@@ -110,6 +110,7 @@ jobs:
           path: |
             dist/installers/backend/
             dist/installers/full/
+            dist/installers/mcp/
             dist/installers/*.zip
             dist/installers/*.tar.gz
             dist/installers/*.sha256
