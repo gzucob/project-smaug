@@ -14,6 +14,13 @@ from pydantic import Field, JsonValue
 
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.mcp_api import JsonObject, McpApiError, McpApiReader
+from smaug.shared.mcp_setup import (
+    SETUP_GUIDE_HINT,
+    SETUP_GUIDE_URI,
+    SetupEdition,
+    SetupPlatform,
+    render_setup_guide,
+)
 
 type Offset = Annotated[int, Field(ge=0, description="Records to skip.")]
 type Limit = Annotated[int, Field(ge=1, le=500, description="Page size (maximum 500).")]
@@ -47,7 +54,8 @@ def create_server(
             "Query persisted Smaug CVM/B3 data. Values are not live quotes. "
             "Preserve named null reasons, source dates and price bases. "
             "Use next_offset to continue lists; pagination is applied locally "
-            "to each fresh API response. No tool computes financial indicators."
+            "to each fresh API response. No tool computes financial indicators. "
+            + SETUP_GUIDE_HINT
         ),
         lifespan=lifespan,
     )
@@ -71,6 +79,36 @@ def create_server(
             return await api().read_ticker(endpoint, ticker, collection, offset, limit)
         except McpApiError as exc:
             raise ToolError(str(exc)) from exc
+
+    @server.resource(SETUP_GUIDE_URI, mime_type="text/markdown")
+    def setup_resource() -> str:
+        """Offline installation, execution and recovery guide for all platforms."""
+        return render_setup_guide()
+
+    @server.resource("smaug://setup/{platform}/{edition}", mime_type="text/markdown")
+    def setup_platform_resource(platform: SetupPlatform, edition: SetupEdition) -> str:
+        """Offline guide selected by platform and backend/full edition."""
+        return render_setup_guide(platform, edition)
+
+    @server.tool(annotations=annotations)
+    async def get_setup_guide(
+        platform: SetupPlatform = "all", edition: SetupEdition = "full"
+    ) -> dict[str, JsonValue]:
+        """Get offline setup and maintenance instructions; never execute commands."""
+        return {
+            "platform": platform,
+            "edition": edition,
+            "resource_uri": f"{SETUP_GUIDE_URI}/{platform}/{edition}",
+            "markdown": render_setup_guide(platform, edition),
+        }
+
+    @server.tool(annotations=annotations)
+    async def get_service_status() -> dict[str, JsonValue]:
+        """Read API /health and /ready, including empty data and dependency failures.
+
+        Does not inspect Docker or frontend, start services, or modify data.
+        """
+        return await api().get_service_status()
 
     @server.tool(annotations=annotations)
     async def list_portfolio(

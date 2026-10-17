@@ -16,6 +16,8 @@ from pathlib import Path
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
+from smaug.shared.mcp_setup import SetupEdition, render_setup_guide
+
 ROOT = Path(__file__).resolve().parents[2]
 TARGETS = [
     (system, arch)
@@ -70,7 +72,8 @@ def build() -> None:
     heads = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini"))).get_heads()
     if len(heads) != 1:
         raise ValueError("release requires exactly one Alembic head")
-    for edition in ("backend", "full"):
+    editions: tuple[SetupEdition, ...] = ("backend", "full")
+    for edition in editions:
         bundle = output / edition
         bundle.mkdir(exist_ok=True)
         for path in binaries.iterdir():
@@ -78,6 +81,9 @@ def build() -> None:
         for name in ("compose.yaml", "install.sh", "install.ps1"):
             shutil.copy2(ROOT / "installer" / name, bundle / name)
         (bundle / "edition.txt").write_text(edition + "\n")
+        (bundle / "SETUP.md").write_text(
+            render_setup_guide(edition=edition), encoding="utf-8"
+        )
         manifest = {
             "version": args.version,
             "commit": args.commit,

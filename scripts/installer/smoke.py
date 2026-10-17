@@ -48,6 +48,9 @@ def smoke(bundle_dir: Path) -> None:
         root = Path(directory)
         for edition in ("backend", "full"):
             bundle = bundle_dir / edition
+            guide = (bundle / "SETUP.md").read_text("utf-8")
+            assert f"**{edition}**" in guide
+            assert "@@EDITION@@" not in guide
             system = {"Linux": "linux", "Darwin": "darwin", "Windows": "windows"}[
                 platform.system()
             ]
