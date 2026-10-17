@@ -6,7 +6,7 @@ import { TickerSearch } from "@/components/TickerSearch";
 export function Navbar() {
   return (
     <header className="sticky top-0 z-50 border-b border-copy-200/10 bg-canvas-950/95">
-      <div className="mx-auto flex h-16 max-w-6xl items-center gap-2 px-4 sm:gap-5 sm:px-5">
+      <div className="page-container flex h-16 items-center gap-2 sm:gap-5">
         <Link href="/" aria-label="Smaug — início" className="group flex shrink-0 items-center gap-2.5 text-copy-50">
           <DragonMark size={27} />
           <span className="hidden font-brand text-sm font-semibold tracking-[0.22em] min-[400px]:inline">SMAUG</span>

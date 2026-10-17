@@ -4,12 +4,9 @@ import { BackgroundRefresh } from "@/components/BackgroundRefresh";
 import { SectionPlaceholder } from "@/components/SectionPlaceholder";
 import { FiBarChart2, FiTag, FiTrendingUp } from "react-icons/fi";
 import type { IconType } from "react-icons";
-import { TickerSearch } from "@/components/TickerSearch";
-import {
-  fetchAnalysisSummaries,
-  fetchDataRevision,
-  fetchPortfolioList,
-} from "@/lib/api";
+import { CompanyExplorer } from "@/components/CompanyExplorer";
+import { VaultOffline } from "@/components/VaultOffline";
+import { fetchAnalysisSummaries, fetchDataRevision } from "@/lib/api";
 import { money, pct, toNum } from "@/lib/format";
 import type { AnalysisSummary } from "@/lib/types";
 type SummaryIndicatorKey = keyof AnalysisSummary["indicators"];
@@ -18,48 +15,17 @@ export default async function HomePage() {
   const revision = await fetchDataRevision();
 
   return (
-    <div className="mx-auto max-w-7xl px-5">
+    <div className="page-container flex flex-col gap-8 sm:gap-12">
       <BackgroundRefresh
         initialRevision={revision.ok ? revision.data.revision : null}
       />
-      {/* ---------------------------------------------------------- hero --- */}
-      <section className="relative flex flex-col items-center pt-20 pb-16 text-center sm:pt-28">
-        <p
-          className="rise mb-6 text-xs font-semibold uppercase tracking-[0.4em] text-accent-400"
-          style={{ animationDelay: "0ms" }}
+      <div className="pt-10 pb-4 sm:pt-16 sm:pb-6">
+        <Suspense
+          fallback={<SectionPlaceholder label="Explorar empresas" tall />}
         >
-          Análise fundamentalista
-        </p>
-
-        <h1
-          className="rise font-brand text-5xl font-bold tracking-[0.18em] text-gold-molten sm:text-7xl"
-          style={{ animationDelay: "60ms" }}
-        >
-          SMAUG
-        </h1>
-
-        <div
-          className="rise mt-7 w-full max-w-md"
-          style={{ animationDelay: "120ms" }}
-        >
-          <TickerSearch />
-        </div>
-
-        <div
-          className="rise mt-5 flex flex-wrap items-center justify-center gap-2"
-          style={{ animationDelay: "180ms" }}
-        >
-          <Suspense fallback={null}>
-            <Shortcuts />
-          </Suspense>
-          <Link
-            href="/portfolio"
-            className="pressable rounded-lg px-2.5 py-1 text-xs font-semibold text-accent-300 hover:text-accent-200"
-          >
-            Ver favoritos →
-          </Link>
-        </div>
-      </section>
+          <Explore />
+        </Suspense>
+      </div>
 
       <Suspense fallback={<SectionPlaceholder label="Destaques" tall />}>
         <Rankings />
@@ -68,37 +34,10 @@ export default async function HomePage() {
   );
 }
 
-async function Shortcuts() {
-  const [portfolioResult, analysesResult] = await Promise.all([
-    fetchPortfolioList(),
-    fetchAnalysisSummaries(),
-  ]);
-  const favorites = portfolioResult.ok ? portfolioResult.data.slice(0, 5) : [];
-  const shortcuts =
-    favorites.length > 0
-      ? favorites.map((item) => item.ticker)
-      : topBy(analysesResult.ok ? analysesResult.data : [], "market_cap").map(
-          (item) => item.ticker,
-        );
-  return (
-    <>
-      {" "}
-      {shortcuts.length > 0 && (
-        <>
-          <span className="text-xs text-ink-600">Acesso rápido:</span>
-          {shortcuts.map((ticker) => (
-            <Link
-              key={ticker}
-              href={`/ticker/${ticker}`}
-              className="pressable nums rounded-lg border border-copy-200/15 px-2.5 py-1 text-xs font-semibold tracking-wide text-copy-300 hover:border-accent-400/50 hover:text-accent-300"
-            >
-              {ticker}
-            </Link>
-          ))}
-        </>
-      )}
-    </>
-  );
+async function Explore() {
+  const result = await fetchAnalysisSummaries();
+  if (!result.ok) return <VaultOffline message={result.message} />;
+  return <CompanyExplorer analyses={result.data} />;
 }
 
 async function Rankings() {
@@ -111,13 +50,13 @@ async function Rankings() {
     <>
       {" "}
       {!analysesResult.ok && (
-        <p role="status" className="panel mb-12 p-4 text-sm text-copy-400">
+        <p role="status" className="panel p-4 text-sm text-copy-400">
           Não foi possível carregar os destaques agora. Tente novamente mais
           tarde.
         </p>
       )}
       {analyses.length > 0 && (
-        <section aria-labelledby="home-rankings" className="pb-12">
+        <section aria-labelledby="home-rankings">
           <div
             className="rise mb-5 flex items-center gap-3"
             style={{ animationDelay: "240ms" }}
@@ -130,7 +69,12 @@ async function Rankings() {
             </h2>
             <span className="h-px flex-1 bg-copy-200/10" />
           </div>
-          <div className="grid grid-cols-1 gap-8 xl:grid-cols-3">
+          <p className="mb-5 text-sm text-copy-500">
+            Entre os ativos disponíveis no Smaug. Indicadores de retorno e
+            dividendos dos últimos 12 meses quando disponíveis; o período de
+            cada ativo aparece na lista.
+          </p>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <RankingCard
               title="Maior valor de mercado"
               icon={FiBarChart2}
@@ -212,6 +156,12 @@ function RankingCard({
                   {analysis.issuer ??
                     analysis.classification.segmento ??
                     "Ativo analisado"}
+                  <span className="ml-1">
+                    ·{" "}
+                    {analysis.view === "ttm_live"
+                      ? "12 meses"
+                      : analysis.reference_date.slice(0, 4)}
+                  </span>
                 </span>
               </span>
               <span className="nums text-sm font-semibold text-copy-200">

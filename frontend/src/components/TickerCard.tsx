@@ -6,8 +6,21 @@ import { listingSegmentLabel } from "@/lib/governance";
 import type { AnalysisSummary } from "@/lib/types";
 
 /** Portfolio tile for one ticker; muted when no analysis has been computed. */
-export function TickerCard({ ticker, sector, analysis, unavailable = false }: { ticker: string; sector: string; analysis: AnalysisSummary | null; unavailable?: boolean }) {
-  const color = sector === "unclassified" ? "var(--color-copy-400)" : sectorColor(sector);
+export function TickerCard({
+  ticker,
+  sector,
+  analysis,
+  unavailable = false,
+  showIssuer = false,
+}: {
+  ticker: string;
+  sector: string;
+  analysis: AnalysisSummary | null;
+  unavailable?: boolean;
+  showIssuer?: boolean;
+}) {
+  const color =
+    sector === "unclassified" ? "var(--color-copy-400)" : sectorColor(sector);
   const meta = sectorMeta(sector);
 
   if (!analysis) {
@@ -15,15 +28,23 @@ export function TickerCard({ ticker, sector, analysis, unavailable = false }: { 
       <div className="panel flex flex-col gap-3 p-5 opacity-60">
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-2">
-            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-canvas-800 text-accent-300" aria-hidden>
+            <span
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-canvas-800 text-accent-300"
+              aria-hidden
+            >
               <FiBriefcase size={16} />
             </span>
             <span className="card-title nums">{ticker}</span>
           </span>
-          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color, opacity: 0.5 }} />
+          <span
+            className="h-2.5 w-2.5 rounded-full"
+            style={{ backgroundColor: color, opacity: 0.5 }}
+          />
         </div>
         <span className="text-xs text-copy-600">
-          {unavailable ? "Análise indisponível no momento" : "Ainda não calculado"}
+          {unavailable
+            ? "Análise indisponível no momento"
+            : "Ainda não calculado"}
         </span>
       </div>
     );
@@ -37,16 +58,24 @@ export function TickerCard({ ticker, sector, analysis, unavailable = false }: { 
       <span
         aria-hidden
         className="absolute inset-x-0 top-0 h-[3px] opacity-70"
-        style={{ background: `linear-gradient(90deg, transparent, ${color}, transparent)` }}
+        style={{
+          background: `linear-gradient(90deg, transparent, ${color}, transparent)`,
+        }}
       />
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-canvas-800 text-accent-300" aria-hidden>
+            <span
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-canvas-800 text-accent-300"
+              aria-hidden
+            >
               <FiBriefcase size={16} />
             </span>
             <span className="card-title nums">{ticker}</span>
           </div>
+          {showIssuer && analysis.issuer && (
+            <p className="mt-2 text-sm text-copy-300">{analysis.issuer}</p>
+          )}
           <div className="mt-0.5 text-[0.7rem] font-medium" style={{ color }}>
             {meta.label}
           </div>
@@ -55,19 +84,28 @@ export function TickerCard({ ticker, sector, analysis, unavailable = false }: { 
           </p>
         </div>
         <span className="nums rounded-md border border-copy-200/10 px-2 py-0.5 text-[0.62rem] font-medium tracking-wide text-copy-500">
-          {analysis.view === "ttm_live" ? LAST_12M_SHORT : yearOf(analysis.reference_date)}
+          {analysis.view === "ttm_live"
+            ? LAST_12M_SHORT
+            : yearOf(analysis.reference_date)}
         </span>
       </div>
 
       <div className="grid grid-cols-3 gap-2">
         <Metric label="ROE" value={pct(analysis.indicators.roe)} />
-        <Metric label="Dividend Yield" value={pct(analysis.indicators.dividend_yield)} />
+        <Metric
+          label="Dividend Yield"
+          value={pct(analysis.indicators.dividend_yield)}
+        />
         <Metric label="P/L" value={multiple(analysis.indicators.pe_basic)} />
       </div>
 
       <div className="mt-auto flex items-center justify-between border-t border-copy-200/10 pt-3">
-        <span className="nums text-sm font-semibold text-copy-100">{price(analysis.price_as_traded ?? analysis.price)}</span>
-        <span className="text-xs text-copy-500 transition-colors group-hover:text-accent-300">abrir análise →</span>
+        <span className="nums text-sm font-semibold text-copy-100">
+          {price(analysis.price_as_traded ?? analysis.price)}
+        </span>
+        <span className="text-xs text-copy-500 transition-colors group-hover:text-accent-300">
+          abrir análise →
+        </span>
       </div>
     </Link>
   );

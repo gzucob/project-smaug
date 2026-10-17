@@ -68,7 +68,7 @@ export default async function PortfolioPage() {
     .filter((group) => group.tickers.length > 0);
 
   return (
-    <div className="mx-auto max-w-6xl px-5 py-14">
+    <div className="page-container py-14">
       <BackgroundRefresh
         initialRevision={revision.ok ? revision.data.revision : null}
       />
@@ -134,7 +134,7 @@ export default async function PortfolioPage() {
 
 function EmptyPortfolio() {
   return (
-    <div className="mx-auto max-w-2xl px-5 py-24 text-center">
+    <div className="page-container py-24 text-center">
       <h1 className="rise text-3xl font-semibold tracking-tight text-copy-50">
         Você ainda não tem favoritos
       </h1>
