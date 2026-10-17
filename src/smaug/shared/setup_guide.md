@@ -195,6 +195,8 @@ exclusão de dados; mudanças nas imagens dos bancos exigem upgrade próprio.
 <!-- section:mcp -->
 ### Instalar e conectar o MCP
 
+Modalidade do pacote separado: **mcp**.
+
 O conector roda por `stdio` usando a imagem Python já distribuída pelo Smaug.
 É necessário ter Docker instalado e em execução, com containers Linux. Para
 os instaladores MCP, Git, Python, uv, Node e Go não precisam estar no host.

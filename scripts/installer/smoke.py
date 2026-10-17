@@ -46,7 +46,11 @@ def request(port_number: int, path: str, method: str = "GET") -> Any:
 
 
 def check_mcp(
-    command: list[str], *, expected_status: str, ticker: str | None = None
+    command: list[str],
+    *,
+    expected_status: str,
+    ticker: str | None = None,
+    setup_edition: str = "backend",
 ) -> None:
     """Exercise the installed stdio command using only the Python standard library."""
     process = subprocess.Popen(
@@ -104,12 +108,14 @@ def check_mcp(
             "tools/call",
             {
                 "name": "get_setup_guide",
-                "arguments": {"platform": "linux", "edition": "backend"},
+                "arguments": {"platform": "linux", "edition": setup_edition},
             },
         )
         assert not guide.get("isError", False), guide
         assert "mcp register" in guide["structuredContent"]["markdown"]
-        resource = call(4, "resources/read", {"uri": "smaug://setup/linux/backend"})
+        resource = call(
+            4, "resources/read", {"uri": f"smaug://setup/linux/{setup_edition}"}
+        )
         assert resource["contents"][0]["text"] == guide["structuredContent"]["markdown"]
         status = call(5, "tools/call", {"name": "get_service_status", "arguments": {}})
         assert not status.get("isError", False), status
@@ -233,7 +239,10 @@ def smoke(bundle_dir: Path) -> None:
                     )
                     assert not (connector_root / "config.json").exists()
                     check_mcp(
-                        connector_ctl, expected_status="ready_empty", ticker="PETR4"
+                        connector_ctl,
+                        expected_status="ready_empty",
+                        ticker="PETR4",
+                        setup_edition="mcp",
                     )
                     next_connector = root / "mcp-next"
                     shutil.copytree(connector_bundle, next_connector)
@@ -253,14 +262,21 @@ def smoke(bundle_dir: Path) -> None:
                     )
                     assert saved_connector["api_base_url"] == f"http://127.0.0.1:{api}"
                     check_mcp(
-                        connector_ctl, expected_status="ready_empty", ticker="PETR4"
+                        connector_ctl,
+                        expected_status="ready_empty",
+                        ticker="PETR4",
+                        setup_edition="mcp",
                     )
                 subprocess.run(
                     [*compose, "stop", "api", "frontend"], env=compose_env, check=True
                 )
                 check_mcp(ctl, expected_status="api_unavailable")
                 if connector_ctl is not None:
-                    check_mcp(connector_ctl, expected_status="api_unavailable")
+                    check_mcp(
+                        connector_ctl,
+                        expected_status="api_unavailable",
+                        setup_edition="mcp",
+                    )
                 # Store raw and Bronze evidence through container-local paths.
                 subprocess.run(
                     [

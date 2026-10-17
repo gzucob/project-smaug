@@ -12,12 +12,11 @@ import subprocess
 import tarfile
 import zipfile
 from pathlib import Path
-from typing import Literal
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
-from smaug.shared.mcp_setup import render_mcp_install_guide, render_setup_guide
+from smaug.shared.mcp_setup import SetupEdition, render_setup_guide
 
 ROOT = Path(__file__).resolve().parents[2]
 TARGETS = [
@@ -73,7 +72,7 @@ def build() -> None:
     heads = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini"))).get_heads()
     if len(heads) != 1:
         raise ValueError("release requires exactly one Alembic head")
-    editions: tuple[Literal["backend", "full", "mcp"], ...] = ("backend", "full", "mcp")
+    editions: tuple[SetupEdition, ...] = ("backend", "full", "mcp")
     for edition in editions:
         bundle = output / edition
         bundle.mkdir(exist_ok=True)
@@ -83,9 +82,7 @@ def build() -> None:
             shutil.copy2(ROOT / "installer" / name, bundle / name)
         (bundle / "edition.txt").write_text(edition + "\n")
         (bundle / "SETUP.md").write_text(
-            render_mcp_install_guide()
-            if edition == "mcp"
-            else render_setup_guide(edition=edition),
+            render_setup_guide(edition=edition),
             encoding="utf-8",
         )
         manifest = {

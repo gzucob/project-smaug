@@ -19,7 +19,7 @@ from smaug.shared.mcp_setup import (
 )
 
 
-@pytest.mark.parametrize("edition", ["backend", "full"])
+@pytest.mark.parametrize("edition", ["backend", "full", "mcp"])
 @pytest.mark.parametrize("platform", ["all", "linux", "macos", "windows"])
 async def test_setup_tool_and_resources_work_without_http(
     platform: SetupPlatform, edition: SetupEdition
@@ -46,17 +46,26 @@ async def test_setup_tool_and_resources_work_without_http(
             ("macos", "### macOS"),
             ("windows", "### Windows"),
         ):
-            assert (heading in guide) == (platform in ("all", name))
+            assert (heading in guide) == (
+                edition != "mcp" and platform in ("all", name)
+            )
         for name, instruction in (
             ("linux", "sha256sum --check smaug-mcp-"),
             ("macos", "shasum -a 256 --check smaug-mcp-"),
             ("windows", "$smaugArchive = 'smaug-mcp-"),
         ):
             assert (instruction in guide) == (platform in ("all", name))
-        for command in ("start", "check", "update", "backup", "restore"):
-            assert f"smaugctl {command}" in guide
-        assert "cli formulas" in guide
-        assert "cli doctor" in guide
+        if edition == "mcp":
+            assert "smaug-mcp-VERSAO" in guide
+            assert "--api-base-url" in guide
+            for command in ("register", "config", "update", "status"):
+                assert f"mcp {command}" in guide
+            assert "cli ingest" not in guide
+        else:
+            for command in ("start", "check", "update", "backup", "restore"):
+                assert f"smaugctl {command}" in guide
+            assert "cli formulas" in guide
+            assert "cli doctor" in guide
         resource = await client.read_resource(content["resource_uri"])
         assert isinstance(resource.contents[0], TextResourceContents)
         assert resource.contents[0].mime_type == "text/markdown"

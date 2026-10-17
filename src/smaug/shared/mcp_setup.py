@@ -5,7 +5,7 @@ from importlib.resources import files
 from typing import Literal
 
 type SetupPlatform = Literal["all", "linux", "macos", "windows"]
-type SetupEdition = Literal["backend", "full"]
+type SetupEdition = Literal["backend", "full", "mcp"]
 
 SETUP_GUIDE_URI = "smaug://setup"
 SETUP_GUIDE_HINT = (
@@ -23,9 +23,11 @@ def render_setup_guide(
     """Select platform instructions locally, without HTTP or command execution."""
     if platform not in ("all", "linux", "macos", "windows"):
         raise ValueError("Unsupported setup platform")
-    if edition not in ("backend", "full"):
+    if edition not in ("backend", "full", "mcp"):
         raise ValueError("Unsupported setup edition")
     sections = _guide_sections()
+    if edition == "mcp":
+        return _select_platform(sections["mcp"], platform) + "\n"
     selected = (
         text.strip()
         for name, text in sections.items()
@@ -37,11 +39,6 @@ def render_setup_guide(
         )
         + "\n"
     )
-
-
-def render_mcp_install_guide() -> str:
-    """Return the same MCP instructions offline inside the standalone bundle."""
-    return _select_platform(_guide_sections()["mcp"].strip(), "all") + "\n"
 
 
 def _guide_sections() -> dict[str, str]:
