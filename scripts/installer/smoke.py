@@ -10,10 +10,12 @@ import argparse
 import json
 import os
 import platform
+import queue
 import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -41,6 +43,102 @@ def request(port_number: int, path: str, method: str = "GET") -> Any:
     with urllib.request.urlopen(req, timeout=30) as response:
         data = response.read()
         return json.loads(data) if data else None
+
+
+def check_mcp(
+    command: list[str],
+    *,
+    expected_status: str,
+    ticker: str | None = None,
+    setup_edition: str = "backend",
+) -> None:
+    """Exercise the installed stdio command using only the Python standard library."""
+    process = subprocess.Popen(
+        [*command, "mcp", "run"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert process.stdin is not None
+    assert process.stdout is not None
+    lines: queue.Queue[str] = queue.Queue()
+
+    def read_output() -> None:
+        assert process.stdout is not None
+        for line in process.stdout:
+            lines.put(line)
+        lines.put("")
+
+    thread = threading.Thread(target=read_output, daemon=True)
+    thread.start()
+
+    def send(message: dict[str, Any]) -> None:
+        assert process.stdin is not None
+        process.stdin.write(json.dumps(message) + "\n")
+        process.stdin.flush()
+
+    def call(identifier: int, method: str, params: dict[str, Any]) -> Any:
+        send({"jsonrpc": "2.0", "id": identifier, "method": method, "params": params})
+        while True:
+            line = lines.get(timeout=60)
+            assert line, f"MCP exited unexpectedly: {process.poll()}"
+            response = json.loads(line)
+            if response.get("id") == identifier:
+                assert "error" not in response, response
+                return response["result"]
+
+    try:
+        initialized = call(
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2026-07-28",
+                "capabilities": {},
+                "clientInfo": {"name": "smaug-installer-smoke", "version": "1"},
+            },
+        )
+        assert initialized["serverInfo"]["name"] == "smaug"
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        discovered = call(2, "tools/list", {})
+        assert {"get_setup_guide", "get_service_status", "list_portfolio"} <= {
+            tool["name"] for tool in discovered["tools"]
+        }
+        guide = call(
+            3,
+            "tools/call",
+            {
+                "name": "get_setup_guide",
+                "arguments": {"platform": "linux", "edition": setup_edition},
+            },
+        )
+        assert not guide.get("isError", False), guide
+        assert "mcp register" in guide["structuredContent"]["markdown"]
+        resource = call(
+            4, "resources/read", {"uri": f"smaug://setup/linux/{setup_edition}"}
+        )
+        assert resource["contents"][0]["text"] == guide["structuredContent"]["markdown"]
+        status = call(5, "tools/call", {"name": "get_service_status", "arguments": {}})
+        assert not status.get("isError", False), status
+        assert status["structuredContent"]["status"] == expected_status, status
+        if ticker is not None:
+            portfolio = call(
+                6, "tools/call", {"name": "list_portfolio", "arguments": {}}
+            )
+            assert not portfolio.get("isError", False), portfolio
+            assert any(
+                row["ticker"] == ticker
+                for row in portfolio["structuredContent"]["items"]
+            )
+    finally:
+        process.stdin.close()
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            process.wait(timeout=15)
+        process.stdout.close()
+        thread.join(timeout=5)
+    assert process.returncode == 0
 
 
 def smoke(bundle_dir: Path) -> None:
@@ -116,9 +214,69 @@ def smoke(bundle_dir: Path) -> None:
                 assert "roe" in run(*ctl, "cli", "formulas", capture=True)
                 run(*ctl, "cli", "doctor", "--help")
                 assert request(api, "/portfolio/PETR4", "POST")["ticker"] == "PETR4"
+                check_mcp(ctl, expected_status="ready_empty", ticker="PETR4")
+                connector_ctl: list[str] | None = None
+                if edition == "backend":
+                    connector_bundle = bundle_dir / "mcp"
+                    connector_guide = (connector_bundle / "SETUP.md").read_text("utf-8")
+                    assert "Pacote separado" in connector_guide
+                    assert "@@EDITION@@" not in connector_guide
+                    connector_binary = connector_bundle / binary.name
+                    connector_binary.chmod(0o700)
+                    connector_root = root / "standalone MCP"
+                    connector_ctl = [
+                        str(connector_binary),
+                        "--dir",
+                        str(connector_root),
+                    ]
+                    bootstrap_mcp = ["bash", str(connector_bundle / "install.sh")]
+                    run(
+                        *bootstrap_mcp,
+                        "--dir",
+                        str(connector_root),
+                        "--api-base-url",
+                        f"http://127.0.0.1:{api}",
+                    )
+                    assert not (connector_root / "config.json").exists()
+                    check_mcp(
+                        connector_ctl,
+                        expected_status="ready_empty",
+                        ticker="PETR4",
+                        setup_edition="mcp",
+                    )
+                    next_connector = root / "mcp-next"
+                    shutil.copytree(connector_bundle, next_connector)
+                    next_connector_manifest = json.loads(
+                        (next_connector / "manifest.json").read_text()
+                    )
+                    next_connector_manifest["commit"] = "c" * 40
+                    next_connector_manifest["version"] = "2099.01.01-" + "c" * 12
+                    (next_connector / "manifest.json").write_text(
+                        json.dumps(next_connector_manifest)
+                    )
+                    run(
+                        *connector_ctl, "mcp", "update", "--source", str(next_connector)
+                    )
+                    saved_connector = json.loads(
+                        (connector_root / "mcp.json").read_text()
+                    )
+                    assert saved_connector["api_base_url"] == f"http://127.0.0.1:{api}"
+                    check_mcp(
+                        connector_ctl,
+                        expected_status="ready_empty",
+                        ticker="PETR4",
+                        setup_edition="mcp",
+                    )
                 subprocess.run(
                     [*compose, "stop", "api", "frontend"], env=compose_env, check=True
                 )
+                check_mcp(ctl, expected_status="api_unavailable")
+                if connector_ctl is not None:
+                    check_mcp(
+                        connector_ctl,
+                        expected_status="api_unavailable",
+                        setup_edition="mcp",
+                    )
                 # Store raw and Bronze evidence through container-local paths.
                 subprocess.run(
                     [
@@ -324,7 +482,7 @@ def smoke(bundle_dir: Path) -> None:
                 assert bronze.returncode == 0
                 print(
                     f"PASS: {edition} installation, migration, update, "
-                    "edition switch, full backup and restore",
+                    "edition switch, full backup, restore and installed MCP stdio",
                     flush=True,
                 )
             finally:

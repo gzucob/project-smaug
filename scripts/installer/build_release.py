@@ -72,7 +72,7 @@ def build() -> None:
     heads = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini"))).get_heads()
     if len(heads) != 1:
         raise ValueError("release requires exactly one Alembic head")
-    editions: tuple[SetupEdition, ...] = ("backend", "full")
+    editions: tuple[SetupEdition, ...] = ("backend", "full", "mcp")
     for edition in editions:
         bundle = output / edition
         bundle.mkdir(exist_ok=True)
@@ -82,7 +82,8 @@ def build() -> None:
             shutil.copy2(ROOT / "installer" / name, bundle / name)
         (bundle / "edition.txt").write_text(edition + "\n")
         (bundle / "SETUP.md").write_text(
-            render_setup_guide(edition=edition), encoding="utf-8"
+            render_setup_guide(edition=edition),
+            encoding="utf-8",
         )
         manifest = {
             "version": args.version,

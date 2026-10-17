@@ -57,6 +57,12 @@ services:
     environment: *backend-env
     volumes: *backend-volumes
     entrypoint: [smaug]
+  mcp:
+    image: ${SMAUG_BACKEND_IMAGE:?manifest required}
+    profiles: [tools]
+    environment:
+      MCP_API_BASE_URL: http://api:8000
+    entrypoint: [smaug-mcp]
   migrate:
     image: ${SMAUG_BACKEND_IMAGE:?manifest required}
     profiles: [tools]

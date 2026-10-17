@@ -168,7 +168,7 @@ smaugctl restore --backup CAMINHO_DO_BACKUP
 ```
 
 Após cada squash merge na `main`, o CI valida o projeto e a publicação
-verifica os dois pacotes em amd64/arm64 antes de disponibilizar uma release.
+valida backend/full e o conector MCP em amd64/arm64 antes de publicar a release.
 A versão identifica a data UTC e o commit; o manifesto registra SHA completo,
 revisão Alembic, digests das imagens e checksums. Uma publicação parcial não
 substitui a última release completa.
@@ -202,30 +202,141 @@ gerenciador ou container CLI continua ativo antes de remover esse diretório.
 Parar, atualizar ou reinstalar não apaga volumes. O gerenciador não oferece
 exclusão de dados; mudanças nas imagens dos bancos exigem upgrade próprio.
 
-### Conectar o MCP e obter ajuda
+### Instalar e conectar o MCP
 
-O conector MCP atual é instalado a partir do checkout com Python 3.13 e uv:
-execute `uv sync` na raiz do projeto. Configure seu cliente MCP para iniciar
-`uv --directory /CAMINHO/ABSOLUTO/project-smaug run smaug-mcp` via `stdio`.
-Veja os exemplos de configuração de clientes no
-[README](https://github.com/gzucob/project-smaug#mcp-local).
+Modalidade do pacote separado: **mcp**.
 
-Configure `MCP_API_BASE_URL` com a URL da API que deseja consultar. O padrão
-é `http://127.0.0.1:8000`; na instalação de teste acima, use
-`http://127.0.0.1:18000`. Essa é a URL da API, não a porta do frontend.
-Quando cliente e conector estão em sistemas diferentes, como Windows e WSL,
-use caminhos e endereços acessíveis ao processo que executa o conector.
+O conector roda por `stdio` usando a imagem Python já distribuída pelo Smaug.
+É necessário ter Docker instalado e em execução, com containers Linux. Para
+os instaladores MCP, Git, Python, uv, Node e Go não precisam estar no host.
+A API deve estar acessível para consultar dados; o guia funciona com ela parada.
 
-Depois de conectado, o MCP fornece `get_setup_guide` e o recurso
-`smaug://setup` mesmo com a API desligada. `get_service_status` consulta
-somente `/health` e `/ready`: verifica a API e as dependências que ela relata,
-não inspeciona Docker ou o frontend e não inicia serviços. Resultados de
-falha indicam como consultar este guia e usar `smaugctl` no host correto.
+**Instalação backend/full:** o conector já está incluído. Em instalações
+anteriores, use `smaugctl update` para obter a versão que fornece o comando.
+Registre no cliente desejado:
 
-O guia continua disponível no README e como `SETUP.md` nos pacotes de release
-antes de o próprio MCP estar conectado. Nenhuma dessas leituras instala,
-calcula indicadores ou executa manutenção. Essas ações permanecem nos
-comandos CLI descritos acima.
+```text
+smaugctl mcp register --client codex
+smaugctl mcp register --client claude
+smaugctl mcp register --client both
+```
+
+Também é possível registrar ao instalar backend/full com
+`install.sh --mcp-client codex` ou `install.ps1 --mcp-client both`.
+O cliente inicia `smaugctl mcp run`; esse comando não inicia API, bancos,
+frontend ou migrações. Ele não usa o bloqueio de escrita das operações CLI e
+permite conexões simultâneas. A comunicação usa `http://api:8000` na rede
+interna da instalação, independentemente da porta publicada no host.
+
+**Pacote separado — modalidade `mcp`:** baixe `smaug-mcp-VERSAO.tar.gz` ou
+`smaug-mcp-VERSAO.zip` e o checksum correspondente em
+[Releases](https://github.com/gzucob/project-smaug/releases). O pacote instala
+somente o conector para uma API existente, em diretório próprio `smaug-mcp`,
+e baixa apenas a imagem de backend. Não cria bancos, API, frontend ou volumes.
+Substitua `VERSAO` e a URL abaixo pelos valores desejados.
+
+No **Linux/WSL**, na pasta dos downloads:
+
+```bash
+sha256sum --check smaug-mcp-VERSAO.tar.gz.sha256
+mkdir -p smaug-mcp-installer
+tar -xzf smaug-mcp-VERSAO.tar.gz -C smaug-mcp-installer
+bash smaug-mcp-installer/install.sh --api-base-url http://127.0.0.1:8000 --client codex
+smaugmcp() { "${XDG_CONFIG_HOME:-$HOME/.config}/smaug-mcp/smaugctl" "$@"; }
+```
+
+No **macOS**:
+
+```bash
+shasum -a 256 --check smaug-mcp-VERSAO.tar.gz.sha256
+mkdir -p smaug-mcp-installer
+tar -xzf smaug-mcp-VERSAO.tar.gz -C smaug-mcp-installer
+bash smaug-mcp-installer/install.sh --api-base-url http://127.0.0.1:8000 --client both
+smaugmcp() { "$HOME/Library/Application Support/smaug-mcp/smaugctl" "$@"; }
+```
+
+No **Windows**, execute no PowerShell:
+
+```powershell
+$smaugArchive = 'smaug-mcp-VERSAO.zip'
+$smaugExpected = ((Get-Content -LiteralPath "$smaugArchive.sha256") -split '\s+')[0]
+$smaugActual = (Get-FileHash -Algorithm SHA256 -LiteralPath $smaugArchive).Hash
+if ($smaugActual -ne $smaugExpected) { throw 'Checksum diferente do publicado' }
+Expand-Archive -LiteralPath $smaugArchive -DestinationPath '.\smaug-mcp-installer'
+& .\smaug-mcp-installer\install.ps1 --api-base-url http://127.0.0.1:8000 --client both
+function smaugmcp { & (Join-Path $env:APPDATA 'smaug-mcp\smaugctl.ps1') @args }
+```
+
+A opção `--client` é opcional; sem ela, só o conector é instalado. Para trocar
+a URL, repita o instalador com `--api-base-url URL`; sem essa opção, a URL
+salva é preservada. `--dir DIRETORIO` deve vir antes das demais opções do
+instalador e permite escolher outra instalação. Ajuste a função `smaugmcp`
+se personalizar o diretório. Para uma API local publicada em outra porta,
+como `18000`, use essa porta na URL da API, nunca a porta do frontend.
+
+O conector separado usa a rede do host no Docker Engine Linux; no Docker
+Desktop para Linux/WSL, essa opção precisa estar habilitada para alcançar a
+API local. Em Windows/macOS, endereços de loopback (`127.0.0.1`, `localhost`
+e `::1`) são traduzidos para `host.docker.internal` dentro do container.
+URLs remotas mantêm seu endereço. Use um Docker local: um contexto Docker
+remoto muda qual máquina o container enxerga como host.
+
+O pacote separado oferece:
+
+```text
+smaugmcp mcp status
+smaugmcp mcp register --client codex
+smaugmcp mcp register --client claude
+smaugmcp mcp config --client codex
+smaugmcp mcp config --client claude
+smaugmcp mcp update
+smaugmcp mcp update --source DIRETORIO_EXTRAIDO_DO_PACOTE_MCP
+```
+
+A atualização baixa o último pacote MCP publicado, verifica os checksums,
+prepara a imagem e muda a versão para as próximas conexões. Não atualiza a
+API externa. Reinicie as conexões MCP após atualizar. As três distribuições
+são publicadas juntas, após o CI da `main` e os testes de instalação.
+
+**Configuração dos clientes:** o registro do Codex requer o comando `codex`
+instalado e usa `codex mcp add`, respeitando `CODEX_HOME`. Sem a CLI, copie a
+saída de `mcp config --client codex` para seu `config.toml`. O Claude Desktop
+usa `claude_desktop_config.json` no diretório de configuração do usuário em
+Windows/macOS. Use `--config CAMINHO_JSON` para um arquivo Claude específico;
+no Linux, é necessário fornecer esse caminho explicitamente.
+
+O registro preserva as outras conexões e configurações. Se o nome `smaug` já
+apontar para outro comando, escolha `--name smaug-remoto` ou confira a saída
+de `mcp config` e use `mcp register --client CLIENTE --replace`. Antes de uma
+alteração, é criado um backup do arquivo do cliente. Repetir um registro
+idêntico não altera o arquivo. O caminho absoluto do Docker é registrado
+para que o cliente não dependa do PATH de um terminal. O registro de `both`
+é sequencial; se o segundo cliente falhar, o primeiro pode já estar pronto.
+
+Registre no mesmo sistema em que o cliente roda: para Codex no WSL, execute
+no WSL; para Claude Desktop no Windows, use o pacote e o PowerShell do Windows.
+Copiar um caminho Linux para o JSON de um aplicativo Windows não o torna
+executável. Reinicie o cliente após registrar e peça o guia ou o diagnóstico.
+
+A implementação segue os formatos documentados de
+[registro MCP no Codex](https://developers.openai.com/codex/mcp/) e
+[MCP local no Claude Desktop](https://modelcontextprotocol.io/docs/develop/connect-local-servers).
+A rede do pacote separado segue as opções de
+[rede do host](https://docs.docker.com/engine/network/drivers/host/) e
+[Docker Desktop](https://docs.docker.com/desktop/features/networking/).
+
+Depois de conectado, `get_setup_guide` e o recurso `smaug://setup` funcionam
+mesmo com a API desligada. `get_service_status` consulta apenas `/health` e
+`/ready`: verifica a API e as dependências relatadas por ela. Não inspeciona
+Docker ou o frontend e não inicia serviços. Nenhuma dessas leituras instala,
+calcula indicadores ou executa manutenção.
+
+O desenvolvimento a partir do checkout continua disponível com Python 3.13
+e uv: rode `uv sync` e configure o cliente para iniciar
+`uv --directory /CAMINHO/ABSOLUTO/project-smaug run smaug-mcp`. Nessa forma,
+`MCP_API_BASE_URL` seleciona a API e `MCP_API_TIMEOUT_SECONDS` define o timeout.
+Veja os exemplos de clientes na seção MCP do README. O guia está disponível
+no README e como `SETUP.md` nos três pacotes antes de conectar o próprio MCP.
 
 <!-- END SMAUG SETUP GUIDE -->
 
@@ -654,6 +765,11 @@ UV_CACHE_DIR=/tmp/project-smaug-uv-cache uv run pytest
 
 ## MCP local
 
+Para uso sem checkout, instale uma modalidade backend/full ou o pacote
+separado MCP e use `smaugctl mcp register --client codex|claude|both`, conforme
+o guia de instalação acima. Os exemplos abaixo são a alternativa para
+desenvolver o conector a partir do código-fonte.
+
 O servidor MCP permite consultar os dados do Smaug em clientes como Codex e
 Claude Desktop. Ele usa `stdio`; as consultas de dados consomem a API existente,
 que deve estar em execução com acesso aos bancos necessários. A configuração é manual.
@@ -713,7 +829,7 @@ argumentos acima; use os caminhos Linux do projeto e do uv dentro do WSL.
 
 | Ferramenta | Dados retornados |
 |---|---|
-| `get_setup_guide` | Guia offline por `platform` (all/linux/macos/windows) e `edition` (backend/full) |
+| `get_setup_guide` | Guia offline por `platform` (all/linux/macos/windows) e `edition` (backend/full/mcp) |
 | `get_service_status` | Estado da API e dependências informadas por `/health` e `/ready` |
 | `list_portfolio` | Tickers favoritos |
 | `list_analysis_summaries` | Resumos TTM persistidos |
