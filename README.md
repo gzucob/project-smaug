@@ -13,131 +13,221 @@ organizado em duas fases:
 O front-end Next.js consome a API e apresenta as análises em TTM e exercícios
 fechados. A análise qualitativa por critérios/IA ainda não foi implementada.
 
-## Instalação com Docker
+<!-- BEGIN SMAUG SETUP GUIDE -->
 
-As distribuições ficam em [Releases](https://github.com/gzucob/project-smaug/releases):
-**backend** inclui ingestão CVM/B3, cálculo dos indicadores, fórmulas, doctor,
-API, MongoDB e PostgreSQL; **full** acrescenta o frontend. As duas usam a mesma
-imagem de backend. Há suporte a computadores amd64 e arm64 em Linux, macOS e
-Windows com Docker Desktop em modo de containers Linux.
+## Instalação e execução com Docker
+
+Modalidade deste guia: **full**. `backend` inclui MongoDB,
+PostgreSQL, ingestão CVM/B3, análise, fórmulas, doctor e API; `full` acrescenta
+o frontend. É possível alternar entre as modalidades mantendo os dados.
 
 Pré-requisito: Docker com Compose v2 instalado, iniciado e acessível pelo seu
-usuário. Não é necessário instalar Git, Python, Node, Go ou uv. A primeira
-instalação baixa imagens e prepara os bancos, sem coletar CVM/B3 nem analisar
-tickers. Os downloads e a coleta posterior precisam de internet.
+usuário, executando containers Linux. Confira com `docker info` e
+`docker compose version`. Para usar os instaladores, não é necessário instalar
+Git, Python, uv, Node ou Go no host. A configuração do conector MCP a partir
+do código-fonte, descrita adiante, tem seus próprios pré-requisitos.
 
-Baixe o pacote da modalidade desejada e seu arquivo `.sha256`. No Linux,
-verifique o arquivo antes de extrair:
+Baixe o pacote da modalidade desejada e seu arquivo `.sha256` em
+[Releases](https://github.com/gzucob/project-smaug/releases). Substitua
+`VERSAO` nos comandos pelo identificador da release escolhida. Downloads e a
+coleta posterior de CVM/B3 precisam de internet. A instalação prepara bancos
+vazios, sem fazer ingestão ou análise automaticamente.
+
+### Linux e WSL
+
+Baixe `smaug-full-VERSAO.tar.gz` e
+`smaug-full-VERSAO.tar.gz.sha256`. Na pasta dos downloads:
 
 ```bash
-sha256sum --check smaug-backend-VERSAO.tar.gz.sha256
-mkdir smaug-installer
-tar -xzf smaug-backend-VERSAO.tar.gz -C smaug-installer
-bash smaug-installer/install.sh
+sha256sum --check smaug-full-VERSAO.tar.gz.sha256
+mkdir -p smaug-installer
+tar -xzf smaug-full-VERSAO.tar.gz -C smaug-installer
+bash smaug-installer/install.sh --edition full
+smaugctl() { "${XDG_CONFIG_HOME:-$HOME/.config}/smaug/smaugctl" "$@"; }
 ```
 
-No macOS, use `shasum -a 256 --check` no lugar de `sha256sum --check`.
-Para a modalidade completa, substitua `backend` por `full` no nome do arquivo.
-No Windows, baixe o `.zip` e o `.zip.sha256`, compare o resultado de
-`Get-FileHash -Algorithm SHA256` com o checksum, extraia o ZIP e execute:
+A instalação padrão fica em `~/.config/smaug`, ou em `$XDG_CONFIG_HOME/smaug`
+quando configurado. No WSL, o Docker precisa estar acessível dentro da
+distribuição Linux. A função acima permite usar os próximos comandos neste
+terminal; o instalador também informa o caminho completo do gerenciador.
+
+### macOS
+
+Baixe `smaug-full-VERSAO.tar.gz` e
+`smaug-full-VERSAO.tar.gz.sha256`. Na pasta dos downloads:
+
+```bash
+shasum -a 256 --check smaug-full-VERSAO.tar.gz.sha256
+mkdir -p smaug-installer
+tar -xzf smaug-full-VERSAO.tar.gz -C smaug-installer
+bash smaug-installer/install.sh --edition full
+smaugctl() { "$HOME/Library/Application Support/smaug/smaugctl" "$@"; }
+```
+
+A instalação padrão fica em `~/Library/Application Support/smaug`. A função
+acima permite usar os próximos comandos neste terminal. O macOS virtual usado
+para validação precisa conseguir executar o engine de containers Linux.
+
+### Windows
+
+Baixe `smaug-full-VERSAO.zip` e
+`smaug-full-VERSAO.zip.sha256`. Use Docker Desktop em modo de containers
+Linux. Na pasta dos downloads, execute no PowerShell:
 
 ```powershell
-& .\smaug-installer\install.ps1
+$smaugArchive = 'smaug-full-VERSAO.zip'
+$smaugExpected = ((Get-Content -LiteralPath "$smaugArchive.sha256") -split '\s+')[0]
+$smaugActual = (Get-FileHash -Algorithm SHA256 -LiteralPath $smaugArchive).Hash
+if ($smaugActual -ne $smaugExpected) { throw 'Checksum diferente do publicado' }
+Expand-Archive -LiteralPath $smaugArchive -DestinationPath '.\smaug-installer'
+& .\smaug-installer\install.ps1 --edition full
+function smaugctl { & (Join-Path $env:APPDATA 'smaug\smaugctl.ps1') @args }
 ```
 
-Os scripts também verificam os arquivos extraídos antes de executar o
-gerenciador. Políticas locais do PowerShell podem exigir a liberação do script
-baixado, conforme a política da sua máquina; o instalador não a altera.
+A instalação padrão fica em `%APPDATA%\smaug`. A função acima permite usar
+os próximos comandos neste terminal. Os scripts verificam também os arquivos
+extraídos antes de executar o gerenciador. A execução do script deve seguir a
+política PowerShell do seu ambiente; o instalador não altera essa política.
 
-Por padrão, a instalação fica em `~/.config/smaug` no Linux (ou no
-`XDG_CONFIG_HOME`), `~/Library/Application Support/smaug` no macOS e
-`%APPDATA%\smaug` no Windows. É possível escolher diretório e portas:
+### Início, diagnóstico e configuração
 
-```bash
-bash smaug-installer/install.sh --dir "$HOME/Meu Smaug" --api-port 18000 --web-port 13000
-```
-
-O diretório contém `smaugctl` e `smaugctl.ps1`. Execute o gerenciador pelo
-caminho completo, pelo diretório da instalação ou adicione esse diretório ao
-seu PATH. Os exemplos abaixo usam o nome `smaugctl`; no PowerShell, use
-`& 'CAMINHO\smaugctl.ps1'`.
-
-```bash
+```text
 smaugctl status
+smaugctl start
 smaugctl check
 smaugctl cli formulas
 smaugctl cli formulas pe_basic --json
-smaugctl cli ingest --ticker PETR4
-smaugctl cli analyze --ticker PETR4
-smaugctl cli doctor --ticker PETR4
-smaugctl stop
-smaugctl start
 smaugctl logs api
+smaugctl stop
 ```
 
-A API fica em <http://127.0.0.1:8000/docs>; na modalidade completa, o frontend
-fica em <http://127.0.0.1:3000>. Somente a própria máquina tem acesso às portas
-publicadas. Os bancos não publicam portas. O ambiente instalado tem volumes
+A API fica em <http://127.0.0.1:8000/docs>; na modalidade `full`, o frontend
+fica em <http://127.0.0.1:3000>. Só a própria máquina acessa essas portas.
+Os bancos ficam na rede interna do Compose. Cada instalação tem volumes
 próprios e não reutiliza os bancos do checkout de desenvolvimento.
 
-`smaugctl check` verifica os serviços e a prontidão da API. Um banco preparado
-sem ingestão aparece como `data: empty`, sem ser considerado falha. O
-`smaug doctor` continua sendo o diagnóstico dos dados de análise, com suas
-causas de nulos e códigos de saída existentes; não substitui o diagnóstico da
-instalação. `GET /health` verifica o processo e identifica seu commit;
-`GET /ready` verifica bancos e revisão Alembic, sem coletar fontes.
-`GET /formulas` e `GET /formulas/{indicator}` expõem a referência do cálculo
-da versão instalada. Fórmulas são descrições, nunca expressões executadas.
+`smaugctl check` verifica a operação. Uma instalação nova deve informar
+`ready: true` e `data: empty`. Isso significa que os serviços estão prontos,
+mas os dados ainda não foram preparados. `smaug doctor` verifica a cobertura
+dos dados de análise; ele não substitui o diagnóstico da instalação.
 
-### Atualização e recuperação
+`GET /health` identifica o processo e seu commit. `GET /ready` verifica os
+bancos e a revisão Alembic e informa se há análises. `GET /formulas` e
+`GET /formulas/{indicator}` expõem a referência das fórmulas da versão.
 
-Cada push da `main` decorrente de squash merge passa pelo CI. Depois de todos
-os gates aprovados, o workflow publica as imagens e valida os dois pacotes em
-amd64 e arm64 antes de publicar a release. A versão usa a data UTC do commit
-e os primeiros 12 caracteres do SHA; o manifesto registra o SHA completo,
-a revisão Alembic, os digests das imagens e os checksums dos arquivos.
-Uma publicação parcial não se torna a versão mais recente.
+Se já houver serviços usando as portas padrão, personalize a instalação.
+No Linux/macOS, por exemplo:
 
 ```bash
+bash smaug-installer/install.sh --dir "$HOME/smaug-teste" --api-port 18000 --web-port 13000
+```
+
+No PowerShell:
+
+```powershell
+& .\smaug-installer\install.ps1 --dir "$env:USERPROFILE\smaug-teste" --api-port 18000 --web-port 13000
+```
+
+Ao escolher outro diretório, ajuste a função `smaugctl` para chamar o
+`smaugctl` ou `smaugctl.ps1` desse diretório. Nesse exemplo, abra o frontend
+em <http://127.0.0.1:13000> e a API em <http://127.0.0.1:18000/docs>.
+
+Reexecutar o instalador preserva configuração e dados. Portas e atualização
+de preços ficam em `config.json`; edite-o com os serviços parados e preserve
+o identificador `project`. Fórmulas podem ser consultadas pela CLI mesmo com
+os bancos parados. A API e o frontend precisam dos serviços em execução.
+
+### Primeiros dados e análise
+
+Escolha os tickers e os anos de documentos deliberadamente. Um exemplo com
+PETR4 e arquivos explicitamente selecionados é:
+
+```text
+smaugctl cli ingest --ticker PETR4 --document DFP --year 2025
+smaugctl cli ingest --ticker PETR4 --document ITR --from-year 2025 --to-year 2026
+smaugctl cli analyze --ticker PETR4
+smaugctl cli doctor --ticker PETR4
+```
+
+A ingestão baixa fontes públicas e persiste o espelho; `analyze` calcula e
+persiste os indicadores; `doctor` lê os resultados e suas causas de nulos.
+A coleta pode demorar e a disponibilidade das fontes determina a cobertura.
+Os anos acima são exemplos, não uma seleção automática do período atual.
+TTM precisa de demonstrações anuais e trimestrais compatíveis; lacunas de
+cobertura devem ser examinadas no doctor. Nulos classificados não são zeros.
+O doctor retorna código diferente de zero quando há nulos não classificados.
+
+### Atualização, modalidades, backup e recuperação
+
+```text
 smaugctl update
-smaugctl edition full
 smaugctl edition backend
+smaugctl edition full
 smaugctl backup
 smaugctl restore --backup CAMINHO_DO_BACKUP
 ```
 
+Após cada squash merge na `main`, o CI valida o projeto e a publicação
+verifica os dois pacotes em amd64/arm64 antes de disponibilizar uma release.
+A versão identifica a data UTC e o commit; o manifesto registra SHA completo,
+revisão Alembic, digests das imagens e checksums. Uma publicação parcial não
+substitui a última release completa.
+
 `update` consulta a última release completa, verifica o pacote e baixa as
 imagens antes de parar serviços. Também aceita `--source DIRETORIO_EXTRAIDO`
-para selecionar um pacote já baixado. A troca de modalidade preserva dados;
-remover o frontend da execução não exclui seus bancos.
+para um pacote já baixado. Trocar de modalidade preserva os dados. O software
+é atualizado por comando explícito; atualizar não faz ingestão ou recálculo
+geral. A rotina existente de atualização de preços continua independente.
 
-Antes de uma migração, o gerenciador para os escritores e cria um backup
-PostgreSQL. Falha no backup impede a migração. Atualizações simultâneas e
-atualizações com uma CLI ativa são recusadas. A revisão anterior permanece no
-disco; uma falha após a migração não reinicia automaticamente software antigo
-contra um schema possivelmente incompatível.
+Antes de migrar, o gerenciador para os escritores e cria um backup do
+PostgreSQL. Falha no backup impede a migração. CLI ativa e atualizações
+simultâneas são recusadas. O arquivo `pending.json` registra uma operação
+interrompida e bloqueia o início normal até a recuperação.
 
-O estado `pending.json` bloqueia o início normal durante uma recuperação.
-Use `smaugctl update` para repetir a operação pendente ou `restore --backup`
-para selecionar explicitamente o backup a restaurar. A restauração substitui
-o estado dos bancos dessa instalação. Se a primeira instalação falhar, os
-gerenciadores no diretório escolhido também permitem repetir com `update`.
-Após uma interrupção abrupta, pode restar `operation.lock`: confira se nenhum
+Se uma atualização falhar, examine `smaugctl status` e `smaugctl logs api`.
+Use `smaugctl update` para repetir a operação pendente ou selecione um backup
+com `restore --backup`. A restauração substitui o estado dos bancos dessa
+instalação; não há retorno automático de software antigo contra um schema
+possivelmente incompatível. Isso vale também para repetir uma instalação
+inicial interrompida usando o gerenciador no diretório escolhido.
+
+`backup` copia PostgreSQL, MongoDB, configuração e artefatos Bronze. Caches
+ficam fora. O backup automático pré-migração contém PostgreSQL e configuração.
+Backups ficam em `backups` e não são removidos automaticamente. A restauração
+preserva artefatos Bronze posteriores que não estão no arquivo selecionado.
+Mantenha cópias dos backups em outro armazenamento para proteger a instalação.
+
+Após uma interrupção abrupta pode restar `operation.lock`. Confira se nenhum
 gerenciador ou container CLI continua ativo antes de remover esse diretório.
+Parar, atualizar ou reinstalar não apaga volumes. O gerenciador não oferece
+exclusão de dados; mudanças nas imagens dos bancos exigem upgrade próprio.
 
-O comando `backup` cria uma cópia completa de PostgreSQL, MongoDB,
-configuração e artefatos de origem; caches ficam fora. O backup automático
-pré-migração contém PostgreSQL e configuração. Os backups ficam no diretório
-`backups` e não são removidos automaticamente. Artefatos Bronze posteriores
-não são apagados ao restaurar os arquivados. Para proteção contra perda da
-máquina, copie os backups para outro armazenamento.
+### Conectar o MCP e obter ajuda
 
-Reexecutar o instalador preserva a instalação existente. Configuração de
-portas e atualização de preços fica em `config.json`; edite-a com os serviços
-parados e mantenha o identificador `project`. Parar serviços, atualizar ou
-reinstalar não apaga volumes. O gerenciador não oferece exclusão de dados.
-Mudanças nas imagens dos bancos exigem um procedimento próprio de upgrade e
-são bloqueadas pela atualização comum.
+O conector MCP atual é instalado a partir do checkout com Python 3.13 e uv:
+execute `uv sync` na raiz do projeto. Configure seu cliente MCP para iniciar
+`uv --directory /CAMINHO/ABSOLUTO/project-smaug run smaug-mcp` via `stdio`.
+Veja os exemplos de configuração de clientes no
+[README](https://github.com/gzucob/project-smaug#mcp-local).
+
+Configure `MCP_API_BASE_URL` com a URL da API que deseja consultar. O padrão
+é `http://127.0.0.1:8000`; na instalação de teste acima, use
+`http://127.0.0.1:18000`. Essa é a URL da API, não a porta do frontend.
+Quando cliente e conector estão em sistemas diferentes, como Windows e WSL,
+use caminhos e endereços acessíveis ao processo que executa o conector.
+
+Depois de conectado, o MCP fornece `get_setup_guide` e o recurso
+`smaug://setup` mesmo com a API desligada. `get_service_status` consulta
+somente `/health` e `/ready`: verifica a API e as dependências que ela relata,
+não inspeciona Docker ou o frontend e não inicia serviços. Resultados de
+falha indicam como consultar este guia e usar `smaugctl` no host correto.
+
+O guia continua disponível no README e como `SETUP.md` nos pacotes de release
+antes de o próprio MCP estar conectado. Nenhuma dessas leituras instala,
+calcula indicadores ou executa manutenção. Essas ações permanecem nos
+comandos CLI descritos acima.
+
+<!-- END SMAUG SETUP GUIDE -->
 
 ### Publicação e desenvolvimento do instalador
 
@@ -146,7 +236,7 @@ apenas para desenvolver e compilar o gerenciador. O backend continua Python
 3.13 e o frontend continua Next.js/React. O CI roda os testes do gerenciador
 em Windows, macOS e Linux, além dos testes Compose completos em Linux amd64
 e arm64. A experiência Docker Desktop em Windows/macOS ainda precisa de
-validação manual em máquinas reais antes de anunciar esses sistemas como
+validação manual em Windows e macOS virtual com engine de containers Linux antes de anunciar esses sistemas como
 validados de ponta a ponta, acompanhada na
 [issue #338](https://github.com/gzucob/project-smaug/issues/338).
 
@@ -565,8 +655,8 @@ UV_CACHE_DIR=/tmp/project-smaug-uv-cache uv run pytest
 ## MCP local
 
 O servidor MCP permite consultar os dados do Smaug em clientes como Codex e
-Claude Desktop. Ele usa `stdio` e consome a API existente, que deve estar em
-execução com acesso aos bancos necessários. A configuração é manual.
+Claude Desktop. Ele usa `stdio`; as consultas de dados consomem a API existente,
+que deve estar em execução com acesso aos bancos necessários. A configuração é manual.
 
 Prepare as dependências com `uv sync`. Em um terminal, inicie a API:
 
@@ -582,7 +672,7 @@ uv --directory /caminho/para/project-smaug run smaug-mcp
 
 Executado diretamente no terminal, o processo aguarda mensagens MCP em stdin.
 Stdout contém apenas mensagens do protocolo; os logs usam stderr. A MCP pode
-iniciar e listar ferramentas sem a API, mas as consultas falham enquanto ela
+iniciar, listar ferramentas e fornecer o guia sem a API, mas as consultas de dados falham enquanto ela
 estiver indisponível. Ela não inicia a API ou comandos de atualização. A API
 continua seguindo sua própria configuração de atualização automática de preços.
 
@@ -623,6 +713,8 @@ argumentos acima; use os caminhos Linux do projeto e do uv dentro do WSL.
 
 | Ferramenta | Dados retornados |
 |---|---|
+| `get_setup_guide` | Guia offline por `platform` (all/linux/macos/windows) e `edition` (backend/full) |
+| `get_service_status` | Estado da API e dependências informadas por `/health` e `/ready` |
 | `list_portfolio` | Tickers favoritos |
 | `list_analysis_summaries` | Resumos TTM persistidos |
 | `get_ticker_analysis` | TTM completo e histórico anual, com contratos e proveniência |
@@ -630,12 +722,20 @@ argumentos acima; use os caminhos Linux do projeto e do uv dentro do WSL.
 | `get_dividend_history` | Eventos de proventos, datas de pagamento e cobertura |
 | `get_shareholding_position` | Posições acionárias e metadados do documento CVM |
 
-Todas as ferramentas aceitam `offset` (padrão 0) e `limit` (padrão 100, máximo
-500). As ferramentas `get_*` também exigem `ticker`, por exemplo `BBAS3`.
+As seis ferramentas de consulta de dados aceitam `offset` (padrão 0) e `limit` (padrão 100, máximo
+500). As quatro consultas por ticker também exigem `ticker`, por exemplo `BBAS3`.
 Listas retornam `items`, `total`, `offset`, `limit` e `next_offset`. Consultas por
 ticker mantêm os campos da API e acrescentam `pagination`; a página limita
 `history`, `points`, `events` ou `positions`, conforme a ferramenta. O TTM é
 retornado completo em cada página de análises.
+
+O recurso `smaug://setup` retorna o mesmo guia de `get_setup_guide`;
+`smaug://setup/{platform}/{edition}` seleciona plataforma e modalidade. O guia
+funciona com a API desligada. `get_service_status` relata indisponibilidade,
+bancos vazios e migração pendente sem executar comandos locais. A fonte é
+`src/smaug/shared/setup_guide.md`, também incluída como `SETUP.md` nos pacotes.
+Após editá-la, rode `uv run python scripts/render_setup_guide.py` para atualizar
+este README; `--check` verifica a sincronização.
 
 A paginação preserva a ordem da API e é aplicada localmente após cada consulta
 HTTP completa. Use `next_offset` até receber `null`; páginas sucessivas podem

@@ -11,7 +11,7 @@ from pathlib import Path
 import httpx
 import pytest
 from mcp import Client, StdioServerParameters
-from mcp.types import TextContent
+from mcp.types import TextContent, TextResourceContents
 from pydantic import JsonValue
 
 from smaug.entrypoints.mcp import create_server
@@ -68,6 +68,8 @@ async def test_tools_discovery_mapping_and_preservation() -> None:
     async with Client(server) as client:
         discovered = await client.list_tools()
         assert {tool.name for tool in discovered.tools} == {
+            "get_setup_guide",
+            "get_service_status",
             "list_portfolio",
             "list_analysis_summaries",
             "get_ticker_analysis",
@@ -80,6 +82,8 @@ async def test_tools_discovery_mapping_and_preservation() -> None:
             assert tool.annotations.read_only_hint is True
             assert tool.output_schema is not None
         for tool in discovered.tools:
+            if tool.name in {"get_setup_guide", "get_service_status"}:
+                continue
             arguments: dict[str, JsonValue] = {"limit": 1}
             if tool.name.startswith("get_"):
                 arguments["ticker"] = " bbas3 "
@@ -146,7 +150,7 @@ async def test_network_failures_are_tool_errors(
 
     server = create_server(Settings(), transport=httpx.MockTransport(handle))
     async with Client(server) as client:
-        assert len((await client.list_tools()).tools) == 6
+        assert len((await client.list_tools()).tools) == 8
         result = await client.call_tool("list_portfolio")
         assert result.is_error
         assert isinstance(result.content[0], TextContent)
@@ -278,7 +282,18 @@ async def test_stdio_subprocess_discovers_tools_and_reads_http() -> None:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 -- HTTPServer handler convention.
             requests.append(self.path)
-            body = b'[{"ticker":"BBAS3"}]'
+            payload = {
+                "/portfolio": [{"ticker": "BBAS3"}],
+                "/health": {"status": "ok", "commit": "stdio-test"},
+                "/ready": {
+                    "ready": True,
+                    "mongo": "ok",
+                    "postgres": "ok",
+                    "schema": "ok",
+                    "data": "empty",
+                },
+            }
+            body = json.dumps(payload[self.path]).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -299,11 +314,21 @@ async def test_stdio_subprocess_discovers_tools_and_reads_http() -> None:
             env={"MCP_API_BASE_URL": f"http://127.0.0.1:{http_server.server_port}"},
         )
         async with Client(parameters, read_timeout_seconds=15) as client:
-            assert len((await client.list_tools()).tools) == 6
+            assert len((await client.list_tools()).tools) == 8
             result = await client.call_tool("list_portfolio")
             assert not result.is_error
             assert result.structured_content["items"] == [{"ticker": "BBAS3"}]
-        assert requests == ["/portfolio"]
+            guide = await client.call_tool(
+                "get_setup_guide", {"platform": "linux", "edition": "backend"}
+            )
+            assert not guide.is_error
+            resource = await client.read_resource("smaug://setup/linux/backend")
+            assert isinstance(resource.contents[0], TextResourceContents)
+            assert resource.contents[0].text == guide.structured_content["markdown"]
+            status = await client.call_tool("get_service_status")
+            assert not status.is_error
+            assert status.structured_content["status"] == "ready_empty"
+        assert requests == ["/portfolio", "/health", "/ready"]
     finally:
         http_server.shutdown()
         thread.join(timeout=5)
