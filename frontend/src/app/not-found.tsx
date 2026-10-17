@@ -3,7 +3,7 @@ import { DragonMark } from "@/components/DragonMark";
 
 export default function NotFound() {
   return (
-    <div className="mx-auto flex max-w-md flex-col items-center gap-6 px-5 py-28 text-center">
+    <div className="page-container flex flex-col items-center gap-6 py-28 text-center">
       <DragonMark size={80} withFlame />
       <h1 className="font-brand text-3xl tracking-[0.2em] text-gold-molten">404</h1>
       <p className="text-copy-400">A página que você procura não existe.</p>

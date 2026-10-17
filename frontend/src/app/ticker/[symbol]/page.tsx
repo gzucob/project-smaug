@@ -131,7 +131,7 @@ export default async function TickerPage({
         initialRevision={revision.ok ? revision.data.revision : null}
       />
       <div className="sticky top-16 z-40 border-b border-copy-200/10 bg-canvas-950/95 backdrop-blur-sm">
-        <div className="mx-auto max-w-[1480px] px-4 sm:px-6 lg:px-8">
+        <div className="page-container">
           <AnalysisNavigation
             showBalanceSheet={history.length === 1}
             showStatements={showStatements}
@@ -140,7 +140,7 @@ export default async function TickerPage({
         </div>
       </div>
 
-      <div className="mx-auto max-w-[1480px] px-4 py-8 sm:px-6 lg:px-8">
+      <div className="page-container py-8">
         <div className="min-w-0">
           <Suspense
             fallback={<SectionPlaceholder label={result.data.ticker} />}
