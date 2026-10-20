@@ -3,6 +3,8 @@ name = "smaug"
 version = "0.1.0"
 description = "Ingestão fiel e auditável dos dados fundamentais da carteira (CVM/B3)."
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "fastapi>=0.115",
@@ -37,6 +39,23 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/smaug"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/smaug",
+    "/alembic",
+    "/tests",
+    "/docs",
+    # Contract fixtures used by the Python formula and API parity tests.
+    "/frontend/src/lib/indicator-docs.ts",
+    "/frontend/src/lib/types.ts",
+    "/frontend/LICENSE",
+    "/alembic.ini",
+    "/pyproject.toml",
+    "/uv.lock",
+    "/README.md",
+    "/LICENSE",
+]
 
 [tool.ruff]
 line-length = 88
