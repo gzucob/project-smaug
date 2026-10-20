@@ -68,9 +68,9 @@ def verify_macos(output: Path) -> None:
                     subprocess.run(
                         [
                             "lipo",
+                            str(binary),
                             "-verify_arch",
                             "x86_64" if arch == "amd64" else arch,
-                            str(binary),
                         ],
                         check=True,
                     )
