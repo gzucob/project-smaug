@@ -161,13 +161,20 @@ class BeanieRawIngestionRepository:
     async def _find_by_identity(
         identity: FilingIdentity,
     ) -> RawIngestionDocument | None:
+        # MongoDB needs the partial index's type predicates explicitly. Equality
+        # alone otherwise selects the archive index and scans its filings per row.
         return await RawIngestionDocument.find_one(
-            RawIngestionDocument.source == identity.source,
-            RawIngestionDocument.artifact_id == identity.artifact_id,
-            RawIngestionDocument.registrant_key == identity.registrant_key,
-            RawIngestionDocument.module == identity.module,
-            RawIngestionDocument.filing_discriminator == identity.filing_discriminator,
-            RawIngestionDocument.content_hash == identity.content_hash,
+            {
+                "source": identity.source,
+                "artifact_id": identity.artifact_id,
+                "registrant_key": {"$eq": identity.registrant_key, "$type": "string"},
+                "module": identity.module,
+                "filing_discriminator": {
+                    "$eq": identity.filing_discriminator,
+                    "$type": "string",
+                },
+                "content_hash": {"$eq": identity.content_hash, "$type": "string"},
+            }
         )
 
     @staticmethod
