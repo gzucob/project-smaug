@@ -8,7 +8,9 @@ on:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    # MongoDB rejects newer host kernels; track SERVER-136848 before moving
+    # database jobs off the Ubuntu 22.04 runners' supported kernel.
+    runs-on: ubuntu-22.04
     services:
       mongo:
         image: mongo:8.0@sha256:4a4ab5d4834207389e0d7270fac988e21ffedccecba77991a552f755df229907
@@ -119,7 +121,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
@@ -134,7 +136,7 @@ jobs:
       - run: uv sync --frozen
       - run: bash scripts/installer/ci-smoke.sh
       - uses: actions/upload-artifact@v4
-        if: matrix.runner == 'ubuntu-latest'
+        if: matrix.runner == 'ubuntu-22.04'
         with:
           name: native-installer-packages
           path: dist/installers/smaug-*installer*
