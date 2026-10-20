@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -196,9 +197,18 @@ func TestInstallRegistersCommandWithoutOverwritingOtherPrograms(t *testing.T) {
 	if err := m.installCommand(); err != nil {
 		t.Fatal(err)
 	}
-	profile, _ := os.ReadFile(filepath.Join(home, ".bashrc"))
-	if strings.Count(string(profile), "# Smaug command") != 1 {
-		t.Fatal("duplicate shell registration")
+	profiles := []string{".profile", ".bashrc"}
+	if runtime.GOOS == "darwin" {
+		profiles = []string{".zprofile", ".zshrc"}
+	}
+	for _, name := range profiles {
+		profile, err := os.ReadFile(filepath.Join(home, name))
+		if err != nil {
+			t.Fatalf("read shell registration %s: %v", name, err)
+		}
+		if strings.Count(string(profile), "# Smaug command") != 1 {
+			t.Fatalf("expected exactly one shell registration in %s", name)
+		}
 	}
 	os.WriteFile(filepath.Join(home, ".local", "bin", "smaug"), []byte("another program"), 0700)
 	if err := m.installCommand(); err == nil {
