@@ -30,7 +30,8 @@ const repository = "gzucob/project-smaug"
 var releasePattern = regexp.MustCompile(`^\d{4}\.\d{2}\.\d{2}-[a-f0-9]{12}$`)
 var digestPattern = regexp.MustCompile(`^[a-z0-9./:_-]+@sha256:[a-f0-9]{64}$`)
 var exitCode int
-var dockerCommand = exec.Command
+var dockerCommand = backgroundCommand
+var guiBuild string
 
 type Manifest struct {
 	Version string            `json:"version"`
@@ -64,7 +65,10 @@ type Manager struct {
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "smaugctl:", err)
+		fmt.Fprintln(os.Stderr, "smaug:", err)
+		if _, graphical := guiArguments(os.Args[1:]); graphical {
+			showGUIError(err.Error())
+		}
 		var commandError *exec.ExitError
 		if errors.As(err, &commandError) {
 			exitCode = commandError.ExitCode()
@@ -79,6 +83,9 @@ func run(args []string) error {
 	if handled, err := dispatchNativeLauncher(args); handled || err != nil {
 		return err
 	}
+	if root, graphical := guiArguments(args); graphical {
+		return runGUI(root)
+	}
 	home, err := os.UserConfigDir()
 	if err != nil {
 		return err
@@ -90,8 +97,15 @@ func run(args []string) error {
 	if len(args) >= 2 && args[0] == "--dir" {
 		root, args = args[1], args[2:]
 	}
-	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
-		fmt.Println("smaugctl [--dir DIRECTORY] install --source BUNDLE [--edition backend|full] [--api-port 8000] [--web-port 3000]\nCommands: start, stop, status, logs [service], check, update, edition backend|full, backup, restore --backup DIRECTORY, cli COMMAND [ARGS], mcp setup|run|register|config|status|update")
+	if len(args) == 0 {
+		if releaseVersion == "" && exists(filepath.Join(root, "config.json")) {
+			args = []string{"status"}
+		} else {
+			args = []string{"installer"}
+		}
+	}
+	if args[0] == "--help" || args[0] == "help" {
+		fmt.Println("smaug gui\nsmaug installer [--backend] [--mcp-client codex|claude|both]\nsmaug upgrade\nCommands: start, stop, status, logs [service], check, backup, restore --backup DIRECTORY, cli COMMAND [ARGS], mcp run|register|config|status\nAdvanced: --dir DIRECTORY; installer --source BUNDLE")
 		return nil
 	}
 	root, err = filepath.Abs(root)
@@ -101,6 +115,12 @@ func run(args []string) error {
 	m := &Manager{Root: root}
 	command := args[0]
 	args = args[1:]
+	if command == "installer" {
+		command = "install"
+	}
+	if command == "upgrade" {
+		command = "update"
+	}
 	if command == "mcp" {
 		return m.mcp(args)
 	}
@@ -109,7 +129,7 @@ func run(args []string) error {
 	}
 	if command != "install" {
 		if err = readJSON(m.file("config.json"), &m.Config); err != nil {
-			return fmt.Errorf("installation not found; run install: %w", err)
+			return fmt.Errorf("installation not found; run smaug installer: %w", err)
 		}
 		if err = readJSON(m.file("current.json"), &m.State); err != nil {
 			return err
@@ -118,25 +138,35 @@ func run(args []string) error {
 			return err
 		}
 	}
+	if command != "install" && command != "update" {
+		m.notifyUpgrade()
+	}
 	// CLI owns this lock for its entire lifetime. A crashed Docker client may
 	// leave its container behind, so writer checks also inspect Docker labels.
 	if command != "status" && command != "logs" && command != "check" {
 		if err = os.MkdirAll(root, 0700); err != nil {
 			return err
 		}
-		lock := m.file("operation.lock")
-		if err = os.Mkdir(lock, 0700); err != nil {
-			return fmt.Errorf("another operation is active (or was interrupted); inspect Docker processes before removing %s", lock)
+		unlock, lockErr := lockOperation(m.file("operation.guard"))
+		if lockErr != nil {
+			return fmt.Errorf("another Smaug operation is active: %w", lockErr)
 		}
-		defer os.Remove(lock)
+		defer unlock()
+		if err = m.acquireLock(); err != nil {
+			return err
+		}
+		defer os.RemoveAll(m.file("operation.lock"))
 	}
-	if exists(m.file("pending.json")) && command != "restore" && command != "update" && command != "status" && command != "logs" && command != "check" {
-		return errors.New("an interrupted update needs recovery; use update to retry or restore --backup PATH; see pending.json")
+	if exists(m.file("pending.json")) && command != "restore" && command != "install" && command != "update" && command != "status" && command != "logs" && command != "check" {
+		return errors.New("an interrupted update needs recovery; use smaug upgrade to retry or smaug restore --backup PATH; see pending.json")
 	}
 	switch command {
 	case "install":
 		return m.install(args)
 	case "start":
+		if exists(m.file("preparing.json")) {
+			return errors.New("data preparation is unfinished; run smaug installer to resume")
+		}
 		return m.start(m.State)
 	case "stop":
 		if err = m.noCLI(); err != nil {
@@ -145,17 +175,23 @@ func run(args []string) error {
 		return m.compose(m.State, nil, nil, "stop")
 	case "status":
 		fmt.Printf("Version: %s\nEdition: %s\nDirectory: %s\n", m.State.Version, m.State.Edition, m.Root)
+		if exists(m.file("preparing.json")) {
+			fmt.Println("Data preparation unfinished: run smaug installer to resume.")
+		}
 		if exists(m.file("pending.json")) {
 			fmt.Println("RECOVERY REQUIRED: pending.json")
 		}
 		return m.compose(m.State, nil, nil, "ps", "--all")
 	case "logs":
+		if len(args) == 1 && args[0] == "preparation" {
+			return m.compose(m.State, nil, nil, "run", "--rm", "--no-deps", "-T", "--entrypoint", "cat", "cli", "/data/cache/preparation.log")
+		}
 		return m.compose(m.State, nil, nil, append([]string{"logs", "--tail", "200", "--follow"}, args...)...)
 	case "check":
 		return m.check()
 	case "cli":
 		if len(args) == 0 {
-			return errors.New("usage: smaugctl cli COMMAND [ARGS]")
+			return errors.New("usage: smaug cli COMMAND [ARGS]")
 		}
 		return m.compose(m.State, nil, nil, append([]string{"run", "--rm", "--no-deps", "-T", "--label", "io.smaug.operation=cli", "cli"}, args...)...)
 	case "edition":
@@ -192,12 +228,18 @@ func run(args []string) error {
 			if err != nil {
 				return err
 			}
-			return m.transition(State{v.Version, m.State.Edition})
+			if err := m.transition(State{v.Version, m.State.Edition}); err != nil {
+				return err
+			}
+			return m.installCommand()
 		}
 		if len(args) != 0 {
 			return errors.New("usage: update [--source BUNDLE]")
 		}
-		return m.update()
+		if err := m.update(); err != nil {
+			return err
+		}
+		return m.installCommand()
 	default:
 		return fmt.Errorf("unknown command %q", command)
 	}
@@ -373,14 +415,31 @@ func (m *Manager) check() error {
 		return err
 	}
 	defer response.Body.Close()
-	if _, err = io.Copy(os.Stdout, response.Body); err != nil {
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
 		return err
+	}
+	if _, err = os.Stdout.Write(body); err != nil {
+		return err
+	}
+	var readiness struct {
+		Ready bool   `json:"ready"`
+		Data  string `json:"data"`
+	}
+	if err = json.Unmarshal(body, &readiness); err != nil {
+		return err
+	}
+	if !readiness.Ready || readiness.Data != "prepared" {
+		return errors.New("data not prepared; run smaug installer")
 	}
 	if response.StatusCode != 200 {
 		return errors.New("installation is not ready")
 	}
 	if exists(m.file("pending.json")) {
 		return errors.New("interrupted update requires recovery")
+	}
+	if exists(m.file("preparing.json")) {
+		return errors.New("data preparation unfinished; run smaug installer")
 	}
 	if m.State.Edition == "full" {
 		response, err = client.Get(fmt.Sprintf("http://127.0.0.1:%d", m.Config.WebPort))
@@ -398,11 +457,18 @@ func (m *Manager) install(args []string) error {
 	flags := flag.NewFlagSet("install", flag.ContinueOnError)
 	source := flags.String("source", "", "directory extracted from the release")
 	edition := flags.String("edition", "", "backend or full")
+	backend := flags.Bool("backend", false, "install without the frontend")
 	api := flags.Int("api-port", 8000, "local API port")
 	web := flags.Int("web-port", 3000, "local frontend port")
 	mcpClient := flags.String("mcp-client", "", "register codex, claude or both after install")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("unexpected installer arguments")
+	}
+	if *backend {
+		*edition = "backend"
 	}
 	if *mcpClient != "" && *mcpClient != "codex" && *mcpClient != "claude" && *mcpClient != "both" {
 		return errors.New("mcp-client must be codex, claude or both")
@@ -420,16 +486,78 @@ func (m *Manager) install(args []string) error {
 		if err := readJSON(m.file("current.json"), &m.State); err != nil {
 			return errors.New("installation incomplete; retry with its original bundle or recover pending.json")
 		}
+		targetEdition := m.State.Edition
+		if *edition != "" {
+			targetEdition = *edition
+		} else if releaseVersion != "" {
+			targetEdition = defaultEdition
+		}
+		if !validEdition(targetEdition) {
+			return errors.New("edition must be backend or full")
+		}
+		var release Manifest
+		var err error
+		if exists(m.file("pending.json")) {
+			var pending Pending
+			if err := readJSON(m.file("pending.json"), &pending); err != nil {
+				return err
+			}
+			if pending.Previous.Version == "" && (*source != "" || releaseVersion != "" && releaseVersion != pending.Target.Version) {
+				release, err = m.recoverInitialInstall(*source, targetEdition)
+			} else {
+				err = m.update()
+			}
+			if err != nil {
+				return err
+			}
+			if *edition == "" && releaseVersion == "" {
+				targetEdition = m.State.Edition
+			}
+		}
+		if release.Version == "" {
+			if *source != "" {
+				release, err = m.stage(*source)
+			} else {
+				release, err = m.downloadLatest(targetEdition, m.State.Version)
+			}
+		}
+		if err != nil {
+			return err
+		}
+		target := State{release.Version, targetEdition}
+		if target != m.State {
+			if err := m.transition(target); err != nil {
+				return err
+			}
+		}
+		if err := m.prepare(m.State); err != nil {
+			return err
+		}
 		if err := m.start(m.State); err != nil {
 			return err
 		}
+		if err := m.installCommand(); err != nil {
+			return err
+		}
+		m.printAccess()
+
 		if *mcpClient != "" {
 			return m.configureMCP("register", []string{"--client", *mcpClient})
 		}
 		return nil
 	}
 	if *source == "" {
-		return errors.New("install requires --source BUNDLE")
+		if *edition == "" {
+			*edition = defaultEdition
+		}
+		if !validEdition(*edition) {
+			return errors.New("edition must be backend or full")
+		}
+		v, err := m.downloadRelease(*edition, "", bootstrapRelease())
+		if err != nil {
+			return err
+		}
+		*source = m.file("releases", v.Version)
 	}
 	if *edition == "" {
 		b, e := os.ReadFile(filepath.Join(*source, "edition.txt"))
@@ -473,21 +601,19 @@ func (m *Manager) install(args []string) error {
 	if err = m.migrate(target); err != nil {
 		return err
 	}
+	if err = m.prepare(target); err != nil {
+		return err
+	}
 	if err = m.start(target); err != nil {
 		return err
 	}
 	if err = m.commit(target); err != nil {
 		return err
 	}
-	launcher := "smaugctl"
-	if runtime.GOOS == "windows" {
-		launcher += ".ps1"
+	if err = m.installCommand(); err != nil {
+		return err
 	}
-	fmt.Printf("Installed %s (%s).\nManager: %s\nAPI: http://127.0.0.1:%d/docs\n", v.Version, *edition, m.file(launcher), m.Config.APIPort)
-	if *edition == "full" {
-		fmt.Printf("Frontend: http://127.0.0.1:%d\n", m.Config.WebPort)
-	}
-	fmt.Println("No data collected. Next: smaugctl cli ingest --ticker PETR4; smaugctl cli analyze --ticker PETR4")
+	m.printAccess()
 	if *mcpClient != "" {
 		return m.configureMCP("register", []string{"--client", *mcpClient})
 	}
@@ -595,6 +721,7 @@ func (m *Manager) commit(s State) error {
 	if err := writeJSON(m.file("current.json"), s); err != nil {
 		return err
 	}
+	m.State = s
 	m.Config.Edition = s.Edition
 	if err := writeJSON(m.file("config.json"), m.Config); err != nil {
 		return err
@@ -627,6 +754,9 @@ exit $LASTEXITCODE
 		return err
 	}
 	if err := os.WriteFile(m.file("smaugctl.ps1"), []byte(ps), 0600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(m.file("smaug"), []byte(sh), 0700); err != nil {
 		return err
 	}
 	return m.nativeLauncher()
@@ -676,6 +806,9 @@ func (m *Manager) transition(target State) error {
 	}
 	if err = m.migrate(target); err != nil {
 		return fmt.Errorf("migration failed; services remain stopped, backup %s: %w", backup, err)
+	}
+	if err = m.prepare(target); err != nil {
+		return err
 	}
 	if err = m.start(target); err != nil {
 		return fmt.Errorf("new services failed; retry update or restore --backup %s: %w", backup, err)
@@ -913,6 +1046,9 @@ func unpackZip(data []byte, dest string) error {
 	return nil
 }
 func (m *Manager) update() error {
+	if err := m.noCLI(); err != nil {
+		return err
+	}
 	if exists(m.file("pending.json")) {
 		var p Pending
 		if err := readJSON(m.file("pending.json"), &p); err != nil {
@@ -923,6 +1059,9 @@ func (m *Manager) update() error {
 				return err
 			}
 			if err := m.migrate(p.Target); err != nil {
+				return err
+			}
+			if err := m.prepare(p.Target); err != nil {
 				return err
 			}
 			if err := m.start(p.Target); err != nil {
@@ -937,6 +1076,14 @@ func (m *Manager) update() error {
 		return err
 	}
 	if v.Version == m.State.Version {
+		if !exists(m.file("prepared.json")) || exists(m.file("preparing.json")) {
+			if err := m.prepare(m.State); err != nil {
+				return err
+			}
+			if err := m.start(m.State); err != nil {
+				return err
+			}
+		}
 		fmt.Println("Already up to date.")
 		return nil
 	}
@@ -944,8 +1091,11 @@ func (m *Manager) update() error {
 }
 
 func (m *Manager) downloadLatest(edition, currentVersion string) (Manifest, error) {
+	return m.downloadRelease(edition, currentVersion, "latest")
+}
+func (m *Manager) downloadRelease(edition, currentVersion, releasePath string) (Manifest, error) {
 	var empty Manifest
-	data, err := getURL("https://api.github.com/repos/" + repository + "/releases/latest")
+	data, err := getURL("https://api.github.com/repos/" + repository + "/releases/" + releasePath)
 	if err != nil {
 		return empty, err
 	}

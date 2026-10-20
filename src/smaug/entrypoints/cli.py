@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import sys
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import date, timedelta
 from decimal import Decimal
+from functools import partial
+from pathlib import Path
 from time import perf_counter
 from typing import Annotated, Any, cast
 
@@ -83,6 +87,7 @@ from smaug.ingestion.application.ingest import (
     FetchOutcome,
     IngestPortfolioUseCase,
     OutcomeStatus,
+    collection_succeeded,
 )
 from smaug.ingestion.application.relink import RelinkMirrorUseCase, RelinkReport
 from smaug.ingestion.application.report import (
@@ -97,6 +102,7 @@ from smaug.ingestion.application.validation import (
 )
 from smaug.ingestion.domain.failures import FailureOccurrence
 from smaug.ingestion.domain.ports import B3TapeObservation, RawDataSource
+from smaug.ingestion.domain.preparation import preparation_batches
 from smaug.ingestion.domain.repositories import RawIngestionRepository
 from smaug.ingestion.domain.runs import (
     IngestionRun,
@@ -110,6 +116,7 @@ from smaug.ingestion.domain.validation import (
     BatchValidationReporter,
     IngestionValidationReport,
 )
+from smaug.ingestion.infrastructure.archive_catalog import CvmArchiveCatalog
 from smaug.ingestion.infrastructure.b3_capital_events import (
     CAPITAL_EVENT_B3_MODULE,
     B3CapitalEventSource,
@@ -217,11 +224,13 @@ from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
 from smaug.shared.errors import (
     IneligibleInstrumentError,
+    SmaugError,
     UnknownTickerError,
 )
 from smaug.shared.events import EventBus
 from smaug.shared.local_artifacts import LocalSourceArtifactStore
 from smaug.shared.logging import get_logger
+from smaug.shared.preparation import PreparationStep, prepare_data
 from smaug.shared.sql_db import create_engine, create_session_factory
 
 app = typer.Typer(help="smaug — CVM/B3 ingestion and indicator analysis.")
@@ -601,6 +610,97 @@ async def _cvm_key_maps(
     code = {t: i.cd_cvm for t, i in identities.items()}
     cnpj = {t: i.cnpj for t, i in identities.items()}
     return code, cnpj
+
+
+@app.command()
+def prepare(
+    state_file: Path = typer.Option(
+        Path(".cache/preparation.json"), help="Persistent preparation checkpoint."
+    ),
+) -> None:
+    """Download and ingest all published CVM data, then prepare all B3 analyses."""
+    diagnostics = state_file.with_name("preparation.log")
+    root_logger = logging.getLogger()
+    console_levels = [(handler, handler.level) for handler in root_logger.handlers]
+    file_handler: logging.FileHandler | None = None
+    try:
+        diagnostics.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(diagnostics)
+        for handler, _ in console_levels:
+            handler.setLevel(logging.WARNING)
+        root_logger.addHandler(file_handler)
+        result = _guarded(_run_prepare(state_file))
+    except (SmaugError, httpx.HTTPError, OSError, ValueError) as exc:
+        typer.echo(
+            f"Preparação interrompida: {exc}. Execute smaug installer para retomar.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    finally:
+        if file_handler is not None:
+            root_logger.removeHandler(file_handler)
+            file_handler.close()
+        for handler, level in console_levels:
+            handler.setLevel(level)
+    if result:
+        typer.echo("Detalhes: smaug logs preparation", err=True)
+    raise typer.Exit(code=result)
+
+
+async def _run_prepare(state_file: Path) -> int:
+    async with httpx.AsyncClient(timeout=60.0) as http:
+        batches = preparation_batches(await CvmArchiveCatalog(http).discover())
+    steps = [
+        PreparationStep(
+            batch.key,
+            partial(
+                _run_ingest,
+                (),
+                document=batch.dataset if batch.dataset in {"DFP", "ITR"} else "DFP",
+                years=(batch.year,),
+                whole_exchange=True,
+                ticker_scope=TickerScope.ALL,
+                modules=batch.modules,
+                reused_root_recovery=batch.dataset == "B3",
+                allow_quarantined=batch.dataset == "B3",
+            ),
+        )
+        for batch in batches
+    ]
+    steps.extend(
+        (
+            PreparationStep("analysis", partial(_run_analyze, (), whole_exchange=True)),
+            PreparationStep(
+                "price-history",
+                partial(
+                    _run_analyze, (), whole_exchange=True, price_history_since=2010
+                ),
+            ),
+            PreparationStep("verification", _verify_prepared_data),
+        )
+    )
+    return await prepare_data(
+        steps,
+        state_file=state_file,
+        revision=f"{application_commit()}:fca-{get_settings().cvm_fca_year}",
+        operation_log=state_file.with_name("preparation.log"),
+        progress=partial(print, file=sys.stdout, flush=True),
+    )
+
+
+async def _verify_prepared_data() -> int:
+    engine = create_engine(get_settings())
+    try:
+        if not await SqlAlchemyAnalysisRepository(
+            create_session_factory(engine)
+        ).all_latest():
+            typer.echo(
+                "No analyses were prepared; installation is incomplete.", err=True
+            )
+            return 1
+    finally:
+        await engine.dispose()
+    return await _run_doctor((), whole_exchange=True)
 
 
 @app.command()
@@ -1011,6 +1111,7 @@ def _build_data_source(
                 ticker_to_code,
                 ticker_to_cnpj,
                 base_url=settings.b3_listed_base_url,
+                validation_reporter=validation_reporter,
             ),
             FREE_FLOAT_MODULE: CvmFreeFloatSource(
                 free_float_archive,
@@ -1076,6 +1177,7 @@ async def _run_ingest(
     retry_failure_ids: dict[tuple[str, str, int], str] | None = None,
     identity_year: int | None = None,
     reused_root_recovery: bool = False,
+    allow_quarantined: bool = False,
     capital_subclass_targets: Mapping[int, tuple[CapitalSubclassBackfillTarget, ...]]
     | None = None,
 ) -> int:
@@ -1226,7 +1328,16 @@ async def _run_ingest(
         f"{format_fca_snapshot(snapshot)}\n"
         f"{collection_log}\n{format_ingestion_metrics(run)}"
     )
-    return 1 if any(o.status in _FAILED_STATUSES for o in outcomes) else 0
+    if allow_quarantined and any(
+        outcome.status is OutcomeStatus.QUARANTINED for outcome in outcomes
+    ):
+        print(
+            "B3: respostas rejeitadas preservadas em quarentena; "
+            "as análises usarão somente os dados admitidos."
+        )
+    return (
+        0 if collection_succeeded(outcomes, allow_quarantined=allow_quarantined) else 1
+    )
 
 
 async def _universe(

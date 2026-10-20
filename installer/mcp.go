@@ -19,7 +19,7 @@ type ConnectorConfig struct {
 
 func (m *Manager) mcp(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: smaugctl mcp setup|run|config|register|update|status")
+		return errors.New("usage: smaug mcp setup|run|config|register|update|status")
 	}
 	// Desktop clients may not inherit the terminal PATH used at registration.
 	if dockerPath := os.Getenv("SMAUG_MCP_DOCKER"); dockerPath != "" {
@@ -53,7 +53,7 @@ func (m *Manager) mcp(args []string) error {
 		return m.configureMCP(args[0], args[1:])
 	case "run":
 		if len(args) != 1 {
-			return errors.New("usage: smaugctl mcp run")
+			return errors.New("usage: smaug mcp run")
 		}
 		if standalone {
 			return m.runConnector()
@@ -63,13 +63,13 @@ func (m *Manager) mcp(args []string) error {
 		return m.compose(m.State, os.Stdin, os.Stdout, "run", "--rm", "--no-deps", "-T", "mcp")
 	case "update":
 		if !standalone {
-			return errors.New("use smaugctl update for backend/full installations")
+			return errors.New("use smaug upgrade for backend/full installations")
 		}
 		if len(args) == 3 && args[1] == "--source" {
 			return m.setupConnector([]string{"--source", args[2]})
 		}
 		if len(args) != 1 {
-			return errors.New("usage: smaugctl mcp update [--source BUNDLE]")
+			return errors.New("usage: smaug mcp update [--source BUNDLE]")
 		}
 		if err := os.MkdirAll(m.Root, 0700); err != nil {
 			return err
@@ -90,10 +90,10 @@ func (m *Manager) mcp(args []string) error {
 		return m.commitConnector(v, nil)
 	case "status":
 		if len(args) != 1 {
-			return errors.New("usage: smaugctl mcp status")
+			return errors.New("usage: smaug mcp status")
 		}
 		if !standalone {
-			return errors.New("use smaugctl status and MCP get_service_status for backend/full")
+			return errors.New("use smaug status and MCP get_service_status for backend/full")
 		}
 		var config ConnectorConfig
 		if err := readJSON(m.file("mcp.json"), &config); err != nil {
@@ -189,7 +189,7 @@ func (m *Manager) setupConnector(args []string) error {
 		return err
 	}
 	if *source == "" || flags.NArg() != 0 {
-		return errors.New("usage: smaugctl mcp setup --source BUNDLE [--api-base-url URL] [--client codex|claude|both]")
+		return errors.New("usage: smaug mcp setup --source BUNDLE [--api-base-url URL] [--client codex|claude|both]")
 	}
 	if exists(m.file("config.json")) {
 		return errors.New("backend/full already provides MCP here; use mcp register, or select a separate --dir")
@@ -261,6 +261,6 @@ func (m *Manager) commitConnector(v Manifest, config *ConnectorConfig) error {
 	if err := m.launchers(); err != nil {
 		return err
 	}
-	fmt.Printf("MCP installed: %s\nDirectory: %s\nUse smaugctl mcp register --client codex|claude|both, then restart the client.\n", v.Version, m.Root)
+	fmt.Printf("MCP installed: %s\nDirectory: %s\nUse smaug mcp register --client codex|claude|both, then restart the client.\n", v.Version, m.Root)
 	return nil
 }

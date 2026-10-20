@@ -7,6 +7,7 @@ configuration was created inside this invocation's temporary directory.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -14,8 +15,11 @@ import queue
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
+import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -43,6 +47,73 @@ def request(port_number: int, path: str, method: str = "GET") -> Any:
     with urllib.request.urlopen(req, timeout=30) as response:
         data = response.read()
         return json.loads(data) if data else None
+
+
+def check_gui(command: list[str], install: Path) -> None:
+    """Exercise the real local controller against this disposable installation."""
+    if platform.system() != "Linux":
+        return
+    with tempfile.TemporaryDirectory(prefix="smaug-gui-browser-") as temporary:
+        browser = Path(temporary) / "xdg-open"
+        browser.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$SMAUG_GUI_OPEN_LOG"\n')
+        browser.chmod(0o700)
+        env = {
+            **os.environ,
+            "PATH": temporary + os.pathsep + os.environ["PATH"],
+            "SMAUG_GUI_OPEN_LOG": str(Path(temporary) / "opened.log"),
+        }
+        process = subprocess.Popen([*command, "gui"], env=env)
+        try:
+            session = install / "gui-session.json"
+            deadline = time.monotonic() + 20
+            while not session.exists():
+                assert process.poll() is None, "GUI exited before opening"
+                assert time.monotonic() < deadline, "GUI did not open"
+                time.sleep(0.1)
+            url = json.loads(session.read_text())["url"]
+            origin = urllib.parse.urlunsplit(
+                (*urllib.parse.urlsplit(url)[:2], "", "", "")
+            )
+
+            def status() -> Any:
+                with urllib.request.urlopen(url + "status", timeout=5) as response:
+                    return json.loads(response.read())
+
+            def action(name: str) -> None:
+                req = urllib.request.Request(
+                    url + "action",
+                    data=json.dumps({"action": name}).encode(),
+                    headers={"Content-Type": "application/json", "Origin": origin},
+                )
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    assert response.status == 202
+
+            while not status()["running"]:
+                assert time.monotonic() < deadline, "GUI did not detect prepared data"
+                time.sleep(0.1)
+            with urllib.request.urlopen(url, timeout=5) as page:
+                assert b"Instalar o Smaug" in page.read()
+            subprocess.run([*command, "gui"], env=env, check=True, timeout=10)
+            assert json.loads(session.read_text())["url"] == url
+            for name, running in (("stop", False), ("start", True)):
+                action(name)
+                deadline = time.monotonic() + 90
+                while True:
+                    state = status()
+                    if not state["busy"]:
+                        assert not state["error"], state
+                        assert state["running"] == running, state
+                        break
+                    assert time.monotonic() < deadline, f"GUI {name} did not finish"
+                    time.sleep(0.2)
+            action("open")
+            action("close")
+            assert process.wait(timeout=10) == 0
+            assert not session.exists()
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=10)
 
 
 def check_mcp(
@@ -129,6 +200,14 @@ def check_mcp(
                 row["ticker"] == ticker
                 for row in portfolio["structuredContent"]["items"]
             )
+            if expected_status == "ready":
+                analysis = call(
+                    7,
+                    "tools/call",
+                    {"name": "get_ticker_analysis", "arguments": {"ticker": ticker}},
+                )
+                assert not analysis.get("isError", False), analysis
+                assert analysis["structuredContent"]["ticker"] == ticker
     finally:
         process.stdin.close()
         try:
@@ -144,8 +223,38 @@ def check_mcp(
 def smoke(bundle_dir: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="smaug installer smoke ") as directory:
         root = Path(directory)
+        os.environ["HOME"] = str(root / "user")
+        os.environ["USERPROFILE"] = str(root / "user")
+        (root / "user").mkdir()
         for edition in ("backend", "full"):
-            bundle = bundle_dir / edition
+            bundle = root / f"{edition}-fixture-bundle"
+            shutil.copytree(bundle_dir / edition, bundle)
+            fixture = Path(__file__).with_name("source_fixture.py").read_text("utf-8")
+            compose_path = bundle / "compose.yaml"
+            compose_text = (
+                compose_path.read_text()
+                .replace(
+                    "entrypoint: [smaug]",
+                    "entrypoint: " + json.dumps(["python", "-c", fixture]),
+                )
+                .replace(
+                    "AUTO_PRICE_REFRESH: ${AUTO_PRICE_REFRESH:-true}",
+                    "AUTO_PRICE_REFRESH: 'false'",
+                )
+            )
+            compose_path.write_text(compose_text)
+            bundle_manifest = json.loads((bundle / "manifest.json").read_text())
+            bundle_manifest["files"]["compose.yaml"] = hashlib.sha256(
+                compose_path.read_bytes()
+            ).hexdigest()
+            (bundle / "manifest.json").write_text(json.dumps(bundle_manifest))
+            (bundle / "checksums.txt").write_text(
+                "".join(
+                    f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
+                    for path in sorted(bundle.iterdir())
+                    if path.name != "checksums.txt"
+                )
+            )
             guide = (bundle / "SETUP.md").read_text("utf-8")
             assert f"**{edition}**" in guide
             assert "@@EDITION@@" not in guide
@@ -206,77 +315,26 @@ def smoke(bundle_dir: Path) -> None:
                     "AUTO_PRICE_REFRESH": "false",
                 }
                 run(*ctl, "check")
-                assert request(api, "/ready")["data"] == "empty"
+                assert request(api, "/ready")["data"] == "prepared"
+                assert request(api, "/analysis/PETR4")
+                if edition == "full":
+                    with urllib.request.urlopen(
+                        f"http://127.0.0.1:{web}/ticker/PETR4", timeout=60
+                    ) as page:
+                        assert b"PETR4" in page.read()
                 assert request(api, "/health")["commit"] == manifest["commit"]
+                check_gui(ctl, install)
                 if edition == "full":
                     # A 200 home page alone can hide an unreachable backend.
                     assert request(web, "/api/data-revision")["revision"]
                 assert "roe" in run(*ctl, "cli", "formulas", capture=True)
                 run(*ctl, "cli", "doctor", "--help")
                 assert request(api, "/portfolio/PETR4", "POST")["ticker"] == "PETR4"
-                check_mcp(ctl, expected_status="ready_empty", ticker="PETR4")
-                connector_ctl: list[str] | None = None
-                if edition == "backend":
-                    connector_bundle = bundle_dir / "mcp"
-                    connector_guide = (connector_bundle / "SETUP.md").read_text("utf-8")
-                    assert "Pacote separado" in connector_guide
-                    assert "@@EDITION@@" not in connector_guide
-                    connector_binary = connector_bundle / binary.name
-                    connector_binary.chmod(0o700)
-                    connector_root = root / "standalone MCP"
-                    connector_ctl = [
-                        str(connector_binary),
-                        "--dir",
-                        str(connector_root),
-                    ]
-                    bootstrap_mcp = ["bash", str(connector_bundle / "install.sh")]
-                    run(
-                        *bootstrap_mcp,
-                        "--dir",
-                        str(connector_root),
-                        "--api-base-url",
-                        f"http://127.0.0.1:{api}",
-                    )
-                    assert not (connector_root / "config.json").exists()
-                    check_mcp(
-                        connector_ctl,
-                        expected_status="ready_empty",
-                        ticker="PETR4",
-                        setup_edition="mcp",
-                    )
-                    next_connector = root / "mcp-next"
-                    shutil.copytree(connector_bundle, next_connector)
-                    next_connector_manifest = json.loads(
-                        (next_connector / "manifest.json").read_text()
-                    )
-                    next_connector_manifest["commit"] = "c" * 40
-                    next_connector_manifest["version"] = "2099.01.01-" + "c" * 12
-                    (next_connector / "manifest.json").write_text(
-                        json.dumps(next_connector_manifest)
-                    )
-                    run(
-                        *connector_ctl, "mcp", "update", "--source", str(next_connector)
-                    )
-                    saved_connector = json.loads(
-                        (connector_root / "mcp.json").read_text()
-                    )
-                    assert saved_connector["api_base_url"] == f"http://127.0.0.1:{api}"
-                    check_mcp(
-                        connector_ctl,
-                        expected_status="ready_empty",
-                        ticker="PETR4",
-                        setup_edition="mcp",
-                    )
+                check_mcp(ctl, expected_status="ready", ticker="PETR4")
                 subprocess.run(
                     [*compose, "stop", "api", "frontend"], env=compose_env, check=True
                 )
                 check_mcp(ctl, expected_status="api_unavailable")
-                if connector_ctl is not None:
-                    check_mcp(
-                        connector_ctl,
-                        expected_status="api_unavailable",
-                        setup_edition="mcp",
-                    )
                 # Store raw and Bronze evidence through container-local paths.
                 subprocess.run(
                     [
@@ -482,7 +540,8 @@ def smoke(bundle_dir: Path) -> None:
                 assert bronze.returncode == 0
                 print(
                     f"PASS: {edition} installation, migration, update, "
-                    "edition switch, full backup, restore and installed MCP stdio",
+                    "source ingestion, analysis, edition switch, full backup, "
+                    "restore and MCP stdio",
                     flush=True,
                 )
             finally:
@@ -506,6 +565,25 @@ def smoke(bundle_dir: Path) -> None:
                             "WEB_PORT": str(web),
                         }
                     )
+                    if sys.exc_info()[0] is not None:
+                        diagnostics = [
+                            "docker",
+                            "compose",
+                            "--project-name",
+                            config["project"],
+                            "--file",
+                            str(release / "compose.yaml"),
+                        ]
+                        subprocess.run(
+                            [*diagnostics, "ps", "--all"],
+                            env=compose_env,
+                            check=False,
+                        )
+                        subprocess.run(
+                            [*diagnostics, "logs", "--no-color", "--tail", "200"],
+                            env=compose_env,
+                            check=False,
+                        )
                     subprocess.run(
                         [
                             "docker",

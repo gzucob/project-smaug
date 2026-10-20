@@ -10,12 +10,12 @@ from pathlib import Path
 import httpx
 import pytest
 
+from smaug.ingestion.domain.validation import SourceBatchValidation
 from smaug.ingestion.infrastructure.b3_listing import B3ListingSource
 from smaug.ingestion.infrastructure.cvm_capital import CvmCapitalSource
 from smaug.ingestion.infrastructure.cvm_tag_along import CvmTagAlongSource
 from smaug.shared.errors import (
     SourceBatchValidationError,
-    SourceMalformedError,
     SourceNotFoundError,
 )
 
@@ -106,6 +106,12 @@ async def test_missing_member_or_tag_header_does_not_produce_inferred_rights(
 async def test_b3_listing_preserves_raw_classification_and_checks_the_registrant(
     wrong_identity: bool,
 ) -> None:
+    reports: list[SourceBatchValidation] = []
+
+    class Reporter:
+        async def record(self, validation: SourceBatchValidation) -> None:
+            reports.append(validation)
+
     def handler(request: httpx.Request) -> httpx.Response:
         params = json.loads(base64.b64decode(request.url.path.rsplit("/", 1)[1]))
         if "GetDetail" in request.url.path:
@@ -139,10 +145,15 @@ async def test_b3_listing_preserves_raw_classification_and_checks_the_registrant
             {"TEST3": "42"},
             {"TEST3": "12.000.000/0001-00"},
             base_url="https://b3.test",
+            validation_reporter=Reporter(),
         )
         if wrong_identity:
-            with pytest.raises(SourceMalformedError):
+            with pytest.raises(SourceBatchValidationError):
                 await source.fetch("TEST3", "LISTING_B3")
+            assert len(reports) == 1
+            assert reports[0].module == "LISTING_B3"
+            assert reports[0].findings[0].code == "response-schema"
+            assert reports[0].evidence["detail"]["codeCVM"] == "99"
         else:
             (result,) = await source.fetch("TEST3", "LISTING_B3")
             assert result.payload["supplement"]["segment"] == "N2"

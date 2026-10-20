@@ -8,8 +8,10 @@ import pytest
 
 from smaug.ingestion.application.ingest import (
     FailureContext,
+    FetchOutcome,
     IngestPortfolioUseCase,
     OutcomeStatus,
+    collection_succeeded,
 )
 from smaug.ingestion.domain.events import RawIngestionStored
 from smaug.ingestion.domain.ports import RawFetchResult
@@ -474,3 +476,17 @@ async def test_the_registrant_travels_from_the_source_onto_what_is_stored() -> N
     assert [i.cvm_code for i in repo.items] == ["9512"]
     # The ticker still records which code the collection was requested under.
     assert [i.ticker for i in repo.items] == ["PETR3"]
+
+
+@pytest.mark.parametrize("status", list(OutcomeStatus))
+def test_collection_completion_keeps_transport_failures_blocking(
+    status: OutcomeStatus,
+) -> None:
+    outcomes = [FetchOutcome("TEST3", "LISTING_B3", status, None, "test")]
+    assert collection_succeeded(outcomes) == (
+        status
+        not in {OutcomeStatus.ERROR, OutcomeStatus.ABORTED, OutcomeStatus.QUARANTINED}
+    )
+    assert collection_succeeded(outcomes, allow_quarantined=True) == (
+        status not in {OutcomeStatus.ERROR, OutcomeStatus.ABORTED}
+    )

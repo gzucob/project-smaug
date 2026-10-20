@@ -7,7 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, NamedTuple, cast
 
-from sqlalchemy import and_, case, delete, func, or_, select
+from sqlalchemy import and_, case, delete, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.elements import ColumnElement
@@ -1379,11 +1379,15 @@ class SqlAlchemyAnalysisRepository:
             }
         )
         keys = ["ticker"]
+        predicate = text("view = 'ttm_live'")
         if analysis.view == VIEW_CLOSED_YEAR:
             keys.append("reference_date")
+            predicate = text("view = 'closed_year'")
         statement = statement.on_conflict_do_update(
             index_elements=keys,
-            index_where=TickerAnalysisRow.view == analysis.view,
+            # A bound view parameter cannot prove a partial-index predicate
+            # once PostgreSQL reuses a generic prepared plan.
+            index_where=predicate,
             set_={
                 column.name: statement.excluded[column.name]
                 for column in TickerAnalysisRow.__table__.columns

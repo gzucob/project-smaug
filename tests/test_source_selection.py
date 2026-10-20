@@ -145,7 +145,7 @@ def test_every_configured_parser_has_a_stable_name_and_version() -> None:
         "cvm.free-float.csv": 1,
         "cvm.shareholder-position.csv": 1,
         "cvm.tag-along.csv": 1,
-        "b3.listing.json": 1,
+        "b3.listing.json": 2,
         "cvm.capital-events.csv": 1,
         # Version 3 reconciles amended stock-event rows and preserves conflicts.
         "b3.capital-events.json": 3,

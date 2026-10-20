@@ -1,4 +1,4 @@
-"""Build immutable offline launchers and Compose bundles (requires Go and uv)."""
+"""Build immutable managers, graphical entrypoints and Compose bundles."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import zipfile
 from pathlib import Path
@@ -67,12 +68,27 @@ def build() -> None:
             env={**os.environ, "GOOS": system, "GOARCH": arch, "CGO_ENABLED": "0"},
             check=True,
         )
+        if system == "windows":
+            subprocess.run(
+                [
+                    "go",
+                    "build",
+                    "-trimpath",
+                    "-ldflags=-s -w -H=windowsgui -X main.guiBuild=true",
+                    "-o",
+                    str(binaries / f"smaug-desktop-windows-{arch}.exe"),
+                    ".",
+                ],
+                cwd=ROOT / "installer",
+                env={**os.environ, "GOOS": system, "GOARCH": arch, "CGO_ENABLED": "0"},
+                check=True,
+            )
     images = json.loads((ROOT / "installer" / "images.json").read_text())
     images.update(backend=args.backend, frontend=args.frontend)
     heads = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini"))).get_heads()
     if len(heads) != 1:
         raise ValueError("release requires exactly one Alembic head")
-    editions: tuple[SetupEdition, ...] = ("backend", "full", "mcp")
+    editions: tuple[SetupEdition, ...] = ("backend", "full")
     for edition in editions:
         bundle = output / edition
         bundle.mkdir(exist_ok=True)
@@ -80,6 +96,7 @@ def build() -> None:
             shutil.copy2(path, bundle / path.name)
         for name in ("compose.yaml", "install.sh", "install.ps1"):
             shutil.copy2(ROOT / "installer" / name, bundle / name)
+        shutil.copy2(ROOT / "LICENSE", bundle / "LICENSE")
         (bundle / "edition.txt").write_text(edition + "\n")
         (bundle / "SETUP.md").write_text(
             render_setup_guide(edition=edition),
@@ -117,6 +134,57 @@ def build() -> None:
             path.with_name(path.name + ".sha256").write_text(
                 f"{sha256(path)}  {path.name}\n"
             )
+    # Native entrypoints fetch their verified bundle themselves. Users never
+    # need to extract an archive or install a language runtime.
+    for edition in editions:
+        for system, arch in TARGETS:
+            name = "smaug-installer" if edition == "full" else "smaug-backend-installer"
+            if system == "windows":
+                suffix = "-arm64" if arch == "arm64" else ""
+                executable = output / f"{name}{suffix}.exe"
+            else:
+                platform = "macos" if system == "darwin" else system
+                executable = output / f"{name}-{platform}-{arch}"
+            subprocess.run(
+                [
+                    "go",
+                    "build",
+                    "-trimpath",
+                    "-ldflags="
+                    + " ".join(
+                        (
+                            "-s -w",
+                            f"-X main.releaseVersion={args.version}",
+                            f"-X main.defaultEdition={edition}",
+                            "-H=windowsgui -X main.guiBuild=true"
+                            if system == "windows"
+                            else "",
+                        )
+                    ),
+                    "-o",
+                    str(executable),
+                    ".",
+                ],
+                cwd=ROOT / "installer",
+                env={**os.environ, "GOOS": system, "GOARCH": arch, "CGO_ENABLED": "0"},
+                check=True,
+            )
+            executable.with_name(executable.name + ".sha256").write_text(
+                f"{sha256(executable)}  {executable.name}\n"
+            )
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/installer/package_desktop.py"),
+            "--input",
+            str(output),
+            "--version",
+            args.version,
+            "--system",
+            "linux",
+        ],
+        check=True,
+    )
     print(output)
 
 

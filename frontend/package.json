@@ -2,6 +2,7 @@
   "name": "smaug-frontend",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "Smaug's Hoard — front-end for the project-smaug analysis API",
   "scripts": {
     "dev": "next dev",

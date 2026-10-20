@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -17,10 +16,14 @@ func dispatchNativeLauncher(args []string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !strings.EqualFold(filepath.Base(executable), "smaugctl.exe") {
+	desktop := strings.EqualFold(filepath.Base(executable), "smaug-desktop.exe")
+	if !desktop && !strings.EqualFold(filepath.Base(executable), "smaugctl.exe") && !strings.EqualFold(filepath.Base(executable), "smaug.exe") {
 		return false, nil
 	}
 	root := filepath.Dir(executable)
+	if !exists(filepath.Join(root, "current.json")) {
+		return false, nil
+	}
 	if len(args) >= 2 && args[0] == "--dir" {
 		root, args = args[1], args[2:]
 	}
@@ -35,7 +38,11 @@ func dispatchNativeLauncher(args []string) (bool, error) {
 	if !releasePattern.MatchString(state.Version) {
 		return true, errors.New("invalid release version")
 	}
-	command := exec.Command(filepath.Join(root, "releases", state.Version, binaryName()), append([]string{"--dir", root}, args...)...)
+	name := binaryName()
+	if desktop {
+		name = desktopBinaryName()
+	}
+	command := backgroundCommand(filepath.Join(root, "releases", state.Version, name), append([]string{"--dir", root}, args...)...)
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return true, command.Run()
 }
