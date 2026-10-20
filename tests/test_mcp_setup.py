@@ -19,7 +19,7 @@ from smaug.shared.mcp_setup import (
 )
 
 
-@pytest.mark.parametrize("edition", ["backend", "full", "mcp"])
+@pytest.mark.parametrize("edition", ["backend", "full"])
 @pytest.mark.parametrize("platform", ["all", "linux", "macos", "windows"])
 async def test_setup_tool_and_resources_work_without_http(
     platform: SetupPlatform, edition: SetupEdition
@@ -46,26 +46,12 @@ async def test_setup_tool_and_resources_work_without_http(
             ("macos", "### macOS"),
             ("windows", "### Windows"),
         ):
-            assert (heading in guide) == (
-                edition != "mcp" and platform in ("all", name)
-            )
-        for name, instruction in (
-            ("linux", "sha256sum --check smaug-mcp-"),
-            ("macos", "shasum -a 256 --check smaug-mcp-"),
-            ("windows", "$smaugArchive = 'smaug-mcp-"),
-        ):
-            assert (instruction in guide) == (platform in ("all", name))
-        if edition == "mcp":
-            assert "smaug-mcp-VERSAO" in guide
-            assert "--api-base-url" in guide
-            for command in ("register", "config", "update", "status"):
-                assert f"mcp {command}" in guide
-            assert "cli ingest" not in guide
-        else:
-            for command in ("start", "check", "update", "backup", "restore"):
-                assert f"smaugctl {command}" in guide
-            assert "cli formulas" in guide
-            assert "cli doctor" in guide
+            assert (heading in guide) == (platform in ("all", name))
+        assert "smaug upgrade" in guide
+        assert "smaug installer" in guide
+        assert "smaug mcp register --client codex" in guide
+        assert "cli ingest" not in guide
+        assert "smaug-mcp-VERSAO" not in guide
         resource = await client.read_resource(content["resource_uri"])
         assert isinstance(resource.contents[0], TextResourceContents)
         assert resource.contents[0].mime_type == "text/markdown"
@@ -81,15 +67,26 @@ async def test_setup_tool_and_resources_work_without_http(
 
 async def test_setup_rejects_unsupported_options() -> None:
     async with Client(create_server(Settings())) as client:
-        for args in ({"platform": "freebsd"}, {"edition": "desktop"}):
+        for args in (
+            {"platform": "freebsd"},
+            {"edition": "desktop"},
+            {"edition": "mcp"},
+        ):
             result = await client.call_tool("get_setup_guide", args)
             assert result.is_error
 
 
-def test_readme_uses_the_packaged_setup_guide() -> None:
-    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text("utf-8")
-    generated = readme.split(README_START, 1)[1].split(README_END, 1)[0]
-    assert generated.strip() == render_setup_guide().strip()
+def test_documentation_uses_the_packaged_setup_guide() -> None:
+    docs = Path(__file__).resolve().parents[1] / "docs"
+    installation, heading, mcp = render_setup_guide().partition("\n## MCP\n")
+    assert heading
+    for name, expected in (
+        ("installation.md", installation),
+        ("mcp.md", mcp),
+    ):
+        document = (docs / name).read_text("utf-8")
+        generated = document.split(README_START, 1)[1].split(README_END, 1)[0]
+        assert generated.strip() == expected.strip()
 
 
 @pytest.mark.parametrize(
