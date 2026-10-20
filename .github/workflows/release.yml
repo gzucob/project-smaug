@@ -95,7 +95,7 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
-      - name: Build application and MCP release bundles
+      - name: Build both application editions
         env:
           BACKEND_IMAGE: ${{ steps.names.outputs.backend }}@${{ steps.backend.outputs.digest }}
           FRONTEND_IMAGE: ${{ steps.names.outputs.frontend }}@${{ steps.frontend.outputs.digest }}
@@ -110,10 +110,9 @@ jobs:
           path: |
             dist/installers/backend/
             dist/installers/full/
-            dist/installers/mcp/
-            dist/installers/*.zip
-            dist/installers/*.tar.gz
-            dist/installers/*.sha256
+            dist/installers/smaug-installer*
+            dist/installers/smaug-full-*
+            dist/installers/smaug-backend-*
           retention-days: 7
           if-no-files-found: error
 
@@ -136,8 +135,33 @@ jobs:
       # Intentionally anonymous: released images must be pullable without login.
       - run: python3 scripts/installer/smoke.py --bundles dist/installers
 
+  macos-packages:
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: installers
+          path: dist/installers
+      - name: Package graphical macOS installers
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open("dist/installers/backend/manifest.json"))["version"])')
+          python3 scripts/installer/package_desktop.py --input dist/installers --version "$version" --system macos
+          python3 scripts/installer/verify_desktop.py --input dist/installers --system macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-installers
+          path: |
+            dist/installers/*.dmg
+            dist/installers/*.dmg.sha256
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
-    needs: verify
+    needs: [verify, macos-packages]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -153,7 +177,11 @@ jobs:
         with:
           name: installers
           path: dist/installers
-      - name: Publish application and MCP installers together
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-installers
+          path: dist/installers
+      - name: Publish both application editions together
         shell: bash
         run: |
           set -euo pipefail
@@ -164,18 +192,19 @@ jobs:
             exit 0
           fi
           cat > "$RUNNER_TEMP/release-notes.md" <<EOF_NOTES
-          Docker installers for backend, full Smaug and the standalone MCP connector, built from commit $RELEASE_COMMIT.
+          Native Smaug installers for Windows, Linux and macOS, built from commit $RELEASE_COMMIT.
 
-          Download the chosen package, verify its SHA-256 checksum and extract it. Run install.sh on Linux/macOS or install.ps1 on Windows. Docker is required; backend/full also require Compose v2. No data is collected automatically.
+          Open the graphical installer for your system: .exe on Windows, .dmg on macOS, or .deb on Ubuntu/Debian. Choose Full or Backend in the browser interface and click Install. Docker Desktop must be installed and running. The installer downloads all supported CVM/B3 data and prepares the local databases automatically.
 
-          Standalone MCP: select the mcp archive and use --api-base-url URL to select an existing API. No database or API is started by this package. Optional --client codex|claude|both registers the connector locally.
+          Use the installed Smaug shortcut to start, stop, update, or connect MCP without terminal commands. CLI commands remain available for automation.
 
-          Existing backend/full installations: run smaugctl update. Standalone MCP: run smaugctl mcp update. Read the [installation guide](https://github.com/$GITHUB_REPOSITORY/blob/$RELEASE_COMMIT/README.md) for backup and recovery commands.
+          ZIP/tar archives are internal payloads downloaded by the native installer. Manual extraction is unnecessary.
           EOF_NOTES
           if [[ "$existing" != true ]]; then
             gh release create "$version" --draft --target "$RELEASE_COMMIT" --title "Smaug $version" --notes-file "$RUNNER_TEMP/release-notes.md"
           fi
-          gh release upload "$version" dist/installers/*.zip dist/installers/*.tar.gz dist/installers/*.sha256 --clobber
+          mapfile -d '' assets < <(find dist/installers -maxdepth 1 -type f \( -name 'smaug-full-*' -o -name 'smaug-backend-*' -o -name 'smaug-installer*' \) -print0)
+          gh release upload "$version" "${assets[@]}" --clobber
           # Workflow scheduling is not FIFO. An older completed build must not
           # replace a newer successfully published descendant as latest.
           latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.target_commitish' 2>/dev/null || true)
