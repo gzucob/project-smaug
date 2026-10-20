@@ -13,6 +13,36 @@ from smaug.ingestion.infrastructure.b3_listed_company import (
     B3CompanyResolutionError,
     B3ListedCompanyResolver,
 )
+from smaug.shared.errors import (
+    SourceRateLimitError,
+    SourceTimeoutError,
+    SourceUnexpectedStatusError,
+)
+
+
+@pytest.mark.parametrize("status", [403, 404, 429, 500, 503])
+async def test_http_failures_are_retryable_failures_not_quarantined_identity(
+    status: int,
+) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(status))
+    ) as http:
+        resolver = B3ListedCompanyResolver(http, base_url="https://b3.test")
+        expected = (
+            SourceRateLimitError if status == 429 else SourceUnexpectedStatusError
+        )
+        with pytest.raises(expected):
+            await resolver.resolve_by_cvm("42")
+
+
+async def test_timeout_is_retryable_instead_of_a_source_validation_decision() -> None:
+    def timeout(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("test timeout", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(timeout)) as http:
+        resolver = B3ListedCompanyResolver(http, base_url="https://b3.test")
+        with pytest.raises(SourceTimeoutError, match="ReadTimeout"):
+            await resolver.resolve_by_cvm("42")
 
 
 def _params(request: httpx.Request) -> dict[str, object]:

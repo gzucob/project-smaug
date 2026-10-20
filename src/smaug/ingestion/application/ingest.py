@@ -96,6 +96,21 @@ class FetchOutcome:
     artifact_id: str | None = None
 
 
+def collection_succeeded(
+    outcomes: Sequence[FetchOutcome], *, allow_quarantined: bool = False
+) -> bool:
+    """Distinguish completed, rejected source responses from unfinished calls.
+
+    Initial B3 preparation can analyze the admitted mirror with named nulls for
+    quarantined batches. Transport failures and interrupted calls still require
+    a retry; ordinary ingestion retains its strict exit status.
+    """
+    blocked = {OutcomeStatus.ERROR, OutcomeStatus.ABORTED}
+    if not allow_quarantined:
+        blocked.add(OutcomeStatus.QUARANTINED)
+    return not any(outcome.status in blocked for outcome in outcomes)
+
+
 OutcomeSink = Callable[[FetchOutcome], Awaitable[None]]
 FailureSink = Callable[[FailureOccurrence], Awaitable[None]]
 ResolutionSink = Callable[[str, str], Awaitable[None]]

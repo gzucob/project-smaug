@@ -12,6 +12,11 @@ from typing import Any
 
 import httpx
 
+from smaug.shared.errors import (
+    SourceRateLimitError,
+    SourceTimeoutError,
+    SourceUnexpectedStatusError,
+)
 from smaug.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -338,13 +343,16 @@ class B3ListedCompanyResolver:
             )
         except httpx.HTTPError as exc:
             logger.warning("B3 %s failed for %s: %s", endpoint, identity, exc)
-            raise B3CompanyResolutionError(
-                "coverage-established", f"B3 {endpoint} failed: {exc}"
+            raise SourceTimeoutError(
+                f"B3 {endpoint} failed for {identity}: {type(exc).__name__}: {exc}"
             ) from exc
         if response.status_code != httpx.codes.OK:
-            raise B3CompanyResolutionError(
-                "coverage-established",
-                f"B3 {endpoint} returned HTTP {response.status_code}",
+            detail = f"B3 {endpoint} returned HTTP {response.status_code}"
+            if response.status_code == httpx.codes.TOO_MANY_REQUESTS:
+                raise SourceRateLimitError(detail)
+            raise SourceUnexpectedStatusError(
+                response.status_code,
+                detail,
             )
         if not response.text.strip():
             return None
