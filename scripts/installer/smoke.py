@@ -15,6 +15,7 @@ import queue
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -564,6 +565,25 @@ def smoke(bundle_dir: Path) -> None:
                             "WEB_PORT": str(web),
                         }
                     )
+                    if sys.exc_info()[0] is not None:
+                        diagnostics = [
+                            "docker",
+                            "compose",
+                            "--project-name",
+                            config["project"],
+                            "--file",
+                            str(release / "compose.yaml"),
+                        ]
+                        subprocess.run(
+                            [*diagnostics, "ps", "--all"],
+                            env=compose_env,
+                            check=False,
+                        )
+                        subprocess.run(
+                            [*diagnostics, "logs", "--no-color", "--tail", "200"],
+                            env=compose_env,
+                            check=False,
+                        )
                     subprocess.run(
                         [
                             "docker",
