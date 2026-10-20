@@ -8,6 +8,7 @@
 .pytest_cache
 __pycache__
 frontend
+website
 installer
 node_modules
 tmp
