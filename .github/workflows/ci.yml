@@ -8,8 +8,17 @@ on:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    # MongoDB rejects newer host kernels; track SERVER-136848 before moving
+    # database jobs off the Ubuntu 22.04 runners' supported kernel.
+    runs-on: ubuntu-22.04
     services:
+      mongo:
+        image: mongo:8.0@sha256:4a4ab5d4834207389e0d7270fac988e21ffedccecba77991a552f755df229907
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'quit(db.adminCommand({ping:1}).ok ? 0 : 1)'"
+          --health-interval 5s --health-timeout 5s --health-retries 30
       postgres:
         image: postgres:17-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826
         env:
@@ -22,6 +31,7 @@ jobs:
           --health-cmd "pg_isready -U smaug -d smaug"
           --health-interval 5s --health-timeout 5s --health-retries 30
     env:
+      SMAUG_TEST_MONGO_URI: mongodb://127.0.0.1:27017
       SMAUG_TEST_POSTGRES_URI: postgresql+asyncpg://smaug:smaug@127.0.0.1:5432/smaug
     steps:
       - uses: actions/checkout@v4
@@ -70,6 +80,7 @@ jobs:
           path: |
             installer/
             scripts/installer/
+            LICENSE
           retention-days: 1
           if-no-files-found: error
 
@@ -110,7 +121,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
@@ -124,3 +135,71 @@ jobs:
           cache: false
       - run: uv sync --frozen
       - run: bash scripts/installer/ci-smoke.sh
+      - uses: actions/upload-artifact@v4
+        if: matrix.runner == 'ubuntu-22.04'
+        with:
+          name: native-installer-packages
+          path: dist/installers/smaug-*installer*
+          retention-days: 3
+          if-no-files-found: error
+
+  desktop-packages:
+    needs: [installer, manager-source]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: manager-source
+          path: .
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-installer-packages
+          path: dist/installers
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Package and verify macOS disk images
+        if: runner.os == 'macOS'
+        run: |
+          python3 scripts/installer/package_desktop.py --input dist/installers --version 0.0.0-ci --system macos
+          python3 scripts/installer/verify_desktop.py --input dist/installers --system macos
+      - name: Verify Windows executables
+        if: runner.os == 'Windows'
+        run: python scripts/installer/verify_desktop.py --input dist/installers --system windows
+      - uses: actions/setup-go@v5
+        if: runner.os == 'Windows'
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Exercise Windows desktop launchers
+        if: runner.os == 'Windows'
+        run: ./scripts/installer/verify_windows_gui.ps1 -InputDirectory dist/installers
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'macOS'
+        with:
+          name: macos-installer-preview
+          path: |
+            dist/installers/*.dmg
+            dist/installers/*.dmg.sha256
+          retention-days: 3
+          if-no-files-found: error
+
+  website:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build

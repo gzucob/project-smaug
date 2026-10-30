@@ -167,10 +167,10 @@ class McpApiReader:
             "ready": "API is ready. Query persisted data with the data tools.",
             "ready_empty": (
                 "API is ready with no analysis data. Follow get_setup_guide "
-                "for explicit CLI ingestion and analysis."
+                "to resume automatic preparation with smaug installer."
             ),
             "migration_required": (
-                "Inspect smaugctl check and logs api; use smaugctl update "
+                "Inspect smaug check and logs api; use smaug upgrade "
                 "to apply the release migrations."
             ),
         }.get(

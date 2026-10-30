@@ -34,14 +34,23 @@ from smaug.portfolio.infrastructure.sqlalchemy_models import (
     not os.environ.get("SMAUG_TEST_POSTGRES_URI"),
     reason="Set SMAUG_TEST_POSTGRES_URI to test retention in an isolated schema",
 )
-async def test_migration_retains_results_and_saves_replace_atomically() -> None:
+@pytest.mark.parametrize("plan_cache_mode", ["auto", "force_generic_plan"])
+async def test_migration_retains_results_and_saves_replace_atomically(
+    plan_cache_mode: str,
+) -> None:
     dsn = os.environ["SMAUG_TEST_POSTGRES_URI"]
     schema = "retention_check_" + uuid.uuid4().hex
     admin = create_async_engine(dsn)
     async with admin.begin() as conn:
         await conn.execute(text("CREATE SCHEMA " + schema))
     engine = create_async_engine(
-        dsn, connect_args={"server_settings": {"search_path": schema}}
+        dsn,
+        connect_args={
+            "server_settings": {
+                "search_path": schema,
+                "plan_cache_mode": plan_cache_mode,
+            }
+        },
     )
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
@@ -145,6 +154,12 @@ async def test_migration_retains_results_and_saves_replace_atomically() -> None:
             indicators=newer.indicators,
         )
         await repo.save(changed_year)
+        assert await repo.history("TEST3") == [year1, changed_year]
+        for offset in range(12):
+            newer = replace(newer, computed_at=now + timedelta(seconds=10 + offset))
+            await repo.save(newer)
+            await repo.save(changed_year)
+        assert await repo.latest("TEST3") == newer
         assert await repo.history("TEST3") == [year1, changed_year]
         async with sessions() as s:
             assert (

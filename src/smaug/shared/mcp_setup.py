@@ -1,16 +1,16 @@
-"""One packaged setup guide for MCP, README and offline installer bundles."""
+"""One packaged setup guide for documentation, MCP and offline installers."""
 
 import re
 from importlib.resources import files
 from typing import Literal
 
 type SetupPlatform = Literal["all", "linux", "macos", "windows"]
-type SetupEdition = Literal["backend", "full", "mcp"]
+type SetupEdition = Literal["backend", "full"]
 
 SETUP_GUIDE_URI = "smaug://setup"
 SETUP_GUIDE_HINT = (
     "Use get_service_status to inspect the API and get_setup_guide "
-    "(or smaug://setup) for installation, smaugctl start/check and "
+    "(or smaug://setup) for installation, smaug start/check and "
     "MCP_API_BASE_URL instructions."
 )
 README_START = "<!-- BEGIN SMAUG SETUP GUIDE -->"
@@ -23,19 +23,20 @@ def render_setup_guide(
     """Select platform instructions locally, without HTTP or command execution."""
     if platform not in ("all", "linux", "macos", "windows"):
         raise ValueError("Unsupported setup platform")
-    if edition not in ("backend", "full", "mcp"):
+    if edition not in ("backend", "full"):
         raise ValueError("Unsupported setup edition")
     sections = _guide_sections()
-    if edition == "mcp":
-        return _select_platform(sections["mcp"], platform) + "\n"
     selected = (
         text.strip()
         for name, text in sections.items()
         if name not in {"linux", "macos", "windows"} or platform in {"all", name}
     )
     return (
-        _select_platform("\n\n".join(selected), platform).replace(
-            "@@EDITION@@", edition
+        _select_platform("\n\n".join(selected), platform)
+        .replace("@@EDITION@@", edition)
+        .replace(
+            "@@INSTALLER@@",
+            "smaug-installer" if edition == "full" else "smaug-backend-installer",
         )
         + "\n"
     )

@@ -35,7 +35,9 @@ class LocalSourceArtifactStore:
     ) -> None:
         self._http = http_client
         self._root = Path(root)
-        self._staging = self._root.parent / f".{self._root.name}-staging"
+        # Keep temporary downloads on the same filesystem as the blobs: Docker
+        # mounts the source root as a volume, and publishing uses atomic rename.
+        self._staging = self._root / ".staging"
         self._observer = observer
         self._clock = clock
         self._sleep = sleep

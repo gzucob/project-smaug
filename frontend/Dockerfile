@@ -7,11 +7,13 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 FROM node:22-bookworm-slim
-LABEL org.opencontainers.image.source="https://github.com/gzucob/project-smaug"
+LABEL org.opencontainers.image.source="https://github.com/gzucob/project-smaug" \
+    org.opencontainers.image.licenses="Apache-2.0"
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+COPY --from=builder --chown=node:node /app/LICENSE ./LICENSE
 USER node
 EXPOSE 3000
 CMD ["node", "server.js"]

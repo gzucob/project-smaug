@@ -87,7 +87,7 @@ def create_server(
 
     @server.resource("smaug://setup/{platform}/{edition}", mime_type="text/markdown")
     def setup_platform_resource(platform: SetupPlatform, edition: SetupEdition) -> str:
-        """Offline guide selected by platform and backend/full/MCP edition."""
+        """Offline guide selected by platform and backend/full edition."""
         return render_setup_guide(platform, edition)
 
     @server.tool(annotations=annotations)

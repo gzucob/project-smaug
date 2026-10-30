@@ -1,0 +1,70 @@
+name: Publish website
+
+on:
+  push:
+    branches: [main]
+    paths: ['website/**', '.github/workflows/pages.yml']
+  workflow_run:
+    workflows: [Release installers]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smaug-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - uses: actions/configure-pages@v5
+        id: pages
+      - run: npm ci
+        working-directory: website
+      - run: npm test
+        working-directory: website
+      - name: Select published installers
+        run: npm run prepare:release
+        working-directory: website
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm run build
+        working-directory: website
+        env:
+          SITE_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
