@@ -16,6 +16,8 @@ from smaug.ingestion.infrastructure.models import (
     IngestionRunDocument,
     IngestionValidationDocument,
     RawIngestionDocument,
+    SourceInputArchiveDocument,
+    SourceInputRowDocument,
 )
 from smaug.shared.config import Settings
 
@@ -34,6 +36,8 @@ async def init_database(settings: Settings) -> AsyncMongoClient[dict[str, Any]]:
             IngestionRunDocument,
             IngestionFailureDocument,
             IngestionValidationDocument,
+            SourceInputArchiveDocument,
+            SourceInputRowDocument,
         ],
     )
     return client

@@ -96,6 +96,7 @@ from smaug.ingestion.application.report import (
     TickerReport,
 )
 from smaug.ingestion.application.runs import IngestionRunService
+from smaug.ingestion.application.source_inputs import MirrorSourceInputs
 from smaug.ingestion.application.validation import (
     IngestionValidationService,
     RunValidationReporter,
@@ -168,6 +169,10 @@ from smaug.ingestion.infrastructure.repositories import (
     BeanieRawIngestionRepository,
 )
 from smaug.ingestion.infrastructure.routed_source import RoutedDataSource
+from smaug.ingestion.infrastructure.source_inputs import (
+    LocalSourceInputReader,
+    MongoSourceInputRepository,
+)
 from smaug.portfolio.application.refresh_taxonomy import (
     RefreshTaxonomyUseCase,
     TaxonomyDrift,
@@ -234,6 +239,27 @@ from smaug.shared.preparation import PreparationStep, prepare_data
 from smaug.shared.sql_db import create_engine, create_session_factory
 
 app = typer.Typer(help="smaug — CVM/B3 ingestion and indicator analysis.")
+
+
+@app.command("mirror-inputs")
+def mirror_inputs(
+    paths: Annotated[
+        list[Path], typer.Argument(exists=True, dir_okay=False, readable=True)
+    ],
+) -> None:
+    """Mirror existing CVM/B3 ZIPs offline, preserving development files."""
+    _guarded(_mirror_inputs(paths))
+
+
+async def _mirror_inputs(paths: list[Path]) -> None:
+    client = await init_database(get_settings())
+    try:
+        use_case = MirrorSourceInputs(MongoSourceInputRepository())
+        for path in paths:
+            created = await use_case.execute(LocalSourceInputReader(path))
+            typer.echo(f"{path.name}: {'mirrored' if created else 'already mirrored'}")
+    finally:
+        await client.close()
 
 
 @app.command()
@@ -1231,9 +1257,13 @@ async def _run_ingest(
 
         async with httpx.AsyncClient(timeout=30.0) as http:
             validation_reporter = RunValidationReporter(validation_service, run_id)
+            source_input_mirror = MirrorSourceInputs(MongoSourceInputRepository())
 
             async def artifact_observer(artifact: SourceArtifact) -> None:
                 await run_service.record_artifact(run_id, artifact.artifact_id)
+                await source_input_mirror.execute(
+                    LocalSourceInputReader(artifact.path, artifact=artifact)
+                )
 
             artifact_store = LocalSourceArtifactStore(
                 http,
