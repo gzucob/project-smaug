@@ -7,6 +7,24 @@ from smaug.ingestion.domain.identity import filing_identity
 from tests.fakes import make_snapshot
 
 
+def test_b3_listing_identity_ignores_local_observation_time_but_keeps_changes() -> None:
+    first = replace(
+        make_snapshot("PETR4", "LISTING_B3", {}),
+        source="b3",
+        cvm_code="9512",
+        request={"codeCVM": "9512", "observed_at": "2026-10-30T00:00:00Z"},
+        payload={"observed_at": "2026-10-30T00:00:00Z", "detail": {"code": "PETR"}},
+    )
+    repeated = replace(
+        first,
+        request={**first.request, "observed_at": "2026-10-31T00:00:00Z"},
+        payload={**first.payload, "observed_at": "2026-10-31T00:00:00Z"},
+    )
+    amended = replace(repeated, payload={**repeated.payload, "detail": {"code": "NEW"}})
+    assert filing_identity(first) == filing_identity(repeated)
+    assert filing_identity(first) != filing_identity(amended)
+
+
 def test_identity_ignores_fetch_time_and_dictionary_order() -> None:
     first = make_snapshot(
         "PETR4",

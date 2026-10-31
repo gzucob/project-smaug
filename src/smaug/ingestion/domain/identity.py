@@ -33,13 +33,20 @@ class FilingIdentity:
 
 def filing_identity(ingestion: RawIngestion) -> FilingIdentity:
     """Build the stable identity for one parsed source filing."""
+    request = ingestion.request
+    payload = ingestion.payload
+    if ingestion.source == "b3" and ingestion.module == "LISTING_B3":
+        # This timestamp is added by our adapter, not published by B3. Preserve
+        # it in the stored snapshot while deduplicating identical source facts.
+        request = {key: value for key, value in request.items() if key != "observed_at"}
+        payload = {key: value for key, value in payload.items() if key != "observed_at"}
     return FilingIdentity(
         source=ingestion.source,
         artifact_id=ingestion.artifact_id,
         registrant_key=_registrant_key(ingestion),
         module=ingestion.module,
-        filing_discriminator=_hash(ingestion.request),
-        content_hash=_hash(ingestion.payload),
+        filing_discriminator=_hash(request),
+        content_hash=_hash(payload),
     )
 
 

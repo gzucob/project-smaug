@@ -1,7 +1,8 @@
 # Plano de instalação com bases preparadas
 
-Status: plano aprovado em escopo; somente a fase 0 pode ser implementada nesta
-sessão. As fases 1–10 dependem de uma instrução posterior de execução.
+Status: plano aprovado em escopo. Fase 0 integrada; fase 1 autorizada para
+implementação em #348, vinculada à tarefa mãe #347. As fases 2–10 dependem de
+uma instrução posterior de execução.
 
 ## Objetivo e decisões
 
