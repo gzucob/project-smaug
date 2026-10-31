@@ -118,7 +118,8 @@ Details in `src/smaug/AGENTS.md`.
   `UV_CACHE_DIR=/tmp/project-smaug-uv-cache uv run pytest`.
 
 ## What NOT to Do
-- Don't push directly to `main` — always branch + PR + squash.
+- Don't push directly to `develop` or `main`. Squash work PRs into `develop`;
+  promote `develop` to `main` through a release PR with a merge commit.
 - Don't add a credentialed source. Every source today is public and
   unauthenticated, so nothing in `.env` is a secret — keep it that way; the
   repo is public.

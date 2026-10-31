@@ -47,6 +47,20 @@ identidade dos arquivos e evita duplicar documentos já espelhados.
 
 ## Trabalhar no código
 
+A branch padrão de desenvolvimento é `develop`. Crie branches de trabalho a
+partir dela e abra as PRs com destino a `develop`; cada fase do plano de
+implementação corresponde a um commit e uma PR, integrada com squash.
+
+Para publicar, abra uma PR de `develop` para `main` e integre com **merge
+commit**, preservando as duas branches. Após o sucesso do CI do push na
+`main`, a release é publicada automaticamente. Antes do próximo ciclo,
+sincronize `develop` com a `main` publicada, preservando o histórico compartilhado.
+As duas branches executam CI; somente a `main` publica versões estáveis.
+
+O [plano de instalação com bases preparadas](prepared-database-installation-plan.md)
+registra as fases futuras. Sua documentação não significa que as fases de
+ingestão, análise, empacotamento ou atualização já estejam implementadas.
+
 Pré-requisitos: Git, Python 3.13, uv e Docker com Compose v2. Para o frontend
 ou o site de downloads, use Node.js 24 e npm. Leia o [AGENTS.md](../AGENTS.md)
 e as regras do diretório alterado.
@@ -227,7 +241,9 @@ atualiza `website/public/release.json`; ele exige todos os instaladores e checks
    <https://gzucob.github.io/project-smaug/>. Ele também pode ser iniciado
    manualmente pela aba **Actions**.
 
-O workflow roda em alterações do site na `main` e após o sucesso de
-**Release installers**. Releases incompletas bloqueiam a publicação do site.
+O workflow roda em alterações do site na `main` e por disparo explícito de
+**Release installers**, depois de publicar uma release validada. Esse disparo
+seleciona a `main`, mesmo com `develop` como branch padrão do repositório.
+Releases incompletas bloqueiam a publicação do site.
 Os links de download apontam para arquivos da release verificada; nenhuma
 consulta à API do GitHub é necessária no navegador do visitante.
