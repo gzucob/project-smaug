@@ -5,22 +5,31 @@ requests. The root `AGENTS.md` remains in force.
 
 ## Branches
 
-- The default branch is `main`. It is protected and accepts changes only
-  through pull requests and squash merges; never push directly to it.
+- The default development branch is `develop`; `main` contains released code.
+  Both branches are protected and accept changes only through pull requests.
+  Never push directly to either branch.
 - Working branch prefixes are `feat/`, `fix/`, `refactor/`, `test/`, `chore/`
   and `docs/`.
 - Use a short technical kebab-case scope, preferably under 40 characters.
 - Keep one logical unit of work per branch. Split unrelated concerns.
-- Create a branch from an up-to-date `main`:
+- Create a work branch from an up-to-date `develop`:
 
 ```bash
-git checkout main
+git checkout develop
 git pull
 git checkout -b <prefix>/<scope>
 ```
 
 - Fix CI failures on the same branch and pull request.
-- After a squash merge, update local `main` and delete the local branch.
+- Squash each work PR into `develop`. After merge, update local `develop` and
+  delete only the merged work branch.
+- Promote a release with a PR from `develop` to `main`, using a merge commit
+  to preserve ancestry. Never squash release PRs or delete either long-lived
+  branch. Synchronize `develop` with the released `main` before starting the
+  next development cycle; do not rewrite shared history.
+- CI runs on pushes and PRs to both branches. A successful push CI on `main`
+  automatically publishes the release; `develop` never publishes a stable
+  release. Website publication always checks out `main`.
 
 ## Quality Gate
 
@@ -52,15 +61,19 @@ For front-end changes, also follow the gate in `frontend/AGENTS.md`.
 
 ```bash
 git push -u origin <branch>
-gh pr create --base main --head <branch> --title "..." --body "..."
+gh pr create --base develop --head <branch> --title "..." --body "..."
 ```
 
 - Push after every commit so CI runs on the current state.
-- Merge with squash and delete the remote branch:
+- Merge work PRs with squash and delete the remote work branch:
 
 ```bash
 gh pr merge --squash --delete-branch
 ```
+
+- Release PRs use `gh pr merge --merge` without `--delete-branch`.
+- Each phase in an approved implementation plan is one logical commit and one
+  work PR to `develop`. A release PR groups completed phases for publication.
 
 ## Issues
 

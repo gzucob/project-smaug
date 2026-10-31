@@ -4,10 +4,6 @@ on:
   push:
     branches: [main]
     paths: ['website/**', '.github/workflows/pages.yml']
-  workflow_run:
-    workflows: [Release installers]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -19,11 +15,7 @@ concurrency:
 
 jobs:
   build:
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name != 'workflow_run' ||
-       (github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.head_repository.full_name == github.repository))
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
