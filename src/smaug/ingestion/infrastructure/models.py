@@ -20,6 +20,67 @@ from pydantic import Field
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
 
+class SourceInputArchiveDocument(Document):
+    """Only fully validated, fully persisted archive versions are admitted."""
+
+    artifact_id: str
+    parser_version: str
+    sha256: str
+    byte_size: int
+    source_url: str
+    dataset: str
+    year: int
+    observed_at: datetime
+    member_counts: dict[str, int]
+    validation: str
+    acquisition: str
+    downloaded_at: datetime | None = None
+    etag: str | None = None
+    last_modified: str | None = None
+    price_basis: str | None = None
+
+    class Settings:
+        name = "source_input_archives"
+        indexes = [
+            IndexModel([("artifact_id", 1), ("parser_version", 1)], unique=True),
+            IndexModel([("dataset", 1), ("year", 1), ("observed_at", -1)]),
+        ]
+
+
+class SourceInputRowDocument(Document):
+    """Lossless source fields, indexed without choosing a financial basis."""
+
+    artifact_id: str
+    parser_version: str
+    member: str
+    ordinal: int
+    dataset: str
+    year: int
+    fields: dict[str, str]
+    columns: list[str]
+    cells: list[str]
+    column_count_mismatch: bool
+    code: str
+    session: str | None = None
+    cnpj: str | None = None
+
+    class Settings:
+        name = "source_input_rows"
+        indexes = [
+            IndexModel(
+                [
+                    ("artifact_id", 1),
+                    ("parser_version", 1),
+                    ("member", 1),
+                    ("ordinal", 1),
+                ],
+                unique=True,
+            ),
+            IndexModel([("dataset", 1), ("code", 1), ("year", 1), ("session", 1)]),
+            IndexModel([("dataset", 1), ("cnpj", 1), ("year", 1)]),
+        ]
+
+
 class RawIngestionDocument(Document):
     """Stored shape of a raw ingestion snapshot."""
 
