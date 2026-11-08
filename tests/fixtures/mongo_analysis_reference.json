@@ -1,0 +1,5052 @@
+{
+  "analyses": [
+    {
+      "ticker": "PETR3",
+      "classification": {
+        "setor": "Petróleo, Gás e Biocombustíveis",
+        "subsetor": "Petróleo, Gás e Biocombustíveis",
+        "segmento": "Exploração, Refino e Distribuição"
+      },
+      "reference_date": "2015-12-31",
+      "indicators": {
+        "roe": "0.2",
+        "roe_total": "0.2",
+        "roa": "0.12",
+        "roa_total": "0.12",
+        "roic_statutory": "0.1885714285714285714285714286",
+        "net_margin": "0.1333333333333333333333333333",
+        "net_margin_total": "0.1333333333333333333333333333",
+        "gross_margin": "0.3333333333333333333333333333",
+        "ebit_margin": "0.2222222222222222222222222222",
+        "ebitda_margin": "0.3111111111111111111111111111",
+        "asset_turnover": "0.9",
+        "eps": "0.6",
+        "eps_basic": "0.6",
+        "eps_diluted": null,
+        "eps_basic_market": null,
+        "bvps": "3",
+        "net_debt": "100",
+        "cash_equivalents": "100",
+        "current_financial_investments": null,
+        "net_debt_to_ebitda": "0.3571428571428571428571428571",
+        "net_debt_to_ebit": "0.5",
+        "net_debt_to_equity": "0.1666666666666666666666666667",
+        "debt_to_equity": "0.3333333333333333333333333333",
+        "liabilities_to_assets": "0.4",
+        "equity_to_assets": "0.6",
+        "current_ratio": "2",
+        "price_to_cfo": null,
+        "ev_cfo": null,
+        "ev_fcf": null,
+        "cash_ratio": "0.5",
+        "quick_ratio": null,
+        "ev_revenue": null,
+        "tag_along": null,
+        "free_float": null,
+        "price_to_ebitda": null,
+        "cfo_yield": null,
+        "cfo_margin": "0.5555555555555555555555555556",
+        "fcf_margin": "0.3888888888888888888888888889",
+        "cash_conversion": "4.166666666666666666666666667",
+        "capex_to_cfo": "0.3",
+        "revenue_growth": null,
+        "net_income_growth": null,
+        "revenue_cagr_5y": null,
+        "ebitda_cagr_5y": null,
+        "ebit_cagr_5y": null,
+        "net_income_cagr_5y": null,
+        "earnings_yield": null,
+        "pe_basic": null,
+        "pe_diluted": null,
+        "pb": null,
+        "pe_basic_market": null,
+        "psr": null,
+        "price_to_assets": null,
+        "price_to_ebit": null,
+        "price_to_working_capital": null,
+        "dividend_yield": null,
+        "payout_cash_paid_in_period": null,
+        "ev_ebitda": null,
+        "ev_ebit": null,
+        "fcf": "350",
+        "price_to_fcf": null,
+        "fcf_yield": null,
+        "revenue": "900",
+        "costs": null,
+        "net_income": "120",
+        "net_income_total": "120",
+        "distributions_per_security": null,
+        "company_distributions_paid_in_period": null,
+        "total_assets": "1000",
+        "total_liabilities": "400",
+        "current_assets": "400",
+        "noncurrent_assets": null,
+        "current_liabilities": "200",
+        "noncurrent_liabilities": null,
+        "equity": "600",
+        "equity_total": "600",
+        "market_cap": null,
+        "enterprise_value": null,
+        "non_controlling_interests": "0",
+        "shares": "200",
+        "source_account_evidence": [
+          {
+            "field": "total_assets",
+            "statement": "BPA",
+            "status": "mapped",
+            "expected": [
+              "code=1"
+            ],
+            "found": [
+              {
+                "code": "1",
+                "name": "Ativo Total",
+                "value": "1000",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "equity",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "label~patrimonio liquido",
+              "direct child~atribuido ao controlador"
+            ],
+            "found": [
+              {
+                "code": "2.03",
+                "name": "Patrimônio Líquido Consolidado",
+                "value": "600",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "equity_total",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "label~patrimonio liquido"
+            ],
+            "found": [
+              {
+                "code": "2.03",
+                "name": "Patrimônio Líquido Consolidado",
+                "value": "600",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "net_income",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "label~consolidated bottom line",
+              "child~controllers/minority"
+            ],
+            "found": [
+              {
+                "code": "3.11",
+                "name": "Lucro/Prejuízo Consolidado do Período",
+                "value": "120",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "net_income_total",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "label~consolidated bottom line"
+            ],
+            "found": [
+              {
+                "code": "3.11",
+                "name": "Lucro/Prejuízo Consolidado do Período",
+                "value": "120",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "revenue",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "code=3.01"
+            ],
+            "found": [
+              {
+                "code": "3.01",
+                "name": "Receita de Venda de Bens e/ou Serviços",
+                "value": "900",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "costs",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "code=3.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "gross_profit",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "code=3.03"
+            ],
+            "found": [
+              {
+                "code": "3.03",
+                "name": "Resultado Bruto",
+                "value": "300",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "operating_expenses",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "code=3.04"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "income_tax_expense",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "unique top-level label~imposto de renda e contribuicao social"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "ebit",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "code=3.05"
+            ],
+            "found": [
+              {
+                "code": "3.05",
+                "name": "Resultado Antes do Resultado Financeiro",
+                "value": "200",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "eps_diluted",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "code=3.99.02.*",
+              "class label or period-proved single-class per-lot disclosure",
+              "reais_per_share = reais_per_1000_shares / 1000 for per-lot lines",
+              "period_class=ON",
+              "period_class=PN",
+              "component=1*ON"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "missing_cpc41_disclosure",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cfo",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [
+              "selected_quarter=2015-03-31",
+              "selected_quarter=2015-06-30",
+              "selected_quarter=2015-09-30",
+              "selected_quarter=2015-12-31"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(isolate_on_dfc_period_start(cfo)); Q4 = annual - prior YTD",
+            "dependencies": [
+              "cfo[2015-03-31]",
+              "cfo[2015-06-30]",
+              "cfo[2015-09-30]",
+              "cfo[2015-12-31]"
+            ],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "price_to_cfo",
+              "ev_cfo",
+              "ev_fcf",
+              "cfo_yield",
+              "cfo_margin",
+              "fcf_margin",
+              "cash_conversion",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dep_amort",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "scope=6.01",
+              "label~depreciacao/amortizacao/exaustao"
+            ],
+            "found": [
+              {
+                "code": "6.01.01.04",
+                "name": "Depreciação e amortização",
+                "value": "80",
+                "column": null
+              }
+            ],
+            "parent_code": "6.01",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "ebitda_margin",
+              "ebitda_cagr_5y",
+              "net_debt_to_ebitda",
+              "ev_ebitda"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "capex",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [
+              "selected_quarter=2015-03-31",
+              "selected_quarter=2015-06-30",
+              "selected_quarter=2015-09-30",
+              "selected_quarter=2015-12-31"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(isolate_on_dfc_period_start(capex)); Q4 = annual - prior YTD",
+            "dependencies": [
+              "capex[2015-03-31]",
+              "capex[2015-06-30]",
+              "capex[2015-09-30]",
+              "capex[2015-12-31]"
+            ],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "ev_fcf",
+              "fcf_margin",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "fcf",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [],
+            "found": [],
+            "parent_code": null,
+            "formula": "annualize(cfo - capex)",
+            "dependencies": [
+              "cfo",
+              "capex"
+            ],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "ebitda",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [],
+            "found": [],
+            "parent_code": null,
+            "formula": "ebit + dep_amort",
+            "dependencies": [
+              "ebit",
+              "dep_amort"
+            ],
+            "blocker": null,
+            "consumer_indicators": [
+              "ebitda_margin",
+              "ebitda_cagr_5y",
+              "net_debt_to_ebitda",
+              "ev_ebitda"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cash_equivalents",
+            "statement": "BPA",
+            "status": "mapped",
+            "expected": [
+              "code=1.01.01",
+              "or explicit current cash-and-equivalents aggregate"
+            ],
+            "found": [
+              {
+                "code": "1.01.01",
+                "name": "Caixa e Equivalentes de Caixa",
+                "value": "100",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "current_financial_investments",
+            "statement": "BPA",
+            "status": "absent",
+            "expected": [
+              "code=1.01.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "current_financial_investments"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "inventories",
+            "statement": "BPA",
+            "status": "absent",
+            "expected": [
+              "code=1.01.04"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "quick_ratio"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "current_assets",
+            "statement": "BPA",
+            "status": "mapped",
+            "expected": [
+              "code=1.01"
+            ],
+            "found": [
+              {
+                "code": "1.01",
+                "name": "Ativo Circulante",
+                "value": "400",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "current_assets",
+              "current_ratio",
+              "quick_ratio"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "noncurrent_assets",
+            "statement": "BPA",
+            "status": "absent",
+            "expected": [
+              "code=1.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "noncurrent_assets"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "current_liabilities",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "code=2.01"
+            ],
+            "found": [
+              {
+                "code": "2.01",
+                "name": "Passivo Circulante",
+                "value": "200",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "current_liabilities",
+              "current_ratio",
+              "cash_ratio",
+              "quick_ratio"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "noncurrent_liabilities",
+            "statement": "BPP",
+            "status": "absent",
+            "expected": [
+              "code=2.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "noncurrent_liabilities"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "total_debt",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "complete current/non-current perimeter"
+            ],
+            "found": [
+              {
+                "code": "2.01.04",
+                "name": "Empréstimos e Financiamentos",
+                "value": "50",
+                "column": null
+              },
+              {
+                "code": "2.02.01",
+                "name": "Empréstimos e Financiamentos",
+                "value": "150",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": "sum(selected BPP perimeter)",
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dividends_paid",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [
+              "selected_quarter=2015-03-31",
+              "selected_quarter=2015-06-30",
+              "selected_quarter=2015-09-30",
+              "selected_quarter=2015-12-31"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(isolate_on_dfc_period_start(dividends_paid)); Q4 = annual - prior YTD",
+            "dependencies": [
+              "dividends_paid[2015-03-31]",
+              "dividends_paid[2015-06-30]",
+              "dividends_paid[2015-09-30]",
+              "dividends_paid[2015-12-31]"
+            ],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "payout_cash_paid_in_period"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "free_float",
+            "statement": "FRE",
+            "status": "absent",
+            "expected": [
+              "company_total_free_float",
+              "dated_assembly_on_or_before_view"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "free_float"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dividends_paid[2015-03-31]",
+            "statement": "DFC",
+            "status": "absent",
+            "expected": [
+              "period_end=2015-03-31",
+              "period_start=2015-01-01",
+              "resolved_value=None",
+              "financing distribution; or explicit operational payment",
+              "balance_type=con",
+              "period_start_date=2015-01-01",
+              "reference_date=2015-03-31",
+              "document_type=ITR",
+              "version=1"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(nonoverlapping cash distributions to controllers)",
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "payout_cash_paid_in_period"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dividends_paid[2015-06-30]",
+            "statement": "DFC",
+            "status": "absent",
+            "expected": [
+              "period_end=2015-06-30",
+              "period_start=2015-01-01",
+              "resolved_value=None",
+              "financing distribution; or explicit operational payment",
+              "balance_type=con",
+              "period_start_date=2015-01-01",
+              "reference_date=2015-06-30",
+              "document_type=ITR",
+              "version=1"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(nonoverlapping cash distributions to controllers)",
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "payout_cash_paid_in_period"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dividends_paid[2015-09-30]",
+            "statement": "DFC",
+            "status": "absent",
+            "expected": [
+              "period_end=2015-09-30",
+              "period_start=2015-01-01",
+              "resolved_value=None",
+              "financing distribution; or explicit operational payment",
+              "balance_type=con",
+              "period_start_date=2015-01-01",
+              "reference_date=2015-09-30",
+              "document_type=ITR",
+              "version=1"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(nonoverlapping cash distributions to controllers)",
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "payout_cash_paid_in_period"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dividends_paid[2015-12-31]",
+            "statement": "DFC",
+            "status": "absent",
+            "expected": [
+              "period_end=2015-12-31",
+              "period_start=2015-01-01",
+              "resolved_value=None",
+              "financing distribution; or explicit operational payment",
+              "balance_type=con",
+              "period_start_date=2015-01-01",
+              "reference_date=2015-12-31",
+              "document_type=DFP",
+              "version=1"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(nonoverlapping cash distributions to controllers)",
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "payout_cash_paid_in_period"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cfo[2015-03-31]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-03-31",
+              "period_start=2015-01-01",
+              "resolved_value=500",
+              "code=6.01"
+            ],
+            "found": [
+              {
+                "code": "6.01",
+                "name": "Caixa Líquido Atividades Operacionais",
+                "value": "500",
+                "column": null
+              }
+            ],
+            "parent_code": "6.01",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "price_to_cfo",
+              "ev_cfo",
+              "ev_fcf",
+              "cfo_yield",
+              "cfo_margin",
+              "fcf_margin",
+              "cash_conversion",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cfo[2015-06-30]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-06-30",
+              "period_start=2015-01-01",
+              "resolved_value=500",
+              "code=6.01"
+            ],
+            "found": [
+              {
+                "code": "6.01",
+                "name": "Caixa Líquido Atividades Operacionais",
+                "value": "500",
+                "column": null
+              }
+            ],
+            "parent_code": "6.01",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "price_to_cfo",
+              "ev_cfo",
+              "ev_fcf",
+              "cfo_yield",
+              "cfo_margin",
+              "fcf_margin",
+              "cash_conversion",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cfo[2015-09-30]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-09-30",
+              "period_start=2015-01-01",
+              "resolved_value=500",
+              "code=6.01"
+            ],
+            "found": [
+              {
+                "code": "6.01",
+                "name": "Caixa Líquido Atividades Operacionais",
+                "value": "500",
+                "column": null
+              }
+            ],
+            "parent_code": "6.01",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "price_to_cfo",
+              "ev_cfo",
+              "ev_fcf",
+              "cfo_yield",
+              "cfo_margin",
+              "fcf_margin",
+              "cash_conversion",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cfo[2015-12-31]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-12-31",
+              "period_start=2015-01-01",
+              "resolved_value=500",
+              "code=6.01"
+            ],
+            "found": [
+              {
+                "code": "6.01",
+                "name": "Caixa Líquido Atividades Operacionais",
+                "value": "500",
+                "column": null
+              }
+            ],
+            "parent_code": "6.01",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "price_to_cfo",
+              "ev_cfo",
+              "ev_fcf",
+              "cfo_yield",
+              "cfo_margin",
+              "fcf_margin",
+              "cash_conversion",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "capex[2015-03-31]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-03-31",
+              "period_start=2015-01-01",
+              "resolved_value=150",
+              "scope=6.02",
+              "label~imobilizado/intangivel",
+              "cash-out <= 0"
+            ],
+            "found": [
+              {
+                "code": "6.02.01",
+                "name": "Aquisição de Imobilizado",
+                "value": "-150",
+                "column": null
+              }
+            ],
+            "parent_code": "6.02",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "ev_fcf",
+              "fcf_margin",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "capex[2015-06-30]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-06-30",
+              "period_start=2015-01-01",
+              "resolved_value=150",
+              "scope=6.02",
+              "label~imobilizado/intangivel",
+              "cash-out <= 0"
+            ],
+            "found": [
+              {
+                "code": "6.02.01",
+                "name": "Aquisição de Imobilizado",
+                "value": "-150",
+                "column": null
+              }
+            ],
+            "parent_code": "6.02",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "ev_fcf",
+              "fcf_margin",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "capex[2015-09-30]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-09-30",
+              "period_start=2015-01-01",
+              "resolved_value=150",
+              "scope=6.02",
+              "label~imobilizado/intangivel",
+              "cash-out <= 0"
+            ],
+            "found": [
+              {
+                "code": "6.02.01",
+                "name": "Aquisição de Imobilizado",
+                "value": "-150",
+                "column": null
+              }
+            ],
+            "parent_code": "6.02",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "ev_fcf",
+              "fcf_margin",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "capex[2015-12-31]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-12-31",
+              "period_start=2015-01-01",
+              "resolved_value=150",
+              "scope=6.02",
+              "label~imobilizado/intangivel",
+              "cash-out <= 0"
+            ],
+            "found": [
+              {
+                "code": "6.02.01",
+                "name": "Aquisição de Imobilizado",
+                "value": "-150",
+                "column": null
+              }
+            ],
+            "parent_code": "6.02",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "ev_fcf",
+              "fcf_margin",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "tag_along",
+            "statement": "CVM/B3",
+            "status": "absent",
+            "expected": [
+              "missing_tag_along_evidence"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "resolved_tag_along_percent / 100",
+            "dependencies": [],
+            "blocker": "missing_tag_along_evidence",
+            "consumer_indicators": [
+              "tag_along"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "eps_basic",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [
+              "net_income=120",
+              "shares=200",
+              "shares_basis=selected_closing_total_unit_equivalent"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "net_income / shares",
+            "dependencies": [
+              "net_income",
+              "shares"
+            ],
+            "blocker": null,
+            "consumer_indicators": [
+              "eps",
+              "eps_basic",
+              "pe_basic",
+              "earnings_yield"
+            ],
+            "duplicates_discarded": 0
+          }
+        ],
+        "cpc41_window_provenance": {
+          "selected_periods": [
+            {
+              "reference_date": "2015-03-31",
+              "disclosure_status": "absent",
+              "class_status": "absent",
+              "multiplier_status": "absent",
+              "multiplier": null,
+              "basic_weighted_shares": null,
+              "basic_weighted_shares_status": "absent",
+              "diluted_weighted_shares": null,
+              "diluted_weighted_shares_status": "absent",
+              "basic_blocker": "missing_cpc41_disclosure",
+              "diluted_blocker": "missing_cpc41_disclosure",
+              "source_accounts": [
+                {
+                  "module": "DRE",
+                  "code": "3.99.01.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*ON",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "basic",
+                  "expected": true
+                },
+                {
+                  "module": "DRE",
+                  "code": "3.99.02.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*ON",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "diluted",
+                  "expected": true
+                }
+              ],
+              "basic_disclosure_status": "absent",
+              "diluted_disclosure_status": "absent",
+              "basic_class_status": "absent",
+              "diluted_class_status": "absent",
+              "basic_multiplier_status": "absent",
+              "diluted_multiplier_status": "absent"
+            },
+            {
+              "reference_date": "2015-06-30",
+              "disclosure_status": "absent",
+              "class_status": "absent",
+              "multiplier_status": "absent",
+              "multiplier": null,
+              "basic_weighted_shares": null,
+              "basic_weighted_shares_status": "absent",
+              "diluted_weighted_shares": null,
+              "diluted_weighted_shares_status": "absent",
+              "basic_blocker": "missing_cpc41_disclosure",
+              "diluted_blocker": "missing_cpc41_disclosure",
+              "source_accounts": [
+                {
+                  "module": "DRE",
+                  "code": "3.99.01.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*ON",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "basic",
+                  "expected": true
+                },
+                {
+                  "module": "DRE",
+                  "code": "3.99.02.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*ON",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "diluted",
+                  "expected": true
+                }
+              ],
+              "basic_disclosure_status": "absent",
+              "diluted_disclosure_status": "absent",
+              "basic_class_status": "absent",
+              "diluted_class_status": "absent",
+              "basic_multiplier_status": "absent",
+              "diluted_multiplier_status": "absent"
+            },
+            {
+              "reference_date": "2015-09-30",
+              "disclosure_status": "absent",
+              "class_status": "absent",
+              "multiplier_status": "absent",
+              "multiplier": null,
+              "basic_weighted_shares": null,
+              "basic_weighted_shares_status": "absent",
+              "diluted_weighted_shares": null,
+              "diluted_weighted_shares_status": "absent",
+              "basic_blocker": "missing_cpc41_disclosure",
+              "diluted_blocker": "missing_cpc41_disclosure",
+              "source_accounts": [
+                {
+                  "module": "DRE",
+                  "code": "3.99.01.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*ON",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "basic",
+                  "expected": true
+                },
+                {
+                  "module": "DRE",
+                  "code": "3.99.02.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*ON",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "diluted",
+                  "expected": true
+                }
+              ],
+              "basic_disclosure_status": "absent",
+              "diluted_disclosure_status": "absent",
+              "basic_class_status": "absent",
+              "diluted_class_status": "absent",
+              "basic_multiplier_status": "absent",
+              "diluted_multiplier_status": "absent"
+            },
+            {
+              "reference_date": "2015-12-31",
+              "disclosure_status": "absent",
+              "class_status": "absent",
+              "multiplier_status": "absent",
+              "multiplier": null,
+              "basic_weighted_shares": null,
+              "basic_weighted_shares_status": "absent",
+              "diluted_weighted_shares": null,
+              "diluted_weighted_shares_status": "absent",
+              "basic_blocker": "missing_cpc41_disclosure",
+              "diluted_blocker": "missing_cpc41_disclosure",
+              "source_accounts": [
+                {
+                  "module": "DRE",
+                  "code": "3.99.01.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*ON",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "basic",
+                  "expected": true
+                },
+                {
+                  "module": "DRE",
+                  "code": "3.99.02.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*ON",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "diluted",
+                  "expected": true
+                }
+              ],
+              "basic_disclosure_status": "absent",
+              "diluted_disclosure_status": "absent",
+              "basic_class_status": "absent",
+              "diluted_class_status": "absent",
+              "basic_multiplier_status": "absent",
+              "diluted_multiplier_status": "absent"
+            }
+          ],
+          "basic_blocker": "missing_cpc41_disclosure",
+          "diluted_blocker": "missing_cpc41_disclosure"
+        },
+        "null_reasons": {
+          "eps_diluted": "missing_cpc41_disclosure",
+          "current_financial_investments": "source_account_absent",
+          "quick_ratio": "source_account_absent",
+          "tag_along": "missing_tag_along_evidence",
+          "free_float": "source_account_absent",
+          "price_to_cfo": "missing_price",
+          "price_to_ebitda": "missing_price",
+          "cfo_yield": "missing_price",
+          "ev_cfo": "missing_price",
+          "ev_fcf": "missing_price",
+          "ev_revenue": "missing_price",
+          "revenue_growth": "missing_prior_period",
+          "net_income_growth": "missing_prior_period",
+          "revenue_cagr_5y": "insufficient_comparable_history",
+          "ebitda_cagr_5y": "insufficient_comparable_history",
+          "ebit_cagr_5y": "insufficient_comparable_history",
+          "net_income_cagr_5y": "insufficient_comparable_history",
+          "earnings_yield": "missing_price",
+          "pe_basic": "missing_price",
+          "pe_diluted": "missing_cpc41_disclosure",
+          "pb": "missing_price",
+          "psr": "missing_price",
+          "price_to_assets": "missing_price",
+          "price_to_ebit": "missing_price",
+          "price_to_working_capital": "missing_price",
+          "dividend_yield": "missing_price",
+          "payout_cash_paid_in_period": "source_account_absent",
+          "ev_ebitda": "missing_price",
+          "ev_ebit": "missing_price",
+          "price_to_fcf": "missing_price",
+          "fcf_yield": "missing_price",
+          "costs": "source_account_absent",
+          "distributions_per_security": "missing_cash_distributions",
+          "company_distributions_paid_in_period": "source_account_absent",
+          "noncurrent_assets": "source_account_absent",
+          "noncurrent_liabilities": "source_account_absent",
+          "market_cap": "missing_price",
+          "enterprise_value": "missing_price"
+        }
+      },
+      "calculation_contract_version": "last_traded_price_v1",
+      "price": null,
+      "price_source_code": null,
+      "price_source_session": null,
+      "price_as_traded": null,
+      "price_adjusted": null,
+      "price_basis": "b3_latest_close",
+      "share_count_basis": "cvm_latest_filed_outstanding_current_base",
+      "liquidity_basis": "cpc03_cash_and_cash_equivalents",
+      "debt_basis": "cvm_bpp_explicit_interest_bearing",
+      "roic_tax_basis": "br_statutory_34pct",
+      "view": "ttm_live",
+      "filed_regime": "corporate",
+      "regime_source": "filed",
+      "issuer_name": "PETROLEO BRASILEIRO SA PETROBRAS",
+      "cd_cvm": "9512",
+      "cnpj": "33.000.167/0001-01",
+      "debt_evidence": {
+        "regime": "corporate",
+        "regime_source": "filed",
+        "identity_status": "resolved",
+        "used_lines": [
+          {
+            "code": "2.01.04",
+            "name": "Empréstimos e Financiamentos",
+            "value": "50",
+            "role": "current_aggregate",
+            "reason": null,
+            "instrument": "loans_financing"
+          },
+          {
+            "code": "2.02.01",
+            "name": "Empréstimos e Financiamentos",
+            "value": "150",
+            "role": "non_current_aggregate",
+            "reason": null,
+            "instrument": "loans_financing"
+          }
+        ],
+        "excluded_lines": [],
+        "included_instruments": [
+          "2.01.04",
+          "2.02.01"
+        ],
+        "primary_blocker": null,
+        "secondary_blockers": []
+      },
+      "debt_evidence_snapshot": "current",
+      "income_statement": {
+        "revenue": "900",
+        "costs": null,
+        "gross_profit": "300",
+        "operating_expenses": null,
+        "ebitda": "280",
+        "dep_amort": "80",
+        "ebit": "200",
+        "income_tax_expense": null,
+        "net_income_total": "120"
+      },
+      "cash_flow_statement": [],
+      "share_class_mappings": [
+        {
+          "class_id": "33.000.167/0001-01:ON",
+          "symbol": "PETR3",
+          "kind": "common",
+          "per_share_class": "ON",
+          "status": "resolved",
+          "economic_rights": "resolved",
+          "resolution_reason": null,
+          "code_evidence": [
+            {
+              "symbol": "PETR3",
+              "filed_years": [
+                2010,
+                2011,
+                2012,
+                2013,
+                2014,
+                2015,
+                2016,
+                2017,
+                2018,
+                2019,
+                2020,
+                2021,
+                2022,
+                2023,
+                2024,
+                2025,
+                2026
+              ],
+              "source": "cvm_fca"
+            }
+          ],
+          "evidence": [
+            "cvm_fca.share_class"
+          ]
+        },
+        {
+          "class_id": "33.000.167/0001-01:PN",
+          "symbol": "PETR4",
+          "kind": "preferred",
+          "per_share_class": "PN",
+          "status": "resolved",
+          "economic_rights": "resolved",
+          "resolution_reason": null,
+          "code_evidence": [
+            {
+              "symbol": "PETR4",
+              "filed_years": [
+                2010,
+                2011,
+                2012,
+                2013,
+                2014,
+                2015,
+                2016,
+                2017,
+                2018,
+                2019,
+                2020,
+                2021,
+                2022,
+                2023,
+                2024,
+                2025,
+                2026
+              ],
+              "source": "cvm_fca"
+            }
+          ],
+          "evidence": [
+            "cvm_fca.share_class"
+          ]
+        }
+      ],
+      "class_market_values": [
+        {
+          "class_id": "33.000.167/0001-01:ON",
+          "symbol": "PETR3",
+          "per_share_class": "ON",
+          "price": null,
+          "shares": "100",
+          "value": null,
+          "price_basis": "b3_latest_close",
+          "share_basis": "cvm_latest_filed_outstanding_current_base",
+          "null_reason": "missing_price"
+        },
+        {
+          "class_id": "33.000.167/0001-01:PN",
+          "symbol": "PETR4",
+          "per_share_class": "PN",
+          "price": "8.33",
+          "shares": "100",
+          "value": "833.00",
+          "price_basis": "b3_latest_close",
+          "share_basis": "cvm_latest_filed_outstanding_current_base",
+          "null_reason": null
+        }
+      ],
+      "capital_provenance": {
+        "requested_year": 2015,
+        "filed_year": 2015,
+        "status": "missing_treasury_composition",
+        "source": "cvm_fre",
+        "issued": {
+          "common": "100",
+          "preferred": "100",
+          "total": "200",
+          "preferred_a": null,
+          "preferred_b": null,
+          "preferred_other": null
+        },
+        "outstanding": null,
+        "treasury": null,
+        "restatement_factor": "1",
+        "actions": [],
+        "evidence": [
+          "cvm_fre.issued",
+          "cvm_dfp.treasury_unreconciled"
+        ],
+        "b3_reconciliation": {
+          "fetched": 0,
+          "accepted": 0,
+          "rejected": 0,
+          "deduplicated": 0,
+          "conflicting": 0,
+          "rows": []
+        }
+      },
+      "governance": {
+        "ipo_date": "2015-01-01",
+        "listing_segment": null,
+        "listing_observed_on": null,
+        "listing_source": null,
+        "tag_along": null,
+        "tag_along_source": null,
+        "tag_along_reference": null,
+        "blocker": "missing_tag_along_evidence"
+      }
+    },
+    {
+      "ticker": "PETR3",
+      "classification": {
+        "setor": "Petróleo, Gás e Biocombustíveis",
+        "subsetor": "Petróleo, Gás e Biocombustíveis",
+        "segmento": "Exploração, Refino e Distribuição"
+      },
+      "reference_date": "2015-12-31",
+      "indicators": {
+        "roe": "0.2",
+        "roe_total": "0.2",
+        "roa": "0.12",
+        "roa_total": "0.12",
+        "roic_statutory": "0.1885714285714285714285714286",
+        "net_margin": "0.1333333333333333333333333333",
+        "net_margin_total": "0.1333333333333333333333333333",
+        "gross_margin": "0.3333333333333333333333333333",
+        "ebit_margin": "0.2222222222222222222222222222",
+        "ebitda_margin": "0.3111111111111111111111111111",
+        "asset_turnover": "0.9",
+        "eps": "0.6",
+        "eps_basic": "0.6",
+        "eps_diluted": null,
+        "eps_basic_market": null,
+        "bvps": "3",
+        "net_debt": "100",
+        "cash_equivalents": "100",
+        "current_financial_investments": null,
+        "net_debt_to_ebitda": "0.3571428571428571428571428571",
+        "net_debt_to_ebit": "0.5",
+        "net_debt_to_equity": "0.1666666666666666666666666667",
+        "debt_to_equity": "0.3333333333333333333333333333",
+        "liabilities_to_assets": "0.4",
+        "equity_to_assets": "0.6",
+        "current_ratio": "2",
+        "price_to_cfo": null,
+        "ev_cfo": null,
+        "ev_fcf": null,
+        "cash_ratio": "0.5",
+        "quick_ratio": null,
+        "ev_revenue": null,
+        "tag_along": null,
+        "free_float": null,
+        "price_to_ebitda": null,
+        "cfo_yield": null,
+        "cfo_margin": "0.5555555555555555555555555556",
+        "fcf_margin": "0.3888888888888888888888888889",
+        "cash_conversion": "4.166666666666666666666666667",
+        "capex_to_cfo": "0.3",
+        "revenue_growth": null,
+        "net_income_growth": null,
+        "revenue_cagr_5y": null,
+        "ebitda_cagr_5y": null,
+        "ebit_cagr_5y": null,
+        "net_income_cagr_5y": null,
+        "earnings_yield": null,
+        "pe_basic": null,
+        "pe_diluted": null,
+        "pb": null,
+        "pe_basic_market": null,
+        "psr": null,
+        "price_to_assets": null,
+        "price_to_ebit": null,
+        "price_to_working_capital": null,
+        "dividend_yield": null,
+        "payout_cash_paid_in_period": null,
+        "ev_ebitda": null,
+        "ev_ebit": null,
+        "fcf": "350",
+        "price_to_fcf": null,
+        "fcf_yield": null,
+        "revenue": "900",
+        "costs": null,
+        "net_income": "120",
+        "net_income_total": "120",
+        "distributions_per_security": null,
+        "company_distributions_paid_in_period": null,
+        "total_assets": "1000",
+        "total_liabilities": "400",
+        "current_assets": "400",
+        "noncurrent_assets": null,
+        "current_liabilities": "200",
+        "noncurrent_liabilities": null,
+        "equity": "600",
+        "equity_total": "600",
+        "market_cap": null,
+        "enterprise_value": null,
+        "non_controlling_interests": "0",
+        "shares": "200",
+        "source_account_evidence": [
+          {
+            "field": "total_assets",
+            "statement": "BPA",
+            "status": "mapped",
+            "expected": [
+              "code=1"
+            ],
+            "found": [
+              {
+                "code": "1",
+                "name": "Ativo Total",
+                "value": "1000",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "equity",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "label~patrimonio liquido",
+              "direct child~atribuido ao controlador"
+            ],
+            "found": [
+              {
+                "code": "2.03",
+                "name": "Patrimônio Líquido Consolidado",
+                "value": "600",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "equity_total",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "label~patrimonio liquido"
+            ],
+            "found": [
+              {
+                "code": "2.03",
+                "name": "Patrimônio Líquido Consolidado",
+                "value": "600",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "net_income",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "label~consolidated bottom line",
+              "child~controllers/minority"
+            ],
+            "found": [
+              {
+                "code": "3.11",
+                "name": "Lucro/Prejuízo Consolidado do Período",
+                "value": "120",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "net_income_total",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "label~consolidated bottom line"
+            ],
+            "found": [
+              {
+                "code": "3.11",
+                "name": "Lucro/Prejuízo Consolidado do Período",
+                "value": "120",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "revenue",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "code=3.01"
+            ],
+            "found": [
+              {
+                "code": "3.01",
+                "name": "Receita de Venda de Bens e/ou Serviços",
+                "value": "900",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "costs",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "code=3.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "gross_profit",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "code=3.03"
+            ],
+            "found": [
+              {
+                "code": "3.03",
+                "name": "Resultado Bruto",
+                "value": "300",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "operating_expenses",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "code=3.04"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "income_tax_expense",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "unique top-level label~imposto de renda e contribuicao social"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "ebit",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "code=3.05"
+            ],
+            "found": [
+              {
+                "code": "3.05",
+                "name": "Resultado Antes do Resultado Financeiro",
+                "value": "200",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "eps_diluted",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "code=3.99.02.*",
+              "class label or period-proved single-class per-lot disclosure",
+              "reais_per_share = reais_per_1000_shares / 1000 for per-lot lines",
+              "period_class=ON",
+              "period_class=PN",
+              "component=1*ON"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "missing_cpc41_disclosure",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cfo",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "code=6.01"
+            ],
+            "found": [
+              {
+                "code": "6.01",
+                "name": "Caixa Líquido Atividades Operacionais",
+                "value": "500",
+                "column": null
+              }
+            ],
+            "parent_code": "6.01",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "price_to_cfo",
+              "ev_cfo",
+              "ev_fcf",
+              "cfo_yield",
+              "cfo_margin",
+              "fcf_margin",
+              "cash_conversion",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dep_amort",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "scope=6.01",
+              "label~depreciacao/amortizacao/exaustao"
+            ],
+            "found": [
+              {
+                "code": "6.01.01.04",
+                "name": "Depreciação e amortização",
+                "value": "80",
+                "column": null
+              }
+            ],
+            "parent_code": "6.01",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "ebitda_margin",
+              "ebitda_cagr_5y",
+              "net_debt_to_ebitda",
+              "ev_ebitda"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "capex",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "scope=6.02",
+              "label~imobilizado/intangivel",
+              "cash-out <= 0"
+            ],
+            "found": [
+              {
+                "code": "6.02.01",
+                "name": "Aquisição de Imobilizado",
+                "value": "-150",
+                "column": null
+              }
+            ],
+            "parent_code": "6.02",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "ev_fcf",
+              "fcf_margin",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "fcf",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [],
+            "found": [],
+            "parent_code": null,
+            "formula": "annualize(cfo - capex)",
+            "dependencies": [
+              "cfo",
+              "capex"
+            ],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "ebitda",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [],
+            "found": [],
+            "parent_code": null,
+            "formula": "ebit + dep_amort",
+            "dependencies": [
+              "ebit",
+              "dep_amort"
+            ],
+            "blocker": null,
+            "consumer_indicators": [
+              "ebitda_margin",
+              "ebitda_cagr_5y",
+              "net_debt_to_ebitda",
+              "ev_ebitda"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cash_equivalents",
+            "statement": "BPA",
+            "status": "mapped",
+            "expected": [
+              "code=1.01.01",
+              "or explicit current cash-and-equivalents aggregate"
+            ],
+            "found": [
+              {
+                "code": "1.01.01",
+                "name": "Caixa e Equivalentes de Caixa",
+                "value": "100",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "current_financial_investments",
+            "statement": "BPA",
+            "status": "absent",
+            "expected": [
+              "code=1.01.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "current_financial_investments"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "inventories",
+            "statement": "BPA",
+            "status": "absent",
+            "expected": [
+              "code=1.01.04"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "quick_ratio"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "current_assets",
+            "statement": "BPA",
+            "status": "mapped",
+            "expected": [
+              "code=1.01"
+            ],
+            "found": [
+              {
+                "code": "1.01",
+                "name": "Ativo Circulante",
+                "value": "400",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "current_assets",
+              "current_ratio",
+              "quick_ratio"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "noncurrent_assets",
+            "statement": "BPA",
+            "status": "absent",
+            "expected": [
+              "code=1.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "noncurrent_assets"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "current_liabilities",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "code=2.01"
+            ],
+            "found": [
+              {
+                "code": "2.01",
+                "name": "Passivo Circulante",
+                "value": "200",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "current_liabilities",
+              "current_ratio",
+              "cash_ratio",
+              "quick_ratio"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "noncurrent_liabilities",
+            "statement": "BPP",
+            "status": "absent",
+            "expected": [
+              "code=2.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "noncurrent_liabilities"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "total_debt",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "complete current/non-current perimeter"
+            ],
+            "found": [
+              {
+                "code": "2.01.04",
+                "name": "Empréstimos e Financiamentos",
+                "value": "50",
+                "column": null
+              },
+              {
+                "code": "2.02.01",
+                "name": "Empréstimos e Financiamentos",
+                "value": "150",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": "sum(selected BPP perimeter)",
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dividends_paid",
+            "statement": "DFC",
+            "status": "absent",
+            "expected": [
+              "financing distribution; or explicit operational payment",
+              "balance_type=con",
+              "period_start_date=2015-01-01",
+              "reference_date=2015-12-31",
+              "document_type=DFP",
+              "version=1"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(nonoverlapping cash distributions to controllers)",
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "payout_cash_paid_in_period"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "free_float",
+            "statement": "FRE",
+            "status": "absent",
+            "expected": [
+              "company_total_free_float",
+              "dated_assembly_on_or_before_view"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "free_float"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "eps_basic",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [
+              "net_income=120",
+              "shares=200",
+              "shares_basis=selected_closing_total_unit_equivalent"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "net_income / shares",
+            "dependencies": [
+              "net_income",
+              "shares"
+            ],
+            "blocker": null,
+            "consumer_indicators": [
+              "eps",
+              "eps_basic",
+              "pe_basic",
+              "earnings_yield"
+            ],
+            "duplicates_discarded": 0
+          }
+        ],
+        "cpc41_window_provenance": null,
+        "null_reasons": {
+          "eps_diluted": "missing_cpc41_disclosure",
+          "current_financial_investments": "source_account_absent",
+          "quick_ratio": "source_account_absent",
+          "tag_along": "current_only_indicator",
+          "free_float": "source_account_absent",
+          "price_to_cfo": "missing_price",
+          "price_to_ebitda": "missing_price",
+          "cfo_yield": "missing_price",
+          "ev_cfo": "missing_price",
+          "ev_fcf": "missing_price",
+          "ev_revenue": "missing_price",
+          "revenue_growth": "missing_prior_period",
+          "net_income_growth": "missing_prior_period",
+          "revenue_cagr_5y": "insufficient_comparable_history",
+          "ebitda_cagr_5y": "insufficient_comparable_history",
+          "ebit_cagr_5y": "insufficient_comparable_history",
+          "net_income_cagr_5y": "insufficient_comparable_history",
+          "earnings_yield": "missing_price",
+          "pe_basic": "missing_price",
+          "pe_diluted": "missing_cpc41_disclosure",
+          "pb": "missing_price",
+          "psr": "missing_price",
+          "price_to_assets": "missing_price",
+          "price_to_ebit": "missing_price",
+          "price_to_working_capital": "missing_price",
+          "dividend_yield": "missing_price",
+          "payout_cash_paid_in_period": "source_account_absent",
+          "ev_ebitda": "missing_price",
+          "ev_ebit": "missing_price",
+          "price_to_fcf": "missing_price",
+          "fcf_yield": "missing_price",
+          "costs": "source_account_absent",
+          "distributions_per_security": "missing_cash_distributions",
+          "company_distributions_paid_in_period": "source_account_absent",
+          "noncurrent_assets": "source_account_absent",
+          "noncurrent_liabilities": "source_account_absent",
+          "market_cap": "missing_price",
+          "enterprise_value": "missing_price"
+        }
+      },
+      "calculation_contract_version": "last_traded_price_v1",
+      "price": null,
+      "price_source_code": null,
+      "price_source_session": null,
+      "price_as_traded": null,
+      "price_adjusted": null,
+      "price_basis": "b3_year_end_close",
+      "share_count_basis": "cvm_year_end_outstanding_current_base",
+      "liquidity_basis": "cpc03_cash_and_cash_equivalents",
+      "debt_basis": "cvm_bpp_explicit_interest_bearing",
+      "roic_tax_basis": "br_statutory_34pct",
+      "view": "closed_year",
+      "filed_regime": "corporate",
+      "regime_source": "filed",
+      "issuer_name": "PETROLEO BRASILEIRO SA PETROBRAS",
+      "cd_cvm": "9512",
+      "cnpj": "33.000.167/0001-01",
+      "debt_evidence": {
+        "regime": "corporate",
+        "regime_source": "filed",
+        "identity_status": "resolved",
+        "used_lines": [
+          {
+            "code": "2.01.04",
+            "name": "Empréstimos e Financiamentos",
+            "value": "50",
+            "role": "current_aggregate",
+            "reason": null,
+            "instrument": "loans_financing"
+          },
+          {
+            "code": "2.02.01",
+            "name": "Empréstimos e Financiamentos",
+            "value": "150",
+            "role": "non_current_aggregate",
+            "reason": null,
+            "instrument": "loans_financing"
+          }
+        ],
+        "excluded_lines": [],
+        "included_instruments": [
+          "2.01.04",
+          "2.02.01"
+        ],
+        "primary_blocker": null,
+        "secondary_blockers": []
+      },
+      "debt_evidence_snapshot": "historical",
+      "income_statement": {
+        "revenue": "900",
+        "costs": null,
+        "gross_profit": "300",
+        "operating_expenses": null,
+        "ebitda": "280",
+        "dep_amort": "80",
+        "ebit": "200",
+        "income_tax_expense": null,
+        "net_income_total": "120"
+      },
+      "cash_flow_statement": [
+        {
+          "code": "6.01",
+          "name": "Caixa Líquido Atividades Operacionais",
+          "value": "500",
+          "column": null
+        },
+        {
+          "code": "6.01.01.04",
+          "name": "Depreciação e amortização",
+          "value": "80",
+          "column": null
+        },
+        {
+          "code": "6.02.01",
+          "name": "Aquisição de Imobilizado",
+          "value": "-150",
+          "column": null
+        }
+      ],
+      "share_class_mappings": [
+        {
+          "class_id": "33.000.167/0001-01:ON",
+          "symbol": "PETR3",
+          "kind": "common",
+          "per_share_class": "ON",
+          "status": "resolved",
+          "economic_rights": "resolved",
+          "resolution_reason": null,
+          "code_evidence": [
+            {
+              "symbol": "PETR3",
+              "filed_years": [
+                2010,
+                2011,
+                2012,
+                2013,
+                2014,
+                2015,
+                2016,
+                2017,
+                2018,
+                2019,
+                2020,
+                2021,
+                2022,
+                2023,
+                2024,
+                2025,
+                2026
+              ],
+              "source": "cvm_fca"
+            }
+          ],
+          "evidence": [
+            "cvm_fca.share_class"
+          ]
+        },
+        {
+          "class_id": "33.000.167/0001-01:PN",
+          "symbol": "PETR4",
+          "kind": "preferred",
+          "per_share_class": "PN",
+          "status": "resolved",
+          "economic_rights": "resolved",
+          "resolution_reason": null,
+          "code_evidence": [
+            {
+              "symbol": "PETR4",
+              "filed_years": [
+                2010,
+                2011,
+                2012,
+                2013,
+                2014,
+                2015,
+                2016,
+                2017,
+                2018,
+                2019,
+                2020,
+                2021,
+                2022,
+                2023,
+                2024,
+                2025,
+                2026
+              ],
+              "source": "cvm_fca"
+            }
+          ],
+          "evidence": [
+            "cvm_fca.share_class"
+          ]
+        }
+      ],
+      "class_market_values": [
+        {
+          "class_id": "33.000.167/0001-01:ON",
+          "symbol": "PETR3",
+          "per_share_class": "ON",
+          "price": null,
+          "shares": "100",
+          "value": null,
+          "price_basis": "b3_year_end_close",
+          "share_basis": "cvm_year_end_outstanding_current_base",
+          "null_reason": "missing_price"
+        },
+        {
+          "class_id": "33.000.167/0001-01:PN",
+          "symbol": "PETR4",
+          "per_share_class": "PN",
+          "price": "8.33",
+          "shares": "100",
+          "value": "833.00",
+          "price_basis": "b3_year_end_close",
+          "share_basis": "cvm_year_end_outstanding_current_base",
+          "null_reason": null
+        }
+      ],
+      "capital_provenance": {
+        "requested_year": 2015,
+        "filed_year": 2015,
+        "status": "missing_treasury_composition",
+        "source": "cvm_fre",
+        "issued": {
+          "common": "100",
+          "preferred": "100",
+          "total": "200",
+          "preferred_a": null,
+          "preferred_b": null,
+          "preferred_other": null
+        },
+        "outstanding": null,
+        "treasury": null,
+        "restatement_factor": "1",
+        "actions": [],
+        "evidence": [
+          "cvm_fre.issued",
+          "cvm_dfp.treasury_unreconciled"
+        ],
+        "b3_reconciliation": {
+          "fetched": 0,
+          "accepted": 0,
+          "rejected": 0,
+          "deduplicated": 0,
+          "conflicting": 0,
+          "rows": []
+        }
+      },
+      "governance": {
+        "ipo_date": "2015-01-01",
+        "listing_segment": null,
+        "listing_observed_on": null,
+        "listing_source": null,
+        "tag_along": null,
+        "tag_along_source": null,
+        "tag_along_reference": null,
+        "blocker": "current_only_indicator"
+      }
+    },
+    {
+      "ticker": "PETR4",
+      "classification": {
+        "setor": "Petróleo, Gás e Biocombustíveis",
+        "subsetor": "Petróleo, Gás e Biocombustíveis",
+        "segmento": "Exploração, Refino e Distribuição"
+      },
+      "reference_date": "2015-12-31",
+      "indicators": {
+        "roe": "0.2",
+        "roe_total": "0.2",
+        "roa": "0.12",
+        "roa_total": "0.12",
+        "roic_statutory": "0.1885714285714285714285714286",
+        "net_margin": "0.1333333333333333333333333333",
+        "net_margin_total": "0.1333333333333333333333333333",
+        "gross_margin": "0.3333333333333333333333333333",
+        "ebit_margin": "0.2222222222222222222222222222",
+        "ebitda_margin": "0.3111111111111111111111111111",
+        "asset_turnover": "0.9",
+        "eps": "0.6",
+        "eps_basic": "0.6",
+        "eps_diluted": null,
+        "eps_basic_market": null,
+        "bvps": "3",
+        "net_debt": "100",
+        "cash_equivalents": "100",
+        "current_financial_investments": null,
+        "net_debt_to_ebitda": "0.3571428571428571428571428571",
+        "net_debt_to_ebit": "0.5",
+        "net_debt_to_equity": "0.1666666666666666666666666667",
+        "debt_to_equity": "0.3333333333333333333333333333",
+        "liabilities_to_assets": "0.4",
+        "equity_to_assets": "0.6",
+        "current_ratio": "2",
+        "price_to_cfo": null,
+        "ev_cfo": null,
+        "ev_fcf": null,
+        "cash_ratio": "0.5",
+        "quick_ratio": null,
+        "ev_revenue": null,
+        "tag_along": null,
+        "free_float": null,
+        "price_to_ebitda": null,
+        "cfo_yield": null,
+        "cfo_margin": "0.5555555555555555555555555556",
+        "fcf_margin": "0.3888888888888888888888888889",
+        "cash_conversion": "4.166666666666666666666666667",
+        "capex_to_cfo": "0.3",
+        "revenue_growth": null,
+        "net_income_growth": null,
+        "revenue_cagr_5y": null,
+        "ebitda_cagr_5y": null,
+        "ebit_cagr_5y": null,
+        "net_income_cagr_5y": null,
+        "earnings_yield": "0.07202881152460984393757503001",
+        "pe_basic": "13.88333333333333333333333333",
+        "pe_diluted": null,
+        "pb": "2.776666666666666666666666667",
+        "pe_basic_market": null,
+        "psr": null,
+        "price_to_assets": null,
+        "price_to_ebit": null,
+        "price_to_working_capital": null,
+        "dividend_yield": null,
+        "payout_cash_paid_in_period": null,
+        "ev_ebitda": null,
+        "ev_ebit": null,
+        "fcf": "350",
+        "price_to_fcf": null,
+        "fcf_yield": null,
+        "revenue": "900",
+        "costs": null,
+        "net_income": "120",
+        "net_income_total": "120",
+        "distributions_per_security": null,
+        "company_distributions_paid_in_period": null,
+        "total_assets": "1000",
+        "total_liabilities": "400",
+        "current_assets": "400",
+        "noncurrent_assets": null,
+        "current_liabilities": "200",
+        "noncurrent_liabilities": null,
+        "equity": "600",
+        "equity_total": "600",
+        "market_cap": null,
+        "enterprise_value": null,
+        "non_controlling_interests": "0",
+        "shares": "200",
+        "source_account_evidence": [
+          {
+            "field": "total_assets",
+            "statement": "BPA",
+            "status": "mapped",
+            "expected": [
+              "code=1"
+            ],
+            "found": [
+              {
+                "code": "1",
+                "name": "Ativo Total",
+                "value": "1000",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "equity",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "label~patrimonio liquido",
+              "direct child~atribuido ao controlador"
+            ],
+            "found": [
+              {
+                "code": "2.03",
+                "name": "Patrimônio Líquido Consolidado",
+                "value": "600",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "equity_total",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "label~patrimonio liquido"
+            ],
+            "found": [
+              {
+                "code": "2.03",
+                "name": "Patrimônio Líquido Consolidado",
+                "value": "600",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "net_income",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "label~consolidated bottom line",
+              "child~controllers/minority"
+            ],
+            "found": [
+              {
+                "code": "3.11",
+                "name": "Lucro/Prejuízo Consolidado do Período",
+                "value": "120",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "net_income_total",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "label~consolidated bottom line"
+            ],
+            "found": [
+              {
+                "code": "3.11",
+                "name": "Lucro/Prejuízo Consolidado do Período",
+                "value": "120",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "revenue",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "code=3.01"
+            ],
+            "found": [
+              {
+                "code": "3.01",
+                "name": "Receita de Venda de Bens e/ou Serviços",
+                "value": "900",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "costs",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "code=3.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "gross_profit",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "code=3.03"
+            ],
+            "found": [
+              {
+                "code": "3.03",
+                "name": "Resultado Bruto",
+                "value": "300",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "operating_expenses",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "code=3.04"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "income_tax_expense",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "unique top-level label~imposto de renda e contribuicao social"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "ebit",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "code=3.05"
+            ],
+            "found": [
+              {
+                "code": "3.05",
+                "name": "Resultado Antes do Resultado Financeiro",
+                "value": "200",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "eps_diluted",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "code=3.99.02.*",
+              "class label or period-proved single-class per-lot disclosure",
+              "reais_per_share = reais_per_1000_shares / 1000 for per-lot lines",
+              "period_class=ON",
+              "period_class=PN",
+              "component=1*PN"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "missing_cpc41_disclosure",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cfo",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [
+              "selected_quarter=2015-03-31",
+              "selected_quarter=2015-06-30",
+              "selected_quarter=2015-09-30",
+              "selected_quarter=2015-12-31"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(isolate_on_dfc_period_start(cfo)); Q4 = annual - prior YTD",
+            "dependencies": [
+              "cfo[2015-03-31]",
+              "cfo[2015-06-30]",
+              "cfo[2015-09-30]",
+              "cfo[2015-12-31]"
+            ],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "price_to_cfo",
+              "ev_cfo",
+              "ev_fcf",
+              "cfo_yield",
+              "cfo_margin",
+              "fcf_margin",
+              "cash_conversion",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dep_amort",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "scope=6.01",
+              "label~depreciacao/amortizacao/exaustao"
+            ],
+            "found": [
+              {
+                "code": "6.01.01.04",
+                "name": "Depreciação e amortização",
+                "value": "80",
+                "column": null
+              }
+            ],
+            "parent_code": "6.01",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "ebitda_margin",
+              "ebitda_cagr_5y",
+              "net_debt_to_ebitda",
+              "ev_ebitda"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "capex",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [
+              "selected_quarter=2015-03-31",
+              "selected_quarter=2015-06-30",
+              "selected_quarter=2015-09-30",
+              "selected_quarter=2015-12-31"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(isolate_on_dfc_period_start(capex)); Q4 = annual - prior YTD",
+            "dependencies": [
+              "capex[2015-03-31]",
+              "capex[2015-06-30]",
+              "capex[2015-09-30]",
+              "capex[2015-12-31]"
+            ],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "ev_fcf",
+              "fcf_margin",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "fcf",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [],
+            "found": [],
+            "parent_code": null,
+            "formula": "annualize(cfo - capex)",
+            "dependencies": [
+              "cfo",
+              "capex"
+            ],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "ebitda",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [],
+            "found": [],
+            "parent_code": null,
+            "formula": "ebit + dep_amort",
+            "dependencies": [
+              "ebit",
+              "dep_amort"
+            ],
+            "blocker": null,
+            "consumer_indicators": [
+              "ebitda_margin",
+              "ebitda_cagr_5y",
+              "net_debt_to_ebitda",
+              "ev_ebitda"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cash_equivalents",
+            "statement": "BPA",
+            "status": "mapped",
+            "expected": [
+              "code=1.01.01",
+              "or explicit current cash-and-equivalents aggregate"
+            ],
+            "found": [
+              {
+                "code": "1.01.01",
+                "name": "Caixa e Equivalentes de Caixa",
+                "value": "100",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "current_financial_investments",
+            "statement": "BPA",
+            "status": "absent",
+            "expected": [
+              "code=1.01.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "current_financial_investments"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "inventories",
+            "statement": "BPA",
+            "status": "absent",
+            "expected": [
+              "code=1.01.04"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "quick_ratio"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "current_assets",
+            "statement": "BPA",
+            "status": "mapped",
+            "expected": [
+              "code=1.01"
+            ],
+            "found": [
+              {
+                "code": "1.01",
+                "name": "Ativo Circulante",
+                "value": "400",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "current_assets",
+              "current_ratio",
+              "quick_ratio"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "noncurrent_assets",
+            "statement": "BPA",
+            "status": "absent",
+            "expected": [
+              "code=1.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "noncurrent_assets"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "current_liabilities",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "code=2.01"
+            ],
+            "found": [
+              {
+                "code": "2.01",
+                "name": "Passivo Circulante",
+                "value": "200",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "current_liabilities",
+              "current_ratio",
+              "cash_ratio",
+              "quick_ratio"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "noncurrent_liabilities",
+            "statement": "BPP",
+            "status": "absent",
+            "expected": [
+              "code=2.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "noncurrent_liabilities"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "total_debt",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "complete current/non-current perimeter"
+            ],
+            "found": [
+              {
+                "code": "2.01.04",
+                "name": "Empréstimos e Financiamentos",
+                "value": "50",
+                "column": null
+              },
+              {
+                "code": "2.02.01",
+                "name": "Empréstimos e Financiamentos",
+                "value": "150",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": "sum(selected BPP perimeter)",
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dividends_paid",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [
+              "selected_quarter=2015-03-31",
+              "selected_quarter=2015-06-30",
+              "selected_quarter=2015-09-30",
+              "selected_quarter=2015-12-31"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(isolate_on_dfc_period_start(dividends_paid)); Q4 = annual - prior YTD",
+            "dependencies": [
+              "dividends_paid[2015-03-31]",
+              "dividends_paid[2015-06-30]",
+              "dividends_paid[2015-09-30]",
+              "dividends_paid[2015-12-31]"
+            ],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "payout_cash_paid_in_period"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "free_float",
+            "statement": "FRE",
+            "status": "absent",
+            "expected": [
+              "company_total_free_float",
+              "dated_assembly_on_or_before_view"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "free_float"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dividends_paid[2015-03-31]",
+            "statement": "DFC",
+            "status": "absent",
+            "expected": [
+              "period_end=2015-03-31",
+              "period_start=2015-01-01",
+              "resolved_value=None",
+              "financing distribution; or explicit operational payment",
+              "balance_type=con",
+              "period_start_date=2015-01-01",
+              "reference_date=2015-03-31",
+              "document_type=ITR",
+              "version=1"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(nonoverlapping cash distributions to controllers)",
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "payout_cash_paid_in_period"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dividends_paid[2015-06-30]",
+            "statement": "DFC",
+            "status": "absent",
+            "expected": [
+              "period_end=2015-06-30",
+              "period_start=2015-01-01",
+              "resolved_value=None",
+              "financing distribution; or explicit operational payment",
+              "balance_type=con",
+              "period_start_date=2015-01-01",
+              "reference_date=2015-06-30",
+              "document_type=ITR",
+              "version=1"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(nonoverlapping cash distributions to controllers)",
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "payout_cash_paid_in_period"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dividends_paid[2015-09-30]",
+            "statement": "DFC",
+            "status": "absent",
+            "expected": [
+              "period_end=2015-09-30",
+              "period_start=2015-01-01",
+              "resolved_value=None",
+              "financing distribution; or explicit operational payment",
+              "balance_type=con",
+              "period_start_date=2015-01-01",
+              "reference_date=2015-09-30",
+              "document_type=ITR",
+              "version=1"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(nonoverlapping cash distributions to controllers)",
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "payout_cash_paid_in_period"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dividends_paid[2015-12-31]",
+            "statement": "DFC",
+            "status": "absent",
+            "expected": [
+              "period_end=2015-12-31",
+              "period_start=2015-01-01",
+              "resolved_value=None",
+              "financing distribution; or explicit operational payment",
+              "balance_type=con",
+              "period_start_date=2015-01-01",
+              "reference_date=2015-12-31",
+              "document_type=DFP",
+              "version=1"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(nonoverlapping cash distributions to controllers)",
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "payout_cash_paid_in_period"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cfo[2015-03-31]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-03-31",
+              "period_start=2015-01-01",
+              "resolved_value=500",
+              "code=6.01"
+            ],
+            "found": [
+              {
+                "code": "6.01",
+                "name": "Caixa Líquido Atividades Operacionais",
+                "value": "500",
+                "column": null
+              }
+            ],
+            "parent_code": "6.01",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "price_to_cfo",
+              "ev_cfo",
+              "ev_fcf",
+              "cfo_yield",
+              "cfo_margin",
+              "fcf_margin",
+              "cash_conversion",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cfo[2015-06-30]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-06-30",
+              "period_start=2015-01-01",
+              "resolved_value=500",
+              "code=6.01"
+            ],
+            "found": [
+              {
+                "code": "6.01",
+                "name": "Caixa Líquido Atividades Operacionais",
+                "value": "500",
+                "column": null
+              }
+            ],
+            "parent_code": "6.01",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "price_to_cfo",
+              "ev_cfo",
+              "ev_fcf",
+              "cfo_yield",
+              "cfo_margin",
+              "fcf_margin",
+              "cash_conversion",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cfo[2015-09-30]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-09-30",
+              "period_start=2015-01-01",
+              "resolved_value=500",
+              "code=6.01"
+            ],
+            "found": [
+              {
+                "code": "6.01",
+                "name": "Caixa Líquido Atividades Operacionais",
+                "value": "500",
+                "column": null
+              }
+            ],
+            "parent_code": "6.01",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "price_to_cfo",
+              "ev_cfo",
+              "ev_fcf",
+              "cfo_yield",
+              "cfo_margin",
+              "fcf_margin",
+              "cash_conversion",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cfo[2015-12-31]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-12-31",
+              "period_start=2015-01-01",
+              "resolved_value=500",
+              "code=6.01"
+            ],
+            "found": [
+              {
+                "code": "6.01",
+                "name": "Caixa Líquido Atividades Operacionais",
+                "value": "500",
+                "column": null
+              }
+            ],
+            "parent_code": "6.01",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "price_to_cfo",
+              "ev_cfo",
+              "ev_fcf",
+              "cfo_yield",
+              "cfo_margin",
+              "fcf_margin",
+              "cash_conversion",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "capex[2015-03-31]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-03-31",
+              "period_start=2015-01-01",
+              "resolved_value=150",
+              "scope=6.02",
+              "label~imobilizado/intangivel",
+              "cash-out <= 0"
+            ],
+            "found": [
+              {
+                "code": "6.02.01",
+                "name": "Aquisição de Imobilizado",
+                "value": "-150",
+                "column": null
+              }
+            ],
+            "parent_code": "6.02",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "ev_fcf",
+              "fcf_margin",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "capex[2015-06-30]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-06-30",
+              "period_start=2015-01-01",
+              "resolved_value=150",
+              "scope=6.02",
+              "label~imobilizado/intangivel",
+              "cash-out <= 0"
+            ],
+            "found": [
+              {
+                "code": "6.02.01",
+                "name": "Aquisição de Imobilizado",
+                "value": "-150",
+                "column": null
+              }
+            ],
+            "parent_code": "6.02",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "ev_fcf",
+              "fcf_margin",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "capex[2015-09-30]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-09-30",
+              "period_start=2015-01-01",
+              "resolved_value=150",
+              "scope=6.02",
+              "label~imobilizado/intangivel",
+              "cash-out <= 0"
+            ],
+            "found": [
+              {
+                "code": "6.02.01",
+                "name": "Aquisição de Imobilizado",
+                "value": "-150",
+                "column": null
+              }
+            ],
+            "parent_code": "6.02",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "ev_fcf",
+              "fcf_margin",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "capex[2015-12-31]",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "period_end=2015-12-31",
+              "period_start=2015-01-01",
+              "resolved_value=150",
+              "scope=6.02",
+              "label~imobilizado/intangivel",
+              "cash-out <= 0"
+            ],
+            "found": [
+              {
+                "code": "6.02.01",
+                "name": "Aquisição de Imobilizado",
+                "value": "-150",
+                "column": null
+              }
+            ],
+            "parent_code": "6.02",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "ev_fcf",
+              "fcf_margin",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "tag_along",
+            "statement": "CVM/B3",
+            "status": "absent",
+            "expected": [
+              "missing_tag_along_evidence"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "resolved_tag_along_percent / 100",
+            "dependencies": [],
+            "blocker": "missing_tag_along_evidence",
+            "consumer_indicators": [
+              "tag_along"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "eps_basic",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [
+              "net_income=120",
+              "shares=200",
+              "shares_basis=selected_closing_total_unit_equivalent"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "net_income / shares",
+            "dependencies": [
+              "net_income",
+              "shares"
+            ],
+            "blocker": null,
+            "consumer_indicators": [
+              "eps",
+              "eps_basic",
+              "pe_basic",
+              "earnings_yield"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "pe_basic",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [
+              "price=8.33",
+              "eps_basic=0.6",
+              "price_source=B3/COTAHIST",
+              "price_source_code=PETR4",
+              "price_source_session=2015-01-06"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "price / eps_basic",
+            "dependencies": [
+              "eps_basic",
+              "price"
+            ],
+            "blocker": null,
+            "consumer_indicators": [
+              "pe_basic"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "price",
+            "statement": "B3/COTAHIST",
+            "status": "mapped",
+            "expected": [
+              "session=2015-01-06"
+            ],
+            "found": [
+              {
+                "code": "PETR4",
+                "name": "B3 closing price",
+                "value": "8.33",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "pe_basic"
+            ],
+            "duplicates_discarded": 0
+          }
+        ],
+        "cpc41_window_provenance": {
+          "selected_periods": [
+            {
+              "reference_date": "2015-03-31",
+              "disclosure_status": "absent",
+              "class_status": "absent",
+              "multiplier_status": "absent",
+              "multiplier": null,
+              "basic_weighted_shares": null,
+              "basic_weighted_shares_status": "absent",
+              "diluted_weighted_shares": null,
+              "diluted_weighted_shares_status": "absent",
+              "basic_blocker": "missing_cpc41_disclosure",
+              "diluted_blocker": "missing_cpc41_disclosure",
+              "source_accounts": [
+                {
+                  "module": "DRE",
+                  "code": "3.99.01.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*PN",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "basic",
+                  "expected": true
+                },
+                {
+                  "module": "DRE",
+                  "code": "3.99.02.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*PN",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "diluted",
+                  "expected": true
+                }
+              ],
+              "basic_disclosure_status": "absent",
+              "diluted_disclosure_status": "absent",
+              "basic_class_status": "absent",
+              "diluted_class_status": "absent",
+              "basic_multiplier_status": "absent",
+              "diluted_multiplier_status": "absent"
+            },
+            {
+              "reference_date": "2015-06-30",
+              "disclosure_status": "absent",
+              "class_status": "absent",
+              "multiplier_status": "absent",
+              "multiplier": null,
+              "basic_weighted_shares": null,
+              "basic_weighted_shares_status": "absent",
+              "diluted_weighted_shares": null,
+              "diluted_weighted_shares_status": "absent",
+              "basic_blocker": "missing_cpc41_disclosure",
+              "diluted_blocker": "missing_cpc41_disclosure",
+              "source_accounts": [
+                {
+                  "module": "DRE",
+                  "code": "3.99.01.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*PN",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "basic",
+                  "expected": true
+                },
+                {
+                  "module": "DRE",
+                  "code": "3.99.02.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*PN",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "diluted",
+                  "expected": true
+                }
+              ],
+              "basic_disclosure_status": "absent",
+              "diluted_disclosure_status": "absent",
+              "basic_class_status": "absent",
+              "diluted_class_status": "absent",
+              "basic_multiplier_status": "absent",
+              "diluted_multiplier_status": "absent"
+            },
+            {
+              "reference_date": "2015-09-30",
+              "disclosure_status": "absent",
+              "class_status": "absent",
+              "multiplier_status": "absent",
+              "multiplier": null,
+              "basic_weighted_shares": null,
+              "basic_weighted_shares_status": "absent",
+              "diluted_weighted_shares": null,
+              "diluted_weighted_shares_status": "absent",
+              "basic_blocker": "missing_cpc41_disclosure",
+              "diluted_blocker": "missing_cpc41_disclosure",
+              "source_accounts": [
+                {
+                  "module": "DRE",
+                  "code": "3.99.01.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*PN",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "basic",
+                  "expected": true
+                },
+                {
+                  "module": "DRE",
+                  "code": "3.99.02.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*PN",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "diluted",
+                  "expected": true
+                }
+              ],
+              "basic_disclosure_status": "absent",
+              "diluted_disclosure_status": "absent",
+              "basic_class_status": "absent",
+              "diluted_class_status": "absent",
+              "basic_multiplier_status": "absent",
+              "diluted_multiplier_status": "absent"
+            },
+            {
+              "reference_date": "2015-12-31",
+              "disclosure_status": "absent",
+              "class_status": "absent",
+              "multiplier_status": "absent",
+              "multiplier": null,
+              "basic_weighted_shares": null,
+              "basic_weighted_shares_status": "absent",
+              "diluted_weighted_shares": null,
+              "diluted_weighted_shares_status": "absent",
+              "basic_blocker": "missing_cpc41_disclosure",
+              "diluted_blocker": "missing_cpc41_disclosure",
+              "source_accounts": [
+                {
+                  "module": "DRE",
+                  "code": "3.99.01.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*PN",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "basic",
+                  "expected": true
+                },
+                {
+                  "module": "DRE",
+                  "code": "3.99.02.*",
+                  "name": "class label or period-proved single-class per-lot disclosure; reais_per_share = reais_per_1000_shares / 1000 for per-lot lines; period_class=ON; period_class=PN; component=1*PN",
+                  "selection_status": "absent",
+                  "value": null,
+                  "basis": "diluted",
+                  "expected": true
+                }
+              ],
+              "basic_disclosure_status": "absent",
+              "diluted_disclosure_status": "absent",
+              "basic_class_status": "absent",
+              "diluted_class_status": "absent",
+              "basic_multiplier_status": "absent",
+              "diluted_multiplier_status": "absent"
+            }
+          ],
+          "basic_blocker": "missing_cpc41_disclosure",
+          "diluted_blocker": "missing_cpc41_disclosure"
+        },
+        "null_reasons": {
+          "eps_diluted": "missing_cpc41_disclosure",
+          "current_financial_investments": "source_account_absent",
+          "quick_ratio": "source_account_absent",
+          "tag_along": "missing_tag_along_evidence",
+          "free_float": "source_account_absent",
+          "price_to_cfo": "missing_price",
+          "price_to_ebitda": "missing_price",
+          "cfo_yield": "missing_price",
+          "ev_cfo": "missing_price",
+          "ev_fcf": "missing_price",
+          "ev_revenue": "missing_price",
+          "revenue_growth": "insufficient_comparable_history",
+          "net_income_growth": "insufficient_comparable_history",
+          "revenue_cagr_5y": "insufficient_comparable_history",
+          "ebitda_cagr_5y": "insufficient_comparable_history",
+          "ebit_cagr_5y": "insufficient_comparable_history",
+          "net_income_cagr_5y": "insufficient_comparable_history",
+          "pe_diluted": "missing_cpc41_disclosure",
+          "psr": "missing_price",
+          "price_to_assets": "missing_price",
+          "price_to_ebit": "missing_price",
+          "price_to_working_capital": "missing_price",
+          "dividend_yield": "missing_cash_distributions",
+          "payout_cash_paid_in_period": "source_account_absent",
+          "ev_ebitda": "missing_price",
+          "ev_ebit": "missing_price",
+          "price_to_fcf": "missing_price",
+          "fcf_yield": "missing_price",
+          "costs": "source_account_absent",
+          "distributions_per_security": "missing_cash_distributions",
+          "company_distributions_paid_in_period": "source_account_absent",
+          "noncurrent_assets": "source_account_absent",
+          "noncurrent_liabilities": "source_account_absent",
+          "market_cap": "missing_price",
+          "enterprise_value": "missing_price"
+        }
+      },
+      "calculation_contract_version": "last_traded_price_v1",
+      "price": "8.33",
+      "price_source_code": "PETR4",
+      "price_source_session": "2015-01-06",
+      "price_as_traded": "8.33",
+      "price_adjusted": null,
+      "price_basis": "b3_latest_close",
+      "share_count_basis": "cvm_latest_filed_outstanding_current_base",
+      "liquidity_basis": "cpc03_cash_and_cash_equivalents",
+      "debt_basis": "cvm_bpp_explicit_interest_bearing",
+      "roic_tax_basis": "br_statutory_34pct",
+      "view": "ttm_live",
+      "filed_regime": "corporate",
+      "regime_source": "filed",
+      "issuer_name": "PETROLEO BRASILEIRO SA PETROBRAS",
+      "cd_cvm": "9512",
+      "cnpj": "33.000.167/0001-01",
+      "debt_evidence": {
+        "regime": "corporate",
+        "regime_source": "filed",
+        "identity_status": "resolved",
+        "used_lines": [
+          {
+            "code": "2.01.04",
+            "name": "Empréstimos e Financiamentos",
+            "value": "50",
+            "role": "current_aggregate",
+            "reason": null,
+            "instrument": "loans_financing"
+          },
+          {
+            "code": "2.02.01",
+            "name": "Empréstimos e Financiamentos",
+            "value": "150",
+            "role": "non_current_aggregate",
+            "reason": null,
+            "instrument": "loans_financing"
+          }
+        ],
+        "excluded_lines": [],
+        "included_instruments": [
+          "2.01.04",
+          "2.02.01"
+        ],
+        "primary_blocker": null,
+        "secondary_blockers": []
+      },
+      "debt_evidence_snapshot": "current",
+      "income_statement": {
+        "revenue": "900",
+        "costs": null,
+        "gross_profit": "300",
+        "operating_expenses": null,
+        "ebitda": "280",
+        "dep_amort": "80",
+        "ebit": "200",
+        "income_tax_expense": null,
+        "net_income_total": "120"
+      },
+      "cash_flow_statement": [],
+      "share_class_mappings": [
+        {
+          "class_id": "33.000.167/0001-01:ON",
+          "symbol": "PETR3",
+          "kind": "common",
+          "per_share_class": "ON",
+          "status": "resolved",
+          "economic_rights": "resolved",
+          "resolution_reason": null,
+          "code_evidence": [
+            {
+              "symbol": "PETR3",
+              "filed_years": [
+                2010,
+                2011,
+                2012,
+                2013,
+                2014,
+                2015,
+                2016,
+                2017,
+                2018,
+                2019,
+                2020,
+                2021,
+                2022,
+                2023,
+                2024,
+                2025,
+                2026
+              ],
+              "source": "cvm_fca"
+            }
+          ],
+          "evidence": [
+            "cvm_fca.share_class"
+          ]
+        },
+        {
+          "class_id": "33.000.167/0001-01:PN",
+          "symbol": "PETR4",
+          "kind": "preferred",
+          "per_share_class": "PN",
+          "status": "resolved",
+          "economic_rights": "resolved",
+          "resolution_reason": null,
+          "code_evidence": [
+            {
+              "symbol": "PETR4",
+              "filed_years": [
+                2010,
+                2011,
+                2012,
+                2013,
+                2014,
+                2015,
+                2016,
+                2017,
+                2018,
+                2019,
+                2020,
+                2021,
+                2022,
+                2023,
+                2024,
+                2025,
+                2026
+              ],
+              "source": "cvm_fca"
+            }
+          ],
+          "evidence": [
+            "cvm_fca.share_class"
+          ]
+        }
+      ],
+      "class_market_values": [
+        {
+          "class_id": "33.000.167/0001-01:ON",
+          "symbol": "PETR3",
+          "per_share_class": "ON",
+          "price": null,
+          "shares": "100",
+          "value": null,
+          "price_basis": "b3_latest_close",
+          "share_basis": "cvm_latest_filed_outstanding_current_base",
+          "null_reason": "missing_price"
+        },
+        {
+          "class_id": "33.000.167/0001-01:PN",
+          "symbol": "PETR4",
+          "per_share_class": "PN",
+          "price": "8.33",
+          "shares": "100",
+          "value": "833.00",
+          "price_basis": "b3_latest_close",
+          "share_basis": "cvm_latest_filed_outstanding_current_base",
+          "null_reason": null
+        }
+      ],
+      "capital_provenance": {
+        "requested_year": 2015,
+        "filed_year": 2015,
+        "status": "missing_treasury_composition",
+        "source": "cvm_fre",
+        "issued": {
+          "common": "100",
+          "preferred": "100",
+          "total": "200",
+          "preferred_a": null,
+          "preferred_b": null,
+          "preferred_other": null
+        },
+        "outstanding": null,
+        "treasury": null,
+        "restatement_factor": "1",
+        "actions": [],
+        "evidence": [
+          "cvm_fre.issued",
+          "cvm_dfp.treasury_unreconciled"
+        ],
+        "b3_reconciliation": {
+          "fetched": 0,
+          "accepted": 0,
+          "rejected": 0,
+          "deduplicated": 0,
+          "conflicting": 0,
+          "rows": []
+        }
+      },
+      "governance": {
+        "ipo_date": "2015-01-01",
+        "listing_segment": null,
+        "listing_observed_on": null,
+        "listing_source": null,
+        "tag_along": null,
+        "tag_along_source": null,
+        "tag_along_reference": null,
+        "blocker": "missing_tag_along_evidence"
+      }
+    },
+    {
+      "ticker": "PETR4",
+      "classification": {
+        "setor": "Petróleo, Gás e Biocombustíveis",
+        "subsetor": "Petróleo, Gás e Biocombustíveis",
+        "segmento": "Exploração, Refino e Distribuição"
+      },
+      "reference_date": "2015-12-31",
+      "indicators": {
+        "roe": "0.2",
+        "roe_total": "0.2",
+        "roa": "0.12",
+        "roa_total": "0.12",
+        "roic_statutory": "0.1885714285714285714285714286",
+        "net_margin": "0.1333333333333333333333333333",
+        "net_margin_total": "0.1333333333333333333333333333",
+        "gross_margin": "0.3333333333333333333333333333",
+        "ebit_margin": "0.2222222222222222222222222222",
+        "ebitda_margin": "0.3111111111111111111111111111",
+        "asset_turnover": "0.9",
+        "eps": "0.6",
+        "eps_basic": "0.6",
+        "eps_diluted": null,
+        "eps_basic_market": null,
+        "bvps": "3",
+        "net_debt": "100",
+        "cash_equivalents": "100",
+        "current_financial_investments": null,
+        "net_debt_to_ebitda": "0.3571428571428571428571428571",
+        "net_debt_to_ebit": "0.5",
+        "net_debt_to_equity": "0.1666666666666666666666666667",
+        "debt_to_equity": "0.3333333333333333333333333333",
+        "liabilities_to_assets": "0.4",
+        "equity_to_assets": "0.6",
+        "current_ratio": "2",
+        "price_to_cfo": null,
+        "ev_cfo": null,
+        "ev_fcf": null,
+        "cash_ratio": "0.5",
+        "quick_ratio": null,
+        "ev_revenue": null,
+        "tag_along": null,
+        "free_float": null,
+        "price_to_ebitda": null,
+        "cfo_yield": null,
+        "cfo_margin": "0.5555555555555555555555555556",
+        "fcf_margin": "0.3888888888888888888888888889",
+        "cash_conversion": "4.166666666666666666666666667",
+        "capex_to_cfo": "0.3",
+        "revenue_growth": null,
+        "net_income_growth": null,
+        "revenue_cagr_5y": null,
+        "ebitda_cagr_5y": null,
+        "ebit_cagr_5y": null,
+        "net_income_cagr_5y": null,
+        "earnings_yield": "0.07202881152460984393757503001",
+        "pe_basic": "13.88333333333333333333333333",
+        "pe_diluted": null,
+        "pb": "2.776666666666666666666666667",
+        "pe_basic_market": null,
+        "psr": null,
+        "price_to_assets": null,
+        "price_to_ebit": null,
+        "price_to_working_capital": null,
+        "dividend_yield": null,
+        "payout_cash_paid_in_period": null,
+        "ev_ebitda": null,
+        "ev_ebit": null,
+        "fcf": "350",
+        "price_to_fcf": null,
+        "fcf_yield": null,
+        "revenue": "900",
+        "costs": null,
+        "net_income": "120",
+        "net_income_total": "120",
+        "distributions_per_security": null,
+        "company_distributions_paid_in_period": null,
+        "total_assets": "1000",
+        "total_liabilities": "400",
+        "current_assets": "400",
+        "noncurrent_assets": null,
+        "current_liabilities": "200",
+        "noncurrent_liabilities": null,
+        "equity": "600",
+        "equity_total": "600",
+        "market_cap": null,
+        "enterprise_value": null,
+        "non_controlling_interests": "0",
+        "shares": "200",
+        "source_account_evidence": [
+          {
+            "field": "total_assets",
+            "statement": "BPA",
+            "status": "mapped",
+            "expected": [
+              "code=1"
+            ],
+            "found": [
+              {
+                "code": "1",
+                "name": "Ativo Total",
+                "value": "1000",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "equity",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "label~patrimonio liquido",
+              "direct child~atribuido ao controlador"
+            ],
+            "found": [
+              {
+                "code": "2.03",
+                "name": "Patrimônio Líquido Consolidado",
+                "value": "600",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "equity_total",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "label~patrimonio liquido"
+            ],
+            "found": [
+              {
+                "code": "2.03",
+                "name": "Patrimônio Líquido Consolidado",
+                "value": "600",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "net_income",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "label~consolidated bottom line",
+              "child~controllers/minority"
+            ],
+            "found": [
+              {
+                "code": "3.11",
+                "name": "Lucro/Prejuízo Consolidado do Período",
+                "value": "120",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "net_income_total",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "label~consolidated bottom line"
+            ],
+            "found": [
+              {
+                "code": "3.11",
+                "name": "Lucro/Prejuízo Consolidado do Período",
+                "value": "120",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "revenue",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "code=3.01"
+            ],
+            "found": [
+              {
+                "code": "3.01",
+                "name": "Receita de Venda de Bens e/ou Serviços",
+                "value": "900",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "costs",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "code=3.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "gross_profit",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "code=3.03"
+            ],
+            "found": [
+              {
+                "code": "3.03",
+                "name": "Resultado Bruto",
+                "value": "300",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "operating_expenses",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "code=3.04"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "income_tax_expense",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "unique top-level label~imposto de renda e contribuicao social"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "ebit",
+            "statement": "DRE",
+            "status": "mapped",
+            "expected": [
+              "code=3.05"
+            ],
+            "found": [
+              {
+                "code": "3.05",
+                "name": "Resultado Antes do Resultado Financeiro",
+                "value": "200",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "eps_diluted",
+            "statement": "DRE",
+            "status": "absent",
+            "expected": [
+              "code=3.99.02.*",
+              "class label or period-proved single-class per-lot disclosure",
+              "reais_per_share = reais_per_1000_shares / 1000 for per-lot lines",
+              "period_class=ON",
+              "period_class=PN",
+              "component=1*PN"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "missing_cpc41_disclosure",
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cfo",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "code=6.01"
+            ],
+            "found": [
+              {
+                "code": "6.01",
+                "name": "Caixa Líquido Atividades Operacionais",
+                "value": "500",
+                "column": null
+              }
+            ],
+            "parent_code": "6.01",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "price_to_cfo",
+              "ev_cfo",
+              "ev_fcf",
+              "cfo_yield",
+              "cfo_margin",
+              "fcf_margin",
+              "cash_conversion",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dep_amort",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "scope=6.01",
+              "label~depreciacao/amortizacao/exaustao"
+            ],
+            "found": [
+              {
+                "code": "6.01.01.04",
+                "name": "Depreciação e amortização",
+                "value": "80",
+                "column": null
+              }
+            ],
+            "parent_code": "6.01",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "ebitda_margin",
+              "ebitda_cagr_5y",
+              "net_debt_to_ebitda",
+              "ev_ebitda"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "capex",
+            "statement": "DFC",
+            "status": "mapped",
+            "expected": [
+              "scope=6.02",
+              "label~imobilizado/intangivel",
+              "cash-out <= 0"
+            ],
+            "found": [
+              {
+                "code": "6.02.01",
+                "name": "Aquisição de Imobilizado",
+                "value": "-150",
+                "column": null
+              }
+            ],
+            "parent_code": "6.02",
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "fcf",
+              "price_to_fcf",
+              "fcf_yield",
+              "ev_fcf",
+              "fcf_margin",
+              "capex_to_cfo"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "fcf",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [],
+            "found": [],
+            "parent_code": null,
+            "formula": "annualize(cfo - capex)",
+            "dependencies": [
+              "cfo",
+              "capex"
+            ],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "ebitda",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [],
+            "found": [],
+            "parent_code": null,
+            "formula": "ebit + dep_amort",
+            "dependencies": [
+              "ebit",
+              "dep_amort"
+            ],
+            "blocker": null,
+            "consumer_indicators": [
+              "ebitda_margin",
+              "ebitda_cagr_5y",
+              "net_debt_to_ebitda",
+              "ev_ebitda"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "cash_equivalents",
+            "statement": "BPA",
+            "status": "mapped",
+            "expected": [
+              "code=1.01.01",
+              "or explicit current cash-and-equivalents aggregate"
+            ],
+            "found": [
+              {
+                "code": "1.01.01",
+                "name": "Caixa e Equivalentes de Caixa",
+                "value": "100",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "current_financial_investments",
+            "statement": "BPA",
+            "status": "absent",
+            "expected": [
+              "code=1.01.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "current_financial_investments"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "inventories",
+            "statement": "BPA",
+            "status": "absent",
+            "expected": [
+              "code=1.01.04"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "quick_ratio"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "current_assets",
+            "statement": "BPA",
+            "status": "mapped",
+            "expected": [
+              "code=1.01"
+            ],
+            "found": [
+              {
+                "code": "1.01",
+                "name": "Ativo Circulante",
+                "value": "400",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "current_assets",
+              "current_ratio",
+              "quick_ratio"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "noncurrent_assets",
+            "statement": "BPA",
+            "status": "absent",
+            "expected": [
+              "code=1.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "noncurrent_assets"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "current_liabilities",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "code=2.01"
+            ],
+            "found": [
+              {
+                "code": "2.01",
+                "name": "Passivo Circulante",
+                "value": "200",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "current_liabilities",
+              "current_ratio",
+              "cash_ratio",
+              "quick_ratio"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "noncurrent_liabilities",
+            "statement": "BPP",
+            "status": "absent",
+            "expected": [
+              "code=2.02"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "noncurrent_liabilities"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "total_debt",
+            "statement": "BPP",
+            "status": "mapped",
+            "expected": [
+              "complete current/non-current perimeter"
+            ],
+            "found": [
+              {
+                "code": "2.01.04",
+                "name": "Empréstimos e Financiamentos",
+                "value": "50",
+                "column": null
+              },
+              {
+                "code": "2.02.01",
+                "name": "Empréstimos e Financiamentos",
+                "value": "150",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": "sum(selected BPP perimeter)",
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "dividends_paid",
+            "statement": "DFC",
+            "status": "absent",
+            "expected": [
+              "financing distribution; or explicit operational payment",
+              "balance_type=con",
+              "period_start_date=2015-01-01",
+              "reference_date=2015-12-31",
+              "document_type=DFP",
+              "version=1"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "sum(nonoverlapping cash distributions to controllers)",
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "payout_cash_paid_in_period"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "free_float",
+            "statement": "FRE",
+            "status": "absent",
+            "expected": [
+              "company_total_free_float",
+              "dated_assembly_on_or_before_view"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": "source_account_absent",
+            "consumer_indicators": [
+              "free_float"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "eps_basic",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [
+              "net_income=120",
+              "shares=200",
+              "shares_basis=selected_closing_total_unit_equivalent"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "net_income / shares",
+            "dependencies": [
+              "net_income",
+              "shares"
+            ],
+            "blocker": null,
+            "consumer_indicators": [
+              "eps",
+              "eps_basic",
+              "pe_basic",
+              "earnings_yield"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "pe_basic",
+            "statement": "derived",
+            "status": "derived",
+            "expected": [
+              "price=8.33",
+              "eps_basic=0.6",
+              "price_source=B3/COTAHIST",
+              "price_source_code=PETR4",
+              "price_source_session=2015-01-06"
+            ],
+            "found": [],
+            "parent_code": null,
+            "formula": "price / eps_basic",
+            "dependencies": [
+              "eps_basic",
+              "price"
+            ],
+            "blocker": null,
+            "consumer_indicators": [
+              "pe_basic"
+            ],
+            "duplicates_discarded": 0
+          },
+          {
+            "field": "price",
+            "statement": "B3/COTAHIST",
+            "status": "mapped",
+            "expected": [
+              "session=2015-01-06"
+            ],
+            "found": [
+              {
+                "code": "PETR4",
+                "name": "B3 closing price",
+                "value": "8.33",
+                "column": null
+              }
+            ],
+            "parent_code": null,
+            "formula": null,
+            "dependencies": [],
+            "blocker": null,
+            "consumer_indicators": [
+              "pe_basic"
+            ],
+            "duplicates_discarded": 0
+          }
+        ],
+        "cpc41_window_provenance": null,
+        "null_reasons": {
+          "eps_diluted": "missing_cpc41_disclosure",
+          "current_financial_investments": "source_account_absent",
+          "quick_ratio": "source_account_absent",
+          "tag_along": "current_only_indicator",
+          "free_float": "source_account_absent",
+          "price_to_cfo": "missing_price",
+          "price_to_ebitda": "missing_price",
+          "cfo_yield": "missing_price",
+          "ev_cfo": "missing_price",
+          "ev_fcf": "missing_price",
+          "ev_revenue": "missing_price",
+          "revenue_growth": "insufficient_comparable_history",
+          "net_income_growth": "insufficient_comparable_history",
+          "revenue_cagr_5y": "insufficient_comparable_history",
+          "ebitda_cagr_5y": "insufficient_comparable_history",
+          "ebit_cagr_5y": "insufficient_comparable_history",
+          "net_income_cagr_5y": "insufficient_comparable_history",
+          "pe_diluted": "missing_cpc41_disclosure",
+          "psr": "missing_price",
+          "price_to_assets": "missing_price",
+          "price_to_ebit": "missing_price",
+          "price_to_working_capital": "missing_price",
+          "dividend_yield": "missing_cash_distributions",
+          "payout_cash_paid_in_period": "source_account_absent",
+          "ev_ebitda": "missing_price",
+          "ev_ebit": "missing_price",
+          "price_to_fcf": "missing_price",
+          "fcf_yield": "missing_price",
+          "costs": "source_account_absent",
+          "distributions_per_security": "missing_cash_distributions",
+          "company_distributions_paid_in_period": "source_account_absent",
+          "noncurrent_assets": "source_account_absent",
+          "noncurrent_liabilities": "source_account_absent",
+          "market_cap": "missing_price",
+          "enterprise_value": "missing_price"
+        }
+      },
+      "calculation_contract_version": "last_traded_price_v1",
+      "price": "8.33",
+      "price_source_code": "PETR4",
+      "price_source_session": "2015-01-06",
+      "price_as_traded": null,
+      "price_adjusted": null,
+      "price_basis": "b3_year_end_close",
+      "share_count_basis": "cvm_year_end_outstanding_current_base",
+      "liquidity_basis": "cpc03_cash_and_cash_equivalents",
+      "debt_basis": "cvm_bpp_explicit_interest_bearing",
+      "roic_tax_basis": "br_statutory_34pct",
+      "view": "closed_year",
+      "filed_regime": "corporate",
+      "regime_source": "filed",
+      "issuer_name": "PETROLEO BRASILEIRO SA PETROBRAS",
+      "cd_cvm": "9512",
+      "cnpj": "33.000.167/0001-01",
+      "debt_evidence": {
+        "regime": "corporate",
+        "regime_source": "filed",
+        "identity_status": "resolved",
+        "used_lines": [
+          {
+            "code": "2.01.04",
+            "name": "Empréstimos e Financiamentos",
+            "value": "50",
+            "role": "current_aggregate",
+            "reason": null,
+            "instrument": "loans_financing"
+          },
+          {
+            "code": "2.02.01",
+            "name": "Empréstimos e Financiamentos",
+            "value": "150",
+            "role": "non_current_aggregate",
+            "reason": null,
+            "instrument": "loans_financing"
+          }
+        ],
+        "excluded_lines": [],
+        "included_instruments": [
+          "2.01.04",
+          "2.02.01"
+        ],
+        "primary_blocker": null,
+        "secondary_blockers": []
+      },
+      "debt_evidence_snapshot": "historical",
+      "income_statement": {
+        "revenue": "900",
+        "costs": null,
+        "gross_profit": "300",
+        "operating_expenses": null,
+        "ebitda": "280",
+        "dep_amort": "80",
+        "ebit": "200",
+        "income_tax_expense": null,
+        "net_income_total": "120"
+      },
+      "cash_flow_statement": [
+        {
+          "code": "6.01",
+          "name": "Caixa Líquido Atividades Operacionais",
+          "value": "500",
+          "column": null
+        },
+        {
+          "code": "6.01.01.04",
+          "name": "Depreciação e amortização",
+          "value": "80",
+          "column": null
+        },
+        {
+          "code": "6.02.01",
+          "name": "Aquisição de Imobilizado",
+          "value": "-150",
+          "column": null
+        }
+      ],
+      "share_class_mappings": [
+        {
+          "class_id": "33.000.167/0001-01:ON",
+          "symbol": "PETR3",
+          "kind": "common",
+          "per_share_class": "ON",
+          "status": "resolved",
+          "economic_rights": "resolved",
+          "resolution_reason": null,
+          "code_evidence": [
+            {
+              "symbol": "PETR3",
+              "filed_years": [
+                2010,
+                2011,
+                2012,
+                2013,
+                2014,
+                2015,
+                2016,
+                2017,
+                2018,
+                2019,
+                2020,
+                2021,
+                2022,
+                2023,
+                2024,
+                2025,
+                2026
+              ],
+              "source": "cvm_fca"
+            }
+          ],
+          "evidence": [
+            "cvm_fca.share_class"
+          ]
+        },
+        {
+          "class_id": "33.000.167/0001-01:PN",
+          "symbol": "PETR4",
+          "kind": "preferred",
+          "per_share_class": "PN",
+          "status": "resolved",
+          "economic_rights": "resolved",
+          "resolution_reason": null,
+          "code_evidence": [
+            {
+              "symbol": "PETR4",
+              "filed_years": [
+                2010,
+                2011,
+                2012,
+                2013,
+                2014,
+                2015,
+                2016,
+                2017,
+                2018,
+                2019,
+                2020,
+                2021,
+                2022,
+                2023,
+                2024,
+                2025,
+                2026
+              ],
+              "source": "cvm_fca"
+            }
+          ],
+          "evidence": [
+            "cvm_fca.share_class"
+          ]
+        }
+      ],
+      "class_market_values": [
+        {
+          "class_id": "33.000.167/0001-01:ON",
+          "symbol": "PETR3",
+          "per_share_class": "ON",
+          "price": null,
+          "shares": "100",
+          "value": null,
+          "price_basis": "b3_year_end_close",
+          "share_basis": "cvm_year_end_outstanding_current_base",
+          "null_reason": "missing_price"
+        },
+        {
+          "class_id": "33.000.167/0001-01:PN",
+          "symbol": "PETR4",
+          "per_share_class": "PN",
+          "price": "8.33",
+          "shares": "100",
+          "value": "833.00",
+          "price_basis": "b3_year_end_close",
+          "share_basis": "cvm_year_end_outstanding_current_base",
+          "null_reason": null
+        }
+      ],
+      "capital_provenance": {
+        "requested_year": 2015,
+        "filed_year": 2015,
+        "status": "missing_treasury_composition",
+        "source": "cvm_fre",
+        "issued": {
+          "common": "100",
+          "preferred": "100",
+          "total": "200",
+          "preferred_a": null,
+          "preferred_b": null,
+          "preferred_other": null
+        },
+        "outstanding": null,
+        "treasury": null,
+        "restatement_factor": "1",
+        "actions": [],
+        "evidence": [
+          "cvm_fre.issued",
+          "cvm_dfp.treasury_unreconciled"
+        ],
+        "b3_reconciliation": {
+          "fetched": 0,
+          "accepted": 0,
+          "rejected": 0,
+          "deduplicated": 0,
+          "conflicting": 0,
+          "rows": []
+        }
+      },
+      "governance": {
+        "ipo_date": "2015-01-01",
+        "listing_segment": null,
+        "listing_observed_on": null,
+        "listing_source": null,
+        "tag_along": null,
+        "tag_along_source": null,
+        "tag_along_reference": null,
+        "blocker": "current_only_indicator"
+      }
+    }
+  ],
+  "outcomes": [
+    {
+      "ticker": "PETR3",
+      "status": "analyzed",
+      "no_analysis_reason": null,
+      "detail": ""
+    },
+    {
+      "ticker": "PETR4",
+      "status": "analyzed",
+      "no_analysis_reason": null,
+      "detail": ""
+    }
+  ]
+}

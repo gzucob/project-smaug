@@ -196,7 +196,7 @@ def fre(year: int) -> bytes:
 
 
 def cotahist(year: int) -> bytes:
-    records = []
+    records = [(f"00COTAHIST.{year}BOVESPA").ljust(245)]
     for day in (f"{year}0102", f"{year}0630"):
         row = list(" " * 245)
         for start, text in (
@@ -212,6 +212,9 @@ def cotahist(year: int) -> bytes:
         ):
             row[start : start + len(text)] = text
         records.append("".join(row))
+    trailer = list((f"99COTAHIST.{year}BOVESPA").ljust(245))
+    trailer[31:42] = f"{len(records) + 1:011d}"
+    records.append("".join(trailer))
     return archive({f"COTAHIST_A{year}.TXT": ("\n".join(records) + "\n").encode()})
 
 

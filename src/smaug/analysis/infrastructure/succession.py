@@ -34,7 +34,7 @@ from smaug.analysis.domain.succession import (
     joins,
     structural_gap,
 )
-from smaug.analysis.infrastructure.b3_prices import CotahistArchive, YearQuotes
+from smaug.analysis.infrastructure.quote_series import QuoteArchive, YearQuotes
 from smaug.portfolio.domain.securities import (
     RegistrantNamesResolver,
     SiblingCodesResolver,
@@ -79,7 +79,7 @@ class CodeSuccession:
 
     def __init__(
         self,
-        archive: CotahistArchive,
+        archive: QuoteArchive,
         *,
         siblings: SiblingCodesResolver = no_siblings,
         names: RegistrantNamesResolver = no_names,

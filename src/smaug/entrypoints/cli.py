@@ -57,11 +57,7 @@ from smaug.analysis.domain.ports import (
     SharesReader,
 )
 from smaug.analysis.domain.price_refresh import PriceRefreshStatusRepository
-from smaug.analysis.infrastructure.b3_prices import (
-    B3BaseChanges,
-    B3PriceProvider,
-    CotahistArchive,
-)
+from smaug.analysis.infrastructure.b3_prices import CotahistArchive
 from smaug.analysis.infrastructure.dividend_adjusted_price import (
     DividendAdjustedPriceProvider,
 )
@@ -70,6 +66,12 @@ from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
 from smaug.analysis.infrastructure.mongo_dividends import MongoCashEventReader
 from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsReader
 from smaug.analysis.infrastructure.mongo_governance import MongoGovernanceReader
+from smaug.analysis.infrastructure.mongo_prices import MongoCotahistArchive
+from smaug.analysis.infrastructure.quote_series import (
+    B3BaseChanges,
+    B3PriceProvider,
+    QuoteArchive,
+)
 from smaug.analysis.infrastructure.restated_price import RestatedPriceProvider
 from smaug.analysis.infrastructure.sql_price_history import SqlPriceHistoryRepository
 from smaug.analysis.infrastructure.sql_price_refresh import (
@@ -96,7 +98,10 @@ from smaug.ingestion.application.report import (
     TickerReport,
 )
 from smaug.ingestion.application.runs import IngestionRunService
-from smaug.ingestion.application.source_inputs import MirrorSourceInputs
+from smaug.ingestion.application.source_inputs import (
+    MirrorSourceInputs,
+    PrepareSourceInputsUseCase,
+)
 from smaug.ingestion.application.validation import (
     IngestionValidationService,
     RunValidationReporter,
@@ -169,6 +174,9 @@ from smaug.ingestion.infrastructure.repositories import (
     BeanieRawIngestionRepository,
 )
 from smaug.ingestion.infrastructure.routed_source import RoutedDataSource
+from smaug.ingestion.infrastructure.source_input_acquisition import (
+    PublicSourceInputAcquirer,
+)
 from smaug.ingestion.infrastructure.source_inputs import (
     LocalSourceInputReader,
     MongoSourceInputRepository,
@@ -216,12 +224,17 @@ from smaug.portfolio.infrastructure.cvm_registry import (
     CVM_FCA_BASE_URL,
     CvmCompanyRegistry,
 )
-from smaug.portfolio.infrastructure.cvm_securities import CvmSecurityHistory
 from smaug.portfolio.infrastructure.fca_placeholders import (
     FcaPlaceholderRecovery,
     OfficialRegistrant,
     OfficialSecurityCode,
     QuoteSeries,
+)
+from smaug.portfolio.infrastructure.fca_registry import FcaCompanyRegistry
+from smaug.portfolio.infrastructure.mongo_listing import MongoRegistrantResolver
+from smaug.portfolio.infrastructure.mongo_registry import (
+    MongoCompanyRegistry,
+    MongoSecurityHistory,
 )
 from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
 from smaug.shared.build import application_commit
@@ -236,6 +249,7 @@ from smaug.shared.events import EventBus
 from smaug.shared.local_artifacts import LocalSourceArtifactStore
 from smaug.shared.logging import get_logger
 from smaug.shared.preparation import PreparationStep, prepare_data
+from smaug.shared.source_inputs import MongoSourceInputs, SourceCollection
 from smaug.shared.sql_db import create_engine, create_session_factory
 
 app = typer.Typer(help="smaug — CVM/B3 ingestion and indicator analysis.")
@@ -347,7 +361,7 @@ def _resolve_scope(
     return tickers, all_listed or not tickers
 
 
-async def _registry_identities(
+async def _ingestion_registry_identities(
     settings: Settings,
     http: httpx.AsyncClient,
     tickers: tuple[str, ...],
@@ -374,7 +388,44 @@ async def _registry_identities(
         cache_dir=settings.cvm_cache_dir,
         artifact_store=artifact_store,
     )
-    _configure_placeholder_recovery(registry, settings, http)
+    _configure_ingestion_placeholder_recovery(registry, settings, http)
+    identities = await registry.resolve_all(tickers)
+    await _remember_placeholder_report(registry, placeholder_reports)
+    if fca_provenance is not None:
+        _remember_fca_provenance(fca_provenance, await registry.provenance())
+    for ticker in tickers:
+        identity = identities.get(ticker)
+        if identity is None:
+            raise UnknownTickerError(ticker)
+        exclusion = fundamental_exclusion(identity)
+        if exclusion is not None:
+            raise IneligibleInstrumentError(ticker, exclusion)
+    return identities
+
+
+async def _registry_identities(
+    settings: Settings,
+    inputs: MongoSourceInputs,
+    listings: SourceCollection,
+    tickers: tuple[str, ...],
+    fca_provenance: list[FcaSnapshotProvenance] | None = None,
+    placeholder_reports: list[FcaPlaceholderReport] | None = None,
+    fca_year: int | None = None,
+) -> dict[str, CompanyIdentity]:
+    """Resolve every requested ticker via the CVM FCA registry (#212).
+
+    The registry reads the independently configured current FCA snapshot;
+    ``settings.cvm_year`` remains reserved for the accounting archive selected
+    by the caller.
+
+    No hand-picked shortcut: every ticker, including the nine that used to skip
+    this call, resolves through the pinned MongoDB FCA snapshot. A ticker that
+    resolves nowhere is a user error — a typo, or a company CVM does not list.
+    A known security outside current fundamental analysis is rejected separately,
+    naming its FCA type or trading end date (ADR 0053).
+    """
+    registry = MongoCompanyRegistry(inputs, year=fca_year or settings.cvm_fca_year)
+    _configure_placeholder_recovery(registry, inputs, listings)
     identities = await registry.resolve_all(tickers)
     await _remember_placeholder_report(registry, placeholder_reports)
     if fca_provenance is not None:
@@ -625,7 +676,7 @@ async def _cvm_key_maps(
 
     Registry-resolved for every ticker, unconditionally (#212).
     """
-    identities = await _registry_identities(
+    identities = await _ingestion_registry_identities(
         settings,
         http,
         tickers,
@@ -693,6 +744,7 @@ async def _run_prepare(state_file: Path) -> int:
         )
         for batch in batches
     ]
+    steps.insert(0, PreparationStep("source-inputs", _run_prepare_source_inputs))
     steps.extend(
         (
             PreparationStep("analysis", partial(_run_analyze, (), whole_exchange=True)),
@@ -712,6 +764,29 @@ async def _run_prepare(state_file: Path) -> int:
         operation_log=state_file.with_name("preparation.log"),
         progress=partial(print, file=sys.stdout, flush=True),
     )
+
+
+async def _run_prepare_source_inputs() -> int:
+    settings = get_settings()
+    client = await init_database(settings)
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as http:
+            store = LocalSourceArtifactStore(http, settings.source_artifact_dir)
+            use_case = PrepareSourceInputsUseCase(
+                PublicSourceInputAcquirer(
+                    store,
+                    fca_base_url=CVM_FCA_BASE_URL,
+                    b3_base_url=settings.b3_series_base_url,
+                ),
+                MirrorSourceInputs(MongoSourceInputRepository()),
+            )
+            await use_case.execute(
+                fca_through=settings.cvm_fca_year,
+                prices_through=max(settings.cvm_fca_year, date.today().year),
+            )
+        return 0
+    finally:
+        await client.close()
 
 
 async def _verify_prepared_data() -> int:
@@ -1448,7 +1523,7 @@ async def _ingest_one_year(
         recovery = B3ReusedRootRecovery(
             ticker_to_code=code_map,
             ticker_to_cnpj=cnpj_map,
-            tape=_CotahistTapeAdapter(_build_archive(settings, http)),
+            tape=_CotahistTapeAdapter(_build_ingestion_archive(settings, http)),
         )
     source = _build_data_source(
         settings,
@@ -1767,11 +1842,16 @@ async def _run_report(
     settings = get_settings()
     client = await init_database(settings)
     try:
-        async with httpx.AsyncClient(timeout=30.0) as http:
-            if whole_exchange:
-                tickers, identities = await _universe_tickers(settings, http)
-            else:
-                identities = await _registry_identities(settings, http, tickers)
+        inputs = MongoSourceInputs(
+            client[settings.mongo_db]["source_input_archives"],
+            client[settings.mongo_db]["source_input_rows"],
+        )
+        await inputs.pin()
+        listings = client[settings.mongo_db]["raw_ingestions"]
+        if whole_exchange:
+            tickers, identities = await _universe_tickers(settings, inputs, listings)
+        else:
+            identities = await _registry_identities(settings, inputs, listings, tickers)
         use_case = CompletenessReportUseCase(
             repository=BeanieRawIngestionRepository(),
             modules=settings.cvm_modules,
@@ -1871,10 +1951,7 @@ async def _run_price_check(*, force: bool = False) -> int:
 
 async def _security_resolvers(
     settings: Settings,
-    http: httpx.AsyncClient,
-    *,
-    artifact_store: SourceArtifactStore | None = None,
-    snapshot: FcaSnapshotProvenance | None = None,
+    inputs: MongoSourceInputs,
 ) -> tuple[
     SiblingCodesResolver,
     RegistrantNamesResolver,
@@ -1889,17 +1966,12 @@ async def _security_resolvers(
     confirms a code retired before that column existed, against the name B3
     printed beside it (#198).
     """
-    history = CvmSecurityHistory(
-        http,
-        # Through today rather than the mirrored year: a code renamed this year
-        # is named by no earlier archive, and the running year's file is skipped
-        # if CVM has not published it yet.
-        through=max(settings.cvm_fca_year, date.today().year),
-        cache_dir=settings.cvm_cache_dir,
-        artifact_store=artifact_store,
-        snapshot_year=snapshot.year if snapshot is not None else None,
-        snapshot_artifact_id=(snapshot.artifact_id if snapshot is not None else None),
+    revisions = await inputs.pin()
+    through = max(
+        (year for dataset, year in revisions if dataset == "FCA"),
+        default=settings.cvm_fca_year,
     )
+    history = MongoSecurityHistory(inputs, through=through)
     return (
         await history.resolver(),
         await history.names(),
@@ -1908,7 +1980,7 @@ async def _security_resolvers(
     )
 
 
-def _build_archive(
+def _build_ingestion_archive(
     settings: Settings, http: httpx.AsyncClient, *, refresh: bool = False
 ) -> CotahistArchive:
     """B3's quote series — the only thing that prices the analysis (ADR 0041).
@@ -1925,7 +1997,25 @@ def _build_archive(
     )
 
 
+def _build_archive(inputs: MongoSourceInputs) -> MongoCotahistArchive:
+    return MongoCotahistArchive(inputs)
+
+
 def _configure_placeholder_recovery(
+    registry: MongoCompanyRegistry,
+    inputs: MongoSourceInputs,
+    listings: SourceCollection,
+) -> None:
+    registry.set_placeholder_recoverer(
+        FcaPlaceholderRecovery(
+            MongoRegistrantResolver(listings),
+            _CotahistArchiveAdapter(_build_archive(inputs)),
+            snapshot_year=registry.snapshot_year,
+        )
+    )
+
+
+def _configure_ingestion_placeholder_recovery(
     registry: CvmCompanyRegistry,
     settings: Settings,
     http: httpx.AsyncClient,
@@ -1938,7 +2028,7 @@ def _configure_placeholder_recovery(
     setter(
         FcaPlaceholderRecovery(
             _B3RegistrantAdapter(b3),
-            _CotahistArchiveAdapter(_build_archive(settings, http)),
+            _CotahistArchiveAdapter(_build_ingestion_archive(settings, http)),
             snapshot_year=settings.cvm_fca_year,
         )
     )
@@ -1972,7 +2062,7 @@ class _B3RegistrantAdapter:
 class _CotahistArchiveAdapter:
     """Expose the existing COTAHIST reader through the portfolio boundary."""
 
-    archive: CotahistArchive
+    archive: QuoteArchive
 
     async def year(self, year: int) -> Mapping[str, QuoteSeries]:
         values = await self.archive.year(year)
@@ -1983,7 +2073,7 @@ class _CotahistArchiveAdapter:
 class _CotahistTapeAdapter:
     """Expose COTAHIST identity sessions to the targeted ingestion repair."""
 
-    archive: CotahistArchive
+    archive: QuoteArchive
 
     async def at(self, ticker: str, session: date) -> B3TapeObservation | None:
         code = ticker.strip().upper()
@@ -2088,7 +2178,7 @@ def _b3_field(company: B3ListedCompany, field: str) -> str | None:
 
 
 async def _remember_placeholder_report(
-    registry: CvmCompanyRegistry,
+    registry: FcaCompanyRegistry,
     collected: list[FcaPlaceholderReport] | None,
 ) -> None:
     if collected is None:
@@ -2102,7 +2192,7 @@ async def _remember_placeholder_report(
 
 def _build_price_provider(
     shares_reader: SharesReader,
-    archive: CotahistArchive,
+    archive: QuoteArchive,
     cash_events: CashEventReader,
     succession: CodeSuccession,
     unit_resolver: UnitResolver,
@@ -2157,169 +2247,162 @@ async def _run_analyze(
     session_factory = create_session_factory(engine)
     fca_provenance: list[FcaSnapshotProvenance] = []
     try:
-        async with httpx.AsyncClient(timeout=30.0) as http:
-            artifact_store = LocalSourceArtifactStore(
-                http, settings.source_artifact_dir
-            )
-            if whole_exchange or not tickers:
-                tickers, identities = await _universe_tickers(
-                    settings,
-                    http,
-                    fca_provenance=fca_provenance,
-                    artifact_store=artifact_store,
-                )
-            else:
-                identities = await _registry_identities(
-                    settings,
-                    http,
-                    tickers,
-                    artifact_store=artifact_store,
-                    fca_provenance=fca_provenance,
-                )
-            if refresh_prices:
-                existing = await SqlAlchemyAnalysisRepository(
-                    session_factory
-                ).all_latest()
-                tickers = tuple(sorted(a.ticker for a in existing))
-                registry = CvmCompanyRegistry(
-                    http,
-                    year=settings.cvm_fca_year,
-                    cache_dir=settings.cvm_cache_dir,
-                    artifact_store=artifact_store,
-                )
-                _configure_placeholder_recovery(registry, settings, http)
-                identities = await registry.resolve_all(tickers)
-            # The reader keeps a five-value Sector (the internal regime hint); the
-            # stored analysis carries the B3 Classification (ADR 0024). Both are
-            # built from the same resolved identities.
-            registrant = _registrant_resolver(identities)
-            # One reader, wired twice: the use case divides the per-share
-            # indicators by its restated counts, and the price provider divides
-            # the as-traded price by the very same restatement (ADR 0027). The
-            # archive is built first because the reader dates that restatement
-            # off it, and the price provider then shares the same instance.
-            archive = _build_archive(settings, http, refresh=refresh_prices)
-            # One chain of trading codes per security, shared by the two readers
-            # that must not disagree about it: the price averages the joined
-            # sessions and the base-change reader dates the actions filed under
-            # the codes those sessions came from (ADR 0042).
-            (
-                siblings,
-                names,
-                historical_codes,
-                period_share_classes,
-            ) = await _security_resolvers(
+        inputs = MongoSourceInputs(
+            mongo[settings.mongo_db]["source_input_archives"],
+            mongo[settings.mongo_db]["source_input_rows"],
+        )
+        await inputs.pin()
+        listings = mongo[settings.mongo_db]["raw_ingestions"]
+        if whole_exchange or not tickers:
+            tickers, identities = await _universe_tickers(
                 settings,
-                http,
-                artifact_store=artifact_store,
-                snapshot=fca_provenance[0] if fca_provenance else None,
+                inputs,
+                listings,
+                fca_provenance=fca_provenance,
             )
-            succession = CodeSuccession(
-                archive,
-                siblings=siblings,
-                names=names,
-                listed_since=_listed_since_resolver(identities),
+        else:
+            identities = await _registry_identities(
+                settings,
+                inputs,
+                listings,
+                tickers,
+                fca_provenance=fca_provenance,
             )
-            units = _unit_resolver(identities)
-            shares_reader = MongoSharesReader(
-                mongo[settings.mongo_db]["raw_ingestions"],
-                registrant_resolver=registrant,
-                validation_collection=mongo[settings.mongo_db]["ingestion_validations"],
-                # The *candidates*, not the joined chain: a seam the price will
-                # refuse is still the session an action took effect on, and this
-                # is the reader that dates it (ADR 0043).
-                base_changes=B3BaseChanges(archive, codes=succession.candidates),
-                unit_composition_resolver=_unit_composition_resolver(identities),
-                unit_resolver=units,
-            )
-            if price_history_since is not None:
-                history_builder = BuildPriceHistoryUseCase(
-                    SuccessionPriceProvider(
-                        B3PriceProvider(archive),
-                        succession,
-                        timeline=shares_reader.restatement_timeline,
-                    ),
-                    shares_reader,
-                    SqlPriceHistoryRepository(session_factory),
-                )
-                errors = 0
-                for symbol in tickers:
-                    try:
-                        history = await history_builder.execute(
-                            symbol, start_year=price_history_since
-                        )
-                        typer.echo(
-                            f"{symbol}: {len(history.points)} daily closes; "
-                            f"{len(history.gaps)} years without a resolved series"
-                        )
-                    except Exception as exc:
-                        errors += 1
-                        typer.echo(f"{symbol}: error: {exc}", err=True)
-                return 1 if errors else 0
-            cash_events = MongoCashEventReader(
-                mongo[settings.mongo_db]["raw_ingestions"],
-                registrant_resolver=registrant,
-                validation_collection=mongo[settings.mongo_db]["ingestion_validations"],
-            )
-            analysis_repository = SqlAlchemyAnalysisRepository(session_factory)
-            use_case = AnalyzePortfolioUseCase(
-                governance_reader=MongoGovernanceReader(
-                    mongo[settings.mongo_db]["raw_ingestions"],
-                    registrant_resolver=registrant,
-                ),
-                reader=MongoFundamentalsReader(
-                    mongo[settings.mongo_db]["raw_ingestions"],
-                    sector_resolver=_sector_resolver(identities),
-                    registrant_resolver=registrant,
-                    issuer_resolver=_issuer_resolver(identities),
-                    per_share_resolver=_per_share_resolver(identities),
-                    per_share_classes_resolver=_per_share_classes_resolver(identities),
-                    period_share_classes_resolver=period_share_classes,
-                    per_share_rights_reason_resolver=_per_share_rights_reason_resolver(
-                        identities
-                    ),
-                ),
-                price_provider=_build_price_provider(
-                    shares_reader,
-                    archive,
-                    cash_events,
+        if refresh_prices:
+            existing = await SqlAlchemyAnalysisRepository(session_factory).all_latest()
+            tickers = tuple(sorted(a.ticker for a in existing))
+            registry = MongoCompanyRegistry(inputs, year=settings.cvm_fca_year)
+            _configure_placeholder_recovery(registry, inputs, listings)
+            identities = await registry.resolve_all(tickers)
+        # The reader keeps a five-value Sector (the internal regime hint); the
+        # stored analysis carries the B3 Classification (ADR 0024). Both are
+        # built from the same resolved identities.
+        registrant = _registrant_resolver(identities)
+        # One reader, wired twice: the use case divides the per-share
+        # indicators by its restated counts, and the price provider divides
+        # the as-traded price by the very same restatement (ADR 0027). The
+        # archive is built first because the reader dates that restatement
+        # off it, and the price provider then shares the same instance.
+        archive = _build_archive(inputs)
+        # One chain of trading codes per security, shared by the two readers
+        # that must not disagree about it: the price averages the joined
+        # sessions and the base-change reader dates the actions filed under
+        # the codes those sessions came from (ADR 0042).
+        (
+            siblings,
+            names,
+            historical_codes,
+            period_share_classes,
+        ) = await _security_resolvers(
+            settings,
+            inputs,
+        )
+        succession = CodeSuccession(
+            archive,
+            siblings=siblings,
+            names=names,
+            listed_since=_listed_since_resolver(identities),
+        )
+        units = _unit_resolver(identities)
+        shares_reader = MongoSharesReader(
+            mongo[settings.mongo_db]["raw_ingestions"],
+            registrant_resolver=registrant,
+            validation_collection=mongo[settings.mongo_db]["ingestion_validations"],
+            # The *candidates*, not the joined chain: a seam the price will
+            # refuse is still the session an action took effect on, and this
+            # is the reader that dates it (ADR 0043).
+            base_changes=B3BaseChanges(archive, codes=succession.candidates),
+            unit_composition_resolver=_unit_composition_resolver(identities),
+            unit_resolver=units,
+        )
+        if price_history_since is not None:
+            history_builder = BuildPriceHistoryUseCase(
+                SuccessionPriceProvider(
+                    B3PriceProvider(archive),
                     succession,
-                    units,
+                    timeline=shares_reader.restatement_timeline,
                 ),
-                repository=analysis_repository,
-                shares_reader=shares_reader,
-                classification_resolver=_classification_resolver(identities),
-                ipo_date_resolver=_listed_since_resolver(identities),
-                classes_resolver=_classes_resolver(identities),
-                class_mapping_resolver=_class_mappings_resolver(
-                    identities, historical_codes
-                ),
-                cash_event_reader=cash_events,
-                per_share_resolver=_per_share_resolver(identities),
-                outcome_repository=analysis_repository,
+                shares_reader,
+                SqlPriceHistoryRepository(session_factory),
             )
-            if refresh_prices:
-                histories = SqlPriceHistoryRepository(session_factory)
-                builder = BuildPriceHistoryUseCase(
-                    SuccessionPriceProvider(
-                        B3PriceProvider(archive),
-                        succession,
-                        timeline=shares_reader.restatement_timeline,
-                    ),
-                    shares_reader,
-                    histories,
-                )
-                return await RefreshPricesUseCase(
-                    builder,
-                    histories,
-                    analysis_repository,
-                    _build_price_provider(
-                        shares_reader, archive, cash_events, succession, units
-                    ),
-                    use_case,
-                    status_repository=refresh_status_repository,
-                ).execute(tickers)
-            run = await use_case.execute(tickers)
+            errors = 0
+            for symbol in tickers:
+                try:
+                    history = await history_builder.execute(
+                        symbol, start_year=price_history_since
+                    )
+                    typer.echo(
+                        f"{symbol}: {len(history.points)} daily closes; "
+                        f"{len(history.gaps)} years without a resolved series"
+                    )
+                except Exception as exc:
+                    errors += 1
+                    typer.echo(f"{symbol}: error: {exc}", err=True)
+            return 1 if errors else 0
+        cash_events = MongoCashEventReader(
+            mongo[settings.mongo_db]["raw_ingestions"],
+            registrant_resolver=registrant,
+            validation_collection=mongo[settings.mongo_db]["ingestion_validations"],
+        )
+        analysis_repository = SqlAlchemyAnalysisRepository(session_factory)
+        use_case = AnalyzePortfolioUseCase(
+            governance_reader=MongoGovernanceReader(
+                mongo[settings.mongo_db]["raw_ingestions"],
+                registrant_resolver=registrant,
+            ),
+            reader=MongoFundamentalsReader(
+                mongo[settings.mongo_db]["raw_ingestions"],
+                sector_resolver=_sector_resolver(identities),
+                registrant_resolver=registrant,
+                issuer_resolver=_issuer_resolver(identities),
+                per_share_resolver=_per_share_resolver(identities),
+                per_share_classes_resolver=_per_share_classes_resolver(identities),
+                period_share_classes_resolver=period_share_classes,
+                per_share_rights_reason_resolver=_per_share_rights_reason_resolver(
+                    identities
+                ),
+            ),
+            price_provider=_build_price_provider(
+                shares_reader,
+                archive,
+                cash_events,
+                succession,
+                units,
+            ),
+            repository=analysis_repository,
+            shares_reader=shares_reader,
+            classification_resolver=_classification_resolver(identities),
+            ipo_date_resolver=_listed_since_resolver(identities),
+            classes_resolver=_classes_resolver(identities),
+            class_mapping_resolver=_class_mappings_resolver(
+                identities, historical_codes
+            ),
+            cash_event_reader=cash_events,
+            per_share_resolver=_per_share_resolver(identities),
+            outcome_repository=analysis_repository,
+        )
+        if refresh_prices:
+            histories = SqlPriceHistoryRepository(session_factory)
+            builder = BuildPriceHistoryUseCase(
+                SuccessionPriceProvider(
+                    B3PriceProvider(archive),
+                    succession,
+                    timeline=shares_reader.restatement_timeline,
+                ),
+                shares_reader,
+                histories,
+            )
+            return await RefreshPricesUseCase(
+                builder,
+                histories,
+                analysis_repository,
+                _build_price_provider(
+                    shares_reader, archive, cash_events, succession, units
+                ),
+                use_case,
+                status_repository=refresh_status_repository,
+            ).execute(tickers)
+        run = await use_case.execute(tickers)
     finally:
         await mongo.close()
         await engine.dispose()
@@ -2334,9 +2417,9 @@ async def _run_analyze(
 
 async def _universe_tickers(
     settings: Settings,
-    http: httpx.AsyncClient,
+    inputs: MongoSourceInputs,
+    listings: SourceCollection,
     fca_provenance: list[FcaSnapshotProvenance] | None = None,
-    artifact_store: SourceArtifactStore | None = None,
     placeholder_reports: list[FcaPlaceholderReport] | None = None,
 ) -> tuple[tuple[str, ...], dict[str, CompanyIdentity]]:
     """Every traded code, with the identity each resolver needs (#109).
@@ -2350,13 +2433,8 @@ async def _universe_tickers(
     company's ON share would leave the other codes unanswerable — including to
     someone typing one into the search box.
     """
-    registry = CvmCompanyRegistry(
-        http,
-        year=settings.cvm_fca_year,
-        cache_dir=settings.cvm_cache_dir,
-        artifact_store=artifact_store,
-    )
-    _configure_placeholder_recovery(registry, settings, http)
+    registry = MongoCompanyRegistry(inputs, year=settings.cvm_fca_year)
+    _configure_placeholder_recovery(registry, inputs, listings)
     tickers = tuple(sorted(t for c in await registry.companies() for t in c.tickers))
     identities = await registry.resolve_all(tickers)
     await _remember_placeholder_report(registry, placeholder_reports)
@@ -2418,27 +2496,29 @@ async def _run_doctor(
     fca_provenance: list[FcaSnapshotProvenance] = []
     placeholder_reports: list[FcaPlaceholderReport] = []
     try:
-        async with httpx.AsyncClient(timeout=30.0) as http:
-            artifact_store = LocalSourceArtifactStore(
-                http, settings.source_artifact_dir
+        inputs = MongoSourceInputs(
+            mongo[settings.mongo_db]["source_input_archives"],
+            mongo[settings.mongo_db]["source_input_rows"],
+        )
+        await inputs.pin()
+        listings = mongo[settings.mongo_db]["raw_ingestions"]
+        if whole_exchange or not tickers:
+            tickers, identities = await _universe_tickers(
+                settings,
+                inputs,
+                listings,
+                fca_provenance=fca_provenance,
+                placeholder_reports=placeholder_reports,
             )
-            if whole_exchange or not tickers:
-                tickers, identities = await _universe_tickers(
-                    settings,
-                    http,
-                    fca_provenance=fca_provenance,
-                    artifact_store=artifact_store,
-                    placeholder_reports=placeholder_reports,
-                )
-            else:
-                identities = await _registry_identities(
-                    settings,
-                    http,
-                    tickers,
-                    artifact_store=artifact_store,
-                    fca_provenance=fca_provenance,
-                    placeholder_reports=placeholder_reports,
-                )
+        else:
+            identities = await _registry_identities(
+                settings,
+                inputs,
+                listings,
+                tickers,
+                fca_provenance=fca_provenance,
+                placeholder_reports=placeholder_reports,
+            )
         resolver = _sector_resolver(identities)
         use_case = DoctorUseCase(
             SqlAlchemyAnalysisRepository(session_factory), sector_resolver=resolver
@@ -2544,8 +2624,15 @@ async def _run_relink() -> int:
     repository = BeanieRawIngestionRepository()
     try:
         pending = await repository.unlinked_tickers()
-        async with httpx.AsyncClient(timeout=30.0) as http:
-            identities = await _registry_identities(settings, http, pending)
+        identities = await _registry_identities(
+            settings,
+            MongoSourceInputs(
+                client[settings.mongo_db]["source_input_archives"],
+                client[settings.mongo_db]["source_input_rows"],
+            ),
+            client[settings.mongo_db]["raw_ingestions"],
+            pending,
+        )
         report = await RelinkMirrorUseCase(
             repository, registrant_resolver=_registrant_resolver(identities)
         ).execute()
