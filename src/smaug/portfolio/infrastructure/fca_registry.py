@@ -1,0 +1,931 @@
+"""Resolve FCA row identities with shared deterministic selection rules."""
+
+from __future__ import annotations
+
+import asyncio
+import re
+import unicodedata
+from collections.abc import Awaitable, Callable, Iterable, Sequence
+from dataclasses import dataclass, field, replace
+from datetime import date
+
+from smaug.portfolio.domain.company import (
+    CompanyIdentity,
+    InstrumentKind,
+    is_organized_market,
+)
+from smaug.portfolio.domain.fca_placeholders import (
+    OFFICIAL_B3_RECOVERY_EVIDENCE,
+    FcaCodeIssue,
+    FcaPlaceholderFinding,
+    FcaPlaceholderReport,
+    FcaPlaceholderRow,
+    FcaRecoveryResult,
+    FcaRecoveryStatus,
+)
+from smaug.portfolio.domain.provenance import FCA_SOURCE, FcaSnapshotProvenance
+from smaug.portfolio.domain.share_classes import (
+    EconomicRightsStatus,
+    PerShareClass,
+    ShareClass,
+    ShareClassMapping,
+    ShareClassMappingReason,
+    ShareClassMappingStatus,
+    ShareKind,
+    TickerCodeEvidence,
+    UnitComponent,
+    mapping_for_share_class,
+    per_share_class_from_symbol,
+    share_class_id,
+)
+from smaug.portfolio.domain.universe import (
+    ListedCompany,
+    is_trading_code,
+    listed_companies,
+)
+from smaug.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+PlaceholderRecoverer = Callable[
+    [tuple[FcaPlaceholderRow, ...]], Awaitable[FcaRecoveryResult]
+]
+
+CVM_FCA_BASE_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS"
+
+_ENCODING = "latin-1"
+_DELIMITER = ";"
+
+
+@dataclass
+class _Cadastre:
+    """The general-cadastre facts for one company, keyed by CNPJ."""
+
+    cd_cvm: str
+    denom: str
+    cvm_sector: str
+    situation: str
+    version: int
+
+
+@dataclass
+class _Security:
+    """A listed security's CNPJ + whether it is still trading, for one ticker."""
+
+    cnpj: str
+    trading: bool
+    version: int
+    instrument_kind: InstrumentKind
+    instrument_type: str
+    market: str = ""
+    venue: str = ""
+    trading_ended: date | None = None
+    listed_since: date | None = None
+    # Underlying shares this ticker's own row bundles, when the row is a unit
+    # ("Units ..."); ``None`` for a plain ON/PN class.
+    unit_shares: int | None = None
+    unit_components: tuple[UnitComponent, ...] = ()
+    # Distinct CNPJs seen at the same trading/version priority. Keep the chosen
+    # row for diagnostics, but never let the CSV order decide the analysis key.
+    ambiguous_cnpjs: tuple[str, ...] = ()
+
+
+@dataclass
+class _ClassAccumulator:
+    """The ON/PN/PNA/PNB trading symbols a company lists, gathered per class."""
+
+    symbols: dict[PerShareClass, set[str]] = field(default_factory=dict)
+    unresolved: set[PerShareClass] = field(default_factory=set)
+
+    def add(self, kind: ShareKind, symbol: str) -> None:
+        per_share_class = per_share_class_from_symbol(symbol, kind)
+        self.symbols.setdefault(per_share_class, set()).add(symbol)
+
+    def add_unresolved(self, per_share_class: PerShareClass) -> None:
+        self.unresolved.add(per_share_class)
+
+
+def _fold(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
+
+
+def _share_kind(valor_mobiliario: str) -> ShareKind | None:
+    """ON/PN from an FCA ``Valor_Mobiliario`` label; ``None`` for units, BDRs, etc."""
+    label = _fold(valor_mobiliario).strip()
+    if label.startswith("acoes ordinarias"):
+        return ShareKind.COMMON
+    if label.startswith("acoes preferenciais"):
+        return ShareKind.PREFERRED
+    return None
+
+
+def _instrument_kind(valor_mobiliario: str) -> InstrumentKind:
+    """Classify the FCA's security label without consulting the ticker suffix."""
+    share_kind = _share_kind(valor_mobiliario)
+    if share_kind is ShareKind.COMMON:
+        return InstrumentKind.COMMON_SHARE
+    if share_kind is ShareKind.PREFERRED:
+        return InstrumentKind.PREFERRED_SHARE
+    label = _fold(valor_mobiliario).strip()
+    if label.startswith("units"):
+        return InstrumentKind.UNIT
+    if label.startswith("bonus de subscricao"):
+        return InstrumentKind.SUBSCRIPTION_WARRANT
+    if label.startswith("recibos de subscricao"):
+        return InstrumentKind.SUBSCRIPTION_RECEIPT
+    if label.startswith("bdr") or label.startswith("certificados de deposito"):
+        return InstrumentKind.DEPOSITARY_RECEIPT
+    return InstrumentKind.OTHER
+
+
+_UNIT_SEPARATOR_RE = re.compile(r"\s*(?:\+|/|\be\b)\s*")
+_SYMBOL_COMPONENT_RE = re.compile(r"(?P<qty>\d+)\s*(?P<symbol>[a-z0-9]{4}\d{1,2})")
+_TEXT_COMPONENT_RE = re.compile(
+    r"(?P<qty>\d+)\s*(?:(?:acao|acoes)\s+)?"
+    r"(?P<label>ons?|pn[a-z]*s?|ordinari[ao]s?|preferencia(?:l|is))"
+)
+
+
+def _kind_from_suffix(symbol: str) -> ShareKind | None:
+    """ON/PN from a B3 ticker suffix (3 = ON, 4/5/6 = PN); ``None`` for a unit."""
+    suffix = symbol[4:]  # B3 roots are four letters; the rest is the class number
+    if suffix == "3":
+        return ShareKind.COMMON
+    if suffix in ("4", "5", "6"):
+        return ShareKind.PREFERRED
+    return None
+
+
+def _unit_composition(composition: str) -> list[UnitComponent]:
+    """Quantity + underlying ON/PN classes named in a unit's ``Composicao_BDR_Unit``.
+
+    Some companies file only the unit on the FCA (Klabin lists KLBN11, never
+    KLBN3/KLBN4), but the unit row spells its bundle out — e.g. "1 KLBN3 +
+    4 KLBN4". Parse the leading quantity alongside each class ticker, keyed by
+    suffix: the quantities summed are how many underlying shares one unit is
+    worth (#212), which the FRE itself never publishes.
+    """
+    parts = [part for part in _UNIT_SEPARATOR_RE.split(_fold(composition)) if part]
+    resolved: list[UnitComponent] = []
+    for part in parts:
+        symbol_match = _SYMBOL_COMPONENT_RE.fullmatch(part)
+        if symbol_match is not None:
+            symbol = symbol_match.group("symbol").upper()
+            kind = _kind_from_suffix(symbol)
+            if kind is None:
+                return []
+            resolved.append(
+                UnitComponent(
+                    int(symbol_match.group("qty")),
+                    per_share_class_from_symbol(symbol, kind),
+                    symbol,
+                )
+            )
+            continue
+        text_match = _TEXT_COMPONENT_RE.fullmatch(part)
+        if text_match is None:
+            # Refuse a partial reading such as "1 PN + 3 subscription receipts".
+            return []
+        label = text_match.group("label")
+        kind = (
+            ShareKind.COMMON
+            if label.startswith("on") or label.startswith("ordinari")
+            else ShareKind.PREFERRED
+        )
+        preferred_label = label.removesuffix("s").upper()
+        per_share_class = (
+            PerShareClass.ORDINARY
+            if kind is ShareKind.COMMON
+            else {
+                "PNA": PerShareClass.PREFERRED_A,
+                "PNB": PerShareClass.PREFERRED_B,
+            }.get(preferred_label, PerShareClass.PREFERRED)
+        )
+        resolved.append(UnitComponent(int(text_match.group("qty")), per_share_class))
+    return resolved
+
+
+def _resolve_classes(
+    accumulator: _ClassAccumulator,
+) -> tuple[ShareClass, ...]:
+    """The company's ON/PN/PNA/PNB classes, ordered by economic class.
+
+    Only when there is at most one symbol per economic class. Two codes for the
+    same class cannot both multiply its filed count; rather than a wrong cap, an
+    ambiguous company yields no classes (the cap stays a named null).
+    """
+    if any(len(symbols) > 1 for symbols in accumulator.symbols.values()):
+        return ()
+    classes: list[ShareClass] = []
+    for per_share_class in PerShareClass:
+        kind = (
+            ShareKind.COMMON
+            if per_share_class is PerShareClass.ORDINARY
+            else ShareKind.PREFERRED
+        )
+        for symbol in sorted(accumulator.symbols.get(per_share_class, ())):
+            classes.append(ShareClass(symbol=symbol, kind=kind))
+    return tuple(classes)
+
+
+def _resolve_class_mappings(
+    cnpj: str, accumulator: _ClassAccumulator
+) -> tuple[ShareClassMapping, ...]:
+    """Retain resolved and ambiguous class evidence instead of dropping it."""
+    mappings: list[ShareClassMapping] = []
+    for per_share_class in PerShareClass:
+        symbols = tuple(sorted(accumulator.symbols.get(per_share_class, ())))
+        if len(symbols) == 1:
+            symbol = symbols[0]
+            kind = (
+                ShareKind.COMMON
+                if per_share_class is PerShareClass.ORDINARY
+                else ShareKind.PREFERRED
+            )
+            mappings.append(
+                mapping_for_share_class(
+                    cnpj,
+                    ShareClass(symbol=symbol, kind=kind),
+                    code_evidence=(TickerCodeEvidence(symbol=symbol),),
+                )
+            )
+        elif len(symbols) > 1 or per_share_class in accumulator.unresolved:
+            reason = (
+                ShareClassMappingReason.CONFLICTING_FCA_CODES
+                if len(symbols) > 1
+                else ShareClassMappingReason.MISSING_COMPONENT_CODE
+            )
+            mappings.append(
+                ShareClassMapping(
+                    class_id=share_class_id(cnpj, per_share_class),
+                    symbol=None,
+                    kind=(
+                        ShareKind.COMMON
+                        if per_share_class is PerShareClass.ORDINARY
+                        else ShareKind.PREFERRED
+                    ),
+                    per_share_class=per_share_class,
+                    status=ShareClassMappingStatus.UNRESOLVED,
+                    # The suffix/``Valor_Mobiliario`` witness still identifies
+                    # the economic rights (ON/PN); only the code-to-class
+                    # identity is ambiguous. A textual unit component is the
+                    # same: its rights are known even when no quote is named.
+                    economic_rights=EconomicRightsStatus.RESOLVED,
+                    resolution_reason=reason,
+                    code_evidence=tuple(
+                        TickerCodeEvidence(symbol=symbol) for symbol in symbols
+                    ),
+                    evidence=("cvm_fca.ambiguous_share_class",),
+                )
+            )
+    return tuple(mappings)
+
+
+class FcaCompanyRegistry:
+    """Resolve B3 tickers to CVM identities from one FCA snapshot archive."""
+
+    def __init__(self, *, year: int, source_url: str) -> None:
+        self._year = year
+        self._base_url = source_url.rsplit("/", 1)[0]
+        self._index: dict[str, CompanyIdentity] | None = None
+        self._placeholder_recoverer: PlaceholderRecoverer | None = None
+        self._placeholder_report: FcaPlaceholderReport | None = None
+        self._lock = asyncio.Lock()
+
+    async def _ensure_loaded(self) -> dict[str, CompanyIdentity]:
+        raise NotImplementedError
+
+    async def provenance(self) -> FcaSnapshotProvenance:
+        raise NotImplementedError
+
+    @property
+    def snapshot_year(self) -> int:
+        """The FCA publication year used for current identity resolution."""
+        return self._year
+
+    @property
+    def source(self) -> str:
+        """The stable provenance label for CVM FCA identity data."""
+        return FCA_SOURCE
+
+    @property
+    def source_url(self) -> str:
+        """The public URL for the selected FCA archive."""
+        return f"{self._base_url}/{self._zip_name}"
+
+    @property
+    def _zip_name(self) -> str:
+        return f"fca_cia_aberta_{self._year}.zip"
+
+    @property
+    def _geral_member(self) -> str:
+        return f"fca_cia_aberta_geral_{self._year}.csv"
+
+    @property
+    def _securities_member(self) -> str:
+        return f"fca_cia_aberta_valor_mobiliario_{self._year}.csv"
+
+    async def resolve(self, ticker: str) -> CompanyIdentity | None:
+        index = await self._ensure_loaded()
+        return index.get(ticker.upper().strip())
+
+    async def resolve_all(self, tickers: Iterable[str]) -> dict[str, CompanyIdentity]:
+        index = await self._ensure_loaded()
+        resolved: dict[str, CompanyIdentity] = {}
+        for ticker in tickers:
+            identity = index.get(ticker.upper().strip())
+            if identity is not None:
+                resolved[ticker] = identity
+        return resolved
+
+    async def companies(self) -> tuple[ListedCompany, ...]:
+        """Every listed company in the archive, grouped from its trading codes.
+
+        The index is keyed by ticker because that is what a caller resolves; a
+        batch wants the other direction, and the grouping is where the archive's
+        non-tickers are dropped (see ``universe``).
+        """
+        index = await self._ensure_loaded()
+        return listed_companies(index.values())
+
+    def set_placeholder_recoverer(self, recoverer: PlaceholderRecoverer | None) -> None:
+        """Set the optional producer before the archive is first read.
+
+        The composition root uses this setter so lightweight registry doubles
+        from older callers remain source-compatible.  Changing the producer
+        after loading is rejected: an identity snapshot and its audit report
+        must always come from one deterministic chain.
+        """
+        if self._index is not None:
+            raise RuntimeError("cannot change FCA recovery after registry load")
+        self._placeholder_recoverer = recoverer
+
+    async def placeholder_report(self) -> FcaPlaceholderReport:
+        """Return the complete malformed-code inventory and recovery outcome."""
+        await self._ensure_loaded()
+        assert self._placeholder_report is not None
+        return self._placeholder_report
+
+    async def fca_placeholder_report(self) -> FcaPlaceholderReport:
+        """Descriptive alias for consumers rendering the doctor report."""
+        return await self.placeholder_report()
+
+    async def placeholder_rows(self) -> tuple[FcaPlaceholderRow, ...]:
+        """Return the affected source rows independently of recovery outcomes."""
+        return (await self.placeholder_report()).rows
+
+    def _build_rows_index(
+        self, archive: dict[str, list[dict[str, str]]]
+    ) -> dict[str, CompanyIdentity]:
+        """Join securities (ticker->CNPJ) with the cadastre (CNPJ->CD_CVM)."""
+        cadastre = self._read_cadastre(archive)
+        securities, class_accumulators = self._read_securities(archive)
+
+        classes = {
+            cnpj: _resolve_classes(acc) for cnpj, acc in class_accumulators.items()
+        }
+        class_mappings = {
+            cnpj: _resolve_class_mappings(cnpj, acc)
+            for cnpj, acc in class_accumulators.items()
+        }
+        index: dict[str, CompanyIdentity] = {}
+        for ticker, security in securities.items():
+            company = cadastre.get(security.cnpj)
+            if company is None:  # a ticker whose company has no cadastre row
+                continue
+            index[ticker] = CompanyIdentity(
+                ticker=ticker,
+                cd_cvm=company.cd_cvm,
+                cnpj=security.cnpj,
+                denom=company.denom,
+                cvm_sector=company.cvm_sector,
+                situation=company.situation,
+                instrument_kind=security.instrument_kind,
+                instrument_type=security.instrument_type,
+                market=security.market,
+                venue=security.venue,
+                listing_evidence=("cvm_fca.market",),
+                trading_ended=security.trading_ended,
+                listed_since=security.listed_since,
+                ambiguous_cnpjs=security.ambiguous_cnpjs,
+                share_classes=classes.get(security.cnpj, ()),
+                shares_per_unit=security.unit_shares,
+                unit_components=security.unit_components,
+                share_class_mappings=class_mappings.get(security.cnpj, ()),
+            )
+        return index
+
+    def _merge_placeholder_result(
+        self,
+        index: dict[str, CompanyIdentity],
+        result: FcaRecoveryResult,
+        *,
+        placeholder_rows: tuple[FcaPlaceholderRow, ...],
+    ) -> tuple[dict[str, CompanyIdentity], FcaPlaceholderReport]:
+        """Merge only collision-free recovered identities into the ticker index."""
+        findings = {
+            finding.row.row_number: finding for finding in result.report.findings
+        }
+        for row in placeholder_rows:
+            findings.setdefault(
+                row.row_number, _unresolved_finding(row, "recovery-not-reported")
+            )
+        merged = dict(index)
+        recovered: list[CompanyIdentity] = []
+        for identity in result.identities:
+            current = merged.get(identity.ticker)
+            if current is None:
+                merged[identity.ticker] = identity
+                recovered.append(identity)
+                continue
+            if current.cnpj == identity.cnpj:
+                merged[identity.ticker] = _merge_recovered_identity(current, identity)
+                recovered.append(identity)
+                continue
+            for row_number, finding in tuple(findings.items()):
+                if identity.ticker in finding.recovered_codes:
+                    findings[row_number] = finding.unresolved(
+                        "ticker-collision-with-fca", detail=identity.ticker
+                    )
+        # A recovered placeholder is another security row from the same FCA
+        # registrant, not a separate cap universe.  Enrich every ticker of
+        # that CNPJ with the complete, collision-free class set (ADR 0014).
+        # Keep each ticker's own instrument/window/unit fields unchanged.
+        for cnpj in {identity.cnpj for identity in recovered}:
+            members = tuple(
+                identity
+                for identity in (*merged.values(), *recovered)
+                if identity.cnpj == cnpj
+            )
+            mappings = _merged_share_class_mappings(cnpj, members)
+            classes = _resolved_share_classes(mappings)
+            for ticker, identity in tuple(merged.items()):
+                if identity.cnpj == cnpj:
+                    merged[ticker] = replace(
+                        identity,
+                        share_classes=classes,
+                        share_class_mappings=mappings,
+                    )
+        report = FcaPlaceholderReport(
+            snapshot_year=self._year,
+            findings=tuple(findings.values()),
+        )
+        return merged, report
+
+    def _read_cadastre(
+        self, archive: dict[str, list[dict[str, str]]]
+    ) -> dict[str, _Cadastre]:
+        """CNPJ -> cadastre facts, keeping the highest-version row per company."""
+        cadastre: dict[str, _Cadastre] = {}
+        for row in archive[self._geral_member]:
+            cnpj = (row.get("CNPJ_Companhia") or "").strip()
+            cd_cvm = (row.get("Codigo_CVM") or "").strip().lstrip("0")
+            if not cnpj or not cd_cvm:
+                continue
+            version = _int(row.get("Versao"))
+            current = cadastre.get(cnpj)
+            if current is not None and current.version >= version:
+                continue
+            cadastre[cnpj] = _Cadastre(
+                cd_cvm=cd_cvm,
+                denom=(row.get("Nome_Empresarial") or "").strip(),
+                cvm_sector=(row.get("Setor_Atividade") or "").strip(),
+                situation=(row.get("Situacao_Registro_CVM") or "").strip(),
+                version=version,
+            )
+        return cadastre
+
+    def _read_placeholder_rows(
+        self, archive: dict[str, list[dict[str, str]]]
+    ) -> tuple[FcaPlaceholderRow, ...]:
+        """Inventory codes without positive organized-market evidence."""
+        cadastre = self._read_cadastre(archive)
+        rows: list[FcaPlaceholderRow] = []
+        for row_number, row in enumerate(archive[self._securities_member], 2):
+            raw_code = (row.get("Codigo_Negociacao") or "").strip().upper()
+            market = (row.get("Mercado") or "").strip()
+            venue = (row.get("Sigla_Entidade_Administradora") or "").strip()
+            if is_trading_code(raw_code) and is_organized_market(market, venue):
+                continue
+            cnpj = (row.get("CNPJ_Companhia") or "").strip()
+            company = cadastre.get(cnpj)
+            valor = (row.get("Valor_Mobiliario") or "").strip()
+            instrument_kind = _instrument_kind(valor)
+            composition = (
+                tuple(_unit_composition(row.get("Composicao_BDR_Unit") or ""))
+                if instrument_kind is InstrumentKind.UNIT
+                else ()
+            )
+            rows.append(
+                FcaPlaceholderRow(
+                    row_number=int(row.get("__source_line_number__", row_number)),
+                    cnpj=cnpj,
+                    cd_cvm=company.cd_cvm if company is not None else None,
+                    denom=company.denom if company is not None else "",
+                    raw_code=raw_code,
+                    code_issue=_code_issue(raw_code, market, venue),
+                    instrument_kind=instrument_kind,
+                    instrument_type=valor,
+                    market=market,
+                    venue=venue,
+                    cvm_sector=company.cvm_sector if company is not None else "",
+                    situation=company.situation if company is not None else "",
+                    listed_since=_iso_date(row.get("Data_Inicio_Listagem")),
+                    trading_ended=(
+                        _iso_date(row.get("Data_Fim_Negociacao"))
+                        or _iso_date(row.get("Data_Fim_Listagem"))
+                    ),
+                    per_share_class=_per_share_class(valor),
+                    unit_components=composition,
+                    shares_per_unit=sum(item.quantity for item in composition) or None,
+                )
+            )
+        return tuple(rows)
+
+    def _read_securities(
+        self, archive: dict[str, list[dict[str, str]]]
+    ) -> tuple[dict[str, _Security], dict[str, _ClassAccumulator]]:
+        """Ticker -> CNPJ (best listing), plus the ON/PN classes gathered per CNPJ.
+
+        A single pass: the ticker map keys off ``Codigo_Negociacao``; the class
+        accumulator gathers the company's trading ON/PN symbols (units and BDRs
+        are skipped by ``_share_kind``) so the cap knows what to price (ADR 0014).
+        A unit row also carries its own bundle ratio (``unit_shares``), parsed
+        from explicit component tickers or textual ON/PN quantities in the same
+        ``Composicao_BDR_Unit`` field (ADR 0053).
+        """
+        securities: dict[str, _Security] = {}
+        classes: dict[str, _ClassAccumulator] = {}
+        for row in archive[self._securities_member]:
+            ticker = (row.get("Codigo_Negociacao") or "").strip().upper()
+            cnpj = (row.get("CNPJ_Companhia") or "").strip()
+            if not ticker or not cnpj:
+                continue
+            trading = not (row.get("Data_Fim_Negociacao") or "").strip()
+            trading_ended = _iso_date(row.get("Data_Fim_Negociacao"))
+            valor = (row.get("Valor_Mobiliario") or "").strip()
+            kind = _share_kind(valor)
+            instrument_kind = _instrument_kind(valor)
+            composition = (
+                _unit_composition(row.get("Composicao_BDR_Unit") or "")
+                if instrument_kind is InstrumentKind.UNIT
+                else ()
+            )
+            unit_shares = sum(item.quantity for item in composition) or None
+            candidate = _Security(
+                cnpj=cnpj,
+                trading=trading,
+                version=_int(row.get("Versao")),
+                instrument_kind=instrument_kind,
+                instrument_type=valor,
+                market=(row.get("Mercado") or "").strip(),
+                venue=(row.get("Sigla_Entidade_Administradora") or "").strip(),
+                trading_ended=trading_ended,
+                listed_since=_iso_date(row.get("Data_Inicio_Listagem")),
+                unit_shares=unit_shares,
+                unit_components=tuple(composition),
+            )
+            current = securities.get(ticker)
+            if current is None or _prefer(candidate, current):
+                securities[ticker] = candidate
+            elif _same_priority(candidate, current) and candidate.cnpj != current.cnpj:
+                securities[ticker] = replace(
+                    current,
+                    ambiguous_cnpjs=tuple(
+                        sorted(
+                            {
+                                current.cnpj,
+                                candidate.cnpj,
+                                *current.ambiguous_cnpjs,
+                            }
+                        )
+                    ),
+                )
+
+            if not trading or not is_organized_market(
+                candidate.market, candidate.venue
+            ):
+                continue
+            if kind is not None:
+                classes.setdefault(cnpj, _ClassAccumulator()).add(kind, ticker)
+            elif composition:
+                # A unit-only filer (Klabin) names its classes in the bundle.
+                accumulator = classes.setdefault(cnpj, _ClassAccumulator())
+                for component in composition:
+                    if component.symbol is not None:
+                        kind = (
+                            ShareKind.COMMON
+                            if component.per_share_class is PerShareClass.ORDINARY
+                            else ShareKind.PREFERRED
+                        )
+                        accumulator.add(kind, component.symbol)
+                    else:
+                        accumulator.add_unresolved(component.per_share_class)
+        return securities, classes
+
+
+def _int(value: str | None) -> int:
+    try:
+        return int(value) if value else 0
+    except ValueError:
+        return 0
+
+
+def _iso_date(value: str | None) -> date | None:
+    """An FCA date column (``YYYY-MM-DD``), or ``None`` when blank or malformed."""
+    text = (value or "").strip()
+    try:
+        return date.fromisoformat(text) if text else None
+    except ValueError:
+        return None
+
+
+def _resolved_share_classes(
+    mappings: Iterable[ShareClassMapping],
+) -> tuple[ShareClass, ...]:
+    """Return only mappings whose final evidence names one listed class."""
+    classes: list[ShareClass] = []
+    for mapping in mappings:
+        if (
+            mapping.status is not ShareClassMappingStatus.RESOLVED
+            or mapping.symbol is None
+            or mapping.kind is None
+        ):
+            continue
+        classes.append(ShareClass(symbol=mapping.symbol, kind=mapping.kind))
+    return tuple(classes)
+
+
+def _merge_recovered_identity(
+    current: CompanyIdentity, recovered: CompanyIdentity
+) -> CompanyIdentity:
+    """Keep FCA facts while adding the official B3 recovery evidence."""
+    return replace(
+        current,
+        market=recovered.market or current.market,
+        venue=recovered.venue or current.venue,
+        listed_since=recovered.listed_since or current.listed_since,
+        listing_evidence=tuple(
+            dict.fromkeys((*current.listing_evidence, *recovered.listing_evidence))
+        ),
+    )
+
+
+def _merged_share_class_mappings(
+    cnpj: str,
+    identities: Iterable[CompanyIdentity],
+) -> tuple[ShareClassMapping, ...]:
+    """Prefer one fully proven B3 code without discarding FCA conflicts."""
+    by_class: dict[PerShareClass, list[ShareClassMapping]] = {}
+    unscoped: list[ShareClassMapping] = []
+    for identity in identities:
+        for mapping in identity.share_class_mappings:
+            if mapping.per_share_class is None:
+                unscoped.append(mapping)
+            else:
+                by_class.setdefault(mapping.per_share_class, []).append(mapping)
+        represented = {
+            (mapping.per_share_class, mapping.symbol)
+            for mapping in identity.share_class_mappings
+        }
+        for share_class in identity.share_classes:
+            if (share_class.per_share_class, share_class.symbol) not in represented:
+                by_class.setdefault(share_class.per_share_class, []).append(
+                    mapping_for_share_class(cnpj, share_class)
+                )
+
+    result: list[ShareClassMapping] = []
+    for per_share_class in PerShareClass:
+        entries = by_class.get(per_share_class, [])
+        if not entries:
+            continue
+
+        symbols = {mapping.symbol for mapping in entries if mapping.symbol is not None}
+        for mapping in entries:
+            if mapping.status is ShareClassMappingStatus.UNRESOLVED:
+                symbols.update(evidence.symbol for evidence in mapping.code_evidence)
+        code_evidence = _unique_code_evidence(
+            evidence for mapping in entries for evidence in mapping.code_evidence
+        )
+        evidence = _unique_text(
+            evidence for mapping in entries for evidence in mapping.evidence
+        )
+        rights = (
+            EconomicRightsStatus.UNRESOLVED
+            if any(
+                mapping.economic_rights is EconomicRightsStatus.UNRESOLVED
+                for mapping in entries
+            )
+            else EconomicRightsStatus.RESOLVED
+        )
+        kind = _kind_for_class(per_share_class)
+        b3_symbols = {
+            mapping.symbol
+            for mapping in entries
+            if _is_proven_b3_mapping(mapping) and mapping.symbol is not None
+        }
+        reason: ShareClassMappingReason | None = None
+        selected: str | None = None
+        if len(b3_symbols) > 1:
+            reason = ShareClassMappingReason.CONFLICTING_B3_CODES
+        elif b3_symbols:
+            selected = next(iter(b3_symbols))
+            reason = _b3_fca_conflict(entries, selected, expected_kind=kind)
+            if reason is None:
+                result.append(
+                    ShareClassMapping(
+                        class_id=share_class_id(cnpj, per_share_class),
+                        symbol=selected,
+                        kind=kind,
+                        per_share_class=per_share_class,
+                        status=ShareClassMappingStatus.RESOLVED,
+                        economic_rights=rights,
+                        resolution_reason=(ShareClassMappingReason.B3_CODE_PRECEDENCE),
+                        code_evidence=code_evidence,
+                        evidence=evidence,
+                    )
+                )
+                continue
+
+        ambiguous = reason is not None or (
+            any(
+                mapping.status is not ShareClassMappingStatus.RESOLVED
+                for mapping in entries
+            )
+            or len(symbols) != 1
+        )
+        if ambiguous:
+            reason = reason or _unresolved_reason(entries, symbols)
+            result.append(
+                ShareClassMapping(
+                    class_id=share_class_id(cnpj, per_share_class),
+                    symbol=None,
+                    kind=kind,
+                    per_share_class=per_share_class,
+                    status=ShareClassMappingStatus.UNRESOLVED,
+                    economic_rights=rights,
+                    resolution_reason=reason,
+                    code_evidence=code_evidence,
+                    evidence=_unique_text((*evidence, "cvm_fca.ambiguous_share_class")),
+                )
+            )
+            continue
+
+        symbol = next(iter(symbols))
+        result.append(
+            ShareClassMapping(
+                class_id=share_class_id(cnpj, per_share_class),
+                symbol=symbol,
+                kind=kind,
+                per_share_class=per_share_class,
+                status=ShareClassMappingStatus.RESOLVED,
+                economic_rights=rights,
+                resolution_reason=next(
+                    (
+                        mapping.resolution_reason
+                        for mapping in entries
+                        if mapping.resolution_reason is not None
+                    ),
+                    None,
+                ),
+                code_evidence=code_evidence,
+                evidence=evidence,
+            )
+        )
+    result.extend(unscoped)
+    return tuple(result)
+
+
+def _kind_for_class(per_share_class: PerShareClass) -> ShareKind:
+    return (
+        ShareKind.COMMON
+        if per_share_class is PerShareClass.ORDINARY
+        else ShareKind.PREFERRED
+    )
+
+
+def _is_proven_b3_mapping(mapping: ShareClassMapping) -> bool:
+    """Whether the mapping crossed the registrant, detail, and tape gates."""
+    if (
+        mapping.status is not ShareClassMappingStatus.RESOLVED
+        or mapping.symbol is None
+        or not set(OFFICIAL_B3_RECOVERY_EVIDENCE).issubset(mapping.evidence)
+    ):
+        return False
+    return any(
+        evidence.symbol == mapping.symbol and evidence.source == "b3_get_detail"
+        for evidence in mapping.code_evidence
+    )
+
+
+def _b3_fca_conflict(
+    entries: Sequence[ShareClassMapping],
+    b3_symbol: str,
+    *,
+    expected_kind: ShareKind,
+) -> ShareClassMappingReason | None:
+    """Return the filed conflict that prevents B3-code precedence, if any."""
+    for mapping in entries:
+        if mapping.kind is not None and mapping.kind is not expected_kind:
+            return ShareClassMappingReason.FCA_CODE_CLASS_CONFLICT
+        filed_symbols = {
+            evidence.symbol
+            for evidence in mapping.code_evidence
+            if evidence.source == "cvm_fca"
+        }
+        if "cvm_fca.share_class" in mapping.evidence and mapping.symbol is not None:
+            filed_symbols.add(mapping.symbol)
+        for symbol in filed_symbols:
+            if symbol == b3_symbol:
+                continue
+            if is_trading_code(symbol):
+                return ShareClassMappingReason.CONFLICTING_FCA_CODES
+            shaped_kind = _kind_from_suffix(symbol)
+            if shaped_kind is not None and shaped_kind is not expected_kind:
+                return ShareClassMappingReason.FCA_CODE_CLASS_CONFLICT
+    return None
+
+
+def _unresolved_reason(
+    entries: Sequence[ShareClassMapping], symbols: set[str]
+) -> ShareClassMappingReason:
+    if len(symbols) > 1:
+        return ShareClassMappingReason.CONFLICTING_FCA_CODES
+    reasons: set[ShareClassMappingReason] = set()
+    for mapping in entries:
+        reason = mapping.resolution_reason
+        if (
+            reason is not None
+            and reason is not ShareClassMappingReason.B3_CODE_PRECEDENCE
+        ):
+            reasons.add(reason)
+    if len(reasons) == 1:
+        return next(iter(reasons))
+    if not symbols:
+        return ShareClassMappingReason.MISSING_COMPONENT_CODE
+    return ShareClassMappingReason.UNRESOLVED_FCA_EVIDENCE
+
+
+def _unique_code_evidence(
+    values: Iterable[TickerCodeEvidence],
+) -> tuple[TickerCodeEvidence, ...]:
+    unique: dict[tuple[str, tuple[int, ...], str], TickerCodeEvidence] = {}
+    for value in values:
+        unique.setdefault((value.symbol, value.filed_years, value.source), value)
+    return tuple(unique.values())
+
+
+def _unique_text(values: Iterable[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(value for value in values if value))
+
+
+def _prefer(candidate: _Security, current: _Security) -> bool:
+    """A still-trading listing wins; then the higher document version."""
+    if candidate.trading != current.trading:
+        return candidate.trading
+    return candidate.version > current.version
+
+
+def _same_priority(candidate: _Security, current: _Security) -> bool:
+    """Whether two FCA rows are tied before their CNPJ is considered."""
+    return candidate.trading == current.trading and candidate.version == current.version
+
+
+def _code_issue(code: str, market: str = "", venue: str = "") -> FcaCodeIssue:
+    """Classify a code or venue that cannot authorize B3 analysis."""
+    if not code:
+        return FcaCodeIssue.BLANK
+    if code.isdigit():
+        return FcaCodeIssue.NUMERIC_PLACEHOLDER
+    if not is_trading_code(code):
+        return FcaCodeIssue.MALFORMED
+    if not market:
+        return FcaCodeIssue.MARKET_UNSPECIFIED
+    if not is_organized_market(market, venue):
+        return FcaCodeIssue.MARKET_NON_ORGANIZED
+    return FcaCodeIssue.MALFORMED
+
+
+def _per_share_class(valor_mobiliario: str) -> PerShareClass | None:
+    """Read the FCA's economic-class label, where it names one explicitly."""
+    label = _fold(valor_mobiliario).strip()
+    if label.startswith("acoes ordinarias"):
+        return PerShareClass.ORDINARY
+    if label.startswith("acoes preferenciais"):
+        if "classe a" in label or "pna" in label:
+            return PerShareClass.PREFERRED_A
+        if "classe b" in label or "pnb" in label:
+            return PerShareClass.PREFERRED_B
+        return PerShareClass.PREFERRED
+    return None
+
+
+def _unresolved_finding(row: FcaPlaceholderRow, reason: str) -> FcaPlaceholderFinding:
+    """Build the explicit result used when no producer is configured."""
+    return FcaPlaceholderFinding(
+        row=row,
+        status=FcaRecoveryStatus.UNRESOLVED,
+        reason=reason,
+        detail="official B3 recovery producer is not configured",
+    )

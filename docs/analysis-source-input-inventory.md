@@ -1,4 +1,4 @@
-# Inventário de insumos da análise — fase 1 (#348)
+# Inventário de insumos da análise — fases 1 e 2 (#348, #349)
 
 Stack preservada: Python 3.13/uv; MongoDB/Beanie para o espelho de fontes;
 PostgreSQL/SQLAlchemy/Alembic para resultados; FastAPI de leitura; Next.js;
@@ -6,10 +6,11 @@ instalador Go/Docker Compose. Nenhuma dependência nova.
 
 ## Fronteira desta fase
 
-Esta fase acrescenta o armazenamento dos insumos brutos que faltavam. Os
-leitores de análise ainda usam os adaptadores existentes. A substituição por
-consultas exclusivas aos bancos, incluindo a composição das dependências e o
-teste sem arquivos/rede, pertence à fase 2 (#349).
+A fase 1 acrescentou o armazenamento dos insumos brutos. Na fase 2, análise,
+resolução de identidade/códigos, históricos e consultas de aplicação passam a
+usar exclusivamente os bancos. A aquisição explícita da ingestão conserva seus
+adaptadores de arquivos/HTTP. A [validação da fase 2](prepared-database-phase-2-validation.md)
+descreve seleção de revisões, fronteira e reprodução dos testes.
 
 ## Leituras alcançáveis e representações persistidas
 
@@ -61,8 +62,8 @@ publicados continuam lendo resultados já persistidos no PostgreSQL.
   Hash e extração usam a mesma cópia privada em disco, criada com memória
   limitada e liberada ao final da tentativa; alterações concorrentes no ZIP
   original não misturam versões durante a escrita. Falhas podem deixar linhas
-  parciais, mas nunca um arquivo admitido. Leitores da fase 2 devem selecionar
-  somente arquivos admitidos e uma revisão explícita.
+  parciais, mas nunca um arquivo admitido. Os leitores da fase 2 selecionam
+  somente arquivos admitidos e fixam suas revisões no início da execução.
 - Lotes de no máximo 1.000 linhas limitam a memória da escrita. É necessário
   espaço temporário para uma cópia comprimida de um arquivo por tentativa.
   A ingestão não
@@ -89,8 +90,8 @@ independentemente do nome/caminho local. A reexecução retoma arquivos incomple
 
 A ingestão CVM normal também espelha cada artefato adquirido/aberto pelo seu
 observador antes de prosseguir com os consumidores atuais. COTAHIST disponível
-no dev usa a transição acima; downloads futuros e a migração dos leitores são
-tratados nas fases 2 e 7. Nenhuma política de remoção da fase 3 foi antecipada.
+no dev usa a transição acima; seus leitores foram migrados na fase 2. Downloads
+de pregões ausentes pelo fluxo de atualização pertencem à fase 7 (#354). Nenhuma política de remoção da fase 3 foi antecipada.
 
 ## Verificação
 

@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from smaug.analysis.infrastructure.b3_prices import CotahistArchive
+from smaug.analysis.infrastructure.mongo_prices import MongoCotahistArchive
 from smaug.entrypoints import cli
 from smaug.entrypoints.cli import (
     _build_archive,
@@ -62,10 +62,9 @@ async def test_identity_resolution_uses_fca_year_not_accounting_year(
     seen: dict[str, object] = {}
 
     class FakeRegistry:
-        def __init__(self, _http, *, year, cache_dir, artifact_store=None) -> None:
+        def __init__(self, inputs, *, year) -> None:
             seen["year"] = year
-            seen["cache_dir"] = cache_dir
-            seen["artifact_store"] = artifact_store
+            seen["inputs"] = inputs
 
         async def resolve_all(self, tickers):
             return {}
@@ -77,32 +76,33 @@ async def test_identity_resolution_uses_fca_year_not_accounting_year(
                 source_url="https://example.test/fca_2026.zip",
             )
 
-    monkeypatch.setattr(cli, "CvmCompanyRegistry", FakeRegistry)
+    monkeypatch.setattr(cli, "MongoCompanyRegistry", FakeRegistry)
+    monkeypatch.setattr(cli, "_configure_placeholder_recovery", lambda *_: None)
     settings = Settings(cvm_year=2024, cvm_fca_year=2026)
     provenance: list[FcaSnapshotProvenance] = []
-    async with httpx.AsyncClient() as http:
-        assert (
-            await cli._registry_identities(
-                settings,
-                http,
-                (),
-                fca_provenance=provenance,
-            )
-            == {}
+    assert (
+        await cli._registry_identities(
+            settings,
+            object(),
+            object(),
+            (),
+            fca_provenance=provenance,
         )
+        == {}
+    )
 
     assert seen["year"] == 2026
     assert provenance[0].year == 2026
 
 
-async def test_current_universe_reuses_the_injected_bronze_store(monkeypatch) -> None:
+async def test_current_universe_reuses_the_pinned_mongo_inputs(monkeypatch) -> None:
     seen: dict[str, object] = {}
-    bronze = object()
+    inputs = object()
 
     class FakeRegistry:
-        def __init__(self, _http, *, year, cache_dir, artifact_store=None) -> None:
+        def __init__(self, inputs, *, year) -> None:
             seen["year"] = year
-            seen["artifact_store"] = artifact_store
+            seen["inputs"] = inputs
 
         async def companies(self):
             return ()
@@ -118,19 +118,19 @@ async def test_current_universe_reuses_the_injected_bronze_store(monkeypatch) ->
                 artifact_id="sha256:" + "b" * 64,
             )
 
-    monkeypatch.setattr(cli, "CvmCompanyRegistry", FakeRegistry)
+    monkeypatch.setattr(cli, "MongoCompanyRegistry", FakeRegistry)
+    monkeypatch.setattr(cli, "_configure_placeholder_recovery", lambda *_: None)
     settings = Settings(cvm_year=2024, cvm_fca_year=2026)
     provenance: list[FcaSnapshotProvenance] = []
-    async with httpx.AsyncClient() as http:
-        await cli._universe_tickers(
-            settings,
-            http,
-            fca_provenance=provenance,
-            artifact_store=bronze,  # type: ignore[arg-type]
-        )
+    await cli._universe_tickers(
+        settings,
+        inputs,
+        object(),
+        fca_provenance=provenance,
+    )
 
     assert seen["year"] == 2026
-    assert seen["artifact_store"] is bronze
+    assert seen["inputs"] is inputs
     assert provenance[0].artifact_id == "sha256:" + "b" * 64
 
 
@@ -192,5 +192,4 @@ async def test_the_exchange_prices_the_analysis_and_nothing_else_does() -> None:
     # There is no second source to fall back to: a company B3 does not list
     # reads as a missing price rather than as somebody else's number on
     # another basis (ADR 0041).
-    async with httpx.AsyncClient() as http:
-        assert isinstance(_build_archive(Settings(), http), CotahistArchive)
+    assert isinstance(_build_archive(object()), MongoCotahistArchive)

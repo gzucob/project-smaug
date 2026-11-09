@@ -3,7 +3,7 @@
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Literal, Protocol
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,3 +41,19 @@ class SourceInputRepository(Protocol):
     async def complete(
         self, archive: SourceInputArchive, member_counts: Mapping[str, int]
     ) -> None: ...
+
+
+class SourceInputReader(Protocol):
+    async def inspect(self) -> SourceInputArchive: ...
+
+    def rows(self) -> Iterable[SourceInputRow]: ...
+
+    def member_counts(self) -> Mapping[str, int]: ...
+
+    def close(self) -> None: ...
+
+
+class SourceInputAcquirer(Protocol):
+    async def acquire(
+        self, dataset: Literal["FCA", "COTAHIST"], year: int
+    ) -> SourceInputReader: ...

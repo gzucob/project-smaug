@@ -308,3 +308,79 @@ _FAKE_UNIT_COMPOSITION: dict[str, int] = {"SAPR11": 5, "TAEE11": 3}
 def fake_unit_composition_resolver(ticker: str) -> int | None:
     """Underlying shares one unit bundles, for the tickers this suite names."""
     return _FAKE_UNIT_COMPOSITION.get(ticker)
+
+
+class SourceInputCursor:
+    """Async cursor preserving deterministic sorting and source row streaming."""
+
+    def __init__(self, documents: list[dict[str, Any]]) -> None:
+        self.documents = documents
+
+    def sort(
+        self, key: str | list[tuple[str, int]], direction: int = 1
+    ) -> SourceInputCursor:
+        fields = [(key, direction)] if isinstance(key, str) else key
+        for name, order in reversed(fields):
+            self.documents.sort(key=lambda row: row[name], reverse=order < 0)
+        return self
+
+    async def to_list(self, length: int | None) -> list[dict[str, Any]]:
+        return self.documents if length is None else self.documents[:length]
+
+    async def __aiter__(self) -> Any:
+        for row in self.documents:
+            yield row
+
+
+class SourceInputCollection:
+    """Read-only Mongo surface for source admission and analysis composition tests."""
+
+    def __init__(self, documents: list[dict[str, Any]] | None = None) -> None:
+        self.documents = documents if documents is not None else []
+
+    def find(self, query: Any, /) -> SourceInputCursor:
+        return SourceInputCursor(
+            [
+                row
+                for row in self.documents
+                if all(row.get(key) == value for key, value in query.items())
+            ]
+        )
+
+    async def find_one(self, query: Any, *, sort: list[tuple[str, int]]) -> Any:
+        rows = await self.find(query).sort(sort).to_list(1)
+        return rows[0] if rows else None
+
+
+class RecordingAnalysisRepository:
+    """Record the complete analysis persistence surface for composition tests."""
+
+    def __init__(self) -> None:
+        self.saved: list[Any] = []
+        self.outcomes: list[Any] = []
+
+    async def save(self, analysis: Any) -> None:
+        self.saved.append(analysis)
+
+    async def save_outcome(self, outcome: Any) -> None:
+        self.outcomes.append(outcome)
+
+    async def latest(self, ticker: str) -> Any:
+        return next(
+            (
+                item
+                for item in self.saved
+                if item.ticker == ticker and item.view == "ttm_live"
+            ),
+            None,
+        )
+
+    async def all_latest(self) -> list[Any]:
+        return [item for item in self.saved if item.view == "ttm_live"]
+
+    async def history(self, ticker: str) -> list[Any]:
+        return [
+            item
+            for item in self.saved
+            if item.ticker == ticker and item.view == "closed_year"
+        ]

@@ -19,26 +19,34 @@ async def test_installation_allows_only_b3_quarantine_and_still_requires_verific
     from smaug.entrypoints import cli
 
     calls: list[dict[str, object]] = []
+    order: list[str] = []
 
     async def discover(_catalog: CvmArchiveCatalog) -> dict[str, tuple[int, ...]]:
         return dict.fromkeys(("DFP", "ITR", "FRE"), (2026,))
 
     async def ingest(*_args: object, **kwargs: object) -> int:
+        order.append("ingest")
         calls.append(kwargs)
         return 0
 
     async def analyze(*_args: object, **_kwargs: object) -> int:
         return 0
 
+    async def source_inputs() -> int:
+        order.append("source-inputs")
+        return 0
+
     async def verify() -> int:
         return 1
 
     monkeypatch.setattr(CvmArchiveCatalog, "discover", discover)
+    monkeypatch.setattr(cli, "_run_prepare_source_inputs", source_inputs)
     monkeypatch.setattr(cli, "_run_ingest", ingest)
     monkeypatch.setattr(cli, "_run_analyze", analyze)
     monkeypatch.setattr(cli, "_verify_prepared_data", verify)
     state = tmp_path / "preparation.json"
     assert await cli._run_prepare(state) == 1
+    assert order[0] == "source-inputs"
     assert [call["allow_quarantined"] for call in calls] == [False] * 3 + [True]
     assert calls[-1]["modules"] == (
         "LISTING_B3",
