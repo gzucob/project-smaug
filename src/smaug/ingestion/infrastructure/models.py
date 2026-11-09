@@ -13,11 +13,46 @@ document from a source that names no filer has no registrant to record.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from beanie import Document
 from pydantic import Field
 from pymongo import ASCENDING, DESCENDING, IndexModel
+
+
+class SourceFileSessionDocument(Document):
+    """Operational ownership and durable completion of installation source files."""
+
+    scope: str
+    operation: str
+    state: Literal["active", "failed", "consumers_complete", "cleaned"]
+    attempts: int = 0
+    artifact_ids: list[str] = Field(default_factory=list)
+    ingestion_run_ids: list[str] = Field(default_factory=list)
+    started_at: datetime
+    completed_at: datetime | None = None
+    cleaned_at: datetime | None = None
+    error: str | None = None
+
+    class Settings:
+        name = "source_file_sessions"
+        indexes = [IndexModel([("scope", 1)], unique=True)]
+
+
+class SourceAcquisitionDocument(Document):
+    """Source observations survive removal of every local financial file."""
+
+    observation_key: str
+    observed_at: datetime
+    kind: str
+    metadata: dict[str, Any]
+
+    class Settings:
+        name = "source_acquisitions"
+        indexes = [
+            IndexModel([("observation_key", 1)], unique=True),
+            IndexModel([("metadata.source_url", 1), ("observed_at", -1)]),
+        ]
 
 
 class SourceInputArchiveDocument(Document):

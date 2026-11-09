@@ -193,3 +193,32 @@ async def test_the_exchange_prices_the_analysis_and_nothing_else_does() -> None:
     # reads as a missing price rather than as somebody else's number on
     # another basis (ADR 0041).
     assert isinstance(_build_archive(object()), MongoCotahistArchive)
+
+
+async def test_development_retains_sources_without_initializing_cleanup(
+    tmp_path, monkeypatch
+) -> None:
+    from pathlib import Path
+
+    settings = Settings(
+        runtime_context="development", source_artifact_dir=str(tmp_path / "sources")
+    )
+    original = Path(settings.source_artifact_dir) / "source.zip"
+    original.parent.mkdir()
+    original.write_bytes(b"original development source")
+
+    def forbidden(*_):
+        raise AssertionError("development must never enter installation cleanup")
+
+    async def operation() -> int:
+        assert (
+            cli._ingestion_settings().source_artifact_dir
+            == settings.source_artifact_dir
+        )
+        return 0
+
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli, "init_database", forbidden)
+    assert await cli._retained_sources(operation)() == 0
+    assert original.read_bytes() == b"original development source"
+    assert not (original.parent / ".ingestion").exists()

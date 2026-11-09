@@ -28,6 +28,7 @@ services:
     image: ${SMAUG_BACKEND_IMAGE:?manifest required}
     restart: unless-stopped
     environment: &backend-env
+      SMAUG_RUNTIME_CONTEXT: installation
       MONGO_URI: mongodb://mongo:27017
       POSTGRES_URI: postgresql+asyncpg://smaug:smaug@postgres:5432/smaug
       CVM_CACHE_DIR: /data/cache/cvm

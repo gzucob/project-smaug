@@ -170,3 +170,25 @@ async def test_open_rejects_unknown_or_malformed_identity(tmp_path: Path) -> Non
             await store.open("not-a-digest")
         with pytest.raises(FileNotFoundError, match="not found"):
             await store.open("sha256:" + "f" * 64)
+
+
+async def test_failed_observer_does_not_memoize_unadmitted_source(
+    tmp_path: Path,
+) -> None:
+    attempts = 0
+
+    async def observer(_: SourceArtifact) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("persistence interrupted")
+
+    content = _zip_bytes("source facts")
+    transport = _SequenceTransport([(200, content, {}), (200, content, {})])
+    async with httpx.AsyncClient(transport=transport) as http:
+        store = LocalSourceArtifactStore(http, tmp_path, observer=observer)
+        with pytest.raises(RuntimeError, match="persistence interrupted"):
+            await store.acquire(URL)
+        await store.acquire(URL)
+        await store.acquire(URL)
+    assert attempts == 2

@@ -1,8 +1,8 @@
 # Plano de instalação com bases preparadas
 
-Status: plano aprovado em escopo. Fases 0 e 1 integradas (#346 e #359).
-Fase 2 em implementação autorizada na issue #349, vinculada à tarefa mãe #347.
-As fases 3–10 dependem de uma instrução posterior de execução.
+Status: plano aprovado em escopo. Fases 0, 1 e 2 integradas (#346, #359 e #360).
+Fase 3 em implementação autorizada na issue #350, vinculada à tarefa mãe #347.
+As fases 4–10 dependem de uma instrução posterior de execução.
 
 ## Objetivo e decisões
 

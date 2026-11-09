@@ -317,6 +317,42 @@ def smoke(bundle_dir: Path) -> None:
                 run(*ctl, "check")
                 assert request(api, "/ready")["data"] == "prepared"
                 assert request(api, "/analysis/PETR4")
+                # Validate real installation retention before backup sentinels
+                # are added outside the managed source workspace below.
+                subprocess.run(
+                    [
+                        *compose,
+                        "run",
+                        "--rm",
+                        "--no-deps",
+                        "-T",
+                        "--entrypoint",
+                        "python",
+                        "cli",
+                        "-c",
+                        """
+import asyncio, os
+from pathlib import Path
+from pymongo import AsyncMongoClient
+async def verify():
+    for root in ("/data/sources", "/data/cache/cvm", "/data/cache/b3"):
+        remaining = [str(p) for p in Path(root).rglob("*")
+                     if p.is_file() and p.suffix.lower() in {".zip", ".csv", ".json"}]
+        assert not remaining, remaining
+    client = AsyncMongoClient(os.environ["MONGO_URI"])
+    db = client["smaug"]
+    assert await db.source_file_sessions.count_documents({"state": "cleaned"})
+    assert not await db.source_file_sessions.count_documents(
+        {"state": {"$in": ["active", "failed", "consumers_complete"]}})
+    assert await db.source_acquisitions.count_documents({})
+    assert await db.source_input_archives.count_documents({})
+    await client.close()
+asyncio.run(verify())
+""",
+                    ],
+                    env=compose_env,
+                    check=True,
+                )
                 if edition == "full":
                     with urllib.request.urlopen(
                         f"http://127.0.0.1:{web}/ticker/PETR4", timeout=60
