@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The CVM "modules" — the regulated statement types.
@@ -66,6 +66,13 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # Internal deployment identity; the native installer sets this in Compose.
+    # Local checkouts, including development containers, retain source files.
+    runtime_context: Literal["development", "installation"] = Field(
+        default="development",
+        validation_alias=AliasChoices("SMAUG_RUNTIME_CONTEXT", "runtime_context"),
+    )
+
     # ---- B3 (the exchange's own published quote series) ----
     # COTAHIST prices the analysis, and nothing else does: the series the
     # exchange publishes itself (ADR 0032), put on the same base as the share
@@ -101,8 +108,8 @@ class Settings(BaseSettings):
     cvm_fca_year: int = Field(default=DEFAULT_CVM_FCA_YEAR)
     # Where the downloaded/sanitized CVM ZIPs are cached (gitignored).
     cvm_cache_dir: str = Field(default=".cache/cvm")
-    # Durable Bronze archive storage. Content is immutable and has no automatic
-    # eviction; cache cleanup must never remove ingestion provenance.
+    # Development retains source bytes. Installations use a private workspace
+    # and retain provenance in MongoDB before releasing its files.
     source_artifact_dir: str = Field(default=".artifacts/sources")
 
     # ---- MongoDB (Phase 1 raw mirror) ----

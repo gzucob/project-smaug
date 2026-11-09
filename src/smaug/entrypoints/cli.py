@@ -8,14 +8,17 @@ dependencies and call the use cases (plan §3.1 / ``src/smaug/AGENTS.md``).
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import inspect
 import json
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, replace
 from datetime import date, timedelta
 from decimal import Decimal
-from functools import partial
+from functools import partial, wraps
 from pathlib import Path
 from time import perf_counter
 from typing import Annotated, Any, cast
@@ -181,6 +184,7 @@ from smaug.ingestion.infrastructure.source_inputs import (
     LocalSourceInputReader,
     MongoSourceInputRepository,
 )
+from smaug.ingestion.infrastructure.source_retention import InstallationSourceSession
 from smaug.portfolio.application.refresh_taxonomy import (
     RefreshTaxonomyUseCase,
     TaxonomyDrift,
@@ -236,7 +240,7 @@ from smaug.portfolio.infrastructure.mongo_registry import (
     MongoCompanyRegistry,
     MongoSecurityHistory,
 )
-from smaug.shared.artifacts import SourceArtifact, SourceArtifactStore
+from smaug.shared.artifacts import ArtifactObserver, SourceArtifact, SourceArtifactStore
 from smaug.shared.build import application_commit
 from smaug.shared.config import Settings, get_settings
 from smaug.shared.db import init_database
@@ -251,6 +255,90 @@ from smaug.shared.logging import get_logger
 from smaug.shared.preparation import PreparationStep, prepare_data
 from smaug.shared.source_inputs import MongoSourceInputs, SourceCollection
 from smaug.shared.sql_db import create_engine, create_session_factory
+
+_source_session: ContextVar[InstallationSourceSession | None] = ContextVar(
+    "source_session", default=None
+)
+
+
+def _ingestion_settings() -> Settings:
+    session = _source_session.get()
+    return session.settings if session is not None else get_settings()
+
+
+def _source_store(
+    http: httpx.AsyncClient,
+    settings: Settings,
+    *,
+    observer: ArtifactObserver | None = None,
+) -> LocalSourceArtifactStore:
+    session = _source_session.get()
+    return LocalSourceArtifactStore(
+        http,
+        settings.source_artifact_dir,
+        observer=observer,
+        observations=session.observations if session is not None else None,
+    )
+
+
+def _retained_sources[**P](
+    operation: Callable[P, Awaitable[int]],
+) -> Callable[P, Coroutine[Any, Any, int]]:
+    @wraps(operation)
+    async def execute(*args: P.args, **kwargs: P.kwargs) -> int:
+        settings = get_settings()
+        if (
+            _source_session.get() is not None
+            or settings.runtime_context == "development"
+        ):
+            return await operation(*args, **kwargs)
+        bound = inspect.signature(operation).bind(*args, **kwargs)
+        bound.apply_defaults()
+        scope = hashlib.sha256(
+            json.dumps(
+                {
+                    "operation": operation.__name__,
+                    "database": [settings.mongo_uri, settings.mongo_db],
+                    "configuration": [
+                        settings.cvm_document,
+                        settings.cvm_year,
+                        settings.cvm_fca_year,
+                        settings.cvm_modules,
+                    ],
+                    "parameters": {
+                        key: value
+                        for key, value in bound.arguments.items()
+                        if key not in {"verbose", "concurrency", "retry_failure_ids"}
+                    },
+                },
+                default=str,
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+        client = await init_database(settings)
+        try:
+            async with InstallationSourceSession(
+                settings,
+                client[settings.mongo_db],
+                scope=scope,
+                operation=operation.__name__,
+                resume_run_id=str(bound.arguments["run_id"])
+                if operation.__name__ == "_run_ingestion_resume"
+                else None,
+            ) as session:
+                token = _source_session.set(session)
+                try:
+                    result = await operation(*args, **kwargs)
+                    if result == 0:
+                        await session.complete()
+                    return result
+                finally:
+                    _source_session.reset(token)
+        finally:
+            await client.close()
+
+    return execute
+
 
 app = typer.Typer(help="smaug — CVM/B3 ingestion and indicator analysis.")
 
@@ -724,6 +812,7 @@ def prepare(
     raise typer.Exit(code=result)
 
 
+@_retained_sources
 async def _run_prepare(state_file: Path) -> int:
     async with httpx.AsyncClient(timeout=60.0) as http:
         batches = preparation_batches(await CvmArchiveCatalog(http).discover())
@@ -766,12 +855,13 @@ async def _run_prepare(state_file: Path) -> int:
     )
 
 
+@_retained_sources
 async def _run_prepare_source_inputs() -> int:
-    settings = get_settings()
+    settings = _ingestion_settings()
     client = await init_database(settings)
     try:
         async with httpx.AsyncClient(timeout=60.0) as http:
-            store = LocalSourceArtifactStore(http, settings.source_artifact_dir)
+            store = _source_store(http, settings)
             use_case = PrepareSourceInputsUseCase(
                 PublicSourceInputAcquirer(
                     store,
@@ -936,12 +1026,13 @@ def capital_subclass_backfill(
     raise typer.Exit(code=exit_code)
 
 
+@_retained_sources
 async def _run_capital_subclass_backfill(*, verbose: bool) -> int:
     """Prove the complete #303 manifest before entering any Mongo write path."""
-    settings = get_settings()
+    settings = _ingestion_settings()
     grouped = targets_by_year()
     async with httpx.AsyncClient(timeout=30.0) as http:
-        artifact_store = LocalSourceArtifactStore(http, settings.source_artifact_dir)
+        artifact_store = _source_store(http, settings)
         for targets in grouped.values():
             source = _capital_subclass_source(
                 settings,
@@ -1015,6 +1106,7 @@ def ingestion_resume(
     raise typer.Exit(code=exit_code)
 
 
+@_retained_sources
 async def _run_ingestion_resume(run_id: str, retry_permanent: bool) -> int:
     """Select one run's safe retries and compose a new, narrower ingestion run."""
     settings = get_settings()
@@ -1263,6 +1355,7 @@ def _capital_subclass_source(
     return AuditedCapitalSubclassSource(source, targets)
 
 
+@_retained_sources
 async def _run_ingest(
     tickers: tuple[str, ...],
     *,
@@ -1282,7 +1375,7 @@ async def _run_ingest(
     capital_subclass_targets: Mapping[int, tuple[CapitalSubclassBackfillTarget, ...]]
     | None = None,
 ) -> int:
-    settings = get_settings()
+    settings = _ingestion_settings()
     tickers = tuple(dict.fromkeys(tickers))
     active_modules = modules or tuple(settings.cvm_modules)
     retry_failure_ids = retry_failure_ids or {}
@@ -1317,6 +1410,9 @@ async def _run_ingest(
     ) -> None:
         nonlocal completed_run_id
         completed_run_id = run_id
+        session = _source_session.get()
+        if session is not None:
+            await session.record_run(run_id)
 
         async def outcome_sink(outcome: FetchOutcome) -> None:
             outcomes.append(outcome)
@@ -1340,11 +1436,7 @@ async def _run_ingest(
                     LocalSourceInputReader(artifact.path, artifact=artifact)
                 )
 
-            artifact_store = LocalSourceArtifactStore(
-                http,
-                settings.source_artifact_dir,
-                observer=artifact_observer,
-            )
+            artifact_store = _source_store(http, settings, observer=artifact_observer)
             companies = (
                 await _universe(
                     settings,
@@ -1989,11 +2081,13 @@ def _build_ingestion_archive(
     dates off it (ADR 0035) and the price side reads the closes, and they must
     not each stream the same gigabytes.
     """
+    session = _source_session.get()
     return CotahistArchive(
         http,
         cache_dir=settings.b3_cache_dir,
         refresh_current_year=refresh,
         base_url=settings.b3_series_base_url,
+        observer=session.observe_artifact if session is not None else None,
     )
 
 

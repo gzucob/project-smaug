@@ -14,7 +14,11 @@ from uuid import uuid4
 
 import httpx
 
-from smaug.shared.artifacts import ArtifactObserver, SourceArtifact
+from smaug.shared.artifacts import (
+    ArtifactObservationStore,
+    ArtifactObserver,
+    SourceArtifact,
+)
 from smaug.shared.download import DownloadResult, Sleeper, download_zip
 from smaug.shared.errors import CvmDownloadError
 
@@ -30,6 +34,7 @@ class LocalSourceArtifactStore:
         root: str | Path,
         *,
         observer: ArtifactObserver | None = None,
+        observations: ArtifactObservationStore | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         sleep: Sleeper = asyncio.sleep,
     ) -> None:
@@ -39,6 +44,7 @@ class LocalSourceArtifactStore:
         # mounts the source root as a volume, and publishing uses atomic rename.
         self._staging = self._root / ".staging"
         self._observer = observer
+        self._observations = observations
         self._clock = clock
         self._sleep = sleep
         self._memo: dict[str, SourceArtifact] = {}
@@ -57,9 +63,9 @@ class LocalSourceArtifactStore:
             if cached is not None:
                 return cached
             artifact = await self._acquire(source_url, follow_redirects)
-            self._memo[source_url] = artifact
             if self._observer is not None:
                 await self._observer(artifact)
+            self._memo[source_url] = artifact
             return artifact
 
     async def open(self, artifact_id: str) -> SourceArtifact:
@@ -72,6 +78,8 @@ class LocalSourceArtifactStore:
     async def _acquire(self, source_url: str, follow_redirects: bool) -> SourceArtifact:
         await asyncio.to_thread(self._prepare_directories)
         previous = await asyncio.to_thread(self._read_url_state, source_url)
+        if self._observations is not None:
+            previous = await self._observations.latest(source_url) or previous
         headers = self._conditional_headers(previous)
         stage = self._staging / f"{uuid4().hex}.zip"
         try:
@@ -101,9 +109,11 @@ class LocalSourceArtifactStore:
             observed = self._with_observation(
                 artifact, source_url, result, previous, observed_at
             )
-            await asyncio.to_thread(
+            observation = await asyncio.to_thread(
                 self._record_observation, observed, result, observed_at
             )
+            if self._observations is not None:
+                await self._observations.record(observation)
             return observed
         finally:
             await asyncio.to_thread(stage.unlink, missing_ok=True)
@@ -235,7 +245,7 @@ class LocalSourceArtifactStore:
         artifact: SourceArtifact,
         result: DownloadResult,
         observed_at: datetime,
-    ) -> None:
+    ) -> Mapping[str, object]:
         assert artifact.source_url is not None
         assert artifact.downloaded_at is not None
         observation = {
@@ -252,6 +262,7 @@ class LocalSourceArtifactStore:
         observation_path = self._root / "observations" / f"{uuid4().hex}.json"
         self._write_json_atomic(observation_path, observation)
         self._write_json_atomic(self._url_path(artifact.source_url), observation)
+        return observation
 
     def _read_url_state(self, source_url: str) -> Mapping[str, object]:
         path = self._url_path(source_url)

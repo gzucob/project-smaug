@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -38,3 +38,11 @@ class SourceArtifactStore(Protocol):
 
 
 ArtifactObserver = Callable[[SourceArtifact], Awaitable[None]]
+
+
+class ArtifactObservationStore(Protocol):
+    """Keep HTTP acquisition state independently of temporary source bytes."""
+
+    async def latest(self, source_url: str) -> Mapping[str, object]: ...
+
+    async def record(self, observation: Mapping[str, object]) -> None: ...

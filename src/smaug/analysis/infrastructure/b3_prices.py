@@ -8,12 +8,13 @@ price acquisition moves into the dedicated ingestion flow in phase 7 (#354).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import re
 import zipfile
 from collections.abc import Callable, Mapping, Sequence
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -33,7 +34,8 @@ from smaug.analysis.infrastructure.quote_series import (
     YearQuotes,
     reduce_records,
 )
-from smaug.shared.download import Sleeper, download_zip
+from smaug.shared.artifacts import ArtifactObserver, SourceArtifact
+from smaug.shared.download import DownloadResult, Sleeper, download_zip
 from smaug.shared.errors import (
     CvmDownloadError,
     SourceMalformedError,
@@ -158,7 +160,9 @@ class CotahistArchive:
         sleep: Sleeper = asyncio.sleep,
         today: Callable[[], date] = date.today,
         refresh_current_year: bool = False,
+        observer: ArtifactObserver | None = None,
     ) -> None:
+        self._observer = observer
         self._refresh_current_year = refresh_current_year
         self._http = http_client
         self._cache_dir = Path(cache_dir)
@@ -202,13 +206,16 @@ class CotahistArchive:
                 return loaded[0]
 
         archive = self._cache_dir / self._zip_name(year)
+        downloaded: DownloadResult | None = None
         if not archive.exists() or not self._is_fresh(
             date.fromtimestamp(archive.stat().st_mtime), year, today
         ):
             url = f"{self._base_url}/{self._zip_name(year)}"
             logger.info("Downloading B3 quote series %d from %s", year, url)
             try:
-                await download_zip(self._http, url, archive, sleep=self._sleep)
+                downloaded = await download_zip(
+                    self._http, url, archive, sleep=self._sleep
+                )
             except CvmDownloadError as exc:
                 # ``download_zip`` retains the transport exception as its cause;
                 # keep a timeout distinct from an unavailable archive for the
@@ -220,6 +227,11 @@ class CotahistArchive:
                 raise
 
         try:
+            if self._observer is not None and downloaded is not None:
+                artifact = await asyncio.to_thread(
+                    _downloaded_artifact, archive, url, downloaded
+                )
+                await self._observer(artifact)
             reduction = await asyncio.to_thread(_reduce, archive)
         except (IndexError, UnicodeError, ValueError, zipfile.BadZipFile) as exc:
             raise SourceMalformedError(
@@ -246,3 +258,20 @@ class CotahistArchive:
         if year < today.year:
             return built_on.year > year
         return not self._refresh_current_year and built_on >= today
+
+
+def _downloaded_artifact(
+    path: Path, url: str, response: DownloadResult
+) -> SourceArtifact:
+    with path.open("rb") as source:
+        digest = hashlib.file_digest(source, "sha256").hexdigest()
+    return SourceArtifact(
+        artifact_id="sha256:" + digest,
+        sha256=digest,
+        byte_size=path.stat().st_size,
+        path=path,
+        source_url=url,
+        downloaded_at=datetime.now(UTC),
+        etag=response.etag,
+        last_modified=response.last_modified,
+    )

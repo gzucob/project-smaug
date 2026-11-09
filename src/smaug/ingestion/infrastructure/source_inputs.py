@@ -13,9 +13,10 @@ import zipfile
 from collections.abc import Iterable, Iterator, Mapping
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 from pymongo import UpdateOne
+from pymongo.asynchronous.collection import AsyncCollection
 
 from smaug.ingestion.domain.source_inputs import SourceInputArchive, SourceInputRow
 from smaug.ingestion.infrastructure.models import (
@@ -50,6 +51,13 @@ class LocalSourceInputReader:
         self._counts: dict[str, int] = {}
         self._identity: SourceInputArchive | None = None
         self._snapshot: BinaryIO | None = None
+
+    @property
+    def archive(self) -> SourceInputArchive:
+        """Identity from the last inspection, also available after closing."""
+        if self._identity is None:
+            raise ValueError("inspect the source before reading its identity")
+        return self._identity
 
     async def inspect(self) -> SourceInputArchive:
         try:
@@ -197,6 +205,29 @@ class LocalSourceInputReader:
 class MongoSourceInputRepository:
     """Version rows by source bytes, parser, member and physical ordinal."""
 
+    def __init__(
+        self,
+        archives: AsyncCollection[dict[str, Any]] | None = None,
+        rows: AsyncCollection[dict[str, Any]] | None = None,
+    ) -> None:
+        # Driver documents are untyped public source payloads at this boundary.
+        self._archives = archives
+        self._rows = rows
+
+    def _archive_collection(self) -> AsyncCollection[dict[str, Any]]:
+        return (
+            self._archives
+            if self._archives is not None
+            else SourceInputArchiveDocument.get_pymongo_collection()
+        )
+
+    def _row_collection(self) -> AsyncCollection[dict[str, Any]]:
+        return (
+            self._rows
+            if self._rows is not None
+            else SourceInputRowDocument.get_pymongo_collection()
+        )
+
     @staticmethod
     def _key(archive: SourceInputArchive) -> dict[str, str]:
         return {
@@ -205,12 +236,12 @@ class MongoSourceInputRepository:
         }
 
     async def completed(self, archive: SourceInputArchive) -> bool:
-        return await SourceInputArchiveDocument.find_one(self._key(archive)) is not None
+        return await self._archive_collection().find_one(self._key(archive)) is not None
 
     async def write_rows(
         self, archive: SourceInputArchive, rows: Iterable[SourceInputRow]
     ) -> None:
-        collection = SourceInputRowDocument.get_pymongo_collection()
+        collection = self._row_collection()
         pending = []
         for row in rows:
             key = {**self._key(archive), "member": row.member, "ordinal": row.ordinal}
@@ -247,7 +278,7 @@ class MongoSourceInputRepository:
     async def complete(
         self, archive: SourceInputArchive, member_counts: Mapping[str, int]
     ) -> None:
-        await SourceInputArchiveDocument.get_pymongo_collection().update_one(
+        await self._archive_collection().update_one(
             self._key(archive),
             {
                 "$setOnInsert": {

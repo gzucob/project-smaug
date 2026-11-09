@@ -24,7 +24,9 @@ def archive(members: dict[str, bytes]) -> bytes:
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zipped:
         for name, content in members.items():
-            zipped.writestr(name, content)
+            zipped.writestr(
+                zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0)), content
+            )
     return output.getvalue()
 
 
