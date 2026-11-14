@@ -1,11 +1,13 @@
 """Frozen source parity, admitted revisions and source-independent analysis."""
 
+import asyncio
 import csv
 import io
 import json
 import os
 import socket
 import zipfile
+from collections.abc import Sequence
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -18,6 +20,7 @@ import pytest
 from beanie import init_beanie
 from pymongo import AsyncMongoClient
 
+from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.infrastructure.b3_prices import CotahistArchive, _reduce
 from smaug.analysis.infrastructure.mongo_prices import MongoCotahistArchive
 from smaug.analysis.infrastructure.quote_series import B3BaseChanges, B3PriceProvider
@@ -513,6 +516,10 @@ async def test_composed_offline_analysis_persists_and_reads_real_databases(
             await persisted.save(analysis)
             await super().save(analysis)
 
+        async def save_many(self, analyses: Sequence[TickerAnalysis]) -> None:
+            await persisted.save_many(analyses)
+            self.saved.extend(analyses)
+
         async def save_outcome(self, outcome: Any) -> None:
             await persisted.save_outcome(outcome)
             await super().save_outcome(outcome)
@@ -564,6 +571,45 @@ async def test_composed_offline_analysis_persists_and_reads_real_databases(
         await admin.dispose()
 
 
+async def test_preload_bounds_reads_and_keeps_consumer_failures_visible() -> None:
+    sources = FrozenSources()
+    for year in range(2010, 2016):
+        sources.archives.documents.append(
+            {
+                "dataset": "COTAHIST",
+                "year": year,
+                "parser_version": "source-inputs-v1",
+                "validation": "zip-crc-and-lossless-row-layout-v1",
+                "price_basis": "as_traded",
+                "artifact_id": str(year),
+                "source_url": "https://example.test",
+                "observed_at": datetime(2026, 1, 1),
+                "member_counts": {},
+            }
+        )
+
+    class Archive(MongoCotahistArchive):
+        active = 0
+        peak = 0
+
+        async def year(self, year: int) -> Any:
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            try:
+                await asyncio.sleep(0.01)
+                if year == 2012:
+                    raise SourceMalformedError("malformed_mirrored_member:2012")
+                return {}
+            finally:
+                self.active -= 1
+
+    archive = Archive(sources.reader())
+    await archive.preload(concurrency=2)
+    assert archive.peak == 2
+    with pytest.raises(SourceMalformedError, match="2012"):
+        await archive.year(2012)
+
+
 async def test_missing_historical_year_does_not_resolve_from_partial_names(
     tmp_path: Path,
 ) -> None:
@@ -579,6 +625,49 @@ async def test_missing_historical_year_does_not_resolve_from_partial_names(
         SourceNotFoundError, match="missing_mirrored_security_history:FCA:2014"
     ):
         await MongoSecurityHistory(source.reader(), through=2026).names()
+
+
+@pytest.mark.parametrize(
+    "damage", ["gap", "ignored_fields", "missing_type", "fractional", "missing_market"]
+)
+async def test_projected_prices_validate_ignored_rows_and_every_ordinal(
+    tmp_path: Path, damage: str
+) -> None:
+    uri = os.environ.get("SMAUG_TEST_MONGO_URI")
+    if not uri:
+        pytest.skip("Set SMAUG_TEST_MONGO_URI for server-side source validation")
+    client: AsyncMongoClient[dict[str, Any]] = AsyncMongoClient(uri)
+    database = client[f"smaug_projection_test_{uuid4().hex}"]
+    try:
+        await init_beanie(
+            database=database,
+            document_models=[SourceInputArchiveDocument, SourceInputRowDocument],
+        )
+        path = next(p for p in frozen_files(tmp_path) if p.name == "COTAHIST_A2015.ZIP")
+        await MirrorSourceInputs(MongoSourceInputRepository()).execute(
+            LocalSourceInputReader(path)
+        )
+        inputs = MongoSourceInputs(
+            database["source_input_archives"], database["source_input_rows"]
+        )
+        archive = MongoCotahistArchive(inputs)
+        assert await archive.year(2015) == _reduce(path)
+        rows = database["source_input_rows"]
+        if damage == "gap":
+            await rows.delete_one({"ordinal": 2})
+        elif damage == "ignored_fields":
+            await rows.update_one({"ordinal": 1}, {"$set": {"fields": None}})
+        elif damage == "missing_type":
+            await rows.update_one({"ordinal": 1}, {"$unset": {"fields.TIPREG": ""}})
+        elif damage == "fractional":
+            await rows.update_one({"ordinal": 2}, {"$set": {"ordinal": 2.5}})
+        else:
+            await rows.update_one({"ordinal": 2}, {"$unset": {"fields.TPMERC": ""}})
+        with pytest.raises(SourceMalformedError, match="mirrored_member"):
+            await MongoCotahistArchive(inputs).year(2015)
+    finally:
+        await client.drop_database(database.name)
+        await client.close()
 
 
 async def test_mirrored_listing_matches_acquisition() -> None:

@@ -58,6 +58,7 @@ from smaug.analysis.domain.financials import (
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.domain.ports import BaseChangeReader
 from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
+from smaug.analysis.infrastructure.read_cache import AsyncReadCache
 from smaug.portfolio.domain.company import RegistrantResolver, UnitResolver, no_units
 from smaug.shared.logging import get_logger
 
@@ -338,6 +339,15 @@ def _statement_issued(
     )
 
 
+type _RestatementInputs = tuple[
+    dict[int, Decimal],
+    list[Decimal],
+    tuple[CorporateAction, ...],
+    tuple[BaseChange, ...],
+    tuple[ExchangeAction, ...],
+]
+
+
 class MongoSharesReader:
     """Serves the outstanding share counts per fiscal year from the raw mirror."""
 
@@ -363,7 +373,13 @@ class MongoSharesReader:
         # registry-backed resolver.
         self._unit_composition = unit_composition_resolver
         self._is_unit = unit_resolver
-        self._statement_cache: dict[str, dict[int, _StatementCapital]] = {}
+        self._statement_cache = AsyncReadCache[str, dict[int, _StatementCapital]]()
+        self._fre_cache = AsyncReadCache[str, dict[int, ShareCounts]]()
+        self._composition_cache = AsyncReadCache[str, dict[int, CapitalComposition]]()
+        self._action_cache = AsyncReadCache[str, tuple[CorporateAction, ...]]()
+        self._exchange_cache = AsyncReadCache[str, _ExchangeEventReading]()
+        self._restatement_cache = AsyncReadCache[str, _RestatementInputs]()
+        self._factor_cache = AsyncReadCache[str, dict[int, Decimal]]()
 
     async def outstanding(self, ticker: str, year: int) -> Decimal | None:
         filed = await self.counts(ticker, year)
@@ -566,6 +582,11 @@ class MongoSharesReader:
         return (await self._exchange_event_reading(ticker)).actions
 
     async def _exchange_event_reading(self, ticker: str) -> _ExchangeEventReading:
+        return await self._exchange_cache.get(
+            ticker, lambda: self._read_exchange_event_reading(ticker)
+        )
+
+    async def _read_exchange_event_reading(self, ticker: str) -> _ExchangeEventReading:
         """Read B3 rows without letting an amendment or duplicate change the chain."""
         validation = await self._latest_capital_validation(ticker)
         cursor = self._collection.find(
@@ -709,18 +730,26 @@ class MongoSharesReader:
     async def _factor(
         self, ticker: str, by_year: dict[int, ShareCounts], served: int
     ) -> Decimal:
-        factors = restatement_factors(*await self._restatement_inputs(ticker, by_year))
+        factors = await self._factor_cache.get(
+            ticker, lambda: self._read_factors(ticker, by_year)
+        )
         return factors.get(served, Decimal(1))
+
+    async def _read_factors(
+        self, ticker: str, by_year: dict[int, ShareCounts]
+    ) -> dict[int, Decimal]:
+        return restatement_factors(*await self._restatement_inputs(ticker, by_year))
 
     async def _restatement_inputs(
         self, ticker: str, by_year: dict[int, ShareCounts]
-    ) -> tuple[
-        dict[int, Decimal],
-        list[Decimal],
-        tuple[CorporateAction, ...],
-        tuple[BaseChange, ...],
-        tuple[ExchangeAction, ...],
-    ]:
+    ) -> _RestatementInputs:
+        return await self._restatement_cache.get(
+            ticker, lambda: self._read_restatement_inputs(ticker, by_year)
+        )
+
+    async def _read_restatement_inputs(
+        self, ticker: str, by_year: dict[int, ShareCounts]
+    ) -> _RestatementInputs:
         """The four readings the restatement takes, in the order both entries use.
 
         Both of B3's records are among them because they now bear on the *ratio*
@@ -738,6 +767,11 @@ class MongoSharesReader:
         )
 
     async def _declared_actions(self, ticker: str) -> tuple[CorporateAction, ...]:
+        return await self._action_cache.get(
+            ticker, lambda: self._read_declared_actions(ticker)
+        )
+
+    async def _read_declared_actions(self, ticker: str) -> tuple[CorporateAction, ...]:
         """The corporate actions the company declared to CVM, deduplicated.
 
         Every later FRE restates the whole history, so the mirror holds the same
@@ -800,6 +834,9 @@ class MongoSharesReader:
         }
 
     async def _fre_by_year(self, ticker: str) -> dict[int, ShareCounts]:
+        return await self._fre_cache.get(ticker, lambda: self._read_fre_by_year(ticker))
+
+    async def _read_fre_by_year(self, ticker: str) -> dict[int, ShareCounts]:
         """The capital composition that supersedes the rest, per year.
 
         Two filed facts order the candidates, in this order:
@@ -853,8 +890,13 @@ class MongoSharesReader:
         return by_year
 
     async def _statement_capital(self, ticker: str) -> dict[int, _StatementCapital]:
-        if ticker in self._statement_cache:
-            return self._statement_cache[ticker]
+        return await self._statement_cache.get(
+            ticker, lambda: self._read_statement_capital(ticker)
+        )
+
+    async def _read_statement_capital(
+        self, ticker: str
+    ) -> dict[int, _StatementCapital]:
         cursor = self._collection.find(
             mirror_filter(ticker, self._registrant, module=TREASURY_MODULE)
         ).sort("fetched_at", 1)
@@ -923,10 +965,14 @@ class MongoSharesReader:
             readings[year] = _StatementCapital(
                 reference, version, issued, composition, scale, status, anchor_evidence
             )
-        self._statement_cache[ticker] = readings
         return readings
 
     async def _compositions(self, ticker: str) -> dict[int, CapitalComposition]:
+        return await self._composition_cache.get(
+            ticker, lambda: self._read_compositions(ticker)
+        )
+
+    async def _read_compositions(self, ticker: str) -> dict[int, CapitalComposition]:
         """The statements' capital composition — the treasury side — per year.
 
         The mirror holds one per filed period (ADR 0016), so a year has the DFP's

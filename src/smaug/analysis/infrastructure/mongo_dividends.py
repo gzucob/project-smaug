@@ -9,6 +9,7 @@ from typing import Protocol
 
 from smaug.analysis.domain.dividends import CashEvent
 from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
+from smaug.analysis.infrastructure.read_cache import AsyncReadCache
 from smaug.portfolio.domain.company import RegistrantResolver
 from smaug.portfolio.domain.share_classes import PerShareClass
 from smaug.shared.logging import get_logger
@@ -54,6 +55,7 @@ class MongoCashEventReader:
         self._collection = collection
         self._registrant = registrant_resolver
         self._validations = validation_collection
+        self._events = AsyncReadCache[tuple[str, str], tuple[CashEvent, ...] | None]()
 
     async def cash_events(
         self, ticker: str, *, per_share_class: PerShareClass | None = None
@@ -83,6 +85,14 @@ class MongoCashEventReader:
         share_class = share_class.strip().upper()
         if not share_class:
             return None
+        return await self._events.get(
+            (ticker, share_class),
+            lambda: self._read_cash_events_for_class(ticker, share_class=share_class),
+        )
+
+    async def _read_cash_events_for_class(
+        self, ticker: str, *, share_class: str
+    ) -> tuple[CashEvent, ...] | None:
         # A quarantined or partially rejected latest batch must hide any mirror
         # rows from analysis. Returning an older/subset history would make a
         # source-validation failure look like a valid distribution history.

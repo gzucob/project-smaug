@@ -499,6 +499,7 @@ async def _registry_identities(
     fca_provenance: list[FcaSnapshotProvenance] | None = None,
     placeholder_reports: list[FcaPlaceholderReport] | None = None,
     fca_year: int | None = None,
+    archive: QuoteArchive | None = None,
 ) -> dict[str, CompanyIdentity]:
     """Resolve every requested ticker via the CVM FCA registry (#212).
 
@@ -513,7 +514,7 @@ async def _registry_identities(
     naming its FCA type or trading end date (ADR 0053).
     """
     registry = MongoCompanyRegistry(inputs, year=fca_year or settings.cvm_fca_year)
-    _configure_placeholder_recovery(registry, inputs, listings)
+    _configure_placeholder_recovery(registry, inputs, listings, archive=archive)
     identities = await registry.resolve_all(tickers)
     await _remember_placeholder_report(registry, placeholder_reports)
     if fca_provenance is not None:
@@ -1987,8 +1988,8 @@ def analyze(
 
     ``--all`` analyses every traded code rather than every company: a company's
     classes share one filing but not one price, so ELET3 and ELET6 are two
-    different answers to "what is this worth". It runs sequentially — measured at
-    about six seconds a code, with no sign of the price sources rate-limiting.
+    different answers to "what is this worth". It reuses the run's pinned source
+    reads and persists each ticker's views atomically.
     With no flags, the command analyzes the complete traded-code universe, the
     same scope selected explicitly by ``--all``.
     """
@@ -2099,11 +2100,15 @@ def _configure_placeholder_recovery(
     registry: MongoCompanyRegistry,
     inputs: MongoSourceInputs,
     listings: SourceCollection,
+    *,
+    archive: QuoteArchive | None = None,
 ) -> None:
     registry.set_placeholder_recoverer(
         FcaPlaceholderRecovery(
             MongoRegistrantResolver(listings),
-            _CotahistArchiveAdapter(_build_archive(inputs)),
+            _CotahistArchiveAdapter(
+                archive if archive is not None else _build_archive(inputs)
+            ),
             snapshot_year=registry.snapshot_year,
         )
     )
@@ -2346,6 +2351,10 @@ async def _run_analyze(
             mongo[settings.mongo_db]["source_input_rows"],
         )
         await inputs.pin()
+        # Identity recovery, share events and prices read the same as-traded tape.
+        archive = _build_archive(inputs)
+        if whole_exchange or not tickers:
+            await archive.preload()
         listings = mongo[settings.mongo_db]["raw_ingestions"]
         if whole_exchange or not tickers:
             tickers, identities = await _universe_tickers(
@@ -2353,6 +2362,7 @@ async def _run_analyze(
                 inputs,
                 listings,
                 fca_provenance=fca_provenance,
+                archive=archive,
             )
         else:
             identities = await _registry_identities(
@@ -2361,12 +2371,13 @@ async def _run_analyze(
                 listings,
                 tickers,
                 fca_provenance=fca_provenance,
+                archive=archive,
             )
         if refresh_prices:
             existing = await SqlAlchemyAnalysisRepository(session_factory).all_latest()
             tickers = tuple(sorted(a.ticker for a in existing))
             registry = MongoCompanyRegistry(inputs, year=settings.cvm_fca_year)
-            _configure_placeholder_recovery(registry, inputs, listings)
+            _configure_placeholder_recovery(registry, inputs, listings, archive=archive)
             identities = await registry.resolve_all(tickers)
         # The reader keeps a five-value Sector (the internal regime hint); the
         # stored analysis carries the B3 Classification (ADR 0024). Both are
@@ -2377,7 +2388,6 @@ async def _run_analyze(
         # the as-traded price by the very same restatement (ADR 0027). The
         # archive is built first because the reader dates that restatement
         # off it, and the price provider then shares the same instance.
-        archive = _build_archive(inputs)
         # One chain of trading codes per security, shared by the two readers
         # that must not disagree about it: the price averages the joined
         # sessions and the base-change reader dates the actions filed under
@@ -2515,6 +2525,7 @@ async def _universe_tickers(
     listings: SourceCollection,
     fca_provenance: list[FcaSnapshotProvenance] | None = None,
     placeholder_reports: list[FcaPlaceholderReport] | None = None,
+    archive: QuoteArchive | None = None,
 ) -> tuple[tuple[str, ...], dict[str, CompanyIdentity]]:
     """Every traded code, with the identity each resolver needs (#109).
 
@@ -2528,7 +2539,7 @@ async def _universe_tickers(
     someone typing one into the search box.
     """
     registry = MongoCompanyRegistry(inputs, year=settings.cvm_fca_year)
-    _configure_placeholder_recovery(registry, inputs, listings)
+    _configure_placeholder_recovery(registry, inputs, listings, archive=archive)
     tickers = tuple(sorted(t for c in await registry.companies() for t in c.tickers))
     identities = await registry.resolve_all(tickers)
     await _remember_placeholder_report(registry, placeholder_reports)

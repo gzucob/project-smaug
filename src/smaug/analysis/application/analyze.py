@@ -21,6 +21,8 @@ each class is summed at: the latest current-year close, or the fiscal-year close
 
 from __future__ import annotations
 
+import asyncio
+from collections import deque
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
@@ -67,6 +69,7 @@ from smaug.analysis.domain.outcomes import (
     TickerOutcome as TickerOutcome,
 )
 from smaug.analysis.domain.ports import (
+    AnalysisBatchWriter,
     AnalysisOutcomeWriter,
     AnalysisRepository,
     CapitalProvenanceReader,
@@ -335,7 +338,11 @@ class AnalyzePortfolioUseCase:
         outcome_repository: AnalysisOutcomeWriter | None = None,
         governance_reader: GovernanceReader | None = None,
         id_factory: IdFactory = _new_id,
+        preparation_concurrency: int = 4,
     ) -> None:
+        if not 1 <= preparation_concurrency <= 4:
+            raise ValueError("preparation concurrency must be between 1 and 4")
+        self._preparation_concurrency = preparation_concurrency
         self._governance_reader = governance_reader
         self._reader = reader
         self._price_provider = price_provider
@@ -362,24 +369,61 @@ class AnalyzePortfolioUseCase:
         run_id = self._id_factory()
         recorded_at = self._clock()
         outcomes: list[TickerOutcome] = []
-        for ticker in dict.fromkeys(tickers):
-            outcome = replace(
-                await self._analyze_guarded(ticker),
-                run_id=run_id,
-                recorded_at=recorded_at,
-            )
-            outcomes.append(outcome)
-            await self._save_outcome(
-                AnalysisOutcome(
-                    run_id=run_id,
-                    ticker=outcome.ticker,
-                    status=outcome.status,
-                    recorded_at=recorded_at,
-                    no_analysis_reason=outcome.no_analysis_reason,
-                    detail=outcome.detail,
+        remaining = iter(dict.fromkeys(tickers))
+        pending: deque[asyncio.Task[TickerOutcome]] = deque()
+
+        def prepare_next() -> None:
+            ticker = next(remaining, None)
+            if ticker is not None:
+                pending.append(asyncio.create_task(self._analyze_guarded(ticker)))
+
+        for _ in range(self._preparation_concurrency):
+            prepare_next()
+        try:
+            while pending:
+                # Preparations overlap; publication follows the original input
+                # order, including IDs and durable per-ticker outcomes.
+                outcome = await pending.popleft()
+                try:
+                    await self._persist_analyses(outcome.analyses)
+                except Exception as exc:
+                    logger.exception(
+                        "Analysis persistence failed for %s", outcome.ticker
+                    )
+                    outcome = TickerOutcome(
+                        outcome.ticker,
+                        AnalysisStatus.ERROR,
+                        (),
+                        f"{type(exc).__name__}: {exc}",
+                    )
+                outcome = replace(outcome, run_id=run_id, recorded_at=recorded_at)
+                outcomes.append(outcome)
+                await self._save_outcome(
+                    AnalysisOutcome(
+                        run_id=run_id,
+                        ticker=outcome.ticker,
+                        status=outcome.status,
+                        recorded_at=recorded_at,
+                        no_analysis_reason=outcome.no_analysis_reason,
+                        detail=outcome.detail,
+                    )
                 )
-            )
+                prepare_next()
+        finally:
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
         return AnalysisRun(tuple(outcomes), run_id=run_id, recorded_at=recorded_at)
+
+    async def _persist_analyses(self, analyses: tuple[TickerAnalysis, ...]) -> None:
+        if not analyses:
+            return
+        if hasattr(self._repository, "save_many"):
+            await cast(AnalysisBatchWriter, self._repository).save_many(analyses)
+        else:
+            for analysis in analyses:
+                await self._repository.save(analysis)
+        logger.info("Analyzed %s: %d view(s)", analyses[0].ticker, len(analyses))
 
     async def _save_outcome(self, outcome: AnalysisOutcome) -> None:
         """Persist an outcome when the optional storage surface is available."""
@@ -445,9 +489,6 @@ class AnalyzePortfolioUseCase:
                 )
             )
 
-        for analysis in analyses:
-            await self._repository.save(analysis)
-        logger.info("Analyzed %s: %d view(s)", ticker, len(analyses))
         if not analyses:
             if eligibility.unresolved_identity:
                 reason = NoAnalysisReason.UNRESOLVED_SECURITY_IDENTITY

@@ -1,7 +1,10 @@
 """Analysis use case: build the TTM, price it nominally, skip/degrade gracefully."""
 
+import asyncio
 from datetime import UTC, date, datetime
 from decimal import Decimal
+
+import pytest
 
 from smaug.analysis.application.analyze import (
     AnalysisStatus,
@@ -210,6 +213,81 @@ class FakeOutcomeRepo(FakeRepo):
 
     async def save_outcome(self, outcome: AnalysisOutcome) -> None:
         self.outcomes.append(outcome)
+
+
+async def test_parallel_preparations_publish_in_input_order_with_a_bounded_window() -> (
+    None
+):
+    second_started = asyncio.Event()
+
+    class Reader(FakeReader):
+        active = 0
+        peak = 0
+
+        async def history(self, ticker: str) -> list[StandardizedFinancials]:
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            try:
+                if ticker == "PETR4":
+                    await second_started.wait()
+                else:
+                    second_started.set()
+                await asyncio.sleep(0)
+                return await super().history(ticker)
+            finally:
+                self.active -= 1
+
+    tickers = ["PETR4", "PETR3", "VALE3"]
+    reader = Reader(
+        {t: _quarters(Sector.COMMODITY, net_income=Decimal(10)) for t in tickers}
+    )
+    repo = FakeRepo()
+    use_case = AnalyzePortfolioUseCase(
+        reader,
+        FakePrice(),
+        repo,
+        FakeShares(),
+        classes_resolver=fake_classes_resolver,
+        preparation_concurrency=2,
+    )
+    run = await asyncio.wait_for(use_case.execute(tickers), timeout=2)
+    assert reader.peak == 2
+    assert [outcome.ticker for outcome in run.outcomes] == tickers
+    assert [analysis.ticker for analysis in repo.saved] == tickers
+
+
+async def test_failed_publication_cancels_pending_work_without_later_writes() -> None:
+    second_started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class Reader(FakeReader):
+        async def history(self, ticker: str) -> list[StandardizedFinancials]:
+            if ticker == "PETR3":
+                second_started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cancelled.set()
+            await second_started.wait()
+            return await super().history(ticker)
+
+    class Repo(FakeOutcomeRepo):
+        async def save_outcome(self, outcome: AnalysisOutcome) -> None:
+            raise RuntimeError("outcome write failed")
+
+    repo = Repo()
+    use_case = AnalyzePortfolioUseCase(
+        Reader({"PETR4": _quarters(Sector.COMMODITY, net_income=Decimal(10))}),
+        FakePrice(),
+        repo,
+        FakeShares(),
+        classes_resolver=fake_classes_resolver,
+        preparation_concurrency=2,
+    )
+    with pytest.raises(RuntimeError, match="outcome write failed"):
+        await asyncio.wait_for(use_case.execute(["PETR4", "PETR3"]), timeout=2)
+    assert cancelled.is_set()
+    assert [analysis.ticker for analysis in repo.saved] == ["PETR4"]
 
 
 async def test_analyze_persists_stable_outcomes_for_analyzed_and_skipped_tickers() -> (

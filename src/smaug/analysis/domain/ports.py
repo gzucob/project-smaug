@@ -253,6 +253,14 @@ class CashEventReader(Protocol):
         ...
 
 
+class AnalysisBatchWriter(Protocol):
+    """Optional atomic write surface for a ticker's complete calculated views."""
+
+    async def save_many(self, analyses: Sequence[TickerAnalysis]) -> None:
+        """Persist the batch atomically, preserving newer concurrent results."""
+        ...
+
+
 class AnalysisRepository(Protocol):
     """Persists and reads back computed analyses."""
 

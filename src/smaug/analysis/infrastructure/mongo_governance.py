@@ -8,6 +8,7 @@ from typing import Any
 from smaug.analysis.domain.governance import Governance, segment_tag_along
 from smaug.analysis.infrastructure.mirror import mirror_filter
 from smaug.analysis.infrastructure.mongo_fundamentals import RawCollection
+from smaug.analysis.infrastructure.read_cache import AsyncReadCache
 from smaug.portfolio.domain.company import RegistrantResolver
 from smaug.portfolio.domain.share_classes import UnitComponent
 
@@ -31,14 +32,31 @@ class MongoGovernanceReader:
     ) -> None:
         self._collection = collection
         self._registrant = registrant_resolver
+        self._records = AsyncReadCache[
+            tuple[str, str, str], tuple[Mapping[str, Any], ...]
+        ]()
+
+    async def _documents(
+        self, ticker: str, module: str, source: str = "cvm"
+    ) -> tuple[Mapping[str, Any], ...]:
+        return await self._records.get(
+            (ticker, module, source),
+            lambda: self._read_documents(ticker, module, source),
+        )
+
+    async def _read_documents(
+        self, ticker: str, module: str, source: str
+    ) -> tuple[Mapping[str, Any], ...]:
+        docs: list[Mapping[str, Any]] = await self._collection.find(
+            mirror_filter(ticker, self._registrant, source=source, module=module)
+        ).to_list(None)
+        return tuple(docs)
 
     async def read(
         self, ticker: str, end: date, components: tuple[UnitComponent, ...]
     ) -> Governance:
         classes = tuple(component.per_share_class.value for component in components)
-        listing_docs = await self._collection.find(
-            mirror_filter(ticker, self._registrant, source="b3", module="LISTING_B3")
-        ).to_list(None)
+        listing_docs = await self._documents(ticker, "LISTING_B3", "b3")
         observations: list[tuple[datetime, Mapping[str, Any]]] = []
         for doc in listing_docs:
             payload = doc.get("payload", {})
@@ -59,9 +77,7 @@ class MongoGovernanceReader:
             elif market == "BALCAO NAO ORG.":
                 segment = "balcao_nao_organizado"
             observed_on = observed.date()
-        docs = await self._collection.find(
-            mirror_filter(ticker, self._registrant, module="TAG_ALONG")
-        ).to_list(None)
+        docs = await self._documents(ticker, "TAG_ALONG")
         candidates: list[tuple[date, int, str, Mapping[str, Any]]] = []
         for doc in docs:
             row = doc.get("payload", {})

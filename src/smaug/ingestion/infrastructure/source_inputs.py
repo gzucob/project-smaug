@@ -180,7 +180,13 @@ class LocalSourceInputReader:
             if kind == "99":
                 if not record.startswith(f"99COTAHIST.{year}"):
                     raise ValueError("invalid COTAHIST trailer")
-                if not record[31:42].isdigit() or int(record[31:42]) != count:
+                # Published 2025/2026 archives count quote records only; older
+                # archives include header/trailer. Retain the declared bytes and
+                # reconcile either exact convention against every physical row.
+                if not record[31:42].isdigit() or int(record[31:42]) not in {
+                    count,
+                    count - 2,
+                }:
                     raise ValueError("invalid COTAHIST record count")
                 trailer_seen = True
             fields = {
@@ -191,7 +197,9 @@ class LocalSourceInputReader:
                     raise ValueError("invalid COTAHIST session year")
                 if not fields["PREULT"].isdigit() or not fields["FATCOT"].isdigit():
                     raise ValueError("invalid COTAHIST price or quote factor")
-                if int(fields["FATCOT"]) == 0:
+                # B3 files zero factors in non-spot markets (e.g. 070 in 2007).
+                # Preserve those source facts; they do not price spot securities.
+                if fields["TPMERC"] == "010" and int(fields["FATCOT"]) == 0:
                     raise ValueError("zero COTAHIST quote factor")
             # Preserve all 245 columns, including header/trailer and non-spot rows.
             yield {**fields, "record": record}
