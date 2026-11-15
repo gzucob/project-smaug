@@ -1,0 +1,32 @@
+{
+  "elapsed_seconds": 293.4124432159988,
+  "as_of": "2026-11-13T23:00:00+00:00",
+  "scope": "complete_traded_code_universe",
+  "exit_status": 0,
+  "exclusive_seconds": {},
+  "timing_scope": "exclusive within each task; concurrent waits overlap",
+  "unattributed_seconds": 293.4124432159988,
+  "overlapping_task_seconds": 0,
+  "process_cpu_seconds": 266.838316,
+  "calls": {},
+  "python_peak_rss_kib": 889828,
+  "python": "3.13.14",
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "cpu_count": 12,
+  "contract_sha256": "87ba3184de832064115adc8864d11e10a680d16c26015bf0c3555ef129d100db",
+  "domain_sha256": "1f144b1b9efdef58f5b12fa6f58c72ddd4557fb46bf892c7f3228d4a124a656d",
+  "coverage": {
+    "ticker_analysis": 6027,
+    "analysis_outcomes": 433
+  },
+  "excluded_fields": [
+    "computed_at",
+    "recorded_at",
+    "run_id"
+  ],
+  "verification_failures": [],
+  "container_peak_bytes": {
+    "mongo": 2727399424,
+    "postgres": 243646464
+  }
+}

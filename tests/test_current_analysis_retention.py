@@ -13,6 +13,7 @@ import pytest
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import Connection, func, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from smaug.analysis.domain.entities import VIEW_CLOSED_YEAR, TickerAnalysis
@@ -144,7 +145,7 @@ async def test_migration_retains_results_and_saves_replace_atomically(
             reference_date=date(2026, 9, 30),
             indicators=Indicators(roe=Decimal(".3")),
         )
-        await asyncio.gather(repo.save(newer), repo.save(base))
+        await asyncio.gather(repo.save_many((newer, current)), repo.save_many((base,)))
         assert await repo.latest("TEST3") == newer
         await repo.save(current)
         assert await repo.latest("TEST3") == newer
@@ -154,6 +155,33 @@ async def test_migration_retains_results_and_saves_replace_atomically(
             indicators=newer.indicators,
         )
         await repo.save(changed_year)
+        assert await repo.history("TEST3") == [year1, changed_year]
+        # The shared revision trigger must not invert locks between point writes
+        # and transactions containing both a live view and a closed year.
+        await asyncio.wait_for(
+            asyncio.gather(
+                *(
+                    repo.save_many((changed_year, newer))
+                    if index % 2 == 0
+                    else repo.save(base)
+                    for index in range(16)
+                )
+            ),
+            timeout=10,
+        )
+        assert await repo.latest("TEST3") == newer
+        assert await repo.history("TEST3") == [year1, changed_year]
+        await repo.save_many((year2new, changed_year, year2, current))
+        assert await repo.latest("TEST3") == newer
+        assert await repo.history("TEST3") == [year1, changed_year]
+        # A later TTM failure must roll back the earlier closed-year statement.
+        with pytest.raises(DBAPIError):
+            await repo.save_many(
+                (
+                    replace(changed_year, computed_at=now + timedelta(seconds=7)),
+                    replace(newer, ticker="INVALID" * 10),
+                )
+            )
         assert await repo.history("TEST3") == [year1, changed_year]
         for offset in range(12):
             newer = replace(newer, computed_at=now + timedelta(seconds=10 + offset))

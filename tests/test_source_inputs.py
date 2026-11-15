@@ -177,6 +177,29 @@ async def test_invalid_tape_never_gets_admitted(tmp_path: Path, text: str) -> No
     assert not repository.archives
 
 
+@pytest.mark.parametrize("market", ["010", "070"])
+async def test_zero_quote_factor_is_preserved_only_outside_spot_market(
+    tmp_path: Path, market: str
+) -> None:
+    path = tape_archive(tmp_path)
+    with zipfile.ZipFile(path) as source:
+        lines = source.read("COTAHIST_A2015.TXT").decode("latin-1").splitlines()
+    lines[1] = lines[1][:24] + market + lines[1][27:210] + "0000000" + lines[1][217:]
+    make_archive(path, {"COTAHIST_A2015.TXT": "\n".join(lines) + "\n"})
+    repository = MemoryInputs()
+    reader = LocalSourceInputReader(path)
+    if market == "010":
+        with pytest.raises(ValueError, match="zero COTAHIST quote factor"):
+            await MirrorSourceInputs(repository).execute(reader)
+        assert not repository.archives
+    else:
+        assert await MirrorSourceInputs(repository).execute(reader)
+        rows = list(repository.rows.values())
+        assert rows[1].fields["FATCOT"] == "0000000"
+        assert rows[1].fields["record"] == lines[1]
+        assert sum(reader.member_counts().values()) == len(lines)
+
+
 @pytest.mark.parametrize("problem", ["missing_trailer", "record_count", "session_year"])
 async def test_incomplete_or_inconsistent_tape_is_not_admitted(
     tmp_path: Path,
@@ -196,6 +219,28 @@ async def test_incomplete_or_inconsistent_tape_is_not_admitted(
     with pytest.raises(ValueError, match="incomplete|invalid"):
         await MirrorSourceInputs(repository).execute(LocalSourceInputReader(path))
     assert not repository.archives
+
+
+@pytest.mark.parametrize("delta", [0, -2, -1, 1, 2, -3])
+async def test_trailer_reconciles_exact_inclusive_or_quote_only_count(
+    tmp_path: Path, delta: int
+) -> None:
+    path = tape_archive(tmp_path)
+    with zipfile.ZipFile(path) as source:
+        lines = source.read("COTAHIST_A2015.TXT").decode("latin-1").splitlines()
+    declared = len(lines) + delta
+    lines[-1] = lines[-1][:31] + f"{declared:011d}" + lines[-1][42:]
+    make_archive(path, {"COTAHIST_A2015.TXT": "\n".join(lines) + "\n"})
+    repository = MemoryInputs()
+    reader = LocalSourceInputReader(path)
+    if delta in {0, -2}:
+        assert await MirrorSourceInputs(repository).execute(reader)
+        assert sum(reader.member_counts().values()) == len(lines)
+        assert list(repository.rows.values())[-1].fields["record"] == lines[-1]
+    else:
+        with pytest.raises(ValueError, match="invalid COTAHIST record count"):
+            await MirrorSourceInputs(repository).execute(reader)
+        assert not repository.archives
 
 
 async def test_ragged_cvm_rows_preserve_missing_columns_and_extra_cells(

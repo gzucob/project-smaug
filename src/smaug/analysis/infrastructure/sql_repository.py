@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, NamedTuple, cast
 
 from sqlalchemy import and_, case, delete, func, or_, select, text
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import Insert, insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -1370,20 +1370,56 @@ class SqlAlchemyAnalysisRepository:
         self._session_factory = session_factory
 
     async def save(self, analysis: TickerAnalysis) -> None:
-        row = _to_row(analysis)
-        statement = insert(TickerAnalysisRow).values(
-            {
-                column.name: getattr(row, column.name)
-                for column in TickerAnalysisRow.__table__.columns
-                if column.name != "id"
-            }
-        )
+        await self.save_many((analysis,))
+
+    async def save_many(self, analyses: Sequence[TickerAnalysis]) -> None:
+        """Write all views atomically, with bounded statements and stable lock order."""
+        selected: dict[tuple[str, str, date], TickerAnalysis] = {}
+        for analysis in analyses:
+            key = (
+                analysis.ticker,
+                analysis.view,
+                analysis.reference_date
+                if analysis.view == VIEW_CLOSED_YEAR
+                else date.min,
+            )
+            if key not in selected or selected[key].computed_at <= analysis.computed_at:
+                selected[key] = analysis
+        if not selected:
+            return
+        ordered = [selected[key] for key in sorted(selected)]
+        async with self._session_factory() as session:
+            # Point writes and overlapping multi-view batches must acquire their
+            # ticker locks before any row (or the shared UI revision trigger).
+            for ticker in sorted({analysis.ticker for analysis in ordered}):
+                await session.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                    {"key": f"smaug.analysis:{ticker}"},
+                )
+            # Partial unique indexes require a separate statement per view.
+            for view in (VIEW_TTM, VIEW_CLOSED_YEAR):
+                rows = [_to_row(a) for a in ordered if a.view == view]
+                for start in range(0, len(rows), 50):
+                    values = [
+                        {
+                            column.name: getattr(row, column.name)
+                            for column in TickerAnalysisRow.__table__.columns
+                            if column.name != "id"
+                        }
+                        for row in rows[start : start + 50]
+                    ]
+                    statement = insert(TickerAnalysisRow).values(values)
+                    await session.execute(self._upsert(statement, view))
+            await session.commit()
+
+    @staticmethod
+    def _upsert(statement: Insert, view: AnalysisView) -> Insert:
         keys = ["ticker"]
         predicate = text("view = 'ttm_live'")
-        if analysis.view == VIEW_CLOSED_YEAR:
+        if view == VIEW_CLOSED_YEAR:
             keys.append("reference_date")
             predicate = text("view = 'closed_year'")
-        statement = statement.on_conflict_do_update(
+        return statement.on_conflict_do_update(
             index_elements=keys,
             # A bound view parameter cannot prove a partial-index predicate
             # once PostgreSQL reuses a generic prepared plan.
@@ -1396,9 +1432,6 @@ class SqlAlchemyAnalysisRepository:
             # An older concurrent calculation must not overwrite a newer one.
             where=TickerAnalysisRow.computed_at <= statement.excluded.computed_at,
         )
-        async with self._session_factory() as session:
-            await session.execute(statement)
-            await session.commit()
 
     async def save_outcome(self, outcome: AnalysisOutcome) -> None:
         """Persist one ticker/run outcome without creating a ticker-analysis row."""

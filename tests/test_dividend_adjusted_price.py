@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, localcontext
 
 from smaug.analysis.domain.capital import RestatementStep
 from smaug.analysis.domain.dividends import (
@@ -120,6 +120,32 @@ def test_the_year_takes_one_factor_weighted_by_its_sessions() -> None:
     average = (Decimal(10) + Decimal(20)) / 2
     adjusted_mean = (Decimal(10) * Decimal("0.9") + Decimal(20)) / 2
     assert average * factor == adjusted_mean
+
+
+def test_weighted_factor_preserves_event_order_ex_dates_and_decimal_rounding() -> None:
+    events = [
+        _event("2025-08-01", "12.3456789"),
+        _event("2025-03-01", "9.87654321"),
+        _event("2025-08-01", "0.123456789"),
+    ]
+    sessions = [
+        _close(day, "123.456789")
+        for day in (
+            "2025-07-02",
+            "2025-01-02",
+            "2025-08-01",
+            "2025-03-01",
+            "2025-07-03",
+            "2025-02-03",
+        )
+    ]
+    with localcontext() as context:
+        context.prec = 8
+        expected = sum(
+            (s.close * dividend_factor(events, s.session) for s in sessions),
+            Decimal(0),
+        ) / sum((s.close for s in sessions), Decimal(0))
+        assert average_dividend_factor(events, sessions) == expected
 
 
 def test_cash_rights_are_rebased_with_the_same_later_actions_as_prices() -> None:

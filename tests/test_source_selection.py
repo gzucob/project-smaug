@@ -77,7 +77,7 @@ async def test_identity_resolution_uses_fca_year_not_accounting_year(
             )
 
     monkeypatch.setattr(cli, "MongoCompanyRegistry", FakeRegistry)
-    monkeypatch.setattr(cli, "_configure_placeholder_recovery", lambda *_: None)
+    monkeypatch.setattr(cli, "_configure_placeholder_recovery", lambda *_, **__: None)
     settings = Settings(cvm_year=2024, cvm_fca_year=2026)
     provenance: list[FcaSnapshotProvenance] = []
     assert (
@@ -119,7 +119,7 @@ async def test_current_universe_reuses_the_pinned_mongo_inputs(monkeypatch) -> N
             )
 
     monkeypatch.setattr(cli, "MongoCompanyRegistry", FakeRegistry)
-    monkeypatch.setattr(cli, "_configure_placeholder_recovery", lambda *_: None)
+    monkeypatch.setattr(cli, "_configure_placeholder_recovery", lambda *_, **__: None)
     settings = Settings(cvm_year=2024, cvm_fca_year=2026)
     provenance: list[FcaSnapshotProvenance] = []
     await cli._universe_tickers(

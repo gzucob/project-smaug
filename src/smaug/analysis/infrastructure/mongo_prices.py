@@ -16,13 +16,36 @@ class MongoCotahistArchive:
     def __init__(self, inputs: MongoSourceInputs) -> None:
         self._inputs = inputs
         self._years: dict[int, Mapping[str, YearQuotes]] = {}
-        self._lock = asyncio.Lock()
+        self._locks: dict[int, asyncio.Lock] = {}
+
+    async def preload(self, *, concurrency: int = 3) -> None:
+        """Warm admitted years with bounded cursors and per-year accumulators."""
+        if not 1 <= concurrency <= 3:
+            raise ValueError("archive concurrency must be between 1 and 3")
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def load(year: int) -> None:
+            async with semaphore:
+                try:
+                    await self.year(year)
+                except Exception:
+                    # Prefetch cannot decide availability. The normal consumer
+                    # retries failures and preserves its named error/null path.
+                    pass
+
+        revisions = await self._inputs.pin()
+        async with asyncio.TaskGroup() as tasks:
+            for dataset, year in revisions:
+                if dataset == "COTAHIST":
+                    tasks.create_task(load(year))
 
     async def year(self, year: int) -> Mapping[str, YearQuotes]:
-        async with self._lock:
+        if year in self._years:
+            return self._years[year]
+        revision = await self._inputs.revision("COTAHIST", year)
+        async with self._locks.setdefault(year, asyncio.Lock()):
             if year in self._years:
                 return self._years[year]
-            revision = await self._inputs.revision("COTAHIST", year)
             if len(revision.member_counts) != 1:
                 raise SourceMalformedError(f"ambiguous_mirrored_cotahist:{year}")
             # Rows stream from MongoDB. Keep only per-code accumulators in memory.
@@ -31,7 +54,7 @@ class MongoCotahistArchive:
             member = next(iter(revision.member_counts))
             batch = []
             try:
-                async for row in self._inputs.rows(revision, member):
+                async for row in self._inputs.cotahist_rows(revision, member):
                     batch.append(row)
                     if len(batch) == 1000:
                         accumulate_quotes(batch, totals)

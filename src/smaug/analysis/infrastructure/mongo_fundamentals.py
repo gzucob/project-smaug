@@ -22,10 +22,11 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 from typing import Any, Protocol
 
 from smaug.analysis.domain.financials import (
@@ -47,6 +48,7 @@ from smaug.analysis.domain.financials import (
 from smaug.analysis.domain.indicators import NullReason
 from smaug.analysis.infrastructure.free_float import filed_free_float
 from smaug.analysis.infrastructure.mirror import mirror_filter, no_registrant
+from smaug.analysis.infrastructure.read_cache import AsyncReadCache
 from smaug.portfolio.domain.company import RegistrantResolver
 from smaug.portfolio.domain.sectors import Sector
 from smaug.portfolio.domain.securities import (
@@ -143,6 +145,7 @@ def _missing_economic_rights(_ticker: str) -> NullReason:
     return NullReason.MISSING_ECONOMIC_RIGHTS
 
 
+@lru_cache(maxsize=8192)
 def _fold(text: str) -> str:
     decomposed = unicodedata.normalize("NFKD", text)
     return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
@@ -1016,6 +1019,7 @@ def _source_account_evidence(
                 financials.unmapped_fields,
             )
         )
+    income_tax_accounts = _income_tax_accounts(dre)
     add(
         _source_entry(
             "income_tax_expense",
@@ -1024,7 +1028,7 @@ def _source_account_evidence(
             _matching_refs(
                 dre,
                 dre_s,
-                lambda account: account in _income_tax_accounts(dre),
+                lambda account: account in income_tax_accounts,
             ),
             financials.income_tax_expense,
             financials.unmapped_fields,
@@ -1952,8 +1956,12 @@ def _account_fixed_flag(account: Mapping[str, Any]) -> Any:  # source payload va
 
 
 def _source_cell_identity(
-    module: str, payload: Mapping[str, Any], account: Mapping[str, Any]
-) -> tuple[str, ...]:
+    module: str,
+    payload: Mapping[str, Any],
+    account: Mapping[str, Any],
+    *,
+    payload_identity: tuple[str, ...] | None = None,
+) -> tuple[Hashable, ...]:
     """Identify one CVM account cell without crossing filing boundaries.
 
     The parser intentionally preserves repeated rows in the raw mirror. Analysis
@@ -1961,11 +1969,8 @@ def _source_cell_identity(
     account identity-bearing value participate in this key. In particular,
     ``COLUNA_DF`` distinguishes DMPL matrix cells that share a code and label.
     """
-    payload_identity = tuple(
-        f"payload:{str(key)}={_identity_value(value)}"
-        for key, value in sorted(payload.items(), key=lambda item: str(item[0]))
-        if key != "accounts"
-    )
+    if payload_identity is None:
+        payload_identity = _payload_identity(payload)
     canonical: dict[str, Any] = {
         "code": _first_account_value(account, "code", "CD_CONTA"),
         "name": _first_account_value(account, "name", "DS_CONTA"),
@@ -1978,15 +1983,30 @@ def _source_cell_identity(
     ):
         canonical["column"] = _account_column(account)
     account_identity = tuple(
-        f"account:{key}={_identity_value(value)}"
-        for key, value in sorted(canonical.items())
+        (key, _cell_value(value)) for key, value in sorted(canonical.items())
     )
     extras = tuple(
-        f"account-extra:{str(key)}={_identity_value(value)}"
+        (str(key), _cell_value(value))
         for key, value in sorted(account.items(), key=lambda item: str(item[0]))
         if str(key) not in _ACCOUNT_IDENTITY_ALIASES
     )
-    return (f"module:{module}", *payload_identity, *account_identity, *extras)
+    return (module, payload_identity, account_identity, extras)
+
+
+def _cell_value(value: Any) -> tuple[str, str]:  # untyped BSON source cell
+    # Plain BSON strings already provide exact, hashable identity. Formatting
+    # their repr adds no evidence; other types retain their typed canonical form.
+    if type(value) is str:
+        return ("str", value)
+    return ("other", _identity_value(value))
+
+
+def _payload_identity(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    return tuple(
+        f"payload:{str(key)}={_identity_value(value)}"
+        for key, value in sorted(payload.items(), key=lambda item: str(item[0]))
+        if key != "accounts"
+    )
 
 
 def _deduplicate_accounts(
@@ -2001,11 +2021,14 @@ def _deduplicate_accounts(
     statement scopes, or ``ORDEM_EXERC`` values, and it never mutates the raw
     payload. The first occurrence remains in source order for stable evidence.
     """
-    seen: set[tuple[str, ...]] = set()
+    seen: set[tuple[Hashable, ...]] = set()
     retained: list[Mapping[str, Any]] = []
     discarded = 0
+    payload_identity = _payload_identity(payload)
     for account in accounts:
-        identity = _source_cell_identity(module, payload, account)
+        identity = _source_cell_identity(
+            module, payload, account, payload_identity=payload_identity
+        )
         if identity in seen:
             discarded += 1
             continue
@@ -2015,6 +2038,8 @@ def _deduplicate_accounts(
 
 
 def _duplicate_count(by_module: Mapping[str, Any], module: str) -> int:
+    if isinstance(by_module, _PreparedStatements):
+        return by_module.duplicates.get(module, 0)
     payload = by_module.get(module)
     if not isinstance(payload, Mapping):
         return 0
@@ -2033,11 +2058,30 @@ def _inventories(bpa: Accounts) -> Decimal | None:
 
 
 def _accounts(by_module: Mapping[str, Any], module: str) -> Accounts:
+    if isinstance(by_module, _PreparedStatements):
+        return by_module.accounts.get(module, ())
     payload = by_module.get(module)
     if not isinstance(payload, Mapping):
         return []
     accounts = _accounts_of(payload)
     return _deduplicate_accounts(module, payload, accounts)[0]
+
+
+class _PreparedStatements(dict[str, Any]):
+    """Deduplicate each selected statement once for calculation and evidence."""
+
+    def __init__(self, statements: Mapping[str, Any]) -> None:
+        super().__init__(statements)
+        self.accounts: dict[str, Accounts] = {}
+        self.duplicates: dict[str, int] = {}
+        for module in _STATEMENTS:
+            payload = statements.get(module)
+            if isinstance(payload, Mapping):
+                accounts, duplicates = _deduplicate_accounts(
+                    module, payload, _accounts_of(payload)
+                )
+                self.accounts[module] = accounts
+                self.duplicates[module] = duplicates
 
 
 def _scale(by_module: Mapping[str, Any], module: str) -> Decimal:
@@ -2345,6 +2389,7 @@ def standardize(
     one its sector predicts when the DRE is missing or its opening line matches
     no known schema — mapping under a guessed regime would read the wrong codes.
     """
+    by_module = _PreparedStatements(by_module)
     bpa, bpa_s = _accounts(by_module, "BPA"), _scale(by_module, "BPA")
     bpp, bpp_s = _accounts(by_module, "BPP"), _scale(by_module, "BPP")
     dre, dre_s = _accounts(by_module, "DRE"), _scale(by_module, "DRE")
@@ -2642,6 +2687,10 @@ class MongoFundamentalsReader:
         self._per_share_classes = per_share_classes_resolver
         self._period_share_classes = period_share_classes_resolver
         self._per_share_rights_reason = per_share_rights_reason_resolver
+        # Concurrent ticker preparation still keeps class-specific CPC 41 separate.
+        self._loaded = AsyncReadCache[
+            str, list[tuple[str | None, StandardizedFinancials]]
+        ]()
 
     async def history(self, ticker: str) -> list[StandardizedFinancials]:
         """ITR quarterly periods (oldest→newest) — the raw material for the TTM."""
@@ -2657,6 +2706,11 @@ class MongoFundamentalsReader:
         return annuals[-1] if annuals else None
 
     async def _load(
+        self, ticker: str
+    ) -> list[tuple[str | None, StandardizedFinancials]]:
+        return await self._loaded.get(ticker, lambda: self._read(ticker))
+
+    async def _read(
         self, ticker: str
     ) -> list[tuple[str | None, StandardizedFinancials]]:
         cursor = self._collection.find(mirror_filter(ticker, self._registrant))

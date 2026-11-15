@@ -23,6 +23,7 @@ payment and the price are both per lot and the ratio cancels the scale away.
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -110,9 +111,20 @@ def average_dividend_factor(
     weighting, which divides where this multiplies.
     """
     traded = sum((s.close for s in sessions), Decimal(0))
-    adjusted = sum(
-        (s.close * dividend_factor(events, s.session) for s in sessions), Decimal(0)
+    boundaries = sorted(
+        {event.effective for event in events if event.percentage is not None}
     )
+    factors: dict[int, Decimal] = {}
+
+    def factor_for(session: date) -> Decimal:
+        interval = bisect_right(boundaries, session)
+        if interval not in factors:
+            # Sessions between the same ex dates include exactly the same events.
+            # Preserve their original multiplication order and Decimal context.
+            factors[interval] = dividend_factor(events, session)
+        return factors[interval]
+
+    adjusted = sum((s.close * factor_for(s.session) for s in sessions), Decimal(0))
     if traded <= 0 or adjusted <= 0:
         return Decimal(1)
     return adjusted / traded

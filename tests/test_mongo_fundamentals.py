@@ -1434,6 +1434,36 @@ class _FakeCollection:
         return _FakeCursor(self._docs)
 
 
+async def test_fundamentals_reuses_one_ticker_without_leaking_other_class_results() -> (
+    None
+):
+    class CountingCollection(_FakeCollection):
+        calls = 0
+
+        def find(self, query: dict[str, Any]) -> _FakeCursor:
+            self.calls += 1
+            return super().find(query)
+
+    collection = CountingCollection(
+        [_doc("DRE", "2024-12-31", [_acc("3.01", "Receita", "100")])]
+    )
+    reader = MongoFundamentalsReader(
+        collection,
+        sector_resolver=lambda _: Sector.INDUSTRY,
+        issuer_resolver=lambda ticker: IssuerIdentity(
+            cd_cvm="1", cnpj="1", issuer_name=ticker
+        ),
+    )
+    assert await reader.history("TEST3") == []
+    first = await reader.annuals("TEST3")
+    first.clear()  # Caller mutations cannot corrupt the reader's cached sequence.
+    assert len(await reader.annuals("TEST3")) == 1
+    assert collection.calls == 1
+    assert (await reader.annuals("TEST4"))[0].issuer_name == "TEST4"
+    assert (await reader.annuals("TEST3"))[0].issuer_name == "TEST3"
+    assert collection.calls == 2
+
+
 def _doc(
     module: str,
     ref: str,
