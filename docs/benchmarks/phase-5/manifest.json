@@ -1,0 +1,1360 @@
+{
+  "format_version": 1,
+  "created_at": "2026-11-15T20:42:49.230996+00:00",
+  "compatibility": {
+    "code_commit": "98fd8e5554cbb955d6a803712ba8d077e323fbb3",
+    "code_sha256": "8f8caf9c8dea8f883b688c2ec3baf20d43f05d223dbc4b260976d459eaee4f26",
+    "alembic_revision": "0044",
+    "calculation_contract": "last_traded_price_v1",
+    "source_parser": "source-inputs-v1",
+    "mongo_major": 8,
+    "postgres_major": 17
+  },
+  "data_revision": "ae88e00b30f8c76e82b709fdf34047b07bf5c980d733ddf06ae4cc6cd24c183c",
+  "source_archives": [
+    {
+      "artifact_id": "sha256:350e6086c8f991484832ca3cd23e900b692769bfd3311017800231fd896c8018",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 8713632,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST.A1986": 177983
+      },
+      "observed_at": "2026-11-13T23:57:49.115Z",
+      "price_basis": "as_traded",
+      "sha256": "350e6086c8f991484832ca3cd23e900b692769bfd3311017800231fd896c8018",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A1986.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 1986
+    },
+    {
+      "artifact_id": "sha256:16db2bbda8cf770ad177af762c6e651422dee7b1dc7a62ea75fa10e5760f517d",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 6349827,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST.A1987": 130667
+      },
+      "observed_at": "2026-11-13T23:58:04.724Z",
+      "price_basis": "as_traded",
+      "sha256": "16db2bbda8cf770ad177af762c6e651422dee7b1dc7a62ea75fa10e5760f517d",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A1987.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 1987
+    },
+    {
+      "artifact_id": "sha256:b99563d58d2c58ba4c910545fc969041499a45e4e2f6649829a67702193a88ee",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 8122653,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST.A1988": 167676
+      },
+      "observed_at": "2026-11-13T23:58:16.784Z",
+      "price_basis": "as_traded",
+      "sha256": "b99563d58d2c58ba4c910545fc969041499a45e4e2f6649829a67702193a88ee",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A1988.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 1988
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:9f2d468dbbd9ff2ffcf960501cbb0a66d3921ecd7fbb9305a8c6269f302c503d",
+      "acquisition": "local_import",
+      "byte_size": 7510968,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST.A1989": 152238
+      },
+      "observed_at": "2026-11-13T23:58:32.896Z",
+      "price_basis": "as_traded",
+      "sha256": "9f2d468dbbd9ff2ffcf960501cbb0a66d3921ecd7fbb9305a8c6269f302c503d",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A1989.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 1989
+    },
+    {
+      "artifact_id": "sha256:85dd3ad24b0d9742c0d438e91ecec2ff07ef38e381c075469b9d0829c9f95619",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 5352193,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST.A1990": 108628
+      },
+      "observed_at": "2026-11-13T23:58:47.342Z",
+      "price_basis": "as_traded",
+      "sha256": "85dd3ad24b0d9742c0d438e91ecec2ff07ef38e381c075469b9d0829c9f95619",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A1990.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 1990
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:9c83ede3d78ca1588309f0934c7cbfdbdfd047287c69b44d17ddfa43e4e82262",
+      "acquisition": "local_import",
+      "byte_size": 5476429,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST.A1991": 110837
+      },
+      "observed_at": "2026-11-13T23:59:00.381Z",
+      "price_basis": "as_traded",
+      "sha256": "9c83ede3d78ca1588309f0934c7cbfdbdfd047287c69b44d17ddfa43e4e82262",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A1991.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 1991
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:50a35c8c409ee49bfb0fcc1773f687548af85e1c2bf81756f7ef2b89ee035939",
+      "acquisition": "local_import",
+      "byte_size": 5214684,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST.A1992": 105920
+      },
+      "observed_at": "2026-11-13T23:59:10.678Z",
+      "price_basis": "as_traded",
+      "sha256": "50a35c8c409ee49bfb0fcc1773f687548af85e1c2bf81756f7ef2b89ee035939",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A1992.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 1992
+    },
+    {
+      "artifact_id": "sha256:f63c13905d712e74f69610511d8000b4231644a89bd60d47af1e21209709ecad",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 5893559,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST.A1993": 116200
+      },
+      "observed_at": "2026-11-13T23:59:20.306Z",
+      "price_basis": "as_traded",
+      "sha256": "f63c13905d712e74f69610511d8000b4231644a89bd60d47af1e21209709ecad",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A1993.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 1993
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:b3bbd8e8d290c36943398c6f99a04e0721db2ebac3b917904df9efaacf3172eb",
+      "acquisition": "local_import",
+      "byte_size": 5998158,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST.A1994": 119099
+      },
+      "observed_at": "2026-11-13T23:59:31.290Z",
+      "price_basis": "as_traded",
+      "sha256": "b3bbd8e8d290c36943398c6f99a04e0721db2ebac3b917904df9efaacf3172eb",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A1994.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 1994
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:de553f41a3ce15ec8a082ed1c2d451df58520a447d3f39417f45e7feb5a995fc",
+      "acquisition": "local_import",
+      "byte_size": 5277341,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST.A1995": 104793
+      },
+      "observed_at": "2026-11-13T23:59:42.650Z",
+      "price_basis": "as_traded",
+      "sha256": "de553f41a3ce15ec8a082ed1c2d451df58520a447d3f39417f45e7feb5a995fc",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A1995.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 1995
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:911a993548931f56b1b3dc18d2994c67f5d011cf7a85986029384298f17d6800",
+      "acquisition": "local_import",
+      "byte_size": 5598339,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST.A1996": 110687
+      },
+      "observed_at": "2026-11-13T23:59:52.561Z",
+      "price_basis": "as_traded",
+      "sha256": "911a993548931f56b1b3dc18d2994c67f5d011cf7a85986029384298f17d6800",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A1996.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 1996
+    },
+    {
+      "artifact_id": "sha256:f6bd380e753ec8024857b739b7d9b010c7467a5fd967e82d01186a46f5e33fc3",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 6094245,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST.A1997": 119274
+      },
+      "observed_at": "2026-11-14T00:00:03.206Z",
+      "price_basis": "as_traded",
+      "sha256": "f6bd380e753ec8024857b739b7d9b010c7467a5fd967e82d01186a46f5e33fc3",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A1997.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 1997
+    },
+    {
+      "artifact_id": "sha256:91a2d516686a0d0ff133254df2595f44d23d9b7ecf1966a11ef4c2beeacec440",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 5384840,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST.A1998": 104973
+      },
+      "observed_at": "2026-11-14T00:00:14.207Z",
+      "price_basis": "as_traded",
+      "sha256": "91a2d516686a0d0ff133254df2595f44d23d9b7ecf1966a11ef4c2beeacec440",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A1998.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 1998
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:fe7428b367a2d40acaefe823fd5080254d07f9ad6c29fc64c9e6876cbd876f09",
+      "acquisition": "local_import",
+      "byte_size": 6675159,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST.A1999": 129843
+      },
+      "observed_at": "2026-11-14T00:00:23.957Z",
+      "price_basis": "as_traded",
+      "sha256": "fe7428b367a2d40acaefe823fd5080254d07f9ad6c29fc64c9e6876cbd876f09",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A1999.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 1999
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:77ba58b5138e384be140759bf836e8cc22189cdfecdf80e4c13672c535f42bd6",
+      "acquisition": "local_import",
+      "byte_size": 6689526,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST.A2000": 153684
+      },
+      "observed_at": "2026-11-14T00:00:35.932Z",
+      "price_basis": "as_traded",
+      "sha256": "77ba58b5138e384be140759bf836e8cc22189cdfecdf80e4c13672c535f42bd6",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2000.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2000
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:0386ca1b80d207ef9876fe64c2d48e9af1b827b3ecc0365c0e99db5cacf20eb5",
+      "acquisition": "local_import",
+      "byte_size": 4978023,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2001": 141850
+      },
+      "observed_at": "2026-11-14T00:00:50.031Z",
+      "price_basis": "as_traded",
+      "sha256": "0386ca1b80d207ef9876fe64c2d48e9af1b827b3ecc0365c0e99db5cacf20eb5",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2001.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2001
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:ee002b9a533d310351ed07ccb3a8cd3badd84993a4969c5b58088d738de59116",
+      "acquisition": "local_import",
+      "byte_size": 5877292,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2002.TXT": 129975
+      },
+      "observed_at": "2026-11-14T00:01:03.132Z",
+      "price_basis": "as_traded",
+      "sha256": "ee002b9a533d310351ed07ccb3a8cd3badd84993a4969c5b58088d738de59116",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2002.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2002
+    },
+    {
+      "artifact_id": "sha256:bcd337ebc1d92c190c4d8b77f582d2ec0890a8705fd5c10d68b28fa1eb15a2f0",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 6901239,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2003.TXT": 148114
+      },
+      "observed_at": "2026-11-14T00:01:15.279Z",
+      "price_basis": "as_traded",
+      "sha256": "bcd337ebc1d92c190c4d8b77f582d2ec0890a8705fd5c10d68b28fa1eb15a2f0",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2003.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2003
+    },
+    {
+      "artifact_id": "sha256:f750ba8ee9e25299ed96811979befb29315d91667fedc3885c709440b4989467",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 7902413,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2004.TXT": 166939
+      },
+      "observed_at": "2026-11-14T00:01:28.984Z",
+      "price_basis": "as_traded",
+      "sha256": "f750ba8ee9e25299ed96811979befb29315d91667fedc3885c709440b4989467",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2004.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2004
+    },
+    {
+      "artifact_id": "sha256:41eac6d743d9c3e812bb001c4d327582fa7c408dbc99ff4a1734698da8b18f52",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 8533024,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2005.TXT": 181410
+      },
+      "observed_at": "2026-11-14T00:01:44.433Z",
+      "price_basis": "as_traded",
+      "sha256": "41eac6d743d9c3e812bb001c4d327582fa7c408dbc99ff4a1734698da8b18f52",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2005.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2005
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:b5432089f8788ea122b4102cd1f09b1a0a3436c176b8f8c548eef50ec3e02687",
+      "acquisition": "local_import",
+      "byte_size": 9318595,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2006.TXT": 198369
+      },
+      "observed_at": "2026-11-14T00:02:01.294Z",
+      "price_basis": "as_traded",
+      "sha256": "b5432089f8788ea122b4102cd1f09b1a0a3436c176b8f8c548eef50ec3e02687",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2006.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2006
+    },
+    {
+      "artifact_id": "sha256:3c46f425112f838f3eb09023c987d7e5e81500610d3e5e40fedefb52d3dffd66",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 10530129,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2007.TXT": 280257
+      },
+      "observed_at": "2026-11-14T00:04:17.185Z",
+      "price_basis": "as_traded",
+      "sha256": "3c46f425112f838f3eb09023c987d7e5e81500610d3e5e40fedefb52d3dffd66",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2007.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2007
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:b4d92bcea3c253ab9379ad6ddcb42115c8afb72fd94d39ded2b5912528cf3786",
+      "acquisition": "local_import",
+      "byte_size": 10330640,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2008.TXT": 284237
+      },
+      "observed_at": "2026-11-14T00:04:44.523Z",
+      "price_basis": "as_traded",
+      "sha256": "b4d92bcea3c253ab9379ad6ddcb42115c8afb72fd94d39ded2b5912528cf3786",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2008.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2008
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:bb9421050bfd98a91b6023c1df540e43f421734c6fa0834ab2891c30af581adc",
+      "acquisition": "local_import",
+      "byte_size": 9620954,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2009.TXT": 265048
+      },
+      "observed_at": "2026-11-14T00:05:16.301Z",
+      "price_basis": "as_traded",
+      "sha256": "bb9421050bfd98a91b6023c1df540e43f421734c6fa0834ab2891c30af581adc",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2009.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2009
+    },
+    {
+      "artifact_id": "sha256:65637311ced65ba54a617ab9cc2543974fdd4ed0ce416a5235e01b2f1aae66f5",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 10385444,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2010.TXT": 287482
+      },
+      "observed_at": "2026-11-14T00:02:41.729Z",
+      "price_basis": "as_traded",
+      "sha256": "65637311ced65ba54a617ab9cc2543974fdd4ed0ce416a5235e01b2f1aae66f5",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2010.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2010
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:0cf67787cc1b77dde67a4ff1a340123ab261ce252245d24b5d32ec5b8b162359",
+      "acquisition": "local_import",
+      "byte_size": 10856136,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2011.TXT": 298372
+      },
+      "observed_at": "2026-11-14T00:03:11.729Z",
+      "price_basis": "as_traded",
+      "sha256": "0cf67787cc1b77dde67a4ff1a340123ab261ce252245d24b5d32ec5b8b162359",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2011.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2011
+    },
+    {
+      "artifact_id": "sha256:98771b1248a3f19b547609ed4fd6c8da0eb396140afb6de91946db457c855465",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 11883689,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2012.TXT": 330635
+      },
+      "observed_at": "2026-11-14T00:03:43.177Z",
+      "price_basis": "as_traded",
+      "sha256": "98771b1248a3f19b547609ed4fd6c8da0eb396140afb6de91946db457c855465",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2012.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2012
+    },
+    {
+      "artifact_id": "sha256:b6dfb0d73181a60cc65083c2b185a1cbb0c95b87b21f873cc151515c65e47636",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 13300034,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2013.TXT": 378919
+      },
+      "observed_at": "2026-11-14T00:04:17.401Z",
+      "price_basis": "as_traded",
+      "sha256": "b6dfb0d73181a60cc65083c2b185a1cbb0c95b87b21f873cc151515c65e47636",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2013.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2013
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:613d76f8a64c7ffba0406cb54c1fd187266f55ed8b6037cb85993b2071a5aae7",
+      "acquisition": "local_import",
+      "byte_size": 13684612,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2014.TXT": 392230
+      },
+      "observed_at": "2026-11-14T00:04:59.506Z",
+      "price_basis": "as_traded",
+      "sha256": "613d76f8a64c7ffba0406cb54c1fd187266f55ed8b6037cb85993b2071a5aae7",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2014.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2014
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:593f8740ec1aa87c80c54c623f1759530b6b32cdadd34a64f0fc66a529f34e35",
+      "acquisition": "local_import",
+      "byte_size": 14129467,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2015.TXT": 414179
+      },
+      "observed_at": "2026-11-14T00:05:43.709Z",
+      "price_basis": "as_traded",
+      "sha256": "593f8740ec1aa87c80c54c623f1759530b6b32cdadd34a64f0fc66a529f34e35",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2015.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2015
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:ffc82a9b973cb5901e68dc11bea1bbc9bf0a2c46749e0efe5a7a89229bc0d81f",
+      "acquisition": "local_import",
+      "byte_size": 15715361,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2016.TXT": 466736
+      },
+      "observed_at": "2026-11-14T00:06:27.073Z",
+      "price_basis": "as_traded",
+      "sha256": "ffc82a9b973cb5901e68dc11bea1bbc9bf0a2c46749e0efe5a7a89229bc0d81f",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2016.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2016
+    },
+    {
+      "artifact_id": "sha256:af6aaa85187c1d58ec6565522644066da573a7dc5b579c1d4c906ae95a2dea86",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 16527191,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2017.TXT": 489117
+      },
+      "observed_at": "2026-11-14T00:07:16.578Z",
+      "price_basis": "as_traded",
+      "sha256": "af6aaa85187c1d58ec6565522644066da573a7dc5b579c1d4c906ae95a2dea86",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2017.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2017
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:9d66136179d9822476c6035000167aecf2665f4396619e4d74c0011745a0c507",
+      "acquisition": "local_import",
+      "byte_size": 19488404,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2018.TXT": 580157
+      },
+      "observed_at": "2026-11-14T00:08:07.663Z",
+      "price_basis": "as_traded",
+      "sha256": "9d66136179d9822476c6035000167aecf2665f4396619e4d74c0011745a0c507",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2018.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2018
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:5170d3f8f079c3306424b36c2fae9b467391f8fa37d16d389f487b4c5c28edb9",
+      "acquisition": "local_import",
+      "byte_size": 26650371,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2019.TXT": 779231
+      },
+      "observed_at": "2026-11-14T00:09:10.042Z",
+      "price_basis": "as_traded",
+      "sha256": "5170d3f8f079c3306424b36c2fae9b467391f8fa37d16d389f487b4c5c28edb9",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2019.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2019
+    },
+    {
+      "artifact_id": "sha256:86442168939b9da7b3cc1ec1662c333ee5ab4c75f2be1865b5bf55ba4c52168f",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 37181542,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2020.TXT": 1251648
+      },
+      "observed_at": "2026-11-14T00:02:41.996Z",
+      "price_basis": "as_traded",
+      "sha256": "86442168939b9da7b3cc1ec1662c333ee5ab4c75f2be1865b5bf55ba4c52168f",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2020.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2020
+    },
+    {
+      "artifact_id": "sha256:b0d4aed17d609c7ba615a23320c2fd513b580a251ae7d884a5015ef8a3fe4705",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 49678679,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2021.TXT": 1831864
+      },
+      "observed_at": "2026-11-14T00:04:53.589Z",
+      "price_basis": "as_traded",
+      "sha256": "b0d4aed17d609c7ba615a23320c2fd513b580a251ae7d884a5015ef8a3fe4705",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2021.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2021
+    },
+    {
+      "artifact_id": "sha256:a4f9015b755f797d9c08b0d13f19dbfab18a6c75f379c0271a1cf1b5f6323cd8",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 58597842,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2022.TXT": 2117442
+      },
+      "observed_at": "2026-11-14T00:08:05.326Z",
+      "price_basis": "as_traded",
+      "sha256": "a4f9015b755f797d9c08b0d13f19dbfab18a6c75f379c0271a1cf1b5f6323cd8",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2022.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2022
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:ad1603788d78aaa1de806498572277f1d9443f88ae116452751b5800cb23523e",
+      "acquisition": "local_import",
+      "byte_size": 70216090,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2023.TXT": 2257426
+      },
+      "observed_at": "2026-11-14T00:11:30.313Z",
+      "price_basis": "as_traded",
+      "sha256": "ad1603788d78aaa1de806498572277f1d9443f88ae116452751b5800cb23523e",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2023.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2023
+    },
+    {
+      "artifact_id": "sha256:96a003d10fab0fa2ace0c64cdc2b892b4c111adf9da8e538aa0b28437bd2a172",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 79261198,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2024.TXT": 2635563
+      },
+      "observed_at": "2026-11-14T00:14:42.622Z",
+      "price_basis": "as_traded",
+      "sha256": "96a003d10fab0fa2ace0c64cdc2b892b4c111adf9da8e538aa0b28437bd2a172",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2024.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2024
+    },
+    {
+      "artifact_id": "sha256:6cc0ad851c8f605ca30418acac48be81f1767f6ed05b4f563772d06ae448047d",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 89056788,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2025.TXT": 3174700
+      },
+      "observed_at": "2026-11-14T00:26:36.155Z",
+      "price_basis": "as_traded",
+      "sha256": "6cc0ad851c8f605ca30418acac48be81f1767f6ed05b4f563772d06ae448047d",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2025.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2025
+    },
+    {
+      "artifact_id": "sha256:1a78ad7f46ced05c723a5b09089e48378dfc5b7fe9cb6558cbcae569c66e51ad",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "local_import",
+      "byte_size": 93512769,
+      "dataset": "COTAHIST",
+      "downloaded_at": null,
+      "etag": null,
+      "last_modified": null,
+      "member_counts": {
+        "COTAHIST_A2026.TXT": 3202913
+      },
+      "observed_at": "2026-11-14T00:30:04.076Z",
+      "price_basis": "as_traded",
+      "sha256": "1a78ad7f46ced05c723a5b09089e48378dfc5b7fe9cb6558cbcae569c66e51ad",
+      "source_url": "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2026.ZIP",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2026
+    },
+    {
+      "artifact_id": "sha256:9a9b933fa02c96f7cf632dbb1f7b004bb78696c81c989792b1eb60f70b001021",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "artifact_store",
+      "byte_size": 337720,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:42.586Z",
+      "etag": "\"65e6743c-52738\"",
+      "last_modified": "Tue, 05 Mar 2024 01:24:12 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2010.csv": 1096,
+        "fca_cia_aberta_auditor_2010.csv": 647,
+        "fca_cia_aberta_canal_divulgacao_2010.csv": 1362,
+        "fca_cia_aberta_departamento_acionistas_2010.csv": 555,
+        "fca_cia_aberta_dri_2010.csv": 643,
+        "fca_cia_aberta_endereco_2010.csv": 1287,
+        "fca_cia_aberta_escriturador_2010.csv": 426,
+        "fca_cia_aberta_geral_2010.csv": 646,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2010.csv": 106,
+        "fca_cia_aberta_valor_mobiliario_2010.csv": 635
+      },
+      "observed_at": "2026-11-08T22:56:42.590Z",
+      "price_basis": null,
+      "sha256": "9a9b933fa02c96f7cf632dbb1f7b004bb78696c81c989792b1eb60f70b001021",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2010.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2010
+    },
+    {
+      "artifact_id": "sha256:f5c7aaa2a4464b4232a05d77c288d33bca5474edd72199a9295d6fa2a34012e8",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "artifact_store",
+      "byte_size": 381161,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:43.380Z",
+      "etag": "\"65e67432-5d0e9\"",
+      "last_modified": "Tue, 05 Mar 2024 01:24:02 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2011.csv": 1947,
+        "fca_cia_aberta_auditor_2011.csv": 822,
+        "fca_cia_aberta_canal_divulgacao_2011.csv": 1451,
+        "fca_cia_aberta_departamento_acionistas_2011.csv": 540,
+        "fca_cia_aberta_dri_2011.csv": 770,
+        "fca_cia_aberta_endereco_2011.csv": 1373,
+        "fca_cia_aberta_escriturador_2011.csv": 471,
+        "fca_cia_aberta_geral_2011.csv": 685,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2011.csv": 116,
+        "fca_cia_aberta_valor_mobiliario_2011.csv": 530
+      },
+      "observed_at": "2026-11-08T22:56:43.384Z",
+      "price_basis": null,
+      "sha256": "f5c7aaa2a4464b4232a05d77c288d33bca5474edd72199a9295d6fa2a34012e8",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2011.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2011
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:ba68b8e8c12b74fc56bf76a75ae582aa53e5adef1d61d940d5191c55b9be2e06",
+      "acquisition": "artifact_store",
+      "byte_size": 381058,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:44.351Z",
+      "etag": "\"65e67424-5d082\"",
+      "last_modified": "Tue, 05 Mar 2024 01:23:48 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2012.csv": 2142,
+        "fca_cia_aberta_auditor_2012.csv": 806,
+        "fca_cia_aberta_canal_divulgacao_2012.csv": 1398,
+        "fca_cia_aberta_departamento_acionistas_2012.csv": 526,
+        "fca_cia_aberta_dri_2012.csv": 749,
+        "fca_cia_aberta_endereco_2012.csv": 1356,
+        "fca_cia_aberta_escriturador_2012.csv": 474,
+        "fca_cia_aberta_geral_2012.csv": 676,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2012.csv": 110,
+        "fca_cia_aberta_valor_mobiliario_2012.csv": 494
+      },
+      "observed_at": "2026-11-08T22:56:44.356Z",
+      "price_basis": null,
+      "sha256": "ba68b8e8c12b74fc56bf76a75ae582aa53e5adef1d61d940d5191c55b9be2e06",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2012.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2012
+    },
+    {
+      "artifact_id": "sha256:d62ef489d8c1208ef3d41cfd25a093b8fcb5f6b47640e59288aece45d4962cce",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "artifact_store",
+      "byte_size": 373007,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:45.445Z",
+      "etag": "\"65e67417-5b10f\"",
+      "last_modified": "Tue, 05 Mar 2024 01:23:35 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2013.csv": 1887,
+        "fca_cia_aberta_auditor_2013.csv": 766,
+        "fca_cia_aberta_canal_divulgacao_2013.csv": 1383,
+        "fca_cia_aberta_departamento_acionistas_2013.csv": 527,
+        "fca_cia_aberta_dri_2013.csv": 763,
+        "fca_cia_aberta_endereco_2013.csv": 1334,
+        "fca_cia_aberta_escriturador_2013.csv": 472,
+        "fca_cia_aberta_geral_2013.csv": 664,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2013.csv": 112,
+        "fca_cia_aberta_valor_mobiliario_2013.csv": 434
+      },
+      "observed_at": "2026-11-08T22:56:45.450Z",
+      "price_basis": null,
+      "sha256": "d62ef489d8c1208ef3d41cfd25a093b8fcb5f6b47640e59288aece45d4962cce",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2013.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2013
+    },
+    {
+      "artifact_id": "sha256:1f70b5e3a544535affb47b04a0c60a618bef872bc783e6909940d2e7dad89e3f",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "artifact_store",
+      "byte_size": 384748,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:46.344Z",
+      "etag": "\"65e6740a-5deec\"",
+      "last_modified": "Tue, 05 Mar 2024 01:23:22 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2014.csv": 1993,
+        "fca_cia_aberta_auditor_2014.csv": 754,
+        "fca_cia_aberta_canal_divulgacao_2014.csv": 1520,
+        "fca_cia_aberta_departamento_acionistas_2014.csv": 527,
+        "fca_cia_aberta_dri_2014.csv": 742,
+        "fca_cia_aberta_endereco_2014.csv": 1338,
+        "fca_cia_aberta_escriturador_2014.csv": 472,
+        "fca_cia_aberta_geral_2014.csv": 667,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2014.csv": 111,
+        "fca_cia_aberta_valor_mobiliario_2014.csv": 658
+      },
+      "observed_at": "2026-11-08T22:56:46.348Z",
+      "price_basis": null,
+      "sha256": "1f70b5e3a544535affb47b04a0c60a618bef872bc783e6909940d2e7dad89e3f",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2014.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2014
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:74326a566c405d703b56af257c9fade687f112f372ae68b8624719becc8215f2",
+      "acquisition": "artifact_store",
+      "byte_size": 380898,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:47.277Z",
+      "etag": "\"65e673f9-5cfe2\"",
+      "last_modified": "Tue, 05 Mar 2024 01:23:05 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2015.csv": 1654,
+        "fca_cia_aberta_auditor_2015.csv": 760,
+        "fca_cia_aberta_canal_divulgacao_2015.csv": 1534,
+        "fca_cia_aberta_departamento_acionistas_2015.csv": 516,
+        "fca_cia_aberta_dri_2015.csv": 763,
+        "fca_cia_aberta_endereco_2015.csv": 1317,
+        "fca_cia_aberta_escriturador_2015.csv": 467,
+        "fca_cia_aberta_geral_2015.csv": 657,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2015.csv": 104,
+        "fca_cia_aberta_valor_mobiliario_2015.csv": 658
+      },
+      "observed_at": "2026-11-08T22:56:47.281Z",
+      "price_basis": null,
+      "sha256": "74326a566c405d703b56af257c9fade687f112f372ae68b8624719becc8215f2",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2015.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2015
+    },
+    {
+      "artifact_id": "sha256:229b2cfc8c0ac5e60083932381364bbdb6666f028422c13a1ac5f6dccc9e3e6c",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "artifact_store",
+      "byte_size": 376154,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:48.191Z",
+      "etag": "\"65e673e8-5bd5a\"",
+      "last_modified": "Tue, 05 Mar 2024 01:22:48 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2016.csv": 1521,
+        "fca_cia_aberta_auditor_2016.csv": 745,
+        "fca_cia_aberta_canal_divulgacao_2016.csv": 1495,
+        "fca_cia_aberta_departamento_acionistas_2016.csv": 514,
+        "fca_cia_aberta_dri_2016.csv": 749,
+        "fca_cia_aberta_endereco_2016.csv": 1300,
+        "fca_cia_aberta_escriturador_2016.csv": 458,
+        "fca_cia_aberta_geral_2016.csv": 648,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2016.csv": 103,
+        "fca_cia_aberta_valor_mobiliario_2016.csv": 639
+      },
+      "observed_at": "2026-11-08T22:56:48.195Z",
+      "price_basis": null,
+      "sha256": "229b2cfc8c0ac5e60083932381364bbdb6666f028422c13a1ac5f6dccc9e3e6c",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2016.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2016
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:48127cf15d8baf4d31b9544b266f9511962db158d591fc9803e335a8ab081d45",
+      "acquisition": "artifact_store",
+      "byte_size": 375132,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:49.035Z",
+      "etag": "\"65e673d5-5b95c\"",
+      "last_modified": "Tue, 05 Mar 2024 01:22:29 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2017.csv": 1586,
+        "fca_cia_aberta_auditor_2017.csv": 793,
+        "fca_cia_aberta_canal_divulgacao_2017.csv": 1484,
+        "fca_cia_aberta_departamento_acionistas_2017.csv": 513,
+        "fca_cia_aberta_dri_2017.csv": 731,
+        "fca_cia_aberta_endereco_2017.csv": 1281,
+        "fca_cia_aberta_escriturador_2017.csv": 445,
+        "fca_cia_aberta_geral_2017.csv": 638,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2017.csv": 99,
+        "fca_cia_aberta_valor_mobiliario_2017.csv": 628
+      },
+      "observed_at": "2026-11-08T22:56:49.040Z",
+      "price_basis": null,
+      "sha256": "48127cf15d8baf4d31b9544b266f9511962db158d591fc9803e335a8ab081d45",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2017.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2017
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:b20056b00927c5261ba587b668e52e4cdfe2d989e7d794491b2bb127fbd0a8cd",
+      "acquisition": "artifact_store",
+      "byte_size": 381642,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:49.958Z",
+      "etag": "\"65e673c0-5d2ca\"",
+      "last_modified": "Tue, 05 Mar 2024 01:22:08 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2018.csv": 1420,
+        "fca_cia_aberta_auditor_2018.csv": 759,
+        "fca_cia_aberta_canal_divulgacao_2018.csv": 1512,
+        "fca_cia_aberta_departamento_acionistas_2018.csv": 528,
+        "fca_cia_aberta_dri_2018.csv": 742,
+        "fca_cia_aberta_endereco_2018.csv": 1304,
+        "fca_cia_aberta_escriturador_2018.csv": 451,
+        "fca_cia_aberta_geral_2018.csv": 650,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2018.csv": 101,
+        "fca_cia_aberta_valor_mobiliario_2018.csv": 751
+      },
+      "observed_at": "2026-11-08T22:56:49.962Z",
+      "price_basis": null,
+      "sha256": "b20056b00927c5261ba587b668e52e4cdfe2d989e7d794491b2bb127fbd0a8cd",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2018.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2018
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:09f84e5f5485217c8b36f8379c36f718dbdcd6d6908b4e96b68861394e76fe97",
+      "acquisition": "artifact_store",
+      "byte_size": 371770,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:50.863Z",
+      "etag": "\"65e673ac-5ac3a\"",
+      "last_modified": "Tue, 05 Mar 2024 01:21:48 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2019.csv": 1311,
+        "fca_cia_aberta_auditor_2019.csv": 677,
+        "fca_cia_aberta_canal_divulgacao_2019.csv": 1508,
+        "fca_cia_aberta_departamento_acionistas_2019.csv": 527,
+        "fca_cia_aberta_dri_2019.csv": 731,
+        "fca_cia_aberta_endereco_2019.csv": 1271,
+        "fca_cia_aberta_escriturador_2019.csv": 438,
+        "fca_cia_aberta_geral_2019.csv": 634,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2019.csv": 97,
+        "fca_cia_aberta_valor_mobiliario_2019.csv": 779
+      },
+      "observed_at": "2026-11-08T22:56:50.867Z",
+      "price_basis": null,
+      "sha256": "09f84e5f5485217c8b36f8379c36f718dbdcd6d6908b4e96b68861394e76fe97",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2019.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2019
+    },
+    {
+      "artifact_id": "sha256:ccf2ac081747da9ccefa50349a5494c263763d5dd8bb961565fd2ae64c264b20",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "artifact_store",
+      "byte_size": 405892,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:51.914Z",
+      "etag": "\"677120df-63184\"",
+      "last_modified": "Sun, 29 Dec 2024 10:13:51 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2020.csv": 1277,
+        "fca_cia_aberta_auditor_2020.csv": 767,
+        "fca_cia_aberta_canal_divulgacao_2020.csv": 1636,
+        "fca_cia_aberta_departamento_acionistas_2020.csv": 577,
+        "fca_cia_aberta_dri_2020.csv": 842,
+        "fca_cia_aberta_endereco_2020.csv": 1371,
+        "fca_cia_aberta_escriturador_2020.csv": 497,
+        "fca_cia_aberta_geral_2020.csv": 684,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2020.csv": 100,
+        "fca_cia_aberta_valor_mobiliario_2020.csv": 856
+      },
+      "observed_at": "2026-11-08T22:56:51.919Z",
+      "price_basis": null,
+      "sha256": "ccf2ac081747da9ccefa50349a5494c263763d5dd8bb961565fd2ae64c264b20",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2020.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2020
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:65ba4b0225e9b2106901cdf348215933be8affba79925fc71361e2f6818c7999",
+      "acquisition": "artifact_store",
+      "byte_size": 465704,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:52.840Z",
+      "etag": "\"695102ae-71b28\"",
+      "last_modified": "Sun, 28 Dec 2025 10:13:02 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2021.csv": 1682,
+        "fca_cia_aberta_auditor_2021.csv": 952,
+        "fca_cia_aberta_canal_divulgacao_2021.csv": 1777,
+        "fca_cia_aberta_departamento_acionistas_2021.csv": 710,
+        "fca_cia_aberta_dri_2021.csv": 1082,
+        "fca_cia_aberta_endereco_2021.csv": 1533,
+        "fca_cia_aberta_escriturador_2021.csv": 554,
+        "fca_cia_aberta_geral_2021.csv": 761,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2021.csv": 106,
+        "fca_cia_aberta_valor_mobiliario_2021.csv": 1002
+      },
+      "observed_at": "2026-11-08T22:56:52.845Z",
+      "price_basis": null,
+      "sha256": "65ba4b0225e9b2106901cdf348215933be8affba79925fc71361e2f6818c7999",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2021.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2021
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:c30912a49163e54503b5664c118cf088212e8715fcdbc7cad76bb4944b36c6a2",
+      "acquisition": "artifact_store",
+      "byte_size": 458295,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:53.879Z",
+      "etag": "\"6af04b69-6fe37\"",
+      "last_modified": "Sun, 08 Nov 2026 10:14:01 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2022.csv": 1434,
+        "fca_cia_aberta_auditor_2022.csv": 1018,
+        "fca_cia_aberta_canal_divulgacao_2022.csv": 1509,
+        "fca_cia_aberta_departamento_acionistas_2022.csv": 721,
+        "fca_cia_aberta_dri_2022.csv": 998,
+        "fca_cia_aberta_endereco_2022.csv": 1543,
+        "fca_cia_aberta_escriturador_2022.csv": 537,
+        "fca_cia_aberta_geral_2022.csv": 766,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2022.csv": 101,
+        "fca_cia_aberta_valor_mobiliario_2022.csv": 1010
+      },
+      "observed_at": "2026-11-08T22:56:53.883Z",
+      "price_basis": null,
+      "sha256": "c30912a49163e54503b5664c118cf088212e8715fcdbc7cad76bb4944b36c6a2",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2022.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2022
+    },
+    {
+      "artifact_id": "sha256:04364dea9a0bfca8816315792720f640e971f4b3c5ab67d5cb918803173bbc71",
+      "parser_version": "source-inputs-v1",
+      "acquisition": "artifact_store",
+      "byte_size": 434052,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:54.979Z",
+      "etag": "\"6af04b5a-69f84\"",
+      "last_modified": "Sun, 08 Nov 2026 10:13:46 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2023.csv": 1253,
+        "fca_cia_aberta_auditor_2023.csv": 1005,
+        "fca_cia_aberta_canal_divulgacao_2023.csv": 1417,
+        "fca_cia_aberta_departamento_acionistas_2023.csv": 546,
+        "fca_cia_aberta_dri_2023.csv": 979,
+        "fca_cia_aberta_endereco_2023.csv": 1468,
+        "fca_cia_aberta_escriturador_2023.csv": 559,
+        "fca_cia_aberta_geral_2023.csv": 731,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2023.csv": 93,
+        "fca_cia_aberta_valor_mobiliario_2023.csv": 1011
+      },
+      "observed_at": "2026-11-08T22:56:54.983Z",
+      "price_basis": null,
+      "sha256": "04364dea9a0bfca8816315792720f640e971f4b3c5ab67d5cb918803173bbc71",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2023.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2023
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:469bccc738b4e71f94d130ac10757123b5b1ef9f7170e1df2f8330e3926ab481",
+      "acquisition": "artifact_store",
+      "byte_size": 391984,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:55.969Z",
+      "etag": "\"6af04b4c-5fb30\"",
+      "last_modified": "Sun, 08 Nov 2026 10:13:32 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2024.csv": 1287,
+        "fca_cia_aberta_auditor_2024.csv": 1041,
+        "fca_cia_aberta_canal_divulgacao_2024.csv": 1395,
+        "fca_cia_aberta_departamento_acionistas_2024.csv": 0,
+        "fca_cia_aberta_dri_2024.csv": 1019,
+        "fca_cia_aberta_endereco_2024.csv": 1472,
+        "fca_cia_aberta_escriturador_2024.csv": 560,
+        "fca_cia_aberta_geral_2024.csv": 733,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2024.csv": 89,
+        "fca_cia_aberta_valor_mobiliario_2024.csv": 1023
+      },
+      "observed_at": "2026-11-08T22:56:55.974Z",
+      "price_basis": null,
+      "sha256": "469bccc738b4e71f94d130ac10757123b5b1ef9f7170e1df2f8330e3926ab481",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2024.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2024
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:62877519e3543a568b64f8bd5ea8c956327ae9b21bb0cb0e7af901e94aa1f926",
+      "acquisition": "artifact_store",
+      "byte_size": 383613,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:56.852Z",
+      "etag": "\"6af04b3e-5da7d\"",
+      "last_modified": "Sun, 08 Nov 2026 10:13:18 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2025.csv": 1301,
+        "fca_cia_aberta_auditor_2025.csv": 1069,
+        "fca_cia_aberta_canal_divulgacao_2025.csv": 1350,
+        "fca_cia_aberta_departamento_acionistas_2025.csv": 0,
+        "fca_cia_aberta_dri_2025.csv": 1007,
+        "fca_cia_aberta_endereco_2025.csv": 1436,
+        "fca_cia_aberta_escriturador_2025.csv": 552,
+        "fca_cia_aberta_geral_2025.csv": 715,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2025.csv": 83,
+        "fca_cia_aberta_valor_mobiliario_2025.csv": 995
+      },
+      "observed_at": "2026-11-08T22:56:56.856Z",
+      "price_basis": null,
+      "sha256": "62877519e3543a568b64f8bd5ea8c956327ae9b21bb0cb0e7af901e94aa1f926",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2025.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2025
+    },
+    {
+      "parser_version": "source-inputs-v1",
+      "artifact_id": "sha256:b24da0981f891532bb7d3068bf714f93d76c3a0cdf0ecb16badbab52b7081917",
+      "acquisition": "artifact_store",
+      "byte_size": 363925,
+      "dataset": "FCA",
+      "downloaded_at": "2026-11-08T22:56:57.697Z",
+      "etag": "\"6af04b2f-58d95\"",
+      "last_modified": "Sun, 08 Nov 2026 10:13:03 GMT",
+      "member_counts": {
+        "fca_cia_aberta_2026.csv": 1045,
+        "fca_cia_aberta_auditor_2026.csv": 1055,
+        "fca_cia_aberta_canal_divulgacao_2026.csv": 1265,
+        "fca_cia_aberta_departamento_acionistas_2026.csv": 0,
+        "fca_cia_aberta_dri_2026.csv": 1010,
+        "fca_cia_aberta_endereco_2026.csv": 1360,
+        "fca_cia_aberta_escriturador_2026.csv": 536,
+        "fca_cia_aberta_geral_2026.csv": 678,
+        "fca_cia_aberta_pais_estrangeiro_negociacao_2026.csv": 74,
+        "fca_cia_aberta_valor_mobiliario_2026.csv": 968
+      },
+      "observed_at": "2026-11-08T22:56:57.701Z",
+      "price_basis": null,
+      "sha256": "b24da0981f891532bb7d3068bf714f93d76c3a0cdf0ecb16badbab52b7081917",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2026.zip",
+      "validation": "zip-crc-and-lossless-row-layout-v1",
+      "year": 2026
+    }
+  ],
+  "source_dates": {
+    "first_analysis_period": "2010-12-31",
+    "last_analysis_period": "2026-06-30",
+    "last_selected_b3_session": "2026-10-16"
+  },
+  "coverage": {
+    "raw_ingestions": 696013,
+    "ingestion_validations": 2488,
+    "source_input_archives": 58,
+    "source_input_rows": 24742852,
+    "ticker_analysis": 6027,
+    "analysis_outcomes": 433,
+    "price_histories": 433
+  },
+  "mongo_hashes": {
+    "ingestion_validations": "573083d1a3607925cbfab5f22fcbbe08",
+    "raw_ingestions": "7f5559bcc0160c3bc63a69f13a3aeda6",
+    "source_input_archives": "5d610c6eb428adec6a5dc4d2eac784bc",
+    "source_input_rows": "f2ef3760bb73788f386222b4af47c5bf"
+  },
+  "sql_hashes": {
+    "ticker_analysis": "b8cd3632f0c439c8ed067080ade82e3161eb489356e55487f843f4c33d958bf0",
+    "analysis_outcomes": "8b2b2dbbdc422d0db97b75db1ea10a838d32b3f4514ac9010edd2ccb29ea24fd",
+    "price_histories": "40fa3108bff53ae3c87b51fa391b5524a8ab34a0ee64ba45f3a88bf857a8cd3d"
+  },
+  "validation": {
+    "analysis": {
+      "as_of": "2026-11-13T23:00:00+00:00",
+      "scope": "complete_traded_code_universe",
+      "exit_status": 0,
+      "contract_sha256": "87ba3184de832064115adc8864d11e10a680d16c26015bf0c3555ef129d100db",
+      "domain_sha256": "1f144b1b9efdef58f5b12fa6f58c72ddd4557fb46bf892c7f3228d4a124a656d",
+      "coverage": {
+        "ticker_analysis": 6027,
+        "analysis_outcomes": 433
+      },
+      "excluded_fields": [
+        "computed_at",
+        "recorded_at",
+        "run_id"
+      ],
+      "verification_failures": []
+    },
+    "doctor_exit_status": 0,
+    "restore_verified": true,
+    "database_images": {
+      "mongo": "sha256:e0ce8c35124d4a9f9785532d1f268f39e9728ffa1cb38f46fa482436424c4bd3",
+      "postgres": "sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317"
+    },
+    "build_disk_bytes": {
+      "mongo": 6728028160,
+      "postgres": 233934848
+    },
+    "build_storage_bytes": {
+      "mongo": 6411284480,
+      "postgres": 92608179
+    },
+    "restored_offline_doctor_exit_status": 0,
+    "restored_offline_recomputation_equivalent": true,
+    "import_measurement": {
+      "seconds": 437.14257286400016,
+      "peak_disk_bytes": {
+        "mongo": 7249018880,
+        "postgres": 216772608
+      },
+      "disk_sample_interval_seconds": 1
+    },
+    "restored_disk_bytes": {
+      "mongo": 6622576640,
+      "postgres": 217182208
+    },
+    "restored_storage_bytes": {
+      "mongo": 6411751424,
+      "postgres": 92681907
+    }
+  },
+  "payloads": [
+    {
+      "name": "mongo.archive.xz",
+      "size_bytes": 1421708668,
+      "sha256": "61666e578d3e86add4153f7186d8071e8ba5bbb1d116d39c50f5a8021870929f"
+    },
+    {
+      "name": "postgres.dump",
+      "size_bytes": 39633996,
+      "sha256": "3d33f4947f11ea6e230cf4349ffe30670d9d8a150a2de43423c322d186f2f7a7"
+    }
+  ],
+  "native_size_budget_bytes": 1595560392
+}
