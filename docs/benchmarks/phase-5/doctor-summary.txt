@@ -1,0 +1,47 @@
+=== FCA identity snapshot ===
+  FCA snapshot year=2026 source=cvm_fca url=https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_2026.zip artifact=sha256:b24da0981f891532bb7d3068bf714f93d76c3a0cdf0ecb16badbab52b7081917
+
+=== smaug doctor — persisted analysis coverage ===
+  430 of 433 ticker(s) analyzed, 6027 exercises, 470106 cells
+  value=398310 (84.7%) named=71796 unclassified=0
+  price provenance=5269/6027 exercises (B3 code + session)
+--- scope --- requested=433 persisted=430 no-analysis=3 stale=0 legacy=0 stored_rows=6027 | requested_tickers=433 persisted_tickers=430 no_analysis_tickers=3 persisted_exercises=6027 stored_rows=6027 stale_rows=0 legacy_rows=0
+    cells: total=470106 values=398310 nulls=71796 named=71796 unclassified=0
+    dispositions: inapplicable=21014 mathematically_undefined=6443 primary_source_unavailable=11652 recoverable_gap=27590 historical_period_does_not_exist=5097
+    percentages (denominator=null indicator cells (71796) / all indicator cells (470106)): missing_or_recoverable=39242 (54.7% of nulls; 8.3% of all cells); genuine_inapplicability=21014 (29.3% of nulls; 4.5% of all cells)
+    strict CPC 41 null fields: with_market_alternative=0 without_market_alternative=6228 legitimate_mathematical_or_historical=236 total=6464
+    basic EPS blocker rows (deduplicated; eps is an alias of eps_basic): total=0 with_any_market_alternative=0 (0.0%); without_market_alternative=0 (0.0%)
+    basic EPS fields: with_market_alternative=0 without_market_alternative=0 total=0
+    alternative=eps_basic_market rows=0 (0.0% of basic EPS blocker rows) fields=0 basis=security_market_convention provenance=cvm
+    alternative=pe_basic_market rows=0 (0.0% of basic EPS blocker rows) fields=0 basis=security_market_convention provenance=cvm,b3
+  latest no-analysis outcomes:
+    ticker=AUAU3 status=skipped reason=all_exercises_pre_first_b3_session detail=all 3 closed exercise(s) precede the first B3 session proved for this security, and the CVM mirror has no complete four-quarter TTM window
+    ticker=B1003 status=skipped reason=all_exercises_pre_first_b3_session detail=all 3 closed exercise(s) precede the first B3 session proved for this security, and the CVM mirror has no complete four-quarter TTM window
+    ticker=CYRE4 status=skipped reason=all_exercises_pre_first_b3_session detail=all 16 closed exercise(s) precede the first B3 session proved for this security, and the CVM mirror has no complete four-quarter TTM window
+    inapplicable_regime          15413
+    missing_price                13053
+    missing_share_count          11754
+    current_only_indicator        5601
+    source_account_absent         5393
+    missing_cpc41_disclosure      3886
+    non_positive_endpoint         3761
+    not_yet_listed                3053
+    zero_denominator              2682
+    insufficient_comparable_history    2044
+    price_symbol_not_found        1809
+    incomplete_debt_coverage      1545
+    missing_economic_rights        602
+    prior_period_outside_source_history     544
+    unresolved_share_class         320
+    missing_tag_along_evidence     228
+    missing_weighted_average_shares      56
+    missing_prior_period            52
+  no persisted analysis: AUAU3, B1003, CYRE4
+    every null carries a named cause.
+
+--- debt coverage evidence ---
+    universe=requested tickers with persisted analysis rows; views=ttm_live,closed_year
+    persisted decisions=6027 incomplete=133 inapplicable=491
+    dependent indicator cells with incomplete_debt_coverage=1545
+    legacy snapshots=0 unclassified blockers=0
+    period=reference_date of each persisted TTM or closed-year row; cell=one debt decision per persisted row; dependent indicator cells are counted separately

@@ -1,0 +1,8 @@
+{
+  "rejected_gzip_bytes": 2248870456,
+  "mongo_xz_bytes": 1421708668,
+  "postgres_bytes": 39633996,
+  "native_budget_bytes": 1595560392,
+  "transcode_seconds": 265.71657945000015,
+  "compression": "XZ/LZMA2 preset=1 CRC64 dictionary=1MiB"
+}
