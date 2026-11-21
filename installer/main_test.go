@@ -30,6 +30,20 @@ func TestDockerProcess(t *testing.T) {
 	if strings.Contains(args, "pg_dump") {
 		fmt.Print("binary-sql-backup")
 	}
+	if schema := os.Getenv("SMAUG_SNAPSHOT_TEST_SCHEMA"); schema != "" {
+		switch {
+		case strings.Contains(args, "db.version()"):
+			fmt.Print(`["8",[]]`)
+		case strings.Contains(args, "estimatedDocumentCount"):
+			fmt.Print("[1,1,1,1]")
+		case strings.Contains(args, "server_version_num"):
+			fmt.Println("17\n0\n0")
+		case strings.Contains(args, "SELECT version_num FROM alembic_version"):
+			fmt.Println(schema + "\n1\n1\n1\n0\n0\n0")
+		case strings.Contains(args, "SELECT EXISTS(SELECT 1 FROM ticker_analysis)"):
+			fmt.Println("t")
+		}
+	}
 	if strings.Contains(args, "--status running") {
 		fmt.Print("running-service")
 	}
@@ -77,7 +91,7 @@ func fixtureBundle(t *testing.T, root, version, commit, schema string) string {
 func managerFixture(t *testing.T) (*Manager, State) {
 	t.Helper()
 	m := &Manager{Root: filepath.Join(t.TempDir(), "path with spaces")}
-	m.Config = Config{"smaug-abcdef012345", "backend", 18000, 13000, false, 21600}
+	m.Config = Config{Project: "smaug-abcdef012345", Edition: "backend", APIPort: 18000, WebPort: 13000, PriceRefreshInterval: 21600}
 	m.State = State{"2026.10.17-" + strings.Repeat("a", 12), "backend"}
 	source := fixtureBundle(t, t.TempDir(), m.State.Version, strings.Repeat("a", 40), "schema-a")
 	if _, err := m.stage(source); err != nil {

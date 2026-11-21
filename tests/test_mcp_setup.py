@@ -48,7 +48,7 @@ async def test_setup_tool_and_resources_work_without_http(
         ):
             assert (heading in guide) == (platform in ("all", name))
         assert "smaug upgrade" in guide
-        assert "smaug installer" in guide
+        assert "Retomar instalação" in guide
         assert "smaug mcp register --client codex" in guide
         assert "cli ingest" not in guide
         assert "smaug-mcp-VERSAO" not in guide

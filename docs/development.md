@@ -161,7 +161,7 @@ O workflow de release publica as versões `backend` e `full` para amd64/arm64:
 - macOS: aplicativos `.app` distribuídos em `.dmg`.
 - Ubuntu/Debian: pacotes `.deb` com entrada no menu de aplicativos.
 
-Os executáveis brutos Linux/macOS permanecem disponíveis para automação.
+Os executáveis Linux também ficam disponíveis para automação.
 Para execução manual no Linux, marque o arquivo como executável e selecione
 explicitamente o comando desejado:
 
@@ -193,6 +193,15 @@ e checksums, e executa os launchers nativos macOS e Windows com `--help`.
 No Windows, verifica ainda abertura, arquivos da interface, sessão única e
 encerramento do gerenciador nas duas versões, com um navegador de teste.
 Os `.dmg` ficam disponíveis nos artefatos do CI para inspeção.
+
+Para preparar um release, gere e certifique o snapshot com
+`scripts/distribution_snapshot.py`. Compacte `manifest.json`,
+`mongo.archive.xz` e `postgres.dump` na raiz de um ZIP e disponibilize o arquivo
+por HTTPS. Execute **Stage a certified installer snapshot** em `develop` ou
+`main` com a URL e o SHA-256 do ZIP. Defina a variável do repositório
+`SMAUG_PREPARED_SNAPSHOT_RUN_ID` com o ID da execução bem-sucedida. O artefato
+de transferência fica disponível por 30 dias. A montagem dos pacotes valida
+o conteúdo e a compatibilidade do snapshot com o código do release.
 O empacotamento `.dmg` usa `hdiutil` no runner macOS; os pacotes
 `.deb` usam `dpkg-deb`, necessário no host de empacotamento. A preparação
 roda na conta do usuário, depois da instalação do pacote.

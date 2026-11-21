@@ -7,7 +7,10 @@ import importlib.util
 import io
 import json
 import lzma
+import runpy
+import struct
 import sys
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -83,6 +86,34 @@ def test_release_commit_may_change_only_when_runtime_content_is_identical(
     expected = make_snapshot(tmp_path)
     released = expected.model_copy(update={"code_commit": "f" * 40})
     assert snapshot.verify_payloads(tmp_path, released).coverage["facts"] == 1
+
+
+def test_native_package_keeps_the_launcher_and_zip_offsets(tmp_path: Path) -> None:
+    source, bundle = tmp_path / "snapshot", tmp_path / "runtime"
+    source.mkdir()
+    bundle.mkdir()
+    make_snapshot(source)
+    (bundle / "manifest.json").write_bytes(b"release manifest")
+    launcher = tmp_path / "native"
+    prefix = b"native launcher prefix"
+    launcher.write_bytes(prefix)
+    tooling = runpy.run_path("scripts/installer/build_release.py")
+    tooling["pack_payload"](launcher, bundle, source)
+    footer = tooling["PREPARED_FOOTER"]
+    with launcher.open("rb") as stream:
+        assert stream.read(len(prefix)) == prefix
+        stream.seek(-len(footer) - 22, 2)
+        end = stream.read(22)
+        assert end.startswith(b"PK\x05\x06")
+        assert stream.read() == footer
+        directory_offset = struct.unpack_from("<I", end, 16)[0]
+        stream.seek(directory_offset)
+        assert stream.read(4) == b"PK\x01\x02"
+    with zipfile.ZipFile(launcher) as archive:
+        assert archive.testzip() is None
+        for name in snapshot.PAYLOAD_NAMES:
+            assert archive.getinfo(name).compress_type == zipfile.ZIP_STORED
+            assert archive.read(name) == (source / name).read_bytes()
 
 
 @pytest.mark.parametrize(

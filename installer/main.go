@@ -34,11 +34,12 @@ var dockerCommand = backgroundCommand
 var guiBuild string
 
 type Manifest struct {
-	Version string            `json:"version"`
-	Commit  string            `json:"commit"`
-	Schema  string            `json:"schema"`
-	Images  map[string]string `json:"images"`
-	Files   map[string]string `json:"files"`
+	Version  string            `json:"version"`
+	Commit   string            `json:"commit"`
+	Schema   string            `json:"schema"`
+	Images   map[string]string `json:"images"`
+	Files    map[string]string `json:"files"`
+	Snapshot *SnapshotContract `json:"snapshot,omitempty"`
 }
 type Config struct {
 	Project              string `json:"project"`
@@ -47,15 +48,18 @@ type Config struct {
 	WebPort              int    `json:"web_port"`
 	AutoPriceRefresh     bool   `json:"auto_price_refresh"`
 	PriceRefreshInterval int    `json:"price_refresh_interval_seconds"`
+	MongoImage           string `json:"mongo_image,omitempty"`
+	PostgresImage        string `json:"postgres_image,omitempty"`
 }
 type State struct {
 	Version string `json:"version"`
 	Edition string `json:"edition"`
 }
 type Pending struct {
-	Previous State  `json:"previous"`
-	Target   State  `json:"target"`
-	Backup   string `json:"backup"`
+	Previous State          `json:"previous"`
+	Target   State          `json:"target"`
+	Backup   string         `json:"backup"`
+	Import   *InitialImport `json:"import,omitempty"`
 }
 type Manager struct {
 	Root   string
@@ -126,6 +130,9 @@ func run(args []string) error {
 	}
 	if err = prerequisites(); err != nil {
 		return err
+	}
+	if command == "check" && exists(m.file("pending.json")) {
+		return errors.New("installation or update interrupted; run smaug installer to resume")
 	}
 	if command != "install" {
 		if err = readJSON(m.file("config.json"), &m.Config); err != nil {
@@ -253,6 +260,11 @@ func validateConfig(c Config) error {
 	if !regexp.MustCompile(`^smaug-[a-f0-9]{12}$`).MatchString(c.Project) || !validEdition(c.Edition) || c.APIPort < 1 || c.APIPort > 65535 || c.WebPort < 1 || c.WebPort > 65535 || c.APIPort == c.WebPort || c.PriceRefreshInterval < 60 {
 		return errors.New("invalid config.json")
 	}
+	if c.MongoImage != "" || c.PostgresImage != "" {
+		if !snapshotImage(c.MongoImage, "mongo") || !snapshotImage(c.PostgresImage, "postgres") {
+			return errors.New("invalid installation database image pins")
+		}
+	}
 	return nil
 }
 func readJSON(path string, v any) error {
@@ -319,6 +331,14 @@ func validateManifest(v Manifest) error {
 			return fmt.Errorf("manifest missing %s", name)
 		}
 	}
+	if snapshot := v.Snapshot; snapshot != nil {
+		if !sha256Pattern.MatchString(snapshot.ManifestSHA256) || !sha256Pattern.MatchString(snapshot.DataRevision) ||
+			!sha256Pattern.MatchString(snapshot.CodeSHA256) || snapshot.Calculation == "" || snapshot.SourceParser == "" ||
+			snapshot.MongoMajor <= 0 || snapshot.PostgresMajor <= 0 ||
+			!snapshotImage(snapshot.MongoImage, "mongo") || !snapshotImage(snapshot.PostgresImage, "postgres") {
+			return errors.New("invalid snapshot compatibility contract")
+		}
+	}
 	return nil
 }
 func binaryName() string {
@@ -344,8 +364,20 @@ func (m *Manager) compose(s State, input io.Reader, output io.Writer, args ...st
 			cmd.Env = append(cmd.Env, e)
 		}
 	}
-	cmd.Env = append(cmd.Env, "COMPOSE_DISABLE_ENV_FILE=1", "API_PORT="+strconv.Itoa(m.Config.APIPort), "WEB_PORT="+strconv.Itoa(m.Config.WebPort), "AUTO_PRICE_REFRESH="+strconv.FormatBool(m.Config.AutoPriceRefresh), "PRICE_REFRESH_INTERVAL_SECONDS="+strconv.Itoa(m.Config.PriceRefreshInterval))
+	// Prepared releases keep the pre-snapshot worker off until incremental
+	// updates use the MongoDB mirror and can start independently of first use.
+	autoRefresh := m.Config.AutoPriceRefresh && v.Snapshot == nil
+	cmd.Env = append(cmd.Env, "COMPOSE_DISABLE_ENV_FILE=1", "API_PORT="+strconv.Itoa(m.Config.APIPort), "WEB_PORT="+strconv.Itoa(m.Config.WebPort), "AUTO_PRICE_REFRESH="+strconv.FormatBool(autoRefresh), "PRICE_REFRESH_INTERVAL_SECONDS="+strconv.Itoa(m.Config.PriceRefreshInterval))
+	if m.Config.MongoImage != "" {
+		cmd.Env = append(cmd.Env, "SMAUG_MONGO_OPTIONS=--wiredTigerCacheSizeGB 1")
+	}
 	for name, image := range v.Images {
+		if name == "mongo" && m.Config.MongoImage != "" {
+			image = m.Config.MongoImage
+		}
+		if name == "postgres" && m.Config.PostgresImage != "" {
+			image = m.Config.PostgresImage
+		}
 		cmd.Env = append(cmd.Env, "SMAUG_"+strings.ToUpper(name)+"_IMAGE="+image)
 	}
 	cmd.Stdin = input
@@ -372,7 +404,7 @@ func (m *Manager) noCLI() error {
 	return nil
 }
 func (m *Manager) pull(s State) error {
-	services := []string{"pull", "mongo", "postgres", "api", "migrate", "cli"}
+	services := []string{"pull", "--policy", "missing", "mongo", "postgres", "api", "migrate", "cli"}
 	if s.Edition == "full" {
 		services = append(services, "frontend")
 	}
@@ -406,6 +438,9 @@ func (m *Manager) start(s State) error {
 	return m.compose(s, nil, nil, services...)
 }
 func (m *Manager) check() error {
+	if exists(m.file("pending.json")) || exists(m.file("preparing.json")) {
+		return errors.New("installation or update interrupted; run smaug installer to resume")
+	}
 	if err := m.compose(m.State, nil, nil, "ps", "--all"); err != nil {
 		return err
 	}
@@ -435,11 +470,8 @@ func (m *Manager) check() error {
 	if response.StatusCode != 200 {
 		return errors.New("installation is not ready")
 	}
-	if exists(m.file("pending.json")) {
-		return errors.New("interrupted update requires recovery")
-	}
-	if exists(m.file("preparing.json")) {
-		return errors.New("data preparation unfinished; run smaug installer")
+	if err := m.checkPreparedSnapshot(m.State); err != nil {
+		return err
 	}
 	if m.State.Edition == "full" {
 		response, err = client.Get(fmt.Sprintf("http://127.0.0.1:%d", m.Config.WebPort))
@@ -475,6 +507,21 @@ func (m *Manager) install(args []string) error {
 	}
 	if exists(m.file("mcp.json")) {
 		return errors.New("standalone MCP already exists here; select a separate --dir for backend/full")
+	}
+	if exists(m.file("pending.json")) {
+		var pending Pending
+		if err := readJSON(m.file("pending.json"), &pending); err != nil {
+			return err
+		}
+		if pending.Import != nil {
+			if err := m.finishInitialImport(pending); err != nil {
+				return err
+			}
+			return m.completeInstall(*mcpClient)
+		}
+		if embeddedRequired != "" && pending.Previous.Version == "" {
+			return errors.New("resume the previous installation with its original installer first")
+		}
 	}
 	if exists(m.file("config.json")) {
 		if err := readJSON(m.file("config.json"), &m.Config); err != nil {
@@ -517,6 +564,8 @@ func (m *Manager) install(args []string) error {
 		if release.Version == "" {
 			if *source != "" {
 				release, err = m.stage(*source)
+			} else if embeddedRequired != "" {
+				release, err = m.stageNative(false)
 			} else {
 				release, err = m.downloadLatest(targetEdition, m.State.Version)
 			}
@@ -536,15 +585,16 @@ func (m *Manager) install(args []string) error {
 		if err := m.start(m.State); err != nil {
 			return err
 		}
-		if err := m.installCommand(); err != nil {
+		return m.completeInstall(*mcpClient)
+	}
+	if embeddedRequired != "" && *source == "" {
+		if *edition == "" {
+			*edition = defaultEdition
+		}
+		if err := m.beginInitialImport(*edition, *api, *web); err != nil {
 			return err
 		}
-		m.printAccess()
-
-		if *mcpClient != "" {
-			return m.configureMCP("register", []string{"--client", *mcpClient})
-		}
-		return nil
+		return m.completeInstall(*mcpClient)
 	}
 	if *source == "" {
 		if *edition == "" {
@@ -566,17 +616,15 @@ func (m *Manager) install(args []string) error {
 		}
 		*edition = strings.TrimSpace(string(b))
 	}
-	id := make([]byte, 6)
-	if _, err := rand.Read(id); err != nil {
-		return err
-	}
-	m.Config = Config{Project: "smaug-" + hex.EncodeToString(id), Edition: *edition, APIPort: *api, WebPort: *web, AutoPriceRefresh: true, PriceRefreshInterval: 21600}
-	if err := validateConfig(m.Config); err != nil {
+	if err := m.newConfig(*edition, *api, *web); err != nil {
 		return err
 	}
 	v, err := m.stage(*source)
 	if err != nil {
 		return err
+	}
+	if v.Snapshot != nil {
+		return errors.New("use the native installer with the embedded database snapshot for a fresh installation")
 	}
 	target := State{v.Version, *edition}
 	if err = m.pull(target); err != nil {
@@ -610,12 +658,48 @@ func (m *Manager) install(args []string) error {
 	if err = m.commit(target); err != nil {
 		return err
 	}
-	if err = m.installCommand(); err != nil {
+	return m.completeInstall(*mcpClient)
+}
+
+func (m *Manager) newConfig(edition string, api, web int) error {
+	id := make([]byte, 6)
+	if _, err := rand.Read(id); err != nil {
+		return err
+	}
+	m.Config = Config{Project: "smaug-" + hex.EncodeToString(id), Edition: edition, APIPort: api, WebPort: web, AutoPriceRefresh: true, PriceRefreshInterval: 21600}
+	return validateConfig(m.Config)
+}
+
+func (m *Manager) beginInitialImport(edition string, api, web int) error {
+	if exists(m.file("current.json")) || exists(m.file("prepared.json")) {
+		return errors.New("installation files already exist; recover the existing installation")
+	}
+	if err := m.newConfig(edition, api, web); err != nil {
+		return err
+	}
+	release, err := m.stageNative(true)
+	if err != nil {
+		return err
+	}
+	m.Config.MongoImage = release.Snapshot.MongoImage
+	m.Config.PostgresImage = release.Snapshot.PostgresImage
+	pending := Pending{
+		Target: State{release.Version, edition},
+		Import: &InitialImport{Config: m.Config, Revision: release.Snapshot.DataRevision},
+	}
+	if err := writeJSON(m.file("pending.json"), pending); err != nil {
+		return err
+	}
+	return m.finishInitialImport(pending)
+}
+
+func (m *Manager) completeInstall(mcpClient string) error {
+	if err := m.installCommand(); err != nil {
 		return err
 	}
 	m.printAccess()
-	if *mcpClient != "" {
-		return m.configureMCP("register", []string{"--client", *mcpClient})
+	if mcpClient != "" {
+		return m.configureMCP("register", []string{"--client", mcpClient})
 	}
 	return nil
 }
@@ -714,8 +798,14 @@ func (m *Manager) migrate(s State) error {
 }
 func (m *Manager) commit(s State) error {
 	if exists(m.file("current.json")) {
-		if err := copyFile(m.file("current.json"), m.file("previous.json")); err != nil {
+		var current State
+		if err := readJSON(m.file("current.json"), &current); err != nil {
 			return err
+		}
+		if current != s {
+			if err := copyFile(m.file("current.json"), m.file("previous.json")); err != nil {
+				return err
+			}
 		}
 	}
 	if err := writeJSON(m.file("current.json"), s); err != nil {
@@ -980,6 +1070,12 @@ func (m *Manager) restore(path string) error {
 		}
 	}
 	m.Config = restored
+	var prepared preparedSnapshot
+	_ = readJSON(m.file("prepared.json"), &prepared)
+	prepared.State = info.State
+	if err = writeJSON(m.file("prepared.json"), prepared); err != nil {
+		return err
+	}
 	if err = m.start(info.State); err != nil {
 		return err
 	}
@@ -1053,6 +1149,9 @@ func (m *Manager) update() error {
 		var p Pending
 		if err := readJSON(m.file("pending.json"), &p); err != nil {
 			return err
+		}
+		if p.Import != nil {
+			return m.finishInitialImport(p)
 		}
 		if p.Previous.Version == "" {
 			if err := m.compose(p.Target, nil, nil, "up", "-d", "--wait", "mongo", "postgres"); err != nil {

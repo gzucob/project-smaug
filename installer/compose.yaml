@@ -2,6 +2,7 @@
 services:
   mongo:
     image: ${SMAUG_MONGO_IMAGE:?manifest required}
+    command: mongod ${SMAUG_MONGO_OPTIONS:-}
     restart: unless-stopped
     volumes:
       - mongo-data:/data/db
@@ -58,6 +59,17 @@ services:
     environment: *backend-env
     volumes: *backend-volumes
     entrypoint: [smaug]
+  snapshot-decoder:
+    image: ${SMAUG_BACKEND_IMAGE:?manifest required}
+    profiles: [tools]
+    entrypoint: [python, -c]
+    command:
+      - >-
+        import lzma, shutil, sys;
+        shutil.copyfileobj(lzma.LZMAFile(sys.stdin.buffer), sys.stdout.buffer, 1024*1024)
+    # Stdout is a binary database archive forwarded to mongorestore.
+    logging:
+      driver: none
   mcp:
     image: ${SMAUG_BACKEND_IMAGE:?manifest required}
     profiles: [tools]

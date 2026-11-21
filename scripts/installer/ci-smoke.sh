@@ -15,5 +15,5 @@ docker push 127.0.0.1:5501/smaug-frontend:ci
 backend=$(docker image inspect 127.0.0.1:5501/smaug-backend:ci --format '{{index .RepoDigests 0}}')
 frontend=$(docker image inspect 127.0.0.1:5501/smaug-frontend:ci --format '{{index .RepoDigests 0}}')
 version="$(date -u +%Y.%m.%d)-${GITHUB_SHA:0:12}"
-uv run python scripts/installer/build_release.py --commit "$GITHUB_SHA" --version "$version" --backend "$backend" --frontend "$frontend"
+uv run python scripts/installer/build_release.py --legacy-smoke --commit "$GITHUB_SHA" --version "$version" --backend "$backend" --frontend "$frontend"
 uv run python scripts/installer/smoke.py --bundles dist/installers

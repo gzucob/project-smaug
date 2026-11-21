@@ -92,8 +92,35 @@ func (m *Manager) recoverInitialInstall(source, edition string) (Manifest, error
 }
 
 func (m *Manager) prepare(s State) error {
-	var prepared State
+	var prepared preparedSnapshot
 	if err := readJSON(m.file("prepared.json"), &prepared); err == nil && prepared.Version == s.Version && !exists(m.file("preparing.json")) {
+		if prepared.State == s {
+			return nil
+		}
+		prepared.State = s
+		return writeJSON(m.file("prepared.json"), prepared)
+	}
+	release, err := m.manifest(s)
+	if err != nil {
+		return err
+	}
+	if release.Snapshot != nil {
+		// An existing installation retains its data during upgrades and edition
+		// switches. The bundled snapshot is only for a newly assigned project.
+		populated, err := m.snapshotSQL(s, "SELECT EXISTS(SELECT 1 FROM ticker_analysis)")
+		if err != nil {
+			return err
+		}
+		if populated != "t" {
+			return errors.New("existing installation has no prepared results; recover its database before upgrading")
+		}
+		prepared.State = s
+		if err := writeJSON(m.file("prepared.json"), prepared); err != nil {
+			return err
+		}
+		if exists(m.file("preparing.json")) {
+			return os.Remove(m.file("preparing.json"))
+		}
 		return nil
 	}
 	if err := m.noCLI(); err != nil {

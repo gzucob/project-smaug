@@ -51,12 +51,30 @@ jobs:
     permissions:
       contents: read
       packages: write
+      actions: read
+    outputs:
+      backend: ${{ steps.runtime.outputs.backend }}
+      frontend: ${{ steps.runtime.outputs.frontend }}
+      version: ${{ steps.runtime.outputs.version }}
     env:
       RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha }}
+      SNAPSHOT_RUN_ID: ${{ vars.SMAUG_PREPARED_SNAPSHOT_RUN_ID }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.RELEASE_COMMIT }}
+      - name: Select a trusted snapshot handoff
+        shell: bash
+        run: |
+          if [[ ! "$SNAPSHOT_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo 'Set SMAUG_PREPARED_SNAPSHOT_RUN_ID to the run containing the certified snapshot artifact.' >&2
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SNAPSHOT_RUN_ID" | jq -e \
+            --arg repo "$GITHUB_REPOSITORY" \
+            '.head_repository.full_name == $repo and .conclusion == "success" and .event == "workflow_dispatch" and .path == ".github/workflows/prepared-snapshot.yml" and (.head_branch == "main" or .head_branch == "develop")'
+          gh run download "$SNAPSHOT_RUN_ID" --name prepared-database-snapshot --dir "$RUNNER_TEMP/prepared"
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -96,7 +114,8 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
-      - name: Build both application editions
+      - name: Build small runtime bundles for upgrades
+        id: runtime
         env:
           BACKEND_IMAGE: ${{ steps.names.outputs.backend }}@${{ steps.backend.outputs.digest }}
           FRONTEND_IMAGE: ${{ steps.names.outputs.frontend }}@${{ steps.frontend.outputs.digest }}
@@ -104,65 +123,108 @@ jobs:
           uv sync --frozen
           epoch=$(git show -s --format=%ct "$RELEASE_COMMIT")
           version="$(date -u -d "@$epoch" +%Y.%m.%d)-${RELEASE_COMMIT:0:12}"
-          uv run python scripts/installer/build_release.py --commit "$RELEASE_COMMIT" --version "$version" --backend "$BACKEND_IMAGE" --frontend "$FRONTEND_IMAGE"
+          uv run python scripts/installer/build_release.py --runtime-only --snapshot "$RUNNER_TEMP/prepared" --commit "$RELEASE_COMMIT" --version "$version" --backend "$BACKEND_IMAGE" --frontend "$FRONTEND_IMAGE"
+          echo "backend=$BACKEND_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "frontend=$FRONTEND_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
-          name: installers
+          name: installer-runtime
           path: |
             dist/installers/backend/
             dist/installers/full/
-            dist/installers/smaug-installer*
-            dist/installers/smaug-full-*
-            dist/installers/smaug-backend-*
+            dist/installers/smaug-backend-*.zip*
+            dist/installers/smaug-full-*.zip*
+            dist/installers/smaug-backend-*.tar.gz*
+            dist/installers/smaug-full-*.tar.gz*
           retention-days: 7
           if-no-files-found: error
+          overwrite: true
 
-  verify:
+  native:
     needs: build
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+        include:
+          - { system: linux, arch: amd64, runner: ubuntu-22.04 }
+          - { system: linux, arch: arm64, runner: ubuntu-22.04-arm }
+          - { system: windows, arch: amd64, runner: ubuntu-22.04 }
+          - { system: windows, arch: arm64, runner: ubuntu-22.04 }
+          - { system: darwin, arch: amd64, runner: macos-latest }
+          - { system: darwin, arch: arm64, runner: macos-latest }
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+    env:
+      RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha }}
+      SNAPSHOT_RUN_ID: ${{ vars.SMAUG_PREPARED_SNAPSHOT_RUN_ID }}
+      GH_TOKEN: ${{ github.token }}
+      BACKEND_IMAGE: ${{ needs.build.outputs.backend }}
+      FRONTEND_IMAGE: ${{ needs.build.outputs.frontend }}
+      RELEASE_VERSION: ${{ needs.build.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.RELEASE_COMMIT }}
       - uses: actions/download-artifact@v4
         with:
-          name: installers
+          name: installer-runtime
           path: dist/installers
-      # Intentionally anonymous: released images must be pullable without login.
-      - run: python3 scripts/installer/smoke.py --bundles dist/installers
-
-  macos-packages:
-    needs: build
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: Download the certified public snapshot
+        shell: bash
+        run: gh run download "$SNAPSHOT_RUN_ID" --name prepared-database-snapshot --dir "$RUNNER_TEMP/prepared"
+      - uses: astral-sh/setup-uv@v5
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-      - uses: actions/download-artifact@v4
+          python-version: '3.13'
+      - uses: actions/setup-go@v5
         with:
-          name: installers
-          path: dist/installers
-      - name: Package graphical macOS installers
+          go-version: '1.27.2'
+          cache: false
+      - name: Build the native packages with the same snapshot in each edition
+        shell: bash
         run: |
-          version=$(python3 -c 'import json; print(json.load(open("dist/installers/backend/manifest.json"))["version"])')
-          python3 scripts/installer/package_desktop.py --input dist/installers --version "$version" --system macos
-          python3 scripts/installer/verify_desktop.py --input dist/installers --system macos
+          uv sync --frozen
+          uv run python scripts/installer/build_release.py --native-only \
+            --snapshot "$RUNNER_TEMP/prepared" --system "${{ matrix.system }}" --arch "${{ matrix.arch }}" \
+            --commit "$RELEASE_COMMIT" --version "$RELEASE_VERSION" --backend "$BACKEND_IMAGE" --frontend "$FRONTEND_IMAGE"
+      - name: Verify macOS disk images
+        if: matrix.system == 'darwin'
+        run: python3 scripts/installer/verify_desktop.py --input dist/installers --system macos --arch "${{ matrix.arch }}" --prepared
+      - name: Verify Windows executables and their prepared payloads
+        if: matrix.system == 'windows'
+        run: python3 scripts/installer/verify_desktop.py --input dist/installers --system windows --arch "${{ matrix.arch }}" --prepared
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-installers
+          name: native-${{ matrix.system }}-${{ matrix.arch }}
           path: |
+            dist/installers/*.exe
+            dist/installers/*.exe.sha256
+            dist/installers/*.deb
+            dist/installers/*.deb.sha256
             dist/installers/*.dmg
             dist/installers/*.dmg.sha256
+            dist/installers/*-linux-${{ matrix.arch }}
+            dist/installers/*-linux-${{ matrix.arch }}.sha256
+          compression-level: 0
           if-no-files-found: error
           retention-days: 7
+          overwrite: true
+      - name: Verify both Linux native installations
+        if: matrix.system == 'linux'
+        shell: bash
+        run: |
+          # The native artifacts are already uploaded. Free the duplicate
+          # payloads before restoring the snapshot into Docker volumes.
+          rm -- "$RUNNER_TEMP/prepared/"{manifest.json,mongo.archive.xz,postgres.dump}
+          rm -- "dist/installers/smaug-backend-installer-linux-${{ matrix.arch }}" "dist/installers/smaug-installer-linux-${{ matrix.arch }}"
+          python3 scripts/installer/verify_prepared.py --package "dist/installers/smaug-backend-installer-linux-${{ matrix.arch }}.deb" --edition backend --exercise-recovery
+          python3 scripts/installer/verify_prepared.py --package "dist/installers/smaug-installer-linux-${{ matrix.arch }}.deb" --edition full
 
   publish:
-    needs: [verify, macos-packages]
+    needs: native
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -177,11 +239,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          name: installers
-          path: dist/installers
-      - uses: actions/download-artifact@v4
-        with:
-          name: macos-installers
+          name: installer-runtime
           path: dist/installers
       - name: Publish both application editions together
         shell: bash
@@ -196,17 +254,28 @@ jobs:
           cat > "$RUNNER_TEMP/release-notes.md" <<EOF_NOTES
           Native Smaug installers for Windows, Linux and macOS, built from commit $RELEASE_COMMIT.
 
-          Open the graphical installer for your system: .exe on Windows, .dmg on macOS, or .deb on Ubuntu/Debian. Choose Full or Backend in the browser interface and click Install. Docker Desktop must be installed and running. The installer downloads all supported CVM/B3 data and prepares the local databases automatically.
+          Open the graphical installer for your system: .exe on Windows, .dmg on macOS, or .deb on Ubuntu/Debian. Choose Full or Backend in the browser interface and click Install. Docker Desktop must be installed and running. The installer imports the bundled public CVM/B3 snapshot and downloads any missing Docker images.
 
           Use the installed Smaug shortcut to start, stop, update, or connect MCP without terminal commands. CLI commands remain available for automation.
 
-          ZIP/tar archives are internal payloads downloaded by the native installer. Manual extraction is unnecessary.
+          The ZIP/tar runtime archives are for upgrades. Use a native installer for a fresh installation.
           EOF_NOTES
           if [[ "$existing" != true ]]; then
             gh release create "$version" --draft --target "$RELEASE_COMMIT" --title "Smaug $version" --notes-file "$RUNNER_TEMP/release-notes.md"
           fi
           mapfile -d '' assets < <(find dist/installers -maxdepth 1 -type f \( -name 'smaug-full-*' -o -name 'smaug-backend-*' -o -name 'smaug-installer*' \) -print0)
           gh release upload "$version" "${assets[@]}" --clobber
+          # Keep only one target's native packages on the publication runner at a time.
+          native_dir=$(mktemp -d "$RUNNER_TEMP/smaug-native.XXXXXXXX")
+          trap 'rm -rf -- "$native_dir"' EXIT
+          for system in linux windows darwin; do
+            for arch in amd64 arm64; do
+              target_dir="$native_dir/$system-$arch"
+              gh run download "$GITHUB_RUN_ID" --name "native-$system-$arch" --dir "$target_dir"
+              gh release upload "$version" "$target_dir"/* --clobber
+              rm -rf -- "$target_dir"
+            done
+          done
           # Workflow scheduling is not FIFO. An older completed build must not
           # replace a newer successfully published descendant as latest.
           latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.target_commitish' 2>/dev/null || true)

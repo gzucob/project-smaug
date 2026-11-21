@@ -117,6 +117,22 @@ Details in `src/smaug/AGENTS.md`.
   the command, for example
   `UV_CACHE_DIR=/tmp/project-smaug-uv-cache uv run pytest`.
 
+## Test Artifacts and Disk Use
+
+- Keep the inputs required for the next run and concise evidence of completed
+  checks. Delete generated installers, extracted payloads, rejected dumps,
+  duplicate builds, and disposable test volumes when their run ends or is
+  abandoned. Preserve developer data, user installations, and certified inputs.
+- Before running a real-data installation or benchmark, estimate peak disk use
+  and check free space on the filesystem that hosts the data. On WSL, check
+  the Windows drive that contains the virtual disk as well as the Linux guest.
+  Run full restores sequentially unless concurrency is what the test measures.
+- Use a dedicated project and scratch directory for each disposable run. Arrange
+  cleanup on success, failure, and interruption. After an abrupt termination,
+  reconcile only the recorded test resources before starting another run.
+- Keep diagnostic logs bounded. Keep database archives and other binary streams
+  out of logs, including Docker's stdout logging.
+
 ## What NOT to Do
 - Don't push directly to `develop` or `main`. Squash work PRs into `develop`;
   promote `develop` to `main` through a release PR with a merge commit.

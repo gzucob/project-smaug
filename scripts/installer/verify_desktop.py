@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import platform
 import plistlib
 import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,11 +29,39 @@ def verify_checksum(path: Path) -> None:
         raise ValueError(f"Checksum mismatch: {path.name}")
 
 
-def verify_macos(output: Path) -> None:
+def verify_payload(path: Path) -> None:
+    """Verify the enclosed dumps with bounded buffers."""
+    with path.open("rb") as stream:
+        footer = b"SMAUG-PREPARED-1"
+        stream.seek(-len(footer), 2)
+        if stream.read() != footer:
+            raise ValueError(f"Missing prepared payload: {path.name}")
+        with zipfile.ZipFile(stream) as archive:
+            snapshot = archive.read("snapshot-manifest.json")
+            release = json.loads(archive.read("manifest.json"))
+            if (
+                hashlib.sha256(snapshot).hexdigest()
+                != release["snapshot"]["manifest_sha256"]
+            ):
+                raise ValueError(f"Snapshot manifest checksum mismatch: {path.name}")
+            for payload in json.loads(snapshot)["payloads"]:
+                name = payload["name"]
+                with archive.open(name) as dump:
+                    digest = hashlib.file_digest(dump, "sha256").hexdigest()
+                if (
+                    archive.getinfo(name).file_size != payload["size_bytes"]
+                    or digest != payload["sha256"]
+                ):
+                    raise ValueError(f"Embedded dump checksum mismatch: {name}")
+
+
+def verify_macos(
+    output: Path, architectures: tuple[str, ...], *, prepared: bool
+) -> None:
     """Mount every DMG and verify its app, license and native architecture."""
     native = "arm64" if platform.machine() == "arm64" else "amd64"
     for prefix in PREFIXES:
-        for arch in ("amd64", "arm64"):
+        for arch in architectures:
             image = output / f"{prefix}-macos-{arch}.dmg"
             verify_checksum(image)
             subprocess.run(["hdiutil", "verify", str(image)], check=True)
@@ -76,6 +106,8 @@ def verify_macos(output: Path) -> None:
                     )
                     if arch == native:
                         subprocess.run([str(binary), "--help"], check=True, timeout=30)
+                    if prepared:
+                        verify_payload(contents / "Resources/prepared.zip")
                     if (mount / "Applications").readlink() != Path("/Applications"):
                         raise ValueError("Missing Applications shortcut")
                 finally:
@@ -83,11 +115,13 @@ def verify_macos(output: Path) -> None:
             print(f"Verified {image.name}")
 
 
-def verify_windows(output: Path) -> None:
+def verify_windows(
+    output: Path, architectures: tuple[str, ...], *, prepared: bool
+) -> None:
     """Verify both PE architectures and execute each native graphical launcher."""
     native = "arm64" if platform.machine().lower() in {"arm64", "aarch64"} else "amd64"
     for prefix in PREFIXES:
-        for arch in ("amd64", "arm64"):
+        for arch in architectures:
             suffix = "-arm64" if arch == "arm64" else ""
             binary = output / f"{prefix}{suffix}.exe"
             verify_checksum(binary)
@@ -105,8 +139,10 @@ def verify_windows(output: Path) -> None:
                 stream.seek(offset + 24 + 68)
                 if int.from_bytes(stream.read(2), "little") != 2:
                     raise ValueError("Launcher must use the Windows GUI subsystem")
-            if arch == native:
+            if arch == native and platform.system() == "Windows":
                 subprocess.run([str(binary), "--help"], check=True, timeout=30)
+            if prepared:
+                verify_payload(binary)
             print(f"Verified {binary.name}")
 
 
@@ -114,9 +150,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--system", choices=("macos", "windows"), required=True)
+    parser.add_argument("--arch", choices=("amd64", "arm64"))
+    parser.add_argument("--prepared", action="store_true")
     args = parser.parse_args()
     verify = verify_macos if args.system == "macos" else verify_windows
-    verify(args.input.resolve())
+    verify(
+        args.input.resolve(),
+        (args.arch,) if args.arch else ("amd64", "arm64"),
+        prepared=args.prepared,
+    )
 
 
 if __name__ == "__main__":

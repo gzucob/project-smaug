@@ -1,0 +1,47 @@
+name: Stage a certified installer snapshot
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: HTTPS URL for the ZIP containing the three certified snapshot files
+        type: string
+        required: true
+      sha256:
+        description: SHA-256 of that ZIP
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      SNAPSHOT_URL: ${{ inputs.url }}
+      SNAPSHOT_SHA256: ${{ inputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.13'
+      - name: Fetch and verify the snapshot
+        shell: bash
+        run: |
+          [[ "$SNAPSHOT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          download="$RUNNER_TEMP/snapshot.zip"
+          curl --proto '=https' --proto-redir '=https' --location --fail --silent --show-error \
+            --max-filesize 2147483647 --output "$download" -- "$SNAPSHOT_URL"
+          printf '%s  %s\n' "$SNAPSHOT_SHA256" "$download" | sha256sum --check
+          uv sync --frozen
+          uv run python scripts/installer/stage_snapshot.py "$download" "$RUNNER_TEMP/prepared"
+          uv run python scripts/distribution_snapshot.py verify "$RUNNER_TEMP/prepared"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prepared-database-snapshot
+          path: ${{ runner.temp }}/prepared/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
