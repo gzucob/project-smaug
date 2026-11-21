@@ -14,11 +14,14 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def checksum(path: Path) -> None:
-    digest = hashlib.file_digest(path.open("rb"), "sha256").hexdigest()
+    with path.open("rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
     path.with_name(path.name + ".sha256").write_text(f"{digest}  {path.name}\n")
 
 
-def linux_package(output: Path, prefix: str, arch: str, version: str) -> Path:
+def linux_package(
+    output: Path, prefix: str, arch: str, version: str, *, prepared: bool = False
+) -> Path:
     """Build a desktop-menu package without running application setup as root."""
     with tempfile.TemporaryDirectory(prefix="smaug-deb-") as temporary:
         root = Path(temporary)
@@ -32,7 +35,7 @@ def linux_package(output: Path, prefix: str, arch: str, version: str) -> Path:
             f"Architecture: {arch}\nMaintainer: Smaug <noreply@smaug.local>\n"
             "Depends: xdg-utils\n"
             "Description: Graphical installer and manager for Smaug\n"
-            " Prepares public CVM/B3 data in local Docker containers.\n"
+            " Sets up public CVM/B3 data in local Docker containers.\n"
         )
         binary = root / "usr" / "lib" / prefix / prefix
         binary.parent.mkdir(parents=True)
@@ -60,15 +63,17 @@ def linux_package(output: Path, prefix: str, arch: str, version: str) -> Path:
             if directory.is_dir():
                 directory.chmod(0o755)
         package = output / f"{prefix}-linux-{arch}.deb"
-        subprocess.run(
-            ["dpkg-deb", "--root-owner-group", "--build", str(root), str(package)],
-            check=True,
-        )
+        command = ["dpkg-deb", "--root-owner-group"]
+        if prepared:
+            command.append("-Znone")
+        subprocess.run([*command, "--build", str(root), str(package)], check=True)
         checksum(package)
         return package
 
 
-def macos_package(output: Path, prefix: str, arch: str, version: str) -> Path:
+def macos_package(
+    output: Path, prefix: str, arch: str, version: str, *, payload: Path | None = None
+) -> Path:
     """Build an app bundle and DMG with macOS's own disk-image tooling."""
     with tempfile.TemporaryDirectory(prefix="smaug-dmg-") as temporary:
         root = Path(temporary)
@@ -86,6 +91,8 @@ def macos_package(output: Path, prefix: str, arch: str, version: str) -> Path:
         resources = app / "Resources"
         resources.mkdir()
         shutil.copyfile(ROOT / "LICENSE", resources / "LICENSE")
+        if payload is not None:
+            shutil.copyfile(payload, resources / "prepared.zip")
         with (app / "Info.plist").open("wb") as stream:
             plistlib.dump(
                 {
@@ -109,7 +116,7 @@ def macos_package(output: Path, prefix: str, arch: str, version: str) -> Path:
                 "create",
                 "-ov",
                 "-format",
-                "UDZO",
+                "UDRO" if payload is not None else "UDZO",
                 "-volname",
                 name,
                 "-srcfolder",

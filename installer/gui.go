@@ -170,7 +170,14 @@ func reopenGUI(root string) error {
 func (g *guiServer) refreshInstallation() {
 	var state State
 	var config Config
-	if readJSON(filepath.Join(g.root, "current.json"), &state) == nil && readJSON(filepath.Join(g.root, "config.json"), &config) == nil && releasePattern.MatchString(state.Version) && validateConfig(config) == nil {
+	if readJSON(filepath.Join(g.root, "current.json"), &state) != nil || readJSON(filepath.Join(g.root, "config.json"), &config) != nil {
+		var pending Pending
+		if readJSON(filepath.Join(g.root, "pending.json"), &pending) != nil || pending.Import == nil {
+			return
+		}
+		state, config = pending.Target, pending.Import.Config
+	}
+	if releasePattern.MatchString(state.Version) && validEdition(state.Edition) && validateConfig(config) == nil {
 		g.state.Installed = true
 		g.state.Edition = state.Edition
 		g.state.Version = state.Version
@@ -392,9 +399,9 @@ func (g *guiServer) actionArguments(action, edition, client string) ([]string, e
 func guiActionMessage(action string) string {
 	switch action {
 	case "install":
-		return "Instalando o Smaug e preparando os dados da CVM e da B3…"
+		return "Instalando o Smaug e preparando a base local. O Docker baixa as imagens ausentes…"
 	case "upgrade":
-		return "Atualizando o Smaug e preparando os dados…"
+		return "Atualizando o Smaug e preservando a base local…"
 	case "start":
 		return "Iniciando o Smaug…"
 	case "stop":

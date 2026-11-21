@@ -1,7 +1,8 @@
 <!-- section:common -->
 ## Instalar o Smaug
 
-As duas versões incluem bancos de dados, API e MCP e preparam os mesmos dados:
+Os dois instaladores incluem a mesma base pública preparada. As duas versões
+oferecem bancos de dados, API e MCP:
 
 - **full**: inclui a interface web.
 - **backend**: funciona sem interface web.
@@ -84,17 +85,14 @@ Abra `@@INSTALLER@@.exe` com dois cliques. Para Windows ARM64, use
 
 No gerenciador, escolha **Completo** ou **Backend** e clique em **Instalar o Smaug**.
 
-O instalador baixa os componentes, cria os bancos, busca os arquivos publicados
-pela CVM e os dados B3 usados pelo Smaug, ingere todo o universo suportado e
-calcula as análises e o histórico de preços. Você não precisa escolher ticker,
-ano ou tipo de documento. Cada instalação constrói a própria base a partir
-das fontes públicas.
+O instalador importa a base incluída no pacote, com os dados públicos CVM/B3,
+as análises e o histórico de preços já calculados. O Docker baixa automaticamente
+as imagens que faltarem. A interface mostra a atividade e os detalhes da
+operação.
 
-A primeira preparação pode levar horas e precisa de internet. A interface mostra
-a atividade e oferece os detalhes da operação. Se houver uma interrupção, abra
-o gerenciador e clique em **Retomar instalação**: o trabalho concluído é preservado.
-Lacunas nas fontes continuam identificadas pelas suas causas; dados ausentes
-não viram zero.
+Se a importação for interrompida, reabra o instalador original e clique em
+**Retomar instalação**. O instalador recupera o projeto criado para essa
+instalação e refaz a carga parcial quando necessário.
 
 Ao concluir, clique em **Abrir o Smaug** na versão completa ou **Abrir a API**
 na versão backend. Os endereços padrão são <http://localhost:3000> para a
@@ -115,8 +113,8 @@ operação. Os detalhes ficam em **Ver detalhes da operação** e no arquivo
 `installer-ui.log` da instalação.
 
 Para automação, o comando `smaug` fica disponível em um novo terminal:
-`smaug gui`, `smaug start`, `smaug stop` e `smaug check`. Use `smaug installer`
-para retomar a preparação ou `smaug logs preparation` para o log da ingestão.
+`smaug gui`, `smaug start`, `smaug stop` e `smaug check`. O instalador original
+também aceita `installer` para retomar a importação pelo terminal.
 
 <!-- section:maintenance -->
 ### Atualizar
@@ -129,8 +127,8 @@ no botão. Para automação, o mesmo fluxo está disponível pelo terminal:
 smaug upgrade
 ```
 
-A atualização busca a versão publicada, prepara os dados e inicia os serviços,
-preservando a configuração da instalação.
+A atualização busca a versão publicada e inicia os serviços com os bancos,
+a carteira e a configuração da instalação existente.
 
 Backup, restauração e portas personalizadas ficam na
 [referência técnica](https://github.com/gzucob/project-smaug/blob/main/docs/development.md).
