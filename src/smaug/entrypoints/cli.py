@@ -25,6 +25,7 @@ from typing import Annotated, Any, cast
 
 import httpx
 import typer
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from smaug.analysis.application.analyze import (
     AnalysisOutcome as AnalysisOutcome,
@@ -59,7 +60,10 @@ from smaug.analysis.domain.ports import (
     PriceProvider,
     SharesReader,
 )
-from smaug.analysis.domain.price_refresh import PriceRefreshStatusRepository
+from smaug.analysis.domain.price_refresh import (
+    PriceRefreshIssue,
+    PriceRefreshStatusRepository,
+)
 from smaug.analysis.infrastructure.b3_prices import CotahistArchive
 from smaug.analysis.infrastructure.dividend_adjusted_price import (
     DividendAdjustedPriceProvider,
@@ -104,6 +108,7 @@ from smaug.ingestion.application.runs import IngestionRunService
 from smaug.ingestion.application.source_inputs import (
     MirrorSourceInputs,
     PrepareSourceInputsUseCase,
+    SyncCotahistUseCase,
 )
 from smaug.ingestion.application.validation import (
     IngestionValidationService,
@@ -247,6 +252,7 @@ from smaug.shared.db import init_database
 from smaug.shared.errors import (
     IneligibleInstrumentError,
     SmaugError,
+    SourceError,
     UnknownTickerError,
 )
 from smaug.shared.events import EventBus
@@ -283,6 +289,8 @@ def _source_store(
 
 def _retained_sources[**P](
     operation: Callable[P, Awaitable[int]],
+    *,
+    reconcile_archives: bool = True,
 ) -> Callable[P, Coroutine[Any, Any, int]]:
     @wraps(operation)
     async def execute(*args: P.args, **kwargs: P.kwargs) -> int:
@@ -330,7 +338,7 @@ def _retained_sources[**P](
                 try:
                     result = await operation(*args, **kwargs)
                     if result == 0:
-                        await session.complete()
+                        await session.complete(reconcile_archives=reconcile_archives)
                     return result
                 finally:
                     _source_session.reset(token)
@@ -878,6 +886,47 @@ async def _run_prepare_source_inputs() -> int:
         return 0
     finally:
         await client.close()
+
+
+async def _mirror_cotahist() -> int:
+    settings = _ingestion_settings()
+    client = await init_database(settings)
+    try:
+        database = client[settings.mongo_db]
+        archives = database["source_input_archives"]
+        rows = database["source_input_rows"]
+        coverage = await MongoSourceInputs(archives, rows).pin()
+        repository = MongoSourceInputRepository(archives, rows)
+        session = _source_session.get()
+        async with httpx.AsyncClient(timeout=60.0) as http:
+            sync = SyncCotahistUseCase(
+                PublicSourceInputAcquirer(
+                    _source_store(http, settings),
+                    fca_base_url=CVM_FCA_BASE_URL,
+                    b3_base_url=settings.b3_series_base_url,
+                ),
+                session.mirror
+                if session is not None
+                else MirrorSourceInputs(repository),
+            )
+            await sync.execute(
+                {
+                    year: partial(
+                        repository.cotahist_sessions,
+                        revision.artifact_id,
+                        revision.parser_version,
+                    )
+                    for (dataset, year), revision in coverage.items()
+                    if dataset == "COTAHIST"
+                },
+                through=date.today().year,
+            )
+        return 0
+    finally:
+        await client.close()
+
+
+_run_sync_cotahist = _retained_sources(_mirror_cotahist, reconcile_archives=False)
 
 
 async def _verify_prepared_data() -> int:
@@ -2030,16 +2079,48 @@ async def _run_price_check(*, force: bool = False) -> int:
             refresh_status = SqlPriceRefreshRepository(create_session_factory(engine))
             return await CheckPricesUseCase(
                 refresh_status,
-                lambda: _run_analyze(
-                    (),
-                    whole_exchange=True,
-                    refresh_prices=True,
-                    refresh_status_repository=refresh_status,
-                ),
+                partial(_refresh_mirrored_prices, engine, refresh_status),
                 timedelta(seconds=settings.price_refresh_interval_seconds),
             ).execute(force=force)
     finally:
         await engine.dispose()
+
+
+async def _refresh_mirrored_prices(
+    engine: AsyncEngine, status: PriceRefreshStatusRepository
+) -> int:
+    try:
+        result = await _run_sync_cotahist()
+        if result:
+            raise SourceError("cotahist_sync_incomplete")
+    except Exception:
+        await status.save(
+            replace(
+                await status.read(),
+                issues=(PriceRefreshIssue("B3", "source_error"),),
+            )
+        )
+        raise
+
+    async with engine.connect() as connection:
+        async with connection.begin() as transaction:
+            # Repository commits release savepoints. The outer transaction
+            # publishes histories and analysis views together after every check.
+            sessions = async_sessionmaker(
+                connection,
+                expire_on_commit=False,
+                join_transaction_mode="create_savepoint",
+            )
+            result = await _run_analyze(
+                (),
+                whole_exchange=True,
+                refresh_prices=True,
+                refresh_status_repository=status,
+                write_sessions=sessions,
+            )
+            if result:
+                await transaction.rollback()
+            return result
 
 
 async def _security_resolvers(
@@ -2339,6 +2420,7 @@ async def _run_analyze(
     price_history_since: int | None = None,
     refresh_prices: bool = False,
     refresh_status_repository: PriceRefreshStatusRepository | None = None,
+    write_sessions: async_sessionmaker[AsyncSession] | None = None,
 ) -> int:
     settings = get_settings()
     mongo = await init_database(settings)
@@ -2448,7 +2530,9 @@ async def _run_analyze(
             registrant_resolver=registrant,
             validation_collection=mongo[settings.mongo_db]["ingestion_validations"],
         )
-        analysis_repository = SqlAlchemyAnalysisRepository(session_factory)
+        analysis_repository = SqlAlchemyAnalysisRepository(
+            write_sessions or session_factory
+        )
         use_case = AnalyzePortfolioUseCase(
             governance_reader=MongoGovernanceReader(
                 mongo[settings.mongo_db]["raw_ingestions"],
@@ -2486,7 +2570,7 @@ async def _run_analyze(
             outcome_repository=analysis_repository,
         )
         if refresh_prices:
-            histories = SqlPriceHistoryRepository(session_factory)
+            histories = SqlPriceHistoryRepository(write_sessions or session_factory)
             builder = BuildPriceHistoryUseCase(
                 SuccessionPriceProvider(
                     B3PriceProvider(archive),

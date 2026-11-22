@@ -6,6 +6,7 @@ import zipfile
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -14,7 +15,10 @@ from pymongo import AsyncMongoClient
 from pymongo.errors import DuplicateKeyError
 
 from smaug.analysis.infrastructure.b3_prices import _reduce
-from smaug.ingestion.application.source_inputs import MirrorSourceInputs
+from smaug.ingestion.application.source_inputs import (
+    MirrorSourceInputs,
+    SyncCotahistUseCase,
+)
 from smaug.ingestion.domain.source_inputs import SourceInputArchive, SourceInputRow
 from smaug.ingestion.infrastructure.models import (
     SourceInputArchiveDocument,
@@ -129,6 +133,61 @@ async def test_idempotent_replay_resume_and_republication(tmp_path: Path) -> Non
     assert await use_case.execute(LocalSourceInputReader(path))
     assert len(repository.archives) == 2
     assert len(repository.rows) == 2 * count
+
+
+async def test_price_sync_rechecks_snapshot_year_and_recovers_offline_years(
+    tmp_path: Path,
+) -> None:
+    base = tape_archive(tmp_path)
+    with zipfile.ZipFile(base) as source:
+        original = source.read("COTAHIST_A2015.TXT").decode("latin-1")
+
+    class PublishedTapes:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, int]] = []
+
+        async def acquire(self, dataset: str, year: int) -> LocalSourceInputReader:
+            self.requests.append((dataset, year))
+            path = tmp_path / f"publication-{year}.zip"
+            lines = original.splitlines()
+            for index, line in enumerate(lines):
+                year_start = 2 if line.startswith("01") else 11
+                lines[index] = line[:year_start] + str(year) + line[year_start + 4 :]
+            if not path.exists():
+                make_archive(path, {f"COTAHIST_A{year}.TXT": "\n".join(lines)})
+            return LocalSourceInputReader(path)
+
+    source = PublishedTapes()
+    repository = MemoryInputs()
+    sync = SyncCotahistUseCase(source, MirrorSourceInputs(repository))
+    previous = AsyncMock(return_value={original.splitlines()[1][2:10]})
+    mirrored = dict.fromkeys(range(1986, 2016), previous)
+    await sync.execute(mirrored, through=2017)
+    assert source.requests == [("COTAHIST", year) for year in range(2015, 2018)]
+    assert len(repository.archives) == 3
+    previous.assert_awaited_once()
+
+    source.requests.clear()
+    previous.reset_mock()
+    await sync.execute(dict.fromkeys(range(1986, 2018), previous), through=2017)
+    assert source.requests == [("COTAHIST", 2017)]
+    assert len(repository.archives) == 3
+    previous.assert_not_awaited()
+
+
+async def test_price_sync_rejects_an_annual_publication_that_loses_a_session(
+    tmp_path: Path,
+) -> None:
+    repository = MemoryInputs()
+    mirror = MirrorSourceInputs(repository)
+    path = tape_archive(tmp_path)
+    with pytest.raises(ValueError, match="omits mirrored sessions"):
+        await mirror.execute(
+            LocalSourceInputReader(path),
+            expected=("COTAHIST", 2015),
+            previous_sessions=AsyncMock(return_value={"20151231"}),
+        )
+    assert not repository.archives
 
 
 async def test_fca_retains_versions_names_security_classes_and_empty_values(

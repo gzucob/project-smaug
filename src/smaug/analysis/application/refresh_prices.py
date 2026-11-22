@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from smaug.analysis.application.analyze import AnalyzePortfolioUseCase
 from smaug.analysis.application.price_history import BuildPriceHistoryUseCase
-from smaug.analysis.domain.indicators import CALCULATION_CONTRACT_VERSION
+from smaug.analysis.domain.indicators import CALCULATION_CONTRACT_VERSION, NullReason
 from smaug.analysis.domain.ports import AnalysisRepository, PriceProvider
 from smaug.analysis.domain.price_history import PriceHistoryRepository
 from smaug.analysis.domain.price_refresh import (
@@ -54,8 +54,26 @@ class RefreshPricesUseCase:
                 previous = await self._histories.latest(ticker)
                 analysis = await self._analyses.latest(ticker)
                 quote = await self._prices.get(ticker)
-                if quote.price is None or quote.price_source_session is None:
+                known_gap = (
+                    analysis is not None
+                    and analysis.price is None
+                    and quote.price is None
+                    and quote.price_null_reason
+                    in {NullReason.MISSING_PRICE, NullReason.PRICE_SYMBOL_NOT_FOUND}
+                )
+                if not known_gap and (
+                    quote.price is None or quote.price_source_session is None
+                ):
                     raise PriceRefreshError("quote_unavailable")
+                if (
+                    analysis is not None
+                    and analysis.price_source_session is not None
+                    and (
+                        quote.price_source_session is None
+                        or quote.price_source_session < analysis.price_source_session
+                    )
+                ):
+                    raise PriceRefreshError("history_incomplete")
                 history = await self._builder.execute(
                     ticker,
                     start_year=previous.start_year if previous else 2010,
@@ -102,15 +120,15 @@ class RefreshPricesUseCase:
                 )
                 issues.append(PriceRefreshIssue(ticker, reason))
                 logger.exception("Automatic price refresh failed for %s", ticker)
-            if self._status_repository is not None:
-                await self._status_repository.save(
-                    replace(
-                        await self._status_repository.read(),
-                        updated_count=updated,
-                        unchanged_count=unchanged,
-                        issues=tuple(issues),
-                    )
+        if self._status_repository is not None:
+            await self._status_repository.save(
+                replace(
+                    await self._status_repository.read(),
+                    updated_count=0 if issues else updated,
+                    unchanged_count=unchanged,
+                    issues=tuple(issues),
                 )
+            )
         return 1 if issues else 0
 
 
@@ -152,6 +170,9 @@ class CheckPricesUseCase:
             result = await self._refresh()
         except Exception:
             logger.exception("Automatic price check failed")
+            await self._repository.save(
+                replace(await self._repository.read(), updated_count=0)
+            )
             result = 1
         finished = datetime.now(UTC)
         await self._repository.save(

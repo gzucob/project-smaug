@@ -1,13 +1,17 @@
 """Offline recovery, interrupted runs and restart throttling."""
 
+import os
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import httpx
 import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from smaug.analysis.application.price_history import BuildPriceHistoryUseCase
 from smaug.analysis.application.refresh_prices import (
@@ -17,7 +21,11 @@ from smaug.analysis.application.refresh_prices import (
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.financials import MarketData
 from smaug.analysis.domain.indicators import CALCULATION_CONTRACT_VERSION, Indicators
-from smaug.analysis.domain.price_refresh import PriceRefreshIssue, PriceRefreshStatus
+from smaug.analysis.domain.price_refresh import (
+    PriceRefreshIssue,
+    PriceRefreshStatus,
+    PriceRefreshStatusRepository,
+)
 from smaug.analysis.infrastructure.b3_prices import CotahistArchive
 from smaug.portfolio.domain.taxonomy import Classification
 from tests.test_price_history import HistorySource, MemoryHistory, Shares
@@ -64,6 +72,86 @@ async def test_failed_check_preserves_completion_and_can_retry() -> None:
     assert await checker.execute() == 0
     assert repository.status.state == "completed"
     assert refresh.await_count == 2
+
+
+async def test_price_sync_failure_stops_before_recalculation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from smaug.entrypoints import cli
+
+    status = MemoryStatus()
+    engine = AsyncMock()
+    analyze = AsyncMock()
+    monkeypatch.setattr(cli, "_run_sync_cotahist", AsyncMock(side_effect=OSError))
+    monkeypatch.setattr(cli, "_run_analyze", analyze)
+
+    async def refresh() -> int:
+        return await cli._refresh_mirrored_prices(engine, status)
+
+    assert await CheckPricesUseCase(status, refresh, timedelta(hours=6)).execute() == 1
+    assert status.status.state == "failed"
+    assert status.status.issues == (PriceRefreshIssue("B3", "source_error"),)
+    assert status.status.updated_count == 0
+    engine.connect.assert_not_called()
+    analyze.assert_not_awaited()
+
+
+@pytest.mark.skipif(
+    not os.environ.get("SMAUG_TEST_POSTGRES_URI"),
+    reason="Set SMAUG_TEST_POSTGRES_URI to test atomic price refresh publication",
+)
+async def test_price_refresh_rolls_back_saved_results_before_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from smaug.entrypoints import cli
+
+    engine = create_async_engine(os.environ["SMAUG_TEST_POSTGRES_URI"])
+    table = "price_refresh_test_" + uuid4().hex
+    status = MemoryStatus()
+    sync = AsyncMock(return_value=0)
+    monkeypatch.setattr(cli, "_run_sync_cotahist", sync)
+
+    async def published() -> list[int]:
+        async with engine.connect() as connection:
+            result = await connection.scalars(text(f"SELECT value FROM {table}"))
+            return sorted(result.all())
+
+    async def analyze(
+        tickers: tuple[str, ...],
+        *,
+        whole_exchange: bool,
+        refresh_prices: bool,
+        refresh_status_repository: PriceRefreshStatusRepository,
+        write_sessions: async_sessionmaker[AsyncSession],
+    ) -> int:
+        assert not tickers
+        assert whole_exchange
+        assert refresh_prices
+        assert refresh_status_repository is status
+        async with write_sessions() as session:
+            await session.execute(text(f"INSERT INTO {table} VALUES (2)"))
+            await session.commit()
+        assert await published() == [1]
+        if sync.await_count == 1:
+            return 1
+        async with write_sessions() as session:
+            await session.execute(text(f"INSERT INTO {table} VALUES (3)"))
+            await session.commit()
+        return 0
+
+    monkeypatch.setattr(cli, "_run_analyze", analyze)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text(f"CREATE TABLE {table} (value integer)"))
+            await connection.execute(text(f"INSERT INTO {table} VALUES (1)"))
+        assert await cli._refresh_mirrored_prices(engine, status) == 1
+        assert await published() == [1]
+        assert await cli._refresh_mirrored_prices(engine, status) == 0
+        assert await published() == [1, 2, 3]
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(text(f"DROP TABLE IF EXISTS {table}"))
+        await engine.dispose()
 
 
 async def test_recovery_saves_all_missed_sessions_then_skips_unchanged_data() -> None:

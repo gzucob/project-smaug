@@ -98,7 +98,7 @@ class InstallationSourceSession:
             write_concern=durable
         )
         self.observations = MongoArtifactObservations(self._acquisitions)
-        self._mirror = MirrorSourceInputs(
+        self.mirror = MirrorSourceInputs(
             MongoSourceInputRepository(
                 database["source_input_archives"].with_options(write_concern=durable),
                 database["source_input_rows"].with_options(write_concern=durable),
@@ -189,7 +189,7 @@ class InstallationSourceSession:
                 "http_status": 200,
             }
         )
-        await self._mirror.execute(
+        await self.mirror.execute(
             LocalSourceInputReader(artifact.path, artifact=artifact)
         )
 
@@ -218,12 +218,12 @@ class InstallationSourceSession:
                 upsert=True,
             )
 
-    async def complete(self) -> None:
+    async def complete(self, *, reconcile_archives: bool = True) -> None:
         """Reconcile every source copy, checkpoint consumers, then remove files."""
         await self._flush_metadata()
         admitted = set()
         sources = Path(self.settings.source_artifact_dir)
-        for path in sorted(self.workspace.rglob("*")):
+        for path in sorted(self.workspace.rglob("*")) if reconcile_archives else ():
             if path.suffix.lower() != ".zip" or ".staging" in path.parts:
                 continue
             if "quarantine" in path.parts:
@@ -252,7 +252,7 @@ class InstallationSourceSession:
             reader = LocalSourceInputReader(path, artifact=artifact)
             # Admission is idempotent and verifies the same bytes the existing
             # ingestion readers consumed. An interrupted write never admits rows.
-            await self._mirror.execute(reader)
+            await self.mirror.execute(reader)
             admitted.add(reader.archive.artifact_id)
         await self._sessions.update_one(
             {"scope": self._scope},
