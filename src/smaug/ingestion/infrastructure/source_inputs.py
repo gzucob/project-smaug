@@ -246,6 +246,19 @@ class MongoSourceInputRepository:
     async def completed(self, archive: SourceInputArchive) -> bool:
         return await self._archive_collection().find_one(self._key(archive)) is not None
 
+    async def cotahist_sessions(
+        self, artifact_id: str, parser_version: str
+    ) -> set[str]:
+        sessions = await self._row_collection().distinct(
+            "session",
+            {
+                "artifact_id": artifact_id,
+                "parser_version": parser_version,
+                "fields.TIPREG": "01",
+            },
+        )
+        return {str(session) for session in sessions}
+
     async def write_rows(
         self, archive: SourceInputArchive, rows: Iterable[SourceInputRow]
     ) -> None:

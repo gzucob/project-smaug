@@ -803,3 +803,83 @@ async def test_prepare_explicitly_mirrors_public_sources_before_analysis(
     finally:
         await client.drop_database(db.name)
         await client.close()
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or not os.environ.get("SMAUG_TEST_MONGO_URI"),
+    reason="Set SMAUG_TEST_MONGO_URI in a Linux test environment",
+)
+async def test_installed_price_sync_admits_b3_revision_and_cleans_source_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import runpy
+
+    fixture = runpy.run_path("scripts/installer/source_fixture.py")
+    year = date.today().year
+    member = f"COTAHIST_A{year}.TXT"
+    initial = fixture["cotahist"](year)
+    with zipfile.ZipFile(io.BytesIO(initial)) as archive:
+        records = archive.read(member).splitlines()
+    extra = records[-2][:2] + f"{year}0701".encode() + records[-2][10:]
+    records.insert(-1, extra)
+    records[-1] = records[-1][:31] + f"{len(records):011d}".encode() + records[-1][42:]
+    published = fixture["archive"]({member: b"\n".join(records) + b"\n"})
+    requests: list[str] = []
+
+    def source(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path.rsplit("/", 1)[-1])
+        return httpx.Response(200, content=published)
+
+    settings = Settings(
+        mongo_uri=os.environ["SMAUG_TEST_MONGO_URI"],
+        mongo_db=f"smaug_price_sync_{uuid4().hex}",
+        runtime_context="installation",
+        source_artifact_dir=str(tmp_path / "installation"),
+    )
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    original_http = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: original_http(transport=httpx.MockTransport(source), **kwargs),
+    )
+    client = AsyncMongoClient(settings.mongo_uri)
+    db = client[settings.mongo_db]
+    archives = db["source_input_archives"]
+    rows = db["source_input_rows"]
+    try:
+        initial_path = tmp_path / "snapshot.zip"
+        initial_path.write_bytes(initial)
+        await MirrorSourceInputs(MongoSourceInputRepository(archives, rows)).execute(
+            LocalSourceInputReader(initial_path)
+        )
+        await archives.insert_many(
+            [
+                {
+                    "artifact_id": f"fixture-{prior}",
+                    "parser_version": "source-inputs-v1",
+                    "dataset": "COTAHIST",
+                    "year": prior,
+                    "source_url": settings.b3_series_base_url,
+                    "validation": "zip-crc-and-lossless-row-layout-v1",
+                    "price_basis": "as_traded",
+                    "member_counts": {},
+                }
+                for prior in range(1986, year)
+            ]
+        )
+        assert await cli._run_sync_cotahist() == 0
+        row_count = await rows.count_documents({})
+        assert await cli._run_sync_cotahist() == 0
+        assert await rows.count_documents({}) == row_count
+        assert requests
+        assert set(requests) == {f"COTAHIST_A{year}.ZIP"}
+        assert not list((tmp_path / "installation").rglob("*.zip"))
+        assert initial_path.read_bytes() == initial
+        tape = MongoCotahistArchive(MongoSourceInputs(archives, rows))
+        quote = (await tape.year(year))["PETR4"]
+        assert quote.last_session == date(year, 7, 1)
+        assert quote.last_close == Decimal("10")
+    finally:
+        await client.drop_database(db.name)
+        await client.close()
