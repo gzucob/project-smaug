@@ -11,6 +11,7 @@ from datetime import datetime
 
 from pymongo.errors import DuplicateKeyError
 
+from smaug.ingestion.domain.disclosures import SYNC_RUN_PREFIX
 from smaug.ingestion.domain.entities import RawIngestion, RawIngestionWrite
 from smaug.ingestion.domain.failures import (
     FailureAttempt,
@@ -50,6 +51,20 @@ class BeanieRawIngestionRepository:
         if ingestion.run_id is None or not ingestion.run_id.strip():
             raise ValueError("new raw ingestions require a run_id")
         identity = filing_identity(ingestion)
+        if ingestion.run_id.startswith(SYNC_RUN_PREFIX):
+            # A newer ZIP may supersede the archive between interrupted
+            # attempts while carrying exactly the same statement version.
+            prior = await RawIngestionDocument.find_one(
+                {
+                    "cvm_code": ingestion.cvm_code,
+                    "module": identity.module,
+                    "source": identity.source,
+                    "filing_discriminator": identity.filing_discriminator,
+                    "content_hash": identity.content_hash,
+                }
+            )
+            if prior is not None:
+                return RawIngestionWrite(self._to_entity(prior), created=False)
         existing = await self._find_by_identity(identity)
         if existing is not None:
             return RawIngestionWrite(self._to_entity(existing), created=False)

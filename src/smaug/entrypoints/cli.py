@@ -16,12 +16,13 @@ import sys
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, replace
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from functools import partial, wraps
 from pathlib import Path
 from time import perf_counter
 from typing import Annotated, Any, cast
+from uuid import uuid4
 
 import httpx
 import typer
@@ -90,6 +91,10 @@ from smaug.analysis.infrastructure.succession import (
     CodeSuccession,
     SuccessionPriceProvider,
 )
+from smaug.ingestion.application.disclosures import (
+    SyncFinancialDisclosures,
+    sync_identity_archives,
+)
 from smaug.ingestion.application.failures import IngestionFailureService
 from smaug.ingestion.application.ingest import (
     FailureContext,
@@ -113,6 +118,11 @@ from smaug.ingestion.application.source_inputs import (
 from smaug.ingestion.application.validation import (
     IngestionValidationService,
     RunValidationReporter,
+)
+from smaug.ingestion.domain.disclosures import (
+    PUBLISHED_YEARS,
+    SYNC_RUN_PREFIX,
+    DisclosureIssuer,
 )
 from smaug.ingestion.domain.failures import FailureOccurrence
 from smaug.ingestion.domain.ports import B3TapeObservation, RawDataSource
@@ -162,6 +172,10 @@ from smaug.ingestion.infrastructure.cvm_capital import (
     CvmCapitalSource,
     CvmTreasurySource,
 )
+from smaug.ingestion.infrastructure.cvm_disclosures import (
+    CvmDisclosureSource,
+    CvmIdentitySource,
+)
 from smaug.ingestion.infrastructure.cvm_free_float import (
     FREE_FLOAT_MODULE,
     CvmFreeFloatSource,
@@ -170,11 +184,16 @@ from smaug.ingestion.infrastructure.cvm_shareholder_position import (
     SHAREHOLDER_POSITION_MODULE,
     CvmShareholderPositionSource,
 )
-from smaug.ingestion.infrastructure.cvm_source import CvmDataSource, CvmDocument
+from smaug.ingestion.infrastructure.cvm_source import (
+    STATEMENT_MODULES,
+    CvmDataSource,
+    CvmDocument,
+)
 from smaug.ingestion.infrastructure.cvm_tag_along import (
     TAG_ALONG_MODULE,
     CvmTagAlongSource,
 )
+from smaug.ingestion.infrastructure.disclosures import MongoDisclosureInventory
 from smaug.ingestion.infrastructure.repositories import (
     BeanieIngestionFailureRepository,
     BeanieIngestionRunRepository,
@@ -2054,6 +2073,148 @@ def analyze(
         )
     )
     raise typer.Exit(code=exit_code)
+
+
+@app.command()
+def sync_fundamentals() -> None:
+    """Sync pending financial disclosures and related CVM evidence into MongoDB."""
+    raise typer.Exit(code=_guarded(_run_sync_fundamentals()))
+
+
+async def _run_sync_fundamentals() -> int:
+    settings = _ingestion_settings()
+    client = await init_database(settings)
+    try:
+        database = client[settings.mongo_db]
+        now = datetime.now(UTC)
+        runs = IngestionRunService(
+            BeanieIngestionRunRepository(),
+            id_factory=lambda: f"{SYNC_RUN_PREFIX}{uuid4()}",
+        )
+        validations = IngestionValidationService(BeanieIngestionValidationRepository())
+        inventory = MongoDisclosureInventory(
+            database["raw_ingestions"], database["financial_disclosure_status"]
+        )
+
+        async def sync(
+            run_id: str, outcome: Callable[[FetchOutcome], Awaitable[None]]
+        ) -> int:
+            session = _source_session.get()
+            if session is not None:
+                await session.record_run(run_id)
+
+            async def observe(artifact: SourceArtifact) -> None:
+                if session is not None:
+                    # FCA is admitted explicitly. The other archives are
+                    # mirrored through their targeted filing parsers.
+                    await session.observe_artifact(artifact, mirror_rows=False)
+                await runs.record_artifact(run_id, artifact.artifact_id)
+
+            async with httpx.AsyncClient(timeout=30) as http:
+                with httpx.Client(timeout=30) as catalog_http:
+                    store = _source_store(http, settings, observer=observe)
+                    archives = database["source_input_archives"]
+                    rows = database["source_input_rows"]
+                    identity_failures = await sync_identity_archives(
+                        inventory,
+                        CvmIdentitySource(
+                            CvmDisclosureSource(
+                                catalog_http,
+                                http,
+                                store,
+                                (),
+                                cache_dir=settings.cvm_cache_dir,
+                            ),
+                            MongoSourceInputs(archives, rows),
+                            store,
+                            MirrorSourceInputs(MongoSourceInputRepository()).execute,
+                        ),
+                        now,
+                    )
+                    tickers, identities = await _universe_tickers(
+                        settings,
+                        MongoSourceInputs(archives, rows),
+                        database["raw_ingestions"],
+                    )
+                    issuers: dict[str, DisclosureIssuer] = {}
+                    for ticker in tickers:
+                        identity = identities[ticker]
+                        issuers.setdefault(
+                            identity.cd_cvm,
+                            DisclosureIssuer(
+                                identity.cd_cvm,
+                                ticker,
+                                identity.cnpj,
+                                identity.listed_since,
+                            ),
+                        )
+                    await runs.resolve_tickers(run_id, tickers)
+                    source = CvmDisclosureSource(
+                        catalog_http,
+                        http,
+                        store,
+                        tuple(issuers.values()),
+                        cache_dir=settings.cvm_cache_dir,
+                        validation_reporter=RunValidationReporter(validations, run_id),
+                    )
+                    result = await SyncFinancialDisclosures(
+                        inventory, source, BeanieRawIngestionRepository(), EventBus()
+                    ).execute(tuple(issuers.values()), today=now.date(), run_id=run_id)
+            failures = result.failures + identity_failures
+            typer.echo(
+                f"Disclosure archives checked: {result.archives_checked}. "
+                f"Filings updated: {result.filings_updated}. "
+                f"Rows stored: {result.rows_stored}. Failures: {failures}."
+            )
+            if failures:
+                await outcome(
+                    FetchOutcome(
+                        "*",
+                        "CVM",
+                        OutcomeStatus.ERROR,
+                        None,
+                        f"{failures} CVM archives failed",
+                    )
+                )
+            return int(bool(failures))
+
+        return await runs.execute(
+            IngestionRunParameters(
+                ticker_scope=TickerScope.ALL,
+                tickers=(),
+                years=tuple(range(now.year - PUBLISHED_YEARS + 1, now.year + 1)),
+                document="ITR/DFP/FRE/FCA",
+                modules=(
+                    *STATEMENT_MODULES,
+                    TREASURY_MODULE,
+                    CAPITAL_MODULE,
+                    CAPITAL_EVENT_MODULE,
+                    FREE_FLOAT_MODULE,
+                    SHAREHOLDER_POSITION_MODULE,
+                    TAG_ALONG_MODULE,
+                ),
+                force=False,
+                verbose=False,
+            ),
+            application_commit=application_commit(),
+            parsers=(
+                CvmDataSource.parser_identity,
+                CvmTreasurySource.parser_identity,
+                CvmCapitalSource.parser_identity,
+                CvmCapitalEventSource.parser_identity,
+                CvmFreeFloatSource.parser_identity,
+                CvmShareholderPositionSource.parser_identity,
+                CvmTagAlongSource.parser_identity,
+            ),
+            operation=sync,
+        )
+    finally:
+        await client.close()
+
+
+_run_sync_fundamentals = _retained_sources(
+    _run_sync_fundamentals, reconcile_archives=False
+)
 
 
 @app.command()

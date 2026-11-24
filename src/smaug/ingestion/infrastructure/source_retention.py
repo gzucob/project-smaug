@@ -174,7 +174,9 @@ class InstallationSourceSession:
             self._unlock()
             raise
 
-    async def observe_artifact(self, artifact: SourceArtifact) -> None:
+    async def observe_artifact(
+        self, artifact: SourceArtifact, *, mirror_rows: bool = True
+    ) -> None:
         observed = datetime.now(UTC)
         await self.observations.record(
             {
@@ -189,9 +191,10 @@ class InstallationSourceSession:
                 "http_status": 200,
             }
         )
-        await self.mirror.execute(
-            LocalSourceInputReader(artifact.path, artifact=artifact)
-        )
+        if mirror_rows:
+            await self.mirror.execute(
+                LocalSourceInputReader(artifact.path, artifact=artifact)
+            )
 
     async def record_run(self, run_id: str) -> None:
         await self._sessions.update_one(
