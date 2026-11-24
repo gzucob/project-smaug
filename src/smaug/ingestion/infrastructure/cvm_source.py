@@ -96,7 +96,7 @@ _DOCUMENT_PREFIX: dict[str, str] = {
 # read today; DMPL/DVA/DRA are mirrored because the mirror is not the place to
 # decide what will be useful later (ADR 0016) — the DMPL in particular carries the
 # controllers/minority attribution the DRE sometimes files blank (#78).
-_MODULES: tuple[str, ...] = ("BPA", "BPP", "DRE", "DFC", "DMPL", "DVA", "DRA")
+STATEMENT_MODULES: tuple[str, ...] = ("BPA", "BPP", "DRE", "DFC", "DMPL", "DVA", "DRA")
 
 # Substring in a member's file name -> the module it carries. The cash flow ships
 # as two members (indirect / direct method); a filer uses one, both fold to DFC.

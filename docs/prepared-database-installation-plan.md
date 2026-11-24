@@ -212,6 +212,34 @@ publicadas ficam registradas e tentativas respeitam a janela definida. Se as
 fontes não permitirem a identificação pretendida, discutir a estratégia antes
 de introduzir um polling genérico.
 
+`smaug sync-fundamentals` consulta o catálogo de ITR e DFP dos cinco anos
+atualizados pela CVM. O catálogo de cada ZIP é lido por faixas de bytes e
+comparado à cobertura por código CVM, período e versão. Apenas arquivos com
+divulgações ainda ausentes ou versões mais novas são baixados integralmente.
+[ITR](https://dados.cvm.gov.br/dataset/cia_aberta-doc-itr) ·
+[DFP](https://dados.cvm.gov.br/dataset/cia_aberta-doc-dfp)
+
+O mesmo catálogo versionado identifica mudanças do FRE, incluindo capital
+social e eventos declarados, e do FCA, que é admitido como revisão completa da
+identidade e dos códigos de negociação. O fluxo continua a usar os eventos já
+espelhados da fonte pública da B3. A B3 documenta um feed de revisões de eventos
+no Up2data, serviço contratado que está fora do conjunto de fontes do Smaug.
+[FRE](https://dados.cvm.gov.br/dataset/cia_aberta-doc-fre) ·
+[FCA](https://dados.cvm.gov.br/dataset/cia_aberta-doc-fca) ·
+[Up2data](https://www.b3.com.br/pt_br/market-data-e-indices/servicos-de-dados/up2data/perguntas-frequentes/servico-e-arquivos.htm)
+
+O MongoDB limita a consulta de cada arquivo a uma vez a cada sete dias.
+Para estimar datas esperadas, o comando usa o último encerramento de exercício
+observado para o emissor, ou dezembro enquanto essa informação estiver ausente.
+Registra lacunas recentes e períodos posteriores à cobertura da empresa a
+partir de 45 dias após o trimestre (ITR) ou três meses após o fim do exercício
+(DFP). Após oito verificações sem publicação, a pendência fica marcada como
+esgotada. Uma publicação tardia ou reapresentação ainda pode entrar enquanto
+estiver na janela de atualização da CVM.
+Versões listadas no catálogo sem dados estruturados no ZIP têm seu próprio
+limite de oito verificações. A ausência dessas linhas não impede a incorporação
+das demais versões publicadas.
+
 ### Fase 9 — Coordenar atualização e recálculo incrementais após abertura
 
 Commit/PR: `feat(analysis): refresh affected results after background ingestion`.
