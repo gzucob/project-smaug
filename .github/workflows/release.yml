@@ -1,12 +1,9 @@
-name: Release installers
+name: Publish validated release
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [main]
 
-# Only trusted, successful main commits can publish. Never promote a PR build.
 permissions:
   contents: read
 
@@ -15,275 +12,136 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  prepare:
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.event == 'push'
+  stage:
     runs-on: ubuntu-latest
-    outputs:
-      required: ${{ steps.release.outputs.required }}
-    env:
-      RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.RELEASE_COMMIT }}
-      - name: Keep published releases immutable on workflow retries
-        id: release
-        run: |
-          epoch=$(git show -s --format=%ct "$RELEASE_COMMIT")
-          version="$(date -u -d "@$epoch" +%Y.%m.%d)-${RELEASE_COMMIT:0:12}"
-          published=$(gh release view "$version" --json isDraft --jq '.isDraft == false' 2>/dev/null || true)
-          if [[ "$published" == true ]]; then
-            echo 'required=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'required=true' >> "$GITHUB_OUTPUT"
-          fi
-
-  build:
-    needs: prepare
-    if: needs.prepare.outputs.required == 'true'
-    runs-on: ubuntu-22.04
     timeout-minutes: 60
     permissions:
-      contents: read
-      packages: write
       actions: read
+      contents: write
+      pages: read
+      pull-requests: read
     outputs:
-      backend: ${{ steps.runtime.outputs.backend }}
-      frontend: ${{ steps.runtime.outputs.frontend }}
-      version: ${{ steps.runtime.outputs.version }}
+      mode: ${{ steps.select.outputs.mode }}
+      version: ${{ steps.select.outputs.version }}
+      previous: ${{ steps.stage.outputs.previous }}
+      site_url: ${{ steps.stage.outputs.site_url }}
+      published: ${{ steps.stage.outputs.published }}
     env:
-      RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha }}
-      SNAPSHOT_RUN_ID: ${{ vars.SMAUG_PREPARED_SNAPSHOT_RUN_ID }}
       GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_COMMIT }}
-      - name: Select a trusted snapshot handoff
-        shell: bash
-        run: |
-          if [[ ! "$SNAPSHOT_RUN_ID" =~ ^[0-9]+$ ]]; then
-            echo 'Set SMAUG_PREPARED_SNAPSHOT_RUN_ID to the run containing the certified snapshot artifact.' >&2
-            exit 1
-          fi
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SNAPSHOT_RUN_ID" | jq -e \
-            --arg repo "$GITHUB_REPOSITORY" \
-            '.head_repository.full_name == $repo and .conclusion == "success" and .event == "workflow_dispatch" and .path == ".github/workflows/prepared-snapshot.yml" and (.head_branch == "main" or .head_branch == "develop")'
-          gh run download "$SNAPSHOT_RUN_ID" --name prepared-database-snapshot --dir "$RUNNER_TEMP/prepared"
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Match the merge to its approved candidate
+        id: select
+        run: bash scripts/quality/select_promotion.sh
+      - uses: actions/setup-node@v4
+        if: steps.select.outputs.mode == 'release'
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Image names
-        id: names
-        run: |
-          image_base="ghcr.io/${GITHUB_REPOSITORY,,}"
-          echo "backend=$image_base-backend" >> "$GITHUB_OUTPUT"
-          echo "frontend=$image_base-frontend" >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v6
-        id: backend
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.names.outputs.backend }}:sha-${{ env.RELEASE_COMMIT }}
-          build-args: APPLICATION_COMMIT=${{ env.RELEASE_COMMIT }}
-          cache-from: type=gha,scope=release-backend
-          cache-to: type=gha,mode=max,scope=release-backend
-      - uses: docker/build-push-action@v6
-        id: frontend
-        with:
-          context: frontend
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.names.outputs.frontend }}:sha-${{ env.RELEASE_COMMIT }}
-          cache-from: type=gha,scope=release-frontend
-          cache-to: type=gha,mode=max,scope=release-frontend
-      - uses: astral-sh/setup-uv@v5
-        with:
-          python-version: '3.13'
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.27.2'
-          cache: false
-      - name: Build small runtime bundles for upgrades
-        id: runtime
+          node-version: '24'
+      - uses: actions/configure-pages@v5
+        if: steps.select.outputs.mode == 'release'
+        id: pages
+      - name: Verify and stage approved assets
+        if: steps.select.outputs.mode == 'release'
+        id: stage
         env:
-          BACKEND_IMAGE: ${{ steps.names.outputs.backend }}@${{ steps.backend.outputs.digest }}
-          FRONTEND_IMAGE: ${{ steps.names.outputs.frontend }}@${{ steps.frontend.outputs.digest }}
-        run: |
-          uv sync --frozen
-          epoch=$(git show -s --format=%ct "$RELEASE_COMMIT")
-          version="$(date -u -d "@$epoch" +%Y.%m.%d)-${RELEASE_COMMIT:0:12}"
-          uv run python scripts/installer/build_release.py --runtime-only --snapshot "$RUNNER_TEMP/prepared" --commit "$RELEASE_COMMIT" --version "$version" --backend "$BACKEND_IMAGE" --frontend "$FRONTEND_IMAGE"
-          echo "backend=$BACKEND_IMAGE" >> "$GITHUB_OUTPUT"
-          echo "frontend=$FRONTEND_IMAGE" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
+          VERSION: ${{ steps.select.outputs.version }}
+          CANDIDATE_RUN: ${{ steps.select.outputs.run }}
+          CANDIDATE: ${{ steps.select.outputs.candidate }}
+          SITE_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: bash scripts/quality/stage_release.sh
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.stage.outputs.published == 'false'
         with:
-          name: installer-runtime
-          path: |
-            dist/installers/backend/
-            dist/installers/full/
-            dist/installers/smaug-backend-*.zip*
-            dist/installers/smaug-full-*.zip*
-            dist/installers/smaug-backend-*.tar.gz*
-            dist/installers/smaug-full-*.tar.gz*
-          retention-days: 7
-          if-no-files-found: error
-          overwrite: true
+          name: smaug-pages-current
+          path: ${{ runner.temp }}/smaug-pages-current
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.stage.outputs.published == 'false'
+        with:
+          name: smaug-pages-previous
+          path: ${{ runner.temp }}/smaug-pages-previous
 
-  native:
-    needs: build
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { system: linux, arch: amd64, runner: ubuntu-22.04 }
-          - { system: linux, arch: arm64, runner: ubuntu-22.04-arm }
-          - { system: windows, arch: amd64, runner: ubuntu-22.04 }
-          - { system: windows, arch: arm64, runner: ubuntu-22.04 }
-          - { system: darwin, arch: amd64, runner: macos-latest }
-          - { system: darwin, arch: arm64, runner: macos-latest }
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    permissions:
-      actions: read
-      contents: read
-    env:
-      RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha }}
-      SNAPSHOT_RUN_ID: ${{ vars.SMAUG_PREPARED_SNAPSHOT_RUN_ID }}
-      GH_TOKEN: ${{ github.token }}
-      BACKEND_IMAGE: ${{ needs.build.outputs.backend }}
-      FRONTEND_IMAGE: ${{ needs.build.outputs.frontend }}
-      RELEASE_VERSION: ${{ needs.build.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.RELEASE_COMMIT }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: installer-runtime
-          path: dist/installers
-      - name: Download the certified public snapshot
-        shell: bash
-        run: gh run download "$SNAPSHOT_RUN_ID" --name prepared-database-snapshot --dir "$RUNNER_TEMP/prepared"
-      - uses: astral-sh/setup-uv@v5
-        with:
-          python-version: '3.13'
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.27.2'
-          cache: false
-      - name: Build the native packages with the same snapshot in each edition
-        shell: bash
-        run: |
-          uv sync --frozen
-          uv run python scripts/installer/build_release.py --native-only \
-            --snapshot "$RUNNER_TEMP/prepared" --system "${{ matrix.system }}" --arch "${{ matrix.arch }}" \
-            --commit "$RELEASE_COMMIT" --version "$RELEASE_VERSION" --backend "$BACKEND_IMAGE" --frontend "$FRONTEND_IMAGE"
-      - name: Verify macOS disk images
-        if: matrix.system == 'darwin'
-        run: python3 scripts/installer/verify_desktop.py --input dist/installers --system macos --arch "${{ matrix.arch }}" --prepared
-      - name: Verify Windows executables and their prepared payloads
-        if: matrix.system == 'windows'
-        run: python3 scripts/installer/verify_desktop.py --input dist/installers --system windows --arch "${{ matrix.arch }}" --prepared
-      - uses: actions/upload-artifact@v4
-        with:
-          name: native-${{ matrix.system }}-${{ matrix.arch }}
-          path: |
-            dist/installers/*.exe
-            dist/installers/*.exe.sha256
-            dist/installers/*.deb
-            dist/installers/*.deb.sha256
-            dist/installers/*.dmg
-            dist/installers/*.dmg.sha256
-            dist/installers/*-linux-${{ matrix.arch }}
-            dist/installers/*-linux-${{ matrix.arch }}.sha256
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 7
-          overwrite: true
-      - name: Verify both Linux native installations
-        if: matrix.system == 'linux'
-        shell: bash
-        run: |
-          # The native artifacts are already uploaded. Free the duplicate
-          # payloads before restoring the snapshot into Docker volumes.
-          rm -- "$RUNNER_TEMP/prepared/"{manifest.json,mongo.archive.xz,postgres.dump}
-          rm -- "dist/installers/smaug-backend-installer-linux-${{ matrix.arch }}" "dist/installers/smaug-installer-linux-${{ matrix.arch }}"
-          python3 scripts/installer/verify_prepared.py --package "dist/installers/smaug-backend-installer-linux-${{ matrix.arch }}.deb" --edition backend --exercise-recovery
-          python3 scripts/installer/verify_prepared.py --package "dist/installers/smaug-installer-linux-${{ matrix.arch }}.deb" --edition full
-
-  publish:
-    needs: native
+  activate:
+    needs: stage
+    if: needs.stage.outputs.mode == 'release' && needs.stage.outputs.published == 'false'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      actions: write
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha }}
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.stage.outputs.version }}
+    steps:
+      - run: gh release edit "$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+  deploy:
+    needs: [stage, activate]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      pages: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deploy
+        with:
+          artifact_name: smaug-pages-current
+
+  verify:
+    needs: [stage, deploy]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.stage.outputs.version }}
+      SITE_URL: ${{ needs.stage.outputs.site_url }}
+    steps:
+      - name: Verify the public release and download page
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)" = "$VERSION"
+          for delay in 0 3 6 12 24 48; do
+            sleep "$delay"
+            if curl -fsSL "${SITE_URL%/}/release.json" |
+                jq -e --arg version "$VERSION" '.version == $version'; then exit 0; fi
+          done
+          exit 1
+
+  rollback:
+    needs: [stage, activate, deploy, verify]
+    if: >-
+      ${{ always() && needs.stage.result == 'success' &&
+      needs.stage.outputs.mode == 'release' && needs.stage.outputs.published == 'false' &&
+      needs.verify.result != 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      pages: write
+    environment: github-pages
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PREVIOUS: ${{ needs.stage.outputs.previous }}
+      VERSION: ${{ needs.stage.outputs.version }}
+      SITE_URL: ${{ needs.stage.outputs.site_url }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_COMMIT }}
-          fetch-depth: 0
-      - uses: actions/download-artifact@v4
+          persist-credentials: false
+      - name: Restore the previous release if this candidate was activated
+        run: bash scripts/quality/restore_release.sh
+      - uses: actions/deploy-pages@v4
+        if: ${{ always() && needs.deploy.result != 'skipped' }}
         with:
-          name: installer-runtime
-          path: dist/installers
-      - name: Publish both application editions together
-        shell: bash
+          artifact_name: smaug-pages-previous
+      - name: Verify the previous public download page
+        if: ${{ always() && needs.deploy.result != 'skipped' }}
         run: |
-          set -euo pipefail
-          version=$(python3 -c 'import json; print(json.load(open("dist/installers/backend/manifest.json"))["version"])')
-          existing=$(gh release view "$version" --json isDraft --jq '.isDraft' 2>/dev/null || true)
-          if [[ "$existing" == false ]]; then
-            echo "Immutable release already published: $version"
-            exit 0
-          fi
-          cat > "$RUNNER_TEMP/release-notes.md" <<EOF_NOTES
-          Native Smaug installers for Windows, Linux and macOS, built from commit $RELEASE_COMMIT.
-
-          Open the graphical installer for your system: .exe on Windows, .dmg on macOS, or .deb on Ubuntu/Debian. Choose Full or Backend in the browser interface and click Install. Docker Desktop must be installed and running. The installer imports the bundled public CVM/B3 snapshot and downloads any missing Docker images.
-
-          Use the installed Smaug shortcut to start, stop, update, or connect MCP without terminal commands. CLI commands remain available for automation.
-
-          The ZIP/tar runtime archives are for upgrades. Use a native installer for a fresh installation.
-          EOF_NOTES
-          if [[ "$existing" != true ]]; then
-            gh release create "$version" --draft --target "$RELEASE_COMMIT" --title "Smaug $version" --notes-file "$RUNNER_TEMP/release-notes.md"
-          fi
-          mapfile -d '' assets < <(find dist/installers -maxdepth 1 -type f \( -name 'smaug-full-*' -o -name 'smaug-backend-*' -o -name 'smaug-installer*' \) -print0)
-          gh release upload "$version" "${assets[@]}" --clobber
-          # Keep only one target's native packages on the publication runner at a time.
-          native_dir=$(mktemp -d "$RUNNER_TEMP/smaug-native.XXXXXXXX")
-          trap 'rm -rf -- "$native_dir"' EXIT
-          for system in linux windows darwin; do
-            for arch in amd64 arm64; do
-              target_dir="$native_dir/$system-$arch"
-              gh run download "$GITHUB_RUN_ID" --name "native-$system-$arch" --dir "$target_dir"
-              gh release upload "$version" "$target_dir"/* --clobber
-              rm -rf -- "$target_dir"
-            done
+          for delay in 0 3 6 12 24 48; do
+            sleep "$delay"
+            if curl -fsSL "${SITE_URL%/}/release.json" |
+                jq -e --arg version "$PREVIOUS" '.version == $version'; then exit 0; fi
           done
-          # Workflow scheduling is not FIFO. An older completed build must not
-          # replace a newer successfully published descendant as latest.
-          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.target_commitish' 2>/dev/null || true)
-          promote=true
-          if [[ "$latest" =~ ^[a-f0-9]{40}$ ]] && [[ "$latest" != "$RELEASE_COMMIT" ]] && git merge-base --is-ancestor "$RELEASE_COMMIT" "$latest"; then
-            promote=false
-          fi
-          gh release edit "$version" --draft=false --latest="$promote"
-          # workflow_run executes on the default branch (develop). Dispatch
-          # Pages explicitly on main so its ref guard and checkout stay stable.
-          gh workflow run pages.yml --ref main
+          exit 1

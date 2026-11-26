@@ -25,6 +25,17 @@ test('site downloads come from a complete published release', () => {
   assert.ok(manifest.assets['smaug-backend-installer-macos-arm64.dmg']);
 });
 
+test('the publication workflow can stage the site for a complete draft', () => {
+  const release = { ...publishedRelease(), draft: true, published_at: null };
+  release.assets[0].browser_download_url = `${githubURL}/releases/download/untagged-placeholder/${release.assets[0].name}`;
+  assert.throws(() => createManifest(release));
+  const manifest = createManifest(release, { draft: true });
+  assert.equal(manifest.version, release.tag_name);
+  assert.equal(manifest.assets[release.assets[0].name], `${githubURL}/releases/download/${release.tag_name}/${release.assets[0].name}`);
+  release.assets.pop();
+  assert.throws(() => createManifest(release, { draft: true }));
+});
+
 test('old releases, missing checksums and wrong download origins cannot be deployed', () => {
   for (const mutate of [
     (release) => { release.draft = true; },
