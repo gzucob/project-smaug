@@ -1499,6 +1499,11 @@ class SqlAlchemyAnalysisRepository:
             rows = (await session.execute(stmt)).scalars().all()
         return [_to_entity(row) for row in rows]
 
+    async def has_latest(self) -> bool:
+        query = select(TickerAnalysisRow.id).where(TickerAnalysisRow.view == VIEW_TTM)
+        async with self._session_factory() as session:
+            return bool(await session.scalar(select(query.exists())))
+
     async def history(self, ticker: str) -> list[TickerAnalysis]:
         """Latest computation per closed fiscal year, oldest → newest."""
         stmt = (

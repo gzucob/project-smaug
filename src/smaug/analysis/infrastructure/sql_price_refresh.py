@@ -7,6 +7,7 @@ from typing import cast
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from smaug.analysis.domain.outcomes import AnalysisStatus, NoAnalysisReason
 from smaug.analysis.domain.price_refresh import (
     PriceRefreshIssue,
     PriceRefreshStatus,
@@ -48,12 +49,7 @@ class SqlPriceRefreshRepository:
                 completed_at=row.completed_at,
                 updated_count=row.updated_count,
                 unchanged_count=row.unchanged_count,
-                issues=tuple(
-                    PriceRefreshIssue(
-                        item["ticker"], cast(RefreshIssueReason, item["reason"])
-                    )
-                    for item in row.issues or []
-                ),
+                issues=tuple(_to_issue(item) for item in row.issues or []),
             )
 
     async def save(self, status: PriceRefreshStatus) -> None:
@@ -67,24 +63,51 @@ class SqlPriceRefreshRepository:
                     completed_at=status.completed_at,
                     updated_count=status.updated_count,
                     unchanged_count=status.unchanged_count,
-                    issues=[
-                        {"ticker": issue.ticker, "reason": issue.reason}
-                        for issue in status.issues
-                    ],
+                    issues=[_to_json(issue) for issue in status.issues],
                 )
             )
             await session.commit()
 
 
+def _to_issue(item: dict[str, str]) -> PriceRefreshIssue:
+    return PriceRefreshIssue(
+        item["ticker"],
+        cast(RefreshIssueReason, item["reason"]),
+        AnalysisStatus(item["analysis_status"]) if "analysis_status" in item else None,
+        NoAnalysisReason(item["no_analysis_reason"])
+        if "no_analysis_reason" in item
+        else None,
+        item.get("detail"),
+    )
+
+
+def _to_json(issue: PriceRefreshIssue) -> dict[str, str]:
+    data = {"ticker": issue.ticker, "reason": issue.reason}
+    if issue.analysis_status is not None:
+        data["analysis_status"] = issue.analysis_status.value
+    if issue.no_analysis_reason is not None:
+        data["no_analysis_reason"] = issue.no_analysis_reason.value
+    if issue.detail is not None:
+        data["detail"] = issue.detail
+    return data
+
+
 @asynccontextmanager
-async def price_refresh_lock(engine: AsyncEngine) -> AsyncIterator[bool]:
+async def price_refresh_lock(
+    engine: AsyncEngine, *, wait: bool = False
+) -> AsyncIterator[bool]:
     """Hold the lock until shutdown; PostgreSQL releases it on process death."""
     async with engine.connect() as connection:
-        locked = bool(
-            await connection.scalar(
-                text("SELECT pg_try_advisory_lock(:key)"), {"key": _LOCK_KEY}
+        params = {"key": _LOCK_KEY}
+        if wait:
+            await connection.execute(text("SELECT pg_advisory_lock(:key)"), params)
+            locked = True
+        else:
+            locked = bool(
+                await connection.scalar(
+                    text("SELECT pg_try_advisory_lock(:key)"), params
+                )
             )
-        )
         try:
             yield locked
         finally:

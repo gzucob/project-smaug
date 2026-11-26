@@ -27,6 +27,10 @@ from smaug.shared.artifacts import SourceArtifact
 
 _CVM = re.compile(r"(fca|fre|dfp|itr)_cia_aberta(?:_.*)?_(\d{4})\.csv", re.I)
 _B3 = re.compile(r"COTAHIST[._]A(\d{4})(?:\.TXT)?", re.I)
+_QUOTE_CODE = re.compile(r"[A-Z0-9]{4,12}")
+_NON_SPOT_MARKETS = frozenset(
+    {"012", "013", "017", "020", "030", "050", "060", "070", "080"}
+)
 _TAPE_FIELDS = {
     "TIPREG": (0, 2),
     "DATA": (2, 10),
@@ -167,12 +171,16 @@ class LocalSourceInputReader:
         header_seen = False
         trailer_seen = False
         for count, line in enumerate(stream, 1):
-            record = line.rstrip("\r\n")
-            if len(record) != 245 or record[:2] not in {"00", "01", "99"}:
+            raw = line.rstrip("\r\n")
+            record = _tape_layout(raw)
+            kind = raw[:2]
+            if record is None and (not header_seen or kind in {"00", "99"}):
                 raise ValueError("invalid COTAHIST record")
-            kind = record[:2]
             if trailer_seen or (not header_seen and kind != "00"):
                 raise ValueError("invalid COTAHIST record order")
+            if record is None:
+                yield _rejected_tape_row(raw, "invalid_layout", year)
+                continue
             if kind == "00":
                 if header_seen or not record.startswith(f"00COTAHIST.{year}"):
                     raise ValueError("invalid COTAHIST header")
@@ -193,21 +201,69 @@ class LocalSourceInputReader:
                 key: record[start:end] for key, (start, end) in _TAPE_FIELDS.items()
             }
             if fields["TIPREG"] == "01":
-                if date.fromisoformat(fields["DATA"]).year != year:
-                    raise ValueError("invalid COTAHIST session year")
-                if not fields["PREULT"].isdigit() or not fields["FATCOT"].isdigit():
-                    raise ValueError("invalid COTAHIST price or quote factor")
-                # B3 files zero factors in non-spot markets (e.g. 070 in 2007).
-                # Preserve those source facts; they do not price spot securities.
-                if fields["TPMERC"] == "010" and int(fields["FATCOT"]) == 0:
-                    raise ValueError("zero COTAHIST quote factor")
-            # Preserve all 245 columns, including header/trailer and non-spot rows.
-            yield {**fields, "record": record}
+                reason = _quote_error(fields, year)
+                if reason is not None:
+                    yield _rejected_tape_row(raw, reason, year)
+                    continue
+            # Latin-1 maps each raw byte to a code point, even for UTF-8 inputs.
+            if record != raw:
+                fields["record_encoding"] = "utf-8"
+            yield {**fields, "record": raw}
         if not header_seen or not trailer_seen:
             raise ValueError("incomplete COTAHIST archive")
 
     def member_counts(self) -> Mapping[str, int]:
         return dict(self._counts)
+
+
+def _tape_layout(raw: str) -> str | None:
+    if raw[:2] not in {"00", "01", "99"}:
+        return None
+    if len(raw) == 245:
+        return raw
+    if raw[:2] != "01" or len(raw) < 245 or raw.isascii():
+        return None
+    try:
+        decoded = raw.encode("latin-1").decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    # The issuer name and security description are the free-text fields. Keep
+    # the other fields single-byte to avoid treating shifted bytes as a price.
+    if len(decoded) == 245 and decoded[:27].isascii() and decoded[49:].isascii():
+        return decoded
+    return None
+
+
+def _quote_error(fields: Mapping[str, str], year: int) -> str | None:
+    try:
+        if date.fromisoformat(fields["DATA"]).year != year:
+            return "invalid_session"
+    except ValueError:
+        return "invalid_session"
+    for field in ("PREULT", "FATCOT"):
+        if not fields[field].isascii() or not fields[field].isdigit():
+            return "invalid_price_or_quote_factor"
+    if fields["TPMERC"] == "010" and int(fields["FATCOT"]) == 0:
+        return "zero_quote_factor"
+    return None
+
+
+def _rejected_tape_row(raw: str, reason: str, year: int) -> dict[str, str]:
+    fields = {"TIPREG": "rejected", "record": raw, "parse_error": reason}
+    if not raw.startswith("01") or len(raw) < 27:
+        return fields
+    code, market = raw[12:24].rstrip(" "), raw[24:27]
+    if not _QUOTE_CODE.fullmatch(code) or not market.isascii() or not market.isdigit():
+        return fields
+    fields.update(CODNEG=code, TPMERC=market)
+    if market in _NON_SPOT_MARKETS:
+        fields["price_relevance"] = "non_spot"
+    try:
+        if date.fromisoformat(raw[2:10]).year == year:
+            fields["DATA"] = raw[2:10]
+    except ValueError:
+        pass
+    return fields
 
 
 class MongoSourceInputRepository:
@@ -254,7 +310,8 @@ class MongoSourceInputRepository:
             {
                 "artifact_id": artifact_id,
                 "parser_version": parser_version,
-                "fields.TIPREG": "01",
+                "fields.TIPREG": {"$in": ["01", "rejected"]},
+                "session": {"$type": "string"},
             },
         )
         return {str(session) for session in sessions}
@@ -299,6 +356,15 @@ class MongoSourceInputRepository:
     async def complete(
         self, archive: SourceInputArchive, member_counts: Mapping[str, int]
     ) -> None:
+        rejections = (
+            {
+                "rejected_rows": archive.rejected_rows,
+                "rejected_price_codes": list(archive.rejected_price_codes),
+                "unscoped_price_rejection": archive.unscoped_price_rejection,
+            }
+            if archive.rejected_rows
+            else {}
+        )
         await self._archive_collection().update_one(
             self._key(archive),
             {
@@ -315,6 +381,7 @@ class MongoSourceInputRepository:
                     "etag": archive.etag,
                     "last_modified": archive.last_modified,
                     "member_counts": dict(member_counts),
+                    **rejections,
                     "validation": "zip-crc-and-lossless-row-layout-v1",
                     "price_basis": "as_traded"
                     if archive.dataset == "COTAHIST"

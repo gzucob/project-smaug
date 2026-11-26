@@ -29,6 +29,9 @@ class SourceInputArchive:
     downloaded_at: datetime | None = None
     etag: str | None = None
     last_modified: str | None = None
+    rejected_rows: int = 0
+    rejected_price_codes: tuple[str, ...] = ()
+    unscoped_price_rejection: bool = False
 
 
 class SourceInputRepository(Protocol):

@@ -1,6 +1,7 @@
 """Regression coverage for the directed, weekly CVM disclosure sync."""
 
 import os
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from uuid import uuid4
 
@@ -17,6 +18,7 @@ from smaug.ingestion.domain.disclosures import (
     SYNC_RUN_PREFIX,
     ArchiveRevision,
     DisclosureArchive,
+    DisclosureBatch,
     DisclosureEdition,
     DisclosureIssuer,
     DisclosurePeriod,
@@ -50,6 +52,14 @@ class Inventory:
             return False
         self.next_check[archive] = now + CHECK_INTERVAL
         return True
+
+    async def begin_materialization(self, archive: DisclosureArchive) -> None:
+        pass
+
+    async def record_issuer_errors(
+        self, archive: DisclosureArchive, checked: set[str], errors: dict[str, str]
+    ) -> bool:
+        return bool(errors)
 
     async def revision(
         self, archive: DisclosureArchive, scope: str
@@ -103,6 +113,7 @@ class Source:
         self.revision = ArchiveRevision(etag='"snapshot"')
         self.downloads: list[dict[DisclosurePeriod, tuple[int, ...]]] = []
         self.catalog_only: set[tuple[DisclosurePeriod, int]] = set()
+        self.issuer_errors: dict[str, str] = {}
 
     async def inspect(
         self, archive: DisclosureArchive, revision: ArchiveRevision | None
@@ -121,27 +132,34 @@ class Source:
         archive: DisclosureArchive,
         edition: DisclosureEdition,
         targets: dict[DisclosurePeriod, tuple[int, ...]],
-    ) -> dict[DisclosurePeriod, list[RawFetchResult]]:
+    ) -> DisclosureBatch:
         self.downloads.append(targets)
-        return {
-            period: [
-                RawFetchResult(
-                    module=module,
-                    source="cvm",
-                    request={
-                        "reference_date": period.reference.isoformat(),
-                        "version": version,
-                    },
-                    http_status=200,
-                    payload={},
-                    cvm_code=period.code,
-                )
-                for version in versions
-                if (period, version) not in self.catalog_only
-                for module in ("DRE", "BPA")
-            ]
-            for period, versions in targets.items()
-        }
+        return DisclosureBatch(
+            {
+                period: [
+                    RawFetchResult(
+                        module=module,
+                        source="cvm",
+                        request={
+                            "reference_date": period.reference.isoformat(),
+                            "version": version,
+                        },
+                        http_status=200,
+                        payload={},
+                        cvm_code=period.code,
+                    )
+                    for version in versions
+                    if (period, version) not in self.catalog_only
+                    for module in ("DRE", "BPA")
+                ]
+                for period, versions in targets.items()
+            },
+            {
+                period.code: self.issuer_errors[period.code]
+                for period in targets
+                if period.code in self.issuer_errors
+            },
+        )
 
 
 class RawMirror:
@@ -217,6 +235,33 @@ async def test_interrupted_period_retries_without_marking_coverage_complete() ->
     raw.fail_on_bpa = False
     result = await sync.execute((ISSUER,), today=now.date(), run_id="retried")
     assert result.rows_stored == 1
+    assert inventory.mirrored[Q1] == 2
+
+
+async def test_bad_issuer_is_reported_while_other_filings_are_stored() -> None:
+    inventory, source, raw = Inventory(), Source(), RawMirror()
+    healthy = DisclosureIssuer("456", "NEXT3", "11.111.111/0001-11")
+    healthy_period = replace(Q2, code=healthy.code)
+    source.versions.update({Q1: (2,), healthy_period: (1,)})
+    source.issuer_errors[ISSUER.code] = "ValueError: invalid filing date"
+    now = datetime(2026, 8, 15, tzinfo=UTC)
+    sync = SyncFinancialDisclosures(
+        inventory, source, raw, EventBus(), clock=lambda: now
+    )
+
+    result = await sync.execute((ISSUER, healthy), today=now.date(), run_id="first")
+    assert result.issuer_errors == (
+        (ISSUER.ticker, "itr_cia_aberta_2026", "ValueError: invalid filing date"),
+    )
+    assert {row.ticker for row in raw.rows.values()} == {healthy.ticker}
+    assert inventory.mirrored[Q1] == 1
+    assert inventory.mirrored[healthy_period] == 1
+    assert inventory.checkpoints[DisclosureArchive("ITR", 2026)] is None
+
+    source.issuer_errors.clear()
+    now += CHECK_INTERVAL
+    retry = await sync.execute((ISSUER, healthy), today=now.date(), run_id="retry")
+    assert not retry.issuer_errors
     assert inventory.mirrored[Q1] == 2
 
 

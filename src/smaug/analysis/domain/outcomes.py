@@ -24,6 +24,8 @@ class NoAnalysisReason(StrEnum):
     NO_FOUR_QUARTER_WINDOW = "no_four_quarter_window"
     ALL_EXERCISES_PRE_FIRST_B3_SESSION = "all_exercises_pre_first_b3_session"
     UNRESOLVED_SECURITY_IDENTITY = "unresolved_security_identity"
+    SOURCE_INGESTION_DEFERRED = "source_ingestion_deferred"
+    REJECTED_PRICE_RECORD = "rejected_price_record"
 
 
 @dataclass(frozen=True, slots=True)

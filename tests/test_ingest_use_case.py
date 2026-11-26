@@ -103,6 +103,32 @@ async def test_should_store_and_publish_one_document_per_period() -> None:
     assert "3 period" in outcomes[0].detail
 
 
+async def test_should_report_a_malformed_ticker_and_continue_ingestion() -> None:
+    class Source(_MultiPeriodSource):
+        async def fetch(self, ticker: str, module: str) -> list[RawFetchResult]:
+            if ticker == "BAD3":
+                raise ValueError("invalid filing date")
+            return await super().fetch(ticker, module)
+
+    repo = FakeRawIngestionRepository()
+    outcomes = await IngestPortfolioUseCase(
+        Source(1),
+        repo,
+        EventBus(),
+        ["BPA"],
+        run_id="mixed",
+        delay_seconds=0,
+        sleep=no_sleep,
+    ).execute(["BAD3", "PETR4"])
+
+    assert [outcome.status for outcome in outcomes] == [
+        OutcomeStatus.ERROR,
+        OutcomeStatus.STORED,
+    ]
+    assert "invalid filing date" in outcomes[0].detail
+    assert [row.ticker for row in repo.items] == ["PETR4"]
+
+
 async def test_should_store_and_publish_for_each_module() -> None:
     repo = FakeRawIngestionRepository()
     bus = EventBus()

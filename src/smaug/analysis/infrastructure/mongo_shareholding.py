@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Protocol
 
@@ -14,6 +14,7 @@ from smaug.analysis.domain.shareholding import (
 )
 from smaug.analysis.infrastructure.mirror import mirror_filter
 from smaug.portfolio.domain.company import RegistrantResolver
+from smaug.shared.source_inputs import SYNC_RUN_PREFIX
 
 SHAREHOLDER_POSITION_MODULE = "SHAREHOLDER_POSITION"
 
@@ -44,21 +45,27 @@ class MongoShareholdingReader:
         *,
         registrant_resolver: RegistrantResolver,
         validation_collection: ValidationCollection | None = None,
+        published_at: datetime | None = None,
     ) -> None:
         self._collection = collection
         self._registrant = registrant_resolver
         self._validations = validation_collection
+        self._published_at = published_at
 
     async def latest(self, ticker: str) -> ShareholdingSnapshot | None:
         """Read the latest filing by archive year, reference date, and version."""
-        cursor = self._collection.find(
-            mirror_filter(
-                ticker,
-                self._registrant,
-                source="cvm",
-                module=SHAREHOLDER_POSITION_MODULE,
-            )
+        query = mirror_filter(
+            ticker,
+            self._registrant,
+            source="cvm",
+            module=SHAREHOLDER_POSITION_MODULE,
         )
+        if self._published_at is not None:
+            query["$or"] = [
+                {"run_id": {"$not": {"$regex": f"^{SYNC_RUN_PREFIX}"}}},
+                {"fetched_at": {"$lte": self._published_at}},
+            ]
+        cursor = self._collection.find(query)
         candidates: list[tuple[tuple[int, date, int, str], Mapping[str, object]]] = []
         async for document in cursor:  # type: ignore[attr-defined]
             request = document.get("request")

@@ -45,6 +45,7 @@ from smaug.ingestion.domain.runs import ParserIdentity
 from smaug.shared.errors import (
     SourceError,
     SourceForbiddenError,
+    SourceMalformedError,
 )
 from smaug.shared.events import EventBus
 from smaug.shared.logging import get_logger
@@ -450,7 +451,12 @@ class IngestPortfolioUseCase:
         # One source call may return several periods (CVM ITR = Q1/Q2/Q3); each
         # is a distinct filing and gets its own stored document and event.
         source_started = perf_counter()
-        responses = await self._client.fetch(ticker, module)
+        try:
+            responses = await self._client.fetch(ticker, module)
+        except SourceError:
+            raise
+        except (ValueError, KeyError, TypeError) as error:
+            raise SourceMalformedError(f"{type(error).__name__}: {error}") from error
         source_seconds = perf_counter() - source_started
         last_status: int | None = None
         stored_count = 0

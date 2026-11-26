@@ -8,16 +8,18 @@ logger = logging.getLogger(__name__)
 
 
 async def supervise_price_worker(interval_seconds: int) -> None:
-    """Run immediately, then periodically; cancel and reap the CLI on shutdown."""
+    """Run the background CLI periodically and reap it on shutdown."""
+    # Give the local application a head start on the first health and page reads.
+    await asyncio.sleep(10)
     while True:
         process: asyncio.subprocess.Process | None = None
         try:
             process = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "smaug.entrypoints.cli", "sync-prices"
+                sys.executable, "-m", "smaug.entrypoints.cli", "sync-updates"
             )
             result = await process.wait()
             if result:
-                logger.warning("Price CLI exited with status %d; will retry", result)
+                logger.warning("Update CLI exited with status %d; will retry", result)
         except asyncio.CancelledError:
             if process is not None and process.returncode is None:
                 process.terminate()
@@ -28,5 +30,5 @@ async def supervise_price_worker(interval_seconds: int) -> None:
                     await process.wait()
             raise
         except Exception:
-            logger.exception("Could not run automatic price CLI")
+            logger.exception("Could not run automatic update CLI")
         await asyncio.sleep(interval_seconds)

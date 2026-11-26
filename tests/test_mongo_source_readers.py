@@ -408,6 +408,7 @@ async def run_composed_analysis(
                 "source_input_rows": source.rows,
                 "raw_ingestions": raw,
                 "ingestion_validations": SourceInputCollection(),
+                "financial_disclosure_status": SourceInputCollection(),
             }
 
         async def close(self) -> None:

@@ -42,7 +42,12 @@ MONGO_COLLECTIONS = (
     "source_input_rows",
 )
 SQL_TABLES = ("ticker_analysis", "analysis_outcomes", "price_histories")
-EMPTY_TABLES = ("portfolio", "price_refresh_status", "ui_data_revision")
+EMPTY_TABLES = (
+    "portfolio",
+    "price_refresh_status",
+    "ui_data_revision",
+    "refresh_checkpoint",
+)
 PAYLOAD_NAMES = ("mongo.archive.xz", "postgres.dump")
 RELEASE_ASSET_LIMIT = 2 * 1024**3
 # Conservative allowance for launcher, application metadata and native wrapping.

@@ -8,6 +8,7 @@ from hashlib import sha256
 from smaug.ingestion.domain.disclosures import (
     PUBLISHED_YEARS,
     DisclosureArchive,
+    DisclosureBatch,
     DisclosureInventory,
     DisclosureIssuer,
     DisclosureKind,
@@ -35,6 +36,7 @@ class DisclosureSyncResult:
     filings_updated: int
     rows_stored: int
     failures: int
+    issuer_errors: tuple[tuple[str, str, str], ...] = ()
 
 
 async def sync_identity_archives(
@@ -95,6 +97,7 @@ class SyncFinancialDisclosures:
         scope = sha256(",".join(sorted(by_code)).encode()).hexdigest()
         recent = shift_months(today, -12)
         checked = updated = stored = failures = 0
+        issuer_errors: list[tuple[str, str, str]] = []
         for archive in archives:
             if not await self._inventory.claim(archive, now):
                 continue
@@ -130,12 +133,17 @@ class SyncFinancialDisclosures:
                         )
                     )
                 }
-                rows = (
+                batch = (
                     await self._source.read(archive, edition, targets)
                     if targets
-                    else {}
+                    else DisclosureBatch({}, {})
                 )
+                rows = batch.rows
+                if any(rows.values()):
+                    await self._inventory.begin_materialization(archive)
                 for period, versions in targets.items():
+                    if period.code in batch.issuer_errors:
+                        continue
                     materialized = {
                         response_version(response) for response in rows[period]
                     }
@@ -203,8 +211,20 @@ class SyncFinancialDisclosures:
                         await self._inventory.complete(period, coverage[period], now)
                     else:
                         await self._inventory.pending(period, now)
-                await self._inventory.settle(archive, scope, edition.revision)
+                has_issuer_errors = await self._inventory.record_issuer_errors(
+                    archive, {period.code for period in targets}, batch.issuer_errors
+                )
+                for code, error in batch.issuer_errors.items():
+                    issuer_errors.append((by_code[code].ticker, archive.name, error))
+                    logger.warning(
+                        "CVM %s %s: %s", archive.name, by_code[code].ticker, error
+                    )
+                await self._inventory.settle(
+                    archive, scope, None if has_issuer_errors else edition.revision
+                )
             except SourceError as error:
                 failures += 1
                 logger.warning("CVM %s: %s", archive.name, error)
-        return DisclosureSyncResult(checked, updated, stored, failures)
+        return DisclosureSyncResult(
+            checked, updated, stored, failures, tuple(issuer_errors)
+        )

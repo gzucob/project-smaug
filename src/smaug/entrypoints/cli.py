@@ -14,6 +14,7 @@ import json
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, nullcontext
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime, timedelta
@@ -21,7 +22,7 @@ from decimal import Decimal
 from functools import partial, wraps
 from pathlib import Path
 from time import perf_counter
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, BinaryIO, cast
 from uuid import uuid4
 
 import httpx
@@ -48,6 +49,7 @@ from smaug.analysis.application.doctor import (
     TickerCoverage,
 )
 from smaug.analysis.application.drift import AccountDriftUseCase, DriftReport
+from smaug.analysis.application.incremental import refresh_incrementally
 from smaug.analysis.application.price_history import BuildPriceHistoryUseCase
 from smaug.analysis.application.refresh_prices import (
     CheckPricesUseCase,
@@ -55,7 +57,9 @@ from smaug.analysis.application.refresh_prices import (
 )
 from smaug.analysis.domain.entities import TickerAnalysis
 from smaug.analysis.domain.financials import IssuerIdentity
+from smaug.analysis.domain.incremental import RefreshCheckpoint, RefreshScope
 from smaug.analysis.domain.indicators import NullReason
+from smaug.analysis.domain.outcomes import NoAnalysisReason
 from smaug.analysis.domain.ports import (
     CashEventReader,
     PriceProvider,
@@ -74,6 +78,7 @@ from smaug.analysis.infrastructure.mongo_capital import MongoSharesReader
 from smaug.analysis.infrastructure.mongo_dividends import MongoCashEventReader
 from smaug.analysis.infrastructure.mongo_fundamentals import MongoFundamentalsReader
 from smaug.analysis.infrastructure.mongo_governance import MongoGovernanceReader
+from smaug.analysis.infrastructure.mongo_incremental import MongoRefreshInputs
 from smaug.analysis.infrastructure.mongo_prices import MongoCotahistArchive
 from smaug.analysis.infrastructure.quote_series import (
     B3BaseChanges,
@@ -81,6 +86,7 @@ from smaug.analysis.infrastructure.quote_series import (
     QuoteArchive,
 )
 from smaug.analysis.infrastructure.restated_price import RestatedPriceProvider
+from smaug.analysis.infrastructure.sql_incremental import SqlRefreshCheckpoint
 from smaug.analysis.infrastructure.sql_price_history import SqlPriceHistoryRepository
 from smaug.analysis.infrastructure.sql_price_refresh import (
     SqlPriceRefreshRepository,
@@ -124,7 +130,7 @@ from smaug.ingestion.domain.disclosures import (
     SYNC_RUN_PREFIX,
     DisclosureIssuer,
 )
-from smaug.ingestion.domain.failures import FailureOccurrence
+from smaug.ingestion.domain.failures import FailureOccurrence, IngestionFailureClass
 from smaug.ingestion.domain.ports import B3TapeObservation, RawDataSource
 from smaug.ingestion.domain.preparation import preparation_batches
 from smaug.ingestion.domain.repositories import RawIngestionRepository
@@ -208,7 +214,10 @@ from smaug.ingestion.infrastructure.source_inputs import (
     LocalSourceInputReader,
     MongoSourceInputRepository,
 )
-from smaug.ingestion.infrastructure.source_retention import InstallationSourceSession
+from smaug.ingestion.infrastructure.source_retention import (
+    InstallationSourceSession,
+    installation_source_lock,
+)
 from smaug.portfolio.application.refresh_taxonomy import (
     RefreshTaxonomyUseCase,
     TaxonomyDrift,
@@ -284,6 +293,9 @@ from smaug.shared.sql_db import create_engine, create_session_factory
 _source_session: ContextVar[InstallationSourceSession | None] = ContextVar(
     "source_session", default=None
 )
+_source_workspace_lock: ContextVar[BinaryIO | None] = ContextVar(
+    "source_workspace_lock", default=None
+)
 
 
 def _ingestion_settings() -> Settings:
@@ -352,6 +364,7 @@ def _retained_sources[**P](
                 resume_run_id=str(bound.arguments["run_id"])
                 if operation.__name__ == "_run_ingestion_resume"
                 else None,
+                workspace_lock=_source_workspace_lock.get(),
             ) as session:
                 token = _source_session.set(session)
                 try:
@@ -508,13 +521,6 @@ async def _ingestion_registry_identities(
     await _remember_placeholder_report(registry, placeholder_reports)
     if fca_provenance is not None:
         _remember_fca_provenance(fca_provenance, await registry.provenance())
-    for ticker in tickers:
-        identity = identities.get(ticker)
-        if identity is None:
-            raise UnknownTickerError(ticker)
-        exclusion = fundamental_exclusion(identity)
-        if exclusion is not None:
-            raise IneligibleInstrumentError(ticker, exclusion)
     return identities
 
 
@@ -527,6 +533,8 @@ async def _registry_identities(
     placeholder_reports: list[FcaPlaceholderReport] | None = None,
     fca_year: int | None = None,
     archive: QuoteArchive | None = None,
+    *,
+    strict: bool = True,
 ) -> dict[str, CompanyIdentity]:
     """Resolve every requested ticker via the CVM FCA registry (#212).
 
@@ -546,14 +554,22 @@ async def _registry_identities(
     await _remember_placeholder_report(registry, placeholder_reports)
     if fca_provenance is not None:
         _remember_fca_provenance(fca_provenance, await registry.provenance())
-    for ticker in tickers:
-        identity = identities.get(ticker)
-        if identity is None:
-            raise UnknownTickerError(ticker)
-        exclusion = fundamental_exclusion(identity)
-        if exclusion is not None:
-            raise IneligibleInstrumentError(ticker, exclusion)
+    if strict:
+        for ticker in tickers:
+            if error := _ticker_identity_error(ticker, identities):
+                raise error
     return identities
+
+
+def _ticker_identity_error(
+    ticker: str, identities: Mapping[str, CompanyIdentity]
+) -> SmaugError | None:
+    identity = identities.get(ticker)
+    if identity is None:
+        return UnknownTickerError(ticker)
+    if exclusion := fundamental_exclusion(identity):
+        return IneligibleInstrumentError(ticker, exclusion)
+    return None
 
 
 def _sector_resolver(
@@ -787,7 +803,7 @@ async def _cvm_key_maps(
     artifact_store: SourceArtifactStore,
     fca_provenance: list[FcaSnapshotProvenance] | None = None,
     fca_year: int | None = None,
-) -> tuple[dict[str, str], dict[str, str]]:
+) -> tuple[dict[str, str], dict[str, str], dict[str, SmaugError]]:
     """The ticker -> CD_CVM and ticker -> CNPJ maps the CVM sources need.
 
     Registry-resolved for every ticker, unconditionally (#212).
@@ -800,9 +816,14 @@ async def _cvm_key_maps(
         fca_provenance=fca_provenance,
         fca_year=fca_year,
     )
-    code = {t: i.cd_cvm for t, i in identities.items()}
-    cnpj = {t: i.cnpj for t, i in identities.items()}
-    return code, cnpj
+    errors = {
+        ticker: error
+        for ticker in tickers
+        if (error := _ticker_identity_error(ticker, identities))
+    }
+    code = {t: i.cd_cvm for t, i in identities.items() if t not in errors}
+    cnpj = {t: i.cnpj for t, i in identities.items() if t not in errors}
+    return code, cnpj, errors
 
 
 @app.command()
@@ -939,6 +960,15 @@ async def _mirror_cotahist() -> int:
                     if dataset == "COTAHIST"
                 },
                 through=date.today().year,
+                retry_years=frozenset(
+                    year
+                    for (dataset, year), revision in coverage.items()
+                    if dataset == "COTAHIST"
+                    and (
+                        revision.rejected_price_codes
+                        or revision.unscoped_price_rejection
+                    )
+                ),
             )
         return 0
     finally:
@@ -1658,8 +1688,7 @@ async def _ingest_one_year(
     The archive is downloaded and indexed once here and then serves every company
     in it, which is why a year costs seconds of CPU rather than a request each.
     """
-    # Resolve the registrant keys up front: an unknown ticker is a user error
-    # rejected before any statement download (#60), not a 404-skip.
+    identity_errors: dict[str, SmaugError] = {}
     if capital_subclass_targets:
         code_map = {target.ticker: target.cd_cvm for target in capital_subclass_targets}
         cnpj_map = {target.ticker: target.cnpj for target in capital_subclass_targets}
@@ -1669,7 +1698,7 @@ async def _ingest_one_year(
         cnpj_map = {c.ticker: c.cnpj for c in companies}
         wanted = tuple(c.ticker for c in companies)
     else:
-        code_map, cnpj_map = await _cvm_key_maps(
+        code_map, cnpj_map, identity_errors = await _cvm_key_maps(
             settings,
             http,
             tickers,
@@ -1677,7 +1706,7 @@ async def _ingest_one_year(
             fca_provenance=fca_provenance,
             fca_year=identity_year,
         )
-        wanted = tickers
+        wanted = tuple(ticker for ticker in tickers if ticker not in identity_errors)
 
     recovery = None
     if reused_root_recovery:
@@ -1712,7 +1741,11 @@ async def _ingest_one_year(
         )
     plan = dict.fromkeys(wanted, modules)
     if call_plan is not None:
-        plan = call_plan
+        plan = {
+            ticker: owed
+            for ticker, owed in call_plan.items()
+            if ticker not in identity_errors
+        }
     elif whole_exchange and not force:
         plan = await _work_plan(
             repository, source, wanted, code_map, modules, artifacts=artifacts
@@ -1751,6 +1784,28 @@ async def _ingest_one_year(
     )
 
     outcomes: list[FetchOutcome] = []
+    for ticker, error in identity_errors.items():
+        now = datetime.now(UTC)
+        for module in modules if call_plan is None else call_plan.get(ticker, ()):
+            record = FetchOutcome(ticker, module, OutcomeStatus.ERROR, None, str(error))
+            await outcome_sink(record)
+            outcomes.append(record)
+            await failure_sink(
+                FailureOccurrence(
+                    ticker=ticker,
+                    registrant=None,
+                    source=sources[module],
+                    module=module,
+                    year=effective_year,
+                    artifact_id=None,
+                    parser=parsers[module],
+                    failure_class=IngestionFailureClass.PERMANENT,
+                    attempt_count=1,
+                    first_failed_at=now,
+                    last_failed_at=now,
+                    detail=str(error),
+                )
+            )
     for owed, tickers in _by_owed_modules(plan):
         use_case = IngestPortfolioUseCase(
             client=source,
@@ -2065,11 +2120,14 @@ def analyze(
         raise typer.BadParameter("--price-history-since cannot be in the future")
     tickers, whole_exchange = _resolve_scope(ticker, all_listed)
     exit_code = _guarded(
-        _run_analyze(
-            tickers,
-            whole_exchange=whole_exchange,
-            verbose=verbose,
-            price_history_since=price_history_since if price_history_only else None,
+        _with_refresh_lock(
+            partial(
+                _run_analyze,
+                tickers,
+                whole_exchange=whole_exchange,
+                verbose=verbose,
+                price_history_since=price_history_since if price_history_only else None,
+            )
         )
     )
     raise typer.Exit(code=exit_code)
@@ -2079,6 +2137,15 @@ def analyze(
 def sync_fundamentals() -> None:
     """Sync pending financial disclosures and related CVM evidence into MongoDB."""
     raise typer.Exit(code=_guarded(_run_sync_fundamentals()))
+
+
+async def _with_refresh_lock[T](operation: Callable[[], Awaitable[T]]) -> T:
+    engine = create_engine(get_settings())
+    try:
+        async with price_refresh_lock(engine, wait=True):
+            return await operation()
+    finally:
+        await engine.dispose()
 
 
 async def _run_sync_fundamentals() -> int:
@@ -2095,6 +2162,9 @@ async def _run_sync_fundamentals() -> int:
         inventory = MongoDisclosureInventory(
             database["raw_ingestions"], database["financial_disclosure_status"]
         )
+        years = range(now.year - PUBLISHED_YEARS + 1, now.year + 1)
+        if not await inventory.any_due(years, now):
+            return 0
 
         async def sync(
             run_id: str, outcome: Callable[[FetchOutcome], Awaitable[None]]
@@ -2128,6 +2198,7 @@ async def _run_sync_fundamentals() -> int:
                             MongoSourceInputs(archives, rows),
                             store,
                             MirrorSourceInputs(MongoSourceInputRepository()).execute,
+                            begin_materialization=inventory.begin_materialization,
                         ),
                         now,
                     )
@@ -2164,8 +2235,13 @@ async def _run_sync_fundamentals() -> int:
             typer.echo(
                 f"Disclosure archives checked: {result.archives_checked}. "
                 f"Filings updated: {result.filings_updated}. "
-                f"Rows stored: {result.rows_stored}. Failures: {failures}."
+                f"Rows stored: {result.rows_stored}. Failures: {failures}. "
+                f"Issuer failures: {len(result.issuer_errors)}."
             )
+            for ticker, archive, error in result.issuer_errors:
+                await outcome(
+                    FetchOutcome(ticker, archive, OutcomeStatus.ERROR, None, error)
+                )
             if failures:
                 await outcome(
                     FetchOutcome(
@@ -2182,7 +2258,7 @@ async def _run_sync_fundamentals() -> int:
             IngestionRunParameters(
                 ticker_scope=TickerScope.ALL,
                 tickers=(),
-                years=tuple(range(now.year - PUBLISHED_YEARS + 1, now.year + 1)),
+                years=tuple(years),
                 document="ITR/DFP/FRE/FCA",
                 modules=(
                     *STATEMENT_MODULES,
@@ -2227,7 +2303,17 @@ def sync_prices(
     raise typer.Exit(code=_guarded(_run_price_check(force=force)))
 
 
-async def _run_price_check(*, force: bool = False) -> int:
+@app.command()
+def sync_updates(
+    force: bool = typer.Option(
+        False, "--force", help="Check now despite the interval."
+    ),
+) -> None:
+    """Synchronize public sources and publish affected analyses and price histories."""
+    raise typer.Exit(code=_guarded(_run_price_check(force=force, fundamentals=True)))
+
+
+async def _run_price_check(*, force: bool = False, fundamentals: bool = False) -> int:
     settings = get_settings()
     engine = create_engine(settings)
     try:
@@ -2235,34 +2321,120 @@ async def _run_price_check(*, force: bool = False) -> int:
             if not locked:
                 return 0
             repository = SqlAlchemyAnalysisRepository(create_session_factory(engine))
-            if not await repository.all_latest():
+            if not await repository.has_latest():
                 return 0
             refresh_status = SqlPriceRefreshRepository(create_session_factory(engine))
-            return await CheckPricesUseCase(
+            check = CheckPricesUseCase(
                 refresh_status,
-                partial(_refresh_mirrored_prices, engine, refresh_status),
+                partial(
+                    _refresh_with_source_lock,
+                    engine,
+                    refresh_status,
+                    fundamentals=fundamentals,
+                ),
                 timedelta(seconds=settings.price_refresh_interval_seconds),
-            ).execute(force=force)
+            )
+            return await check.execute(force=force)
     finally:
         await engine.dispose()
 
 
-async def _refresh_mirrored_prices(
-    engine: AsyncEngine, status: PriceRefreshStatusRepository
+async def _refresh_with_source_lock(
+    engine: AsyncEngine, status: PriceRefreshStatusRepository, *, fundamentals: bool
 ) -> int:
+    settings = get_settings()
+    if settings.runtime_context == "development":
+        return await _refresh_mirrored_prices(engine, status, fundamentals=fundamentals)
+    with installation_source_lock(Path(settings.source_artifact_dir).resolve()) as lock:
+        # The refresh steps borrow this lock so a separate ingestion command
+        # cannot change the mirror between synchronization and publication.
+        token = _source_workspace_lock.set(lock)
+        try:
+            return await _refresh_mirrored_prices(
+                engine, status, fundamentals=fundamentals
+            )
+        finally:
+            _source_workspace_lock.reset(token)
+
+
+async def _refresh_mirrored_prices(
+    engine: AsyncEngine,
+    status: PriceRefreshStatusRepository,
+    *,
+    fundamentals: bool = False,
+) -> int:
+    settings = get_settings()
+    mongo = await init_database(settings)
+    database = mongo[settings.mongo_db]
+    inputs = MongoRefreshInputs(database)
+    inventory = MongoDisclosureInventory(
+        database["raw_ingestions"], database["financial_disclosure_status"]
+    )
+    checkpoints = SqlRefreshCheckpoint(create_session_factory(engine))
+
+    async def changes(
+        previous: RefreshCheckpoint, current: RefreshCheckpoint
+    ) -> RefreshScope:
+        return replace(
+            await inputs.changes(previous, current),
+            ingestion_errors=await inventory.issuer_errors(),
+        )
+
+    async def sync_prices() -> int:
+        try:
+            result = await _run_sync_cotahist()
+            if result:
+                raise SourceError("cotahist_sync_incomplete")
+        except Exception:
+            await status.save(
+                replace(
+                    await status.read(),
+                    issues=(PriceRefreshIssue("B3", "source_error"),),
+                )
+            )
+            raise
+        return result
+
     try:
-        result = await _run_sync_cotahist()
-        if result:
-            raise SourceError("cotahist_sync_incomplete")
-    except Exception:
+        previous = await checkpoints.read()
+        if previous is None:
+            # Imported analysis already represents the installed archives. Phase 8's
+            # standalone filing rows may still be waiting for their first publication.
+            previous = replace(await inputs.checkpoint(), raw_id=None)
+            await checkpoints.save(previous)
+        return await refresh_incrementally(
+            previous,
+            sync_prices=sync_prices,
+            sync_fundamentals=_run_sync_fundamentals if fundamentals else None,
+            checkpoint=inputs.checkpoint,
+            changes=changes,
+            has_unfinished_disclosures=inventory.has_unfinished_publication,
+            publish=partial(_publish_refresh, engine, status, previous),
+        )
+    finally:
+        await mongo.close()
+
+
+async def _publish_refresh(
+    engine: AsyncEngine,
+    status: PriceRefreshStatusRepository,
+    previous: RefreshCheckpoint,
+    current: RefreshCheckpoint,
+    scope: RefreshScope,
+) -> int:
+    if current == previous and not scope.ingestion_errors:
+        latest_status = await status.read()
         await status.save(
             replace(
-                await status.read(),
-                issues=(PriceRefreshIssue("B3", "source_error"),),
+                latest_status,
+                updated_count=0,
+                unchanged_count=0,
+                issues=tuple(
+                    dict.fromkeys((*latest_status.issues, *scope.price_issues))
+                ),
             )
         )
-        raise
-
+        return 0
     async with engine.connect() as connection:
         async with connection.begin() as transaction:
             # Repository commits release savepoints. The outer transaction
@@ -2272,16 +2444,34 @@ async def _refresh_mirrored_prices(
                 expire_on_commit=False,
                 join_transaction_mode="create_savepoint",
             )
-            result = await _run_analyze(
-                (),
-                whole_exchange=True,
-                refresh_prices=True,
-                refresh_status_repository=status,
-                write_sessions=sessions,
-            )
-            if result:
-                await transaction.rollback()
-            return result
+            checkpoints = SqlRefreshCheckpoint(sessions)
+            await checkpoints.defer_ui_revision()
+            scope = replace(scope, retry_tickers=previous.retry_tickers)
+            if (
+                scope.issuers
+                or scope.compare_prices
+                or scope.retry_tickers
+                or scope.ingestion_errors
+            ):
+                result = await _run_analyze(
+                    (),
+                    refresh_prices=True,
+                    refresh_scope=scope,
+                    refresh_status_repository=status,
+                    write_sessions=sessions,
+                    group_transaction=connection.begin_nested,
+                )
+                if result:
+                    await transaction.rollback()
+                    return result
+                current_status = await status.read()
+                await checkpoints.save(
+                    replace(current, retry_tickers=current_status.retry_tickers),
+                    publish=bool(current_status.updated_count),
+                )
+            else:
+                await checkpoints.save(current)
+    return 0
 
 
 async def _security_resolvers(
@@ -2580,14 +2770,17 @@ async def _run_analyze(
     verbose: bool = False,
     price_history_since: int | None = None,
     refresh_prices: bool = False,
+    refresh_scope: RefreshScope | None = None,
     refresh_status_repository: PriceRefreshStatusRepository | None = None,
     write_sessions: async_sessionmaker[AsyncSession] | None = None,
+    group_transaction: Callable[[], AbstractAsyncContextManager[object]] = nullcontext,
 ) -> int:
     settings = get_settings()
     mongo = await init_database(settings)
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
     fca_provenance: list[FcaSnapshotProvenance] = []
+    unavailable: dict[str, tuple[NoAnalysisReason, str]] = {}
     try:
         inputs = MongoSourceInputs(
             mongo[settings.mongo_db]["source_input_archives"],
@@ -2596,10 +2789,52 @@ async def _run_analyze(
         await inputs.pin()
         # Identity recovery, share events and prices read the same as-traded tape.
         archive = _build_archive(inputs)
-        if whole_exchange or not tickers:
+        if not refresh_prices and (whole_exchange or not tickers):
             await archive.preload()
         listings = mongo[settings.mongo_db]["raw_ingestions"]
-        if whole_exchange or not tickers:
+        refresh_issuers: dict[str, str] = {}
+        forced: frozenset[str] = frozenset()
+        if refresh_prices:
+            existing = await SqlAlchemyAnalysisRepository(session_factory).all_latest()
+            refresh_issuers = {a.ticker: a.cd_cvm for a in existing if a.cd_cvm}
+            tickers = tuple(sorted(a.ticker for a in existing))
+            registry = MongoCompanyRegistry(inputs, year=settings.cvm_fca_year)
+            _configure_placeholder_recovery(registry, inputs, listings, archive=archive)
+            identities = await registry.resolve_all(tickers)
+            refresh_issuers.update(
+                (ticker, identity.cd_cvm) for ticker, identity in identities.items()
+            )
+            if refresh_scope is not None:
+                forced = (
+                    frozenset(
+                        ticker
+                        for ticker, code in refresh_issuers.items()
+                        if code in refresh_scope.issuers
+                    )
+                    | frozenset(
+                        a.ticker for a in existing if a.cd_cvm in refresh_scope.issuers
+                    )
+                    | refresh_scope.retry_tickers
+                )
+                if not refresh_scope.compare_prices:
+                    selected = forced | frozenset(
+                        ticker
+                        for ticker, code in refresh_issuers.items()
+                        if code in refresh_scope.ingestion_errors
+                    )
+                    issuers = {
+                        code
+                        for ticker, code in refresh_issuers.items()
+                        if ticker in selected
+                    }
+                    tickers = tuple(
+                        ticker
+                        for ticker in tickers
+                        if ticker in selected or refresh_issuers.get(ticker) in issuers
+                    )
+            if not tickers:
+                return 0
+        elif whole_exchange or not tickers:
             tickers, identities = await _universe_tickers(
                 settings,
                 inputs,
@@ -2607,6 +2842,30 @@ async def _run_analyze(
                 fca_provenance=fca_provenance,
                 archive=archive,
             )
+        status = mongo[settings.mongo_db]["financial_disclosure_status"]
+        ingestion_errors = (
+            refresh_scope.ingestion_errors
+            if refresh_scope is not None
+            else await MongoDisclosureInventory(listings, status).issuer_errors()
+        )
+        blocked_issues: dict[str, PriceRefreshIssue] = {}
+        for ticker in tickers:
+            if error := _ticker_identity_error(ticker, identities):
+                reason = NoAnalysisReason.UNRESOLVED_SECURITY_IDENTITY
+                unavailable[ticker] = reason, str(error)
+                blocked_issues[ticker] = PriceRefreshIssue(
+                    ticker,
+                    "identity_unresolved",
+                    AnalysisStatus.SKIPPED,
+                    reason,
+                    str(error),
+                )
+            elif detail := ingestion_errors.get(identities[ticker].cd_cvm):
+                reason = NoAnalysisReason.SOURCE_INGESTION_DEFERRED
+                unavailable[ticker] = reason, detail
+                blocked_issues[ticker] = PriceRefreshIssue(
+                    ticker, "ingestion_deferred", AnalysisStatus.SKIPPED, reason, detail
+                )
         else:
             identities = await _registry_identities(
                 settings,
@@ -2615,13 +2874,8 @@ async def _run_analyze(
                 tickers,
                 fca_provenance=fca_provenance,
                 archive=archive,
+                strict=False,
             )
-        if refresh_prices:
-            existing = await SqlAlchemyAnalysisRepository(session_factory).all_latest()
-            tickers = tuple(sorted(a.ticker for a in existing))
-            registry = MongoCompanyRegistry(inputs, year=settings.cvm_fca_year)
-            _configure_placeholder_recovery(registry, inputs, listings, archive=archive)
-            identities = await registry.resolve_all(tickers)
         # The reader keeps a five-value Sector (the internal regime hint); the
         # stored analysis carries the B3 Classification (ADR 0024). Both are
         # built from the same resolved identities.
@@ -2650,6 +2904,32 @@ async def _run_analyze(
             names=names,
             listed_since=_listed_since_resolver(identities),
         )
+        class_mappings = _class_mappings_resolver(identities, historical_codes)
+        bad_codes, unknown_code = await inputs.price_rejections()
+        blocked = await _price_rejection_dependents(
+            tickers, bad_codes, unknown_code, class_mappings, succession
+        )
+        if refresh_scope is not None:
+            forced |= await _price_rejection_dependents(
+                tickers,
+                refresh_scope.previously_rejected_codes,
+                refresh_scope.previously_unscoped_price_rejection,
+                class_mappings,
+                succession,
+            )
+        if blocked and not refresh_prices:
+            logger.warning(
+                "Keeping published results for %s (COTAHIST contains rejected records)",
+                ", ".join(sorted(blocked)),
+            )
+            for ticker in blocked:
+                unavailable.setdefault(
+                    ticker,
+                    (
+                        NoAnalysisReason.REJECTED_PRICE_RECORD,
+                        "COTAHIST contains rejected records",
+                    ),
+                )
         units = _unit_resolver(identities)
         shares_reader = MongoSharesReader(
             mongo[settings.mongo_db]["raw_ingestions"],
@@ -2674,6 +2954,10 @@ async def _run_analyze(
             )
             errors = 0
             for symbol in tickers:
+                if problem := unavailable.get(symbol):
+                    errors += 1
+                    typer.echo(f"{symbol}: {problem[0].value}: {problem[1]}", err=True)
+                    continue
                 try:
                     history = await history_builder.execute(
                         symbol, start_year=price_history_since
@@ -2723,12 +3007,11 @@ async def _run_analyze(
             classification_resolver=_classification_resolver(identities),
             ipo_date_resolver=_listed_since_resolver(identities),
             classes_resolver=_classes_resolver(identities),
-            class_mapping_resolver=_class_mappings_resolver(
-                identities, historical_codes
-            ),
+            class_mapping_resolver=class_mappings,
             cash_event_reader=cash_events,
             per_share_resolver=_per_share_resolver(identities),
             outcome_repository=analysis_repository,
+            preparation_concurrency=1 if refresh_prices else 4,
         )
         if refresh_prices:
             histories = SqlPriceHistoryRepository(write_sessions or session_factory)
@@ -2741,7 +3024,7 @@ async def _run_analyze(
                 shares_reader,
                 histories,
             )
-            return await RefreshPricesUseCase(
+            await RefreshPricesUseCase(
                 builder,
                 histories,
                 analysis_repository,
@@ -2750,8 +3033,17 @@ async def _run_analyze(
                 ),
                 use_case,
                 status_repository=refresh_status_repository,
-            ).execute(tickers)
-        run = await use_case.execute(tickers)
+            ).execute(
+                tickers,
+                issuers=refresh_issuers,
+                forced=forced,
+                blocked=blocked,
+                source_issues=refresh_scope.price_issues if refresh_scope else (),
+                deferred=blocked_issues,
+                group_transaction=group_transaction,
+            )
+            return 0
+        run = await use_case.execute(tickers, unavailable=unavailable)
     finally:
         await mongo.close()
         await engine.dispose()
@@ -2761,7 +3053,35 @@ async def _run_analyze(
     )
     output = format_analysis(run.analyses) if verbose else format_analysis_run(run)
     print(f"{format_fca_snapshot(snapshot)}\n{output}")
-    return 1 if run.failed else 0
+    return int(bool(run.failed or unavailable))
+
+
+async def _price_rejection_dependents(
+    tickers: tuple[str, ...],
+    codes: frozenset[str],
+    unscoped: bool,
+    class_mappings: Callable[[str], tuple[ShareClassMapping, ...]],
+    succession: CodeSuccession,
+) -> frozenset[str]:
+    if unscoped:
+        return frozenset(tickers)
+    if not codes:
+        return frozenset()
+    affected = set()
+    for ticker in tickers:
+        symbols = {ticker}
+        for mapping in class_mappings(ticker):
+            if mapping.symbol:
+                symbols.add(mapping.symbol)
+            symbols.update(evidence.symbol for evidence in mapping.code_evidence)
+        if not codes.isdisjoint(symbols):
+            affected.add(ticker)
+            continue
+        for symbol in sorted(symbols):
+            if not codes.isdisjoint(await succession.candidates(symbol, 2010)):
+                affected.add(ticker)
+                break
+    return frozenset(affected)
 
 
 async def _universe_tickers(

@@ -7,6 +7,8 @@ from typing import Any, Protocol
 
 from smaug.shared.errors import SourceMalformedError, SourceNotFoundError
 
+SYNC_RUN_PREFIX = "financial-sync:"
+
 
 class SourceCollection(Protocol):
     # Mongo cursors are driver-specific and also supplied by in-memory test stores.
@@ -26,6 +28,21 @@ class SourceRevision:
     year: int
     source_url: str
     member_counts: Mapping[str, int]
+    rejected_price_codes: frozenset[str] = frozenset()
+    unscoped_price_rejection: bool = False
+
+
+def _source_revision(doc: Mapping[str, Any]) -> SourceRevision:
+    return SourceRevision(
+        artifact_id=doc["artifact_id"],
+        parser_version=doc["parser_version"],
+        dataset=doc["dataset"],
+        year=doc["year"],
+        source_url=doc["source_url"],
+        member_counts=dict(doc["member_counts"]),
+        rejected_price_codes=frozenset(doc.get("rejected_price_codes", ())),
+        unscoped_price_rejection=doc.get("unscoped_price_rejection", False),
+    )
 
 
 class MongoSourceInputs:
@@ -62,14 +79,7 @@ class MongoSourceInputs:
                     and doc.get("price_basis") != "as_traded"
                 ):
                     continue
-                revision = SourceRevision(
-                    artifact_id=doc["artifact_id"],
-                    parser_version=doc["parser_version"],
-                    dataset=doc["dataset"],
-                    year=doc["year"],
-                    source_url=doc["source_url"],
-                    member_counts=dict(doc["member_counts"]),
-                )
+                revision = _source_revision(doc)
                 revisions[(revision.dataset, revision.year)] = revision
             self._revisions = revisions
         return self._revisions
@@ -83,6 +93,25 @@ class MongoSourceInputs:
         if artifact_id is not None and revision.artifact_id != artifact_id:
             raise SourceNotFoundError(f"missing_mirrored_revision:{artifact_id}")
         return revision
+
+    async def completed_revision(self, artifact_id: str) -> SourceRevision:
+        docs = await self._archives.find(
+            {"artifact_id": artifact_id, "parser_version": "source-inputs-v1"}
+        ).to_list(1)
+        if not docs:
+            raise SourceNotFoundError(f"missing_mirrored_revision:{artifact_id}")
+        return _source_revision(docs[0])
+
+    async def price_rejections(self) -> tuple[frozenset[str], bool]:
+        tapes = [
+            revision
+            for revision in (await self.pin()).values()
+            if revision.dataset == "COTAHIST"
+        ]
+        return (
+            frozenset(code for tape in tapes for code in tape.rejected_price_codes),
+            any(tape.unscoped_price_rejection for tape in tapes),
+        )
 
     async def _documents(
         self, revision: SourceRevision, member: str

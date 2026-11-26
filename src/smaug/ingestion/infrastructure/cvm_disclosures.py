@@ -12,6 +12,7 @@ import httpx
 from smaug.ingestion.domain.disclosures import (
     ArchiveRevision,
     DisclosureArchive,
+    DisclosureBatch,
     DisclosureEdition,
     DisclosureIssuer,
     DisclosurePeriod,
@@ -220,7 +221,7 @@ class CvmDisclosureSource:
         archive: DisclosureArchive,
         edition: DisclosureEdition,
         targets: dict[DisclosurePeriod, tuple[int, ...]],
-    ) -> dict[DisclosurePeriod, list[RawFetchResult]]:
+    ) -> DisclosureBatch:
         issuers = [
             self._issuers[code] for code in sorted({key.code for key in targets})
         ]
@@ -228,24 +229,38 @@ class CvmDisclosureSource:
         results: dict[DisclosurePeriod, list[RawFetchResult]] = {
             key: [] for key in targets
         }
+        errors: dict[str, str] = {}
         for issuer in issuers:
-            for module, reader in readers.items():
-                try:
-                    responses = await reader.fetch(issuer.ticker, module)
-                except SourceNotFoundError:
-                    continue
-                for response in responses:
-                    request = response.request
-                    # The tag-along parser keeps the original filing field names.
-                    reference = (
-                        request.get("reference_date") or request["Data_Referencia"]
-                    )
-                    key = DisclosurePeriod(
-                        issuer.code, archive.kind, date.fromisoformat(str(reference))
-                    )
-                    if key in targets and response_version(response) in targets[key]:
-                        results[key].append(response)
-        return results
+            try:
+                await self._read_issuer(archive, issuer, readers, targets, results)
+            except (ValueError, KeyError, TypeError) as error:
+                errors[issuer.code] = f"{type(error).__name__}: {error}"[:500]
+                for key in results:
+                    if key.code == issuer.code:
+                        results[key].clear()
+        return DisclosureBatch(results, errors)
+
+    async def _read_issuer(
+        self,
+        archive: DisclosureArchive,
+        issuer: DisclosureIssuer,
+        readers: dict[str, RawDataSource],
+        targets: dict[DisclosurePeriod, tuple[int, ...]],
+        results: dict[DisclosurePeriod, list[RawFetchResult]],
+    ) -> None:
+        for module, reader in readers.items():
+            try:
+                responses = await reader.fetch(issuer.ticker, module)
+            except SourceNotFoundError:
+                continue
+            for response in responses:
+                request = response.request
+                reference = request.get("reference_date") or request["Data_Referencia"]
+                key = DisclosurePeriod(
+                    issuer.code, archive.kind, date.fromisoformat(str(reference))
+                )
+                if key in targets and response_version(response) in targets[key]:
+                    results[key].append(response)
 
     async def _readers(
         self,
@@ -345,11 +360,15 @@ class CvmIdentitySource:
         inputs: MongoSourceInputs,
         store: SourceArtifactStore,
         admit: Callable[[SourceInputReader], Awaitable[bool]],
+        *,
+        begin_materialization: Callable[[DisclosureArchive], Awaitable[None]]
+        | None = None,
     ) -> None:
         self._catalog = catalog
         self._inputs = inputs
         self._store = store
         self._admit = admit
+        self._begin_materialization = begin_materialization
 
     async def refresh_identity(
         self, archive: DisclosureArchive, revision: ArchiveRevision | None
@@ -389,6 +408,8 @@ class CvmIdentitySource:
                     f"FCA identity members missing for {archive.year}"
                 )
         try:
+            if self._begin_materialization is not None:
+                await self._begin_materialization(archive)
             await self._admit(LocalSourceInputReader(artifact.path, artifact=artifact))
         except ValueError as exc:
             raise SourceMalformedError(f"invalid FCA archive: {exc}") from exc
