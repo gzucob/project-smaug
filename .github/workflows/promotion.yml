@@ -1,0 +1,126 @@
+name: Validate main promotion
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited, labeled, unlabeled, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main-promotion-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  intent:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.intent.outputs.mode }}
+    steps:
+      - name: Validate promotion request
+        id: intent
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e --arg repo "$GITHUB_REPOSITORY" '
+            .pull_request | .base.ref == "main" and .head.ref == "develop"
+            and .head.repo.full_name == $repo' "$GITHUB_EVENT_PATH" >/dev/null
+          if jq -e 'any(.pull_request.labels[]; .name == "no-release")' "$GITHUB_EVENT_PATH" >/dev/null; then
+            jq -er '.pull_request.body | split("\n") |
+              map(select(test("^No-release reason: [^[:space:]].*"))) |
+              if length == 1 then .[0] else error("Specify one No-release reason in the PR body") end' \
+              "$GITHUB_EVENT_PATH" >> "$GITHUB_STEP_SUMMARY"
+            echo 'mode=no-release' >> "$GITHUB_OUTPUT"
+          else
+            echo 'mode=release' >> "$GITHUB_OUTPUT"
+          fi
+
+  regressions:
+    needs: intent
+    uses: ./.github/workflows/ci.yml
+    with:
+      full: ${{ needs.intent.outputs.mode == 'release' }}
+
+  approval:
+    needs: [intent, regressions]
+    if: needs.intent.outputs.mode == 'no-release'
+    environment: main-no-release
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Require the repository owner's manual approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          [[ "$GITHUB_RUN_ATTEMPT" == 1 ]] || {
+            echo 'Request a new promotion run to obtain a fresh manual approval.'
+            exit 1
+          }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" |
+            jq -e 'any(.[]; .state == "approved" and .user.login == "gzucob"
+              and any(.environments[]; .name == "main-no-release"))'
+
+  packages:
+    needs: [intent, regressions]
+    if: needs.intent.outputs.mode == 'release'
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    uses: ./.github/workflows/release-candidate.yml
+
+  gate:
+    name: Main promotion
+    needs: [intent, regressions, approval, packages]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    env:
+      MODE: ${{ needs.intent.outputs.mode }}
+      INTENT: ${{ needs.intent.result }}
+      REGRESSIONS: ${{ needs.regressions.result }}
+      APPROVAL: ${{ needs.approval.result }}
+      PACKAGES: ${{ needs.packages.result }}
+      VERSION: ${{ needs.packages.outputs.version }}
+      BACKEND: ${{ needs.packages.outputs.backend }}
+      FRONTEND: ${{ needs.packages.outputs.frontend }}
+      SNAPSHOT: ${{ vars.SMAUG_PREPARED_SNAPSHOT_RUN_ID }}
+    steps:
+      - name: Require checks for the selected promotion
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$INTENT" == success && "$REGRESSIONS" == success ]]
+          case "$MODE" in
+            release) [[ "$PACKAGES" == success && "$APPROVAL" == skipped ]] ;;
+            no-release) [[ "$APPROVAL" == success && "$PACKAGES" == skipped ]] ;;
+            *) exit 1 ;;
+          esac
+      - uses: actions/checkout@v4
+      - name: Record the validated candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          tree=$(git rev-parse 'HEAD^{tree}')
+          reason=''
+          if [[ "$MODE" == no-release ]]; then
+            reason=$(jq -r '.pull_request.body | split("\n") |
+              map(select(startswith("No-release reason: "))) | first' "$GITHUB_EVENT_PATH")
+          fi
+          jq -n --arg mode "$MODE" --arg tree "$tree" --arg tested "$GITHUB_SHA" \
+            --arg version "$VERSION" --arg backend "$BACKEND" --arg frontend "$FRONTEND" \
+            --arg snapshot "$SNAPSHOT" --arg reason "$reason" \
+            --argjson run "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" \
+            --slurpfile event "$GITHUB_EVENT_PATH" \
+            '{mode:$mode, tree:$tree, tested:$tested, version:$version, backend:$backend,
+              frontend:$frontend, snapshot:$snapshot, reason:$reason, run:$run, attempt:$attempt,
+              pr:$event[0].pull_request.number, head:$event[0].pull_request.head.sha,
+              base:$event[0].pull_request.base.sha}' > "$RUNNER_TEMP/promotion.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: promotion-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/promotion.json
+          retention-days: 7
+          if-no-files-found: error

@@ -16,7 +16,9 @@ func TestStatementLinesIncludeNeverExecutedFile(t *testing.T) {
 	if hit, total, err := statementLines(path, nil); err != nil || hit != 0 || total != 2 {
 		t.Fatalf("unmeasured lines = %d/%d, %v", hit, total, err)
 	}
-	profile, err := readProfile(strings.NewReader("mode: count\nfixture.go:2.20,5.2 2 1\n"))
+	profile, err := readProfile(strings.NewReader(
+		"mode: count\nfixture.go:2.20,5.2 2 0\nfixture.go:2.20,5.2 2 1\n",
+	))
 	if err != nil {
 		t.Fatal(err)
 	}

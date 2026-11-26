@@ -49,6 +49,14 @@ def request(port_number: int, path: str, method: str = "GET") -> Any:
         return json.loads(data) if data else None
 
 
+def check_frontend_browser(web: int, mode: str) -> None:
+    """Exercise the running Next frontend and its installed FastAPI backend."""
+    script = (
+        Path(__file__).resolve().parents[2] / "frontend/tests/installed-browser.mjs"
+    )
+    run("node", str(script), f"http://127.0.0.1:{web}", mode)
+
+
 def check_gui(command: list[str], install: Path) -> None:
     """Exercise the real local controller against this disposable installation."""
     if platform.system() != "Linux":
@@ -378,6 +386,14 @@ asyncio.run(verify())
                 assert request(api, "/portfolio/PETR4", "POST")["ticker"] == "PETR4"
                 check_mcp(ctl, expected_status="ready", ticker="PETR4")
                 if edition == "full":
+                    if os.environ.get("SMAUG_TEST_INSTALLED_BROWSER") == "1":
+                        check_frontend_browser(web, "online")
+                        subprocess.run(
+                            [*compose, "stop", "api"],
+                            env=compose_env,
+                            check=True,
+                        )
+                        check_frontend_browser(web, "offline")
                     print("PASS: full installation, doctor, API, frontend and MCP")
                     continue
                 subprocess.run(

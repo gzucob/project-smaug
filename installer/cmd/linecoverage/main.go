@@ -81,10 +81,10 @@ func statementLines(path string, blocks []block) (int, int, error) {
 				}
 				if selected == nil || selected.start.before(candidate.start) {
 					selected = candidate
+					hit = candidate.hit
+				} else if selected.start == candidate.start && selected.end == candidate.end {
+					hit = hit || candidate.hit
 				}
-			}
-			if selected != nil {
-				hit = selected.hit
 			}
 			if previous, exists := lines[source.Line]; exists {
 				hit = hit && previous

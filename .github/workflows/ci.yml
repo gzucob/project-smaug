@@ -4,10 +4,67 @@ on:
   push:
     branches: [develop, main]
   pull_request:
-    branches: [develop, main]
+    branches: [develop]
+  workflow_call:
+    inputs:
+      full:
+        type: boolean
+        default: false
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.detect.outputs.backend }}
+      frontend: ${{ steps.detect.outputs.frontend }}
+      installer: ${{ steps.detect.outputs.installer }}
+      website: ${{ steps.detect.outputs.website }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect affected regressions
+        id: detect
+        env:
+          FULL: ${{ inputs.full }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          paths="$RUNNER_TEMP/changed-paths"
+          if [[ "$FULL" == true || -z "$BASE_SHA" ]]; then
+            echo .github/ > "$paths"
+          else
+            git diff --name-only --no-renames "$BASE_SHA" "$GITHUB_SHA" > "$paths"
+          fi
+          shared='^([^/]+$|\.github/|scripts/quality/)'
+          backend='^(src/|tests/|alembic/|scripts/|frontend/src/lib/(types|indicator-docs)\.ts$)'
+          frontend='^frontend/'
+          installer='^(installer/|scripts/installer/|scripts/distribution_snapshot\.py$)'
+          website='^website/'
+          for area in backend frontend installer website; do
+            affected=false
+            if grep -Eq "${shared}|${!area}" "$paths"; then affected=true; fi
+            echo "$area=$affected" >> "$GITHUB_OUTPUT"
+          done
+          if grep -Eq "${shared}|${backend}|${frontend}" "$paths"; then
+            # Backend/frontend and packaging share the installed application.
+            echo "installer=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes=
+
   quality:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     # MongoDB rejects newer host kernels; track SERVER-136848 before moving
     # database jobs off the Ubuntu 22.04 runners' supported kernel.
     runs-on: ubuntu-22.04
@@ -53,6 +110,8 @@ jobs:
         run: uv run pytest
 
   frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -70,6 +129,8 @@ jobs:
       - run: npm run build
 
   manager-source:
+    needs: changes
+    if: needs.changes.outputs.installer == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,6 +142,7 @@ jobs:
           path: |
             installer/
             scripts/installer/
+            scripts/quality/verify_launchers.py
             LICENSE
           retention-days: 1
           if-no-files-found: error
@@ -106,6 +168,14 @@ jobs:
           cache: false
       - run: go test ./...
       - run: go vet ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test tests/app.test.cjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python ../scripts/quality/verify_launchers.py
       - name: Validate PowerShell launcher syntax
         if: runner.os == 'Windows'
         shell: pwsh
@@ -118,13 +188,20 @@ jobs:
         run: bash -n install.sh ../scripts/installer/ci-regression.sh
 
   installer:
-    needs: [quality, frontend, manager]
+    needs: [changes, quality, frontend, manager]
+    if: >-
+      ${{ !cancelled() && needs.changes.outputs.installer == 'true' &&
+      needs.manager.result == 'success' &&
+      (needs.quality.result == 'success' || needs.quality.result == 'skipped') &&
+      (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
         runner: [ubuntu-22.04, ubuntu-22.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    env:
+      SMAUG_TEST_INSTALLED_BROWSER: ${{ matrix.runner == 'ubuntu-22.04' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -135,6 +212,18 @@ jobs:
           go-version: '1.27.2'
           cache: false
       - run: uv sync --frozen
+      - uses: actions/setup-node@v4
+        if: matrix.runner == 'ubuntu-22.04'
+        with:
+          node-version: '24'
+      - name: Install the browser for the Next.js regression
+        if: matrix.runner == 'ubuntu-22.04'
+        working-directory: frontend
+        run: |
+          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/smaug-browsers"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
+          npm ci
+          npx --no-install playwright install --with-deps chromium
       - run: bash scripts/installer/ci-regression.sh
       - uses: actions/upload-artifact@v4
         if: matrix.runner == 'ubuntu-22.04'
@@ -190,6 +279,8 @@ jobs:
           if-no-files-found: error
 
   website:
+    needs: changes
+    if: needs.changes.outputs.website == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -204,3 +295,15 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+
+  regressions:
+    name: Regressions
+    needs: [changes, workflows, quality, frontend, manager-source, manager, installer, desktop-packages, website]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    env:
+      RESULTS: ${{ toJSON(needs.*.result) }}
+    steps:
+      - name: Require successful affected jobs
+        run: |
+          jq -e 'all(.[]; . == "success" or . == "skipped")' <<< "$RESULTS"
