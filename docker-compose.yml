@@ -1,26 +1,75 @@
+name: project-smaug-local
 services:
   mongo:
     image: mongo:8
-    container_name: smaug-mongo
     restart: unless-stopped
-    ports:
-      - "${MONGO_PORT:-27017}:27017"
     volumes:
-      - smaug-mongo-data:/data/db
-
+      - mongo-data:/data/db
+    healthcheck:
+      test: [CMD, mongosh, --quiet, --eval, "quit(db.adminCommand('ping').ok ? 0 : 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
   postgres:
     image: postgres:17
-    container_name: smaug-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: smaug
       POSTGRES_PASSWORD: smaug
       POSTGRES_DB: smaug
-    ports:
-      - "5432:5432"
     volumes:
-      - smaug-postgres-data:/var/lib/postgresql/data
-
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, smaug, -d, smaug]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  backend:
+    build:
+      context: .
+      args:
+        APPLICATION_COMMIT: ${SMAUG_LOCAL_COMMIT:-unknown}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB: smaug
+      POSTGRES_URI: postgresql+asyncpg://smaug:smaug@postgres:5432/smaug
+      SOURCE_ARTIFACT_DIR: /data/sources
+      CVM_CACHE_DIR: /data/cache/cvm
+      B3_CACHE_DIR: /data/cache/b3
+      AUTO_PRICE_REFRESH: ${AUTO_PRICE_REFRESH:-false}
+    volumes:
+      - ./.artifacts/sources:/data/sources
+      - ./.cache:/data/cache
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=15)"]
+      interval: 10s
+      timeout: 20s
+      retries: 12
+      start_period: 10s
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    environment:
+      SMAUG_API_BASE: http://backend:8000
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 30s
+      retries: 12
 volumes:
-  smaug-mongo-data:
-  smaug-postgres-data:
+  postgres-data:
+  mongo-data:
