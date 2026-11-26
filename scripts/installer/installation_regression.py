@@ -317,9 +317,17 @@ def verify_installation(bundle_dir: Path) -> None:
                 run(*ctl, "check")
                 assert request(api, "/ready")["data"] == "prepared"
                 assert request(api, "/analysis/PETR4")
-                assert "PETR4" in run(
-                    *ctl, "cli", "doctor", "--ticker", "PETR4", capture=True
+                coverage = run(
+                    *ctl,
+                    "cli",
+                    "doctor",
+                    "--ticker",
+                    "PETR4",
+                    "--verbose",
+                    capture=True,
                 )
+                assert "PETR4 [" in coverage
+                assert "no persisted analysis" not in coverage
                 # Validate real installation retention before backup sentinels
                 # are added outside the managed source workspace below.
                 subprocess.run(

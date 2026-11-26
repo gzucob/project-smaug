@@ -1,0 +1,31 @@
+services:
+  mongo:
+    image: mongo:8
+    healthcheck:
+      test: [CMD, mongosh, --quiet, --eval, "quit(db.adminCommand('ping').ok ? 0 : 1)"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: smaug
+      POSTGRES_PASSWORD: smaug
+      POSTGRES_DB: smaug
+    healthcheck:
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, smaug, -d, smaug]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  python:
+    image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+    working_dir: /repo
+    volumes:
+      - ../..:/repo:ro
+    environment:
+      UV_PROJECT_ENVIRONMENT: /tmp/venv
+      UV_CACHE_DIR: /tmp/uv
+      PYTHONPATH: /repo/src:/repo
+      COVERAGE_FILE: /tmp/.coverage
+      SMAUG_TEST_MONGO_URI: mongodb://mongo:27017
+      SMAUG_TEST_POSTGRES_URI: postgresql+asyncpg://smaug:smaug@postgres:5432/smaug

@@ -4,7 +4,8 @@ const { join } = require("node:path");
 const { test } = require("node:test");
 const { runInNewContext } = require("node:vm");
 
-const source = readFileSync(join(__dirname, "../ui/app.js"), "utf8");
+const script = join(__dirname, "../ui/app.js");
+const source = readFileSync(script, "utf8");
 
 function ui(fetch) {
   const nodes = new Map();
@@ -20,7 +21,7 @@ function ui(fetch) {
     querySelectorAll: () => [],
   };
   const context = { document, fetch, setTimeout() {} };
-  runInNewContext(source, context, { filename: "app.js" });
+  runInNewContext(source, context, { filename: script });
   return { node, action: context.action, render: context.render, poll: context.poll };
 }
 
