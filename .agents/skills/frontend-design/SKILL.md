@@ -1,6 +1,6 @@
 ---
 name: frontend-design
-description: Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults.
+description: Design and refine distinctive frontend interfaces through visual direction, typography, layout, and copy. Use to build, name, review, or audit UI motion, or to stress-test a frontend design plan.
 license: Complete terms in LICENSE.txt
 ---
 
@@ -20,8 +20,6 @@ Typography carries the personality of the page. Pair the display and body faces 
 
 Structure is information. Structural devices, numbering, eyebrows, dividers, labels, should encode something true about the content, not decorate it. Many generic designs use numbered markers (01 / 02 / 03), but that's only appropriate if the content actually is a sequence - like a real process or a typed timeline where order carries information the reader needs. Question if choices like numbered markers actually make sense before incorporating them.
 
-Leverage motion deliberately. Think about where and if animation can serve the subject: a page-load sequence, a scroll-triggered reveal, hover micro-interactions, ambient atmosphere. An orchestrated moment usually lands harder than scattered effects; choose what the direction calls for. However, sometimes less is more, and extra animation contributes to the feeling that the design is AI-generated.
-
 Match complexity to the vision. Maximalist directions need elaborate execution; minimal directions need precision in spacing, type, and detail. Elegance is executing the chosen vision well.
 
 Consider written content carefully. Often a design brief may not contain real content, and it's up to you to come up with copy. Copy can make a design feel as templated as the design itself. See the below section on writing for more guidance.
@@ -40,7 +38,33 @@ Try to do a lot of this planning and iteration in your thinking, and only show i
 
 ## Restraint and self-critique
 
-Spend your boldness in one place. Let the signature element be the one memorable thing, keep everything around it quiet and disciplined, and cut any decoration that does not serve the brief. Not taking a risk can be a risk itself! Build to a quality floor without announcing it: responsive down to mobile, visible keyboard focus, reduced motion respected. Critique your own work as you build, taking screenshots if your environment supports it – a picture is worth 1000 tokens. Consider Chanel's advice: before leaving the house, take a look in the mirror and remove one accessory. Human creators have memory and always try to do something new, so if you have a space to quickly jot down notes about what you've tried, it can help you in future passes.
+Spend your boldness in one place. Let the signature element be the one memorable thing, keep everything around it quiet and disciplined, and cut any decoration that does not serve the brief. Not taking a risk can be a risk itself! Build to a quality floor without announcing it: responsive down to mobile and visible keyboard focus. Critique your own work as you build, taking screenshots if your environment supports it – a picture is worth 1000 tokens. Consider Chanel's advice: before leaving the house, take a look in the mirror and remove one accessory. Human creators have memory and always try to do something new, so if you have a space to quickly jot down notes about what you've tried, it can help you in future passes.
+
+## Interaction and motion
+
+Use the project's design system, tokens, and component primitives. In Smaug, read `frontend/AGENTS.md` for the stack, motion limits, and accessibility conventions. Apply those conventions before the general defaults below. Prefer useful defaults over configuration options, and reuse primitives that already handle focus, dismissal, and keyboard navigation.
+
+1. Decide what the motion does for the user. Use it to confirm input, communicate state, preserve spatial continuity, explain an interaction, or soften an abrupt change. Keep shortcuts and very frequent actions immediate, frequent feedback subtle, and expressive motion for rare or first-time moments. Keep data and controls stable while users read or act on them.
+2. Use the simplest mechanism that fits. Start with CSS transitions for state changes and `@starting-style` for entry where supported. Reserve keyframes for fixed sequences. Use the Web Animations API when timing needs programmatic control, and an existing spring primitive for gestures that need to carry velocity through interruptions. Rapid toggles and stacked toasts should continue from their current visual state when interrupted.
+3. Tune timing using shared tokens. Favor a strong ease-out for entry and exit, ease-in-out for movement between visible states, `ease` for color feedback, and linear timing for progress. Avoid a slow-starting ease-in on UI responses. As defaults, use 100–160 ms for press feedback, 125–200 ms for tooltips and small popovers, 150–250 ms for menus, and keep ordinary UI transitions under 300 ms. Let a deliberate hold take time and make release feel immediate.
+4. Match motion to the component. Give presses a visible active state (a slight scale such as `0.97` where appropriate). Scale anchored overlays from their trigger and centered dialogs from their center. Start a scale entrance near full size. After the first tooltip in a group, make adjacent tooltips appear immediately. Keep any group entrance stagger brief and leave controls usable throughout. For drag-to-dismiss, capture the active pointer, ignore extra touches, and use distance and release velocity with resistance beyond the drag bounds. Keep an accessible dismissal control available.
+5. Animate explicit properties. Prefer `transform` and `opacity` for movement and fades. Keep layout animation, such as a measured accordion height, short and verify its cost. Update a dragged element's transform directly to avoid style recalculation across descendants. Remove spatial movement under `prefers-reduced-motion` while retaining useful opacity or color feedback. Gate hover movement with `@media (hover: hover) and (pointer: fine)`.
+
+Verify the interaction in the browser when available. Repeat and reverse it midway, test keyboard and reduced-motion behavior, and check touch gestures on a touch device when possible. Use slow playback or frame stepping to inspect origin, abrupt changes, and timing between properties. Profile suspected jank under load. State which visual or behavioral checks remain unverified if you could only inspect code.
+
+### Review or audit existing motion
+
+For a focused review, inspect the changed interaction against the guidance above. Cite the affected file and line, and show concrete findings in a `Before | After | Why` table, ordered by user impact. Check whether removing or reducing motion would solve the issue before proposing a more elaborate fix.
+
+For a broader audit, map the stack, shared tokens, animation definitions, and high-frequency interaction paths first. Verify each finding against its call site and established product decisions. Prioritize by user impact and effort. Include opportunities tied to observed problems, such as an abrupt state change that breaks orientation. When asked for a plan, specify the target files, existing tokens or primitives to reuse, the intended behavior, and how to verify the result. Implement fixes when the user asks for changes.
+
+### Name a motion effect
+
+For a naming question, lead with the established term and a one-line definition. If the description is ambiguous, offer one or two close terms and explain how to distinguish them. A **stagger** offsets the start time across items. A **crossfade** overlaps the outgoing and incoming states in place. A **morph** changes shape, while a **shared element transition** preserves an element's identity between views. A **scroll reveal** begins as content enters the viewport, while **scroll-driven animation** tracks scroll progress. **Rubber-banding** is resistance and snap-back past a boundary.
+
+## Stress-test a frontend decision
+
+When the user asks to challenge a design or plan, identify the decisions and their prerequisites. Resolve factual questions from the repository or available evidence first. Ask about the independent decisions that are ready together, with a recommendation and its tradeoff for each. Use the answers to identify which follow-up decisions are ready. Summarize the agreed direction and any material open decisions before moving from discussion to implementation.
 
 ## More on writing in design
 
