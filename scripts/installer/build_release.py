@@ -79,7 +79,7 @@ def build() -> None:
     parser.add_argument("--frontend", required=True)
     parser.add_argument("--output", type=Path, default=ROOT / "dist" / "installers")
     parser.add_argument("--snapshot", type=Path)
-    parser.add_argument("--legacy-smoke", action="store_true")
+    parser.add_argument("--test-fixture", action="store_true")
     parser.add_argument("--runtime-only", action="store_true")
     parser.add_argument("--native-only", action="store_true")
     parser.add_argument("--system", choices=("linux", "darwin", "windows"))
@@ -94,8 +94,8 @@ def build() -> None:
     for image in (args.backend, args.frontend):
         if not re.fullmatch(r"[a-z0-9./:_-]+@sha256:[a-f0-9]{64}", image):
             parser.error("images must be pinned by digest")
-    if bool(args.snapshot) == args.legacy_smoke:
-        parser.error("supply a validated --snapshot or explicitly use --legacy-smoke")
+    if bool(args.snapshot) == args.test_fixture:
+        parser.error("supply a validated --snapshot or explicitly use --test-fixture")
     if args.native_only and (args.runtime_only or not args.system or not args.arch):
         parser.error("--native-only requires one --system and --arch")
     output: Path = args.output.resolve()

@@ -1,4 +1,4 @@
-"""Exercise disposable backend/full installations; never connect to checkout DBs.
+"""Verify packaged installation and lifecycle regressions with a local fixture.
 
 Requires prebuilt bundles and Docker. Removes only the Compose projects whose
 configuration was created inside this invocation's temporary directory.
@@ -220,8 +220,8 @@ def check_mcp(
     assert process.returncode == 0
 
 
-def smoke(bundle_dir: Path) -> None:
-    with tempfile.TemporaryDirectory(prefix="smaug installer smoke ") as directory:
+def verify_installation(bundle_dir: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="smaug installer regression ") as directory:
         root = Path(directory)
         os.environ["HOME"] = str(root / "user")
         os.environ["USERPROFILE"] = str(root / "user")
@@ -317,6 +317,9 @@ def smoke(bundle_dir: Path) -> None:
                 run(*ctl, "check")
                 assert request(api, "/ready")["data"] == "prepared"
                 assert request(api, "/analysis/PETR4")
+                assert "PETR4" in run(
+                    *ctl, "cli", "doctor", "--ticker", "PETR4", capture=True
+                )
                 # Validate real installation retention before backup sentinels
                 # are added outside the managed source workspace below.
                 subprocess.run(
@@ -364,9 +367,11 @@ asyncio.run(verify())
                     # A 200 home page alone can hide an unreachable backend.
                     assert request(web, "/api/data-revision")["revision"]
                 assert "roe" in run(*ctl, "cli", "formulas", capture=True)
-                run(*ctl, "cli", "doctor", "--help")
                 assert request(api, "/portfolio/PETR4", "POST")["ticker"] == "PETR4"
                 check_mcp(ctl, expected_status="ready", ticker="PETR4")
+                if edition == "full":
+                    print("PASS: full installation, doctor, API, frontend and MCP")
+                    continue
                 subprocess.run(
                     [*compose, "stop", "api", "frontend"], env=compose_env, check=True
                 )
@@ -645,7 +650,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundles", type=Path, required=True)
     args = parser.parse_args()
-    smoke(args.bundles.resolve())
+    verify_installation(args.bundles.resolve())
 
 
 if __name__ == "__main__":
