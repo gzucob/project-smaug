@@ -1,8 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [develop, main]
   pull_request:
     branches: [develop]
   workflow_call:
@@ -32,9 +30,10 @@ jobs:
         run: |
           set -euo pipefail
           paths="$RUNNER_TEMP/changed-paths"
-          if [[ "$FULL" == true || -z "$BASE_SHA" ]]; then
+          if [[ "$FULL" == true ]]; then
             echo .github/ > "$paths"
           else
+            [[ -n "$BASE_SHA" ]]
             git diff --name-only --no-renames "$BASE_SHA" "$GITHUB_SHA" > "$paths"
           fi
           shared='^([^/]+$|\.github/|scripts/quality/)'
@@ -188,10 +187,9 @@ jobs:
         run: bash -n install.sh ../scripts/installer/ci-regression.sh
 
   installer:
-    needs: [changes, quality, frontend, manager]
+    needs: [changes, quality, frontend]
     if: >-
       ${{ !cancelled() && needs.changes.outputs.installer == 'true' &&
-      needs.manager.result == 'success' &&
       (needs.quality.result == 'success' || needs.quality.result == 'skipped') &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') }}
     strategy:
@@ -223,7 +221,7 @@ jobs:
           export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/smaug-browsers"
           echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
           npm ci
-          npx --no-install playwright install --with-deps chromium
+          npx --no-install playwright install --with-deps --only-shell chromium
       - run: bash scripts/installer/ci-regression.sh
       - uses: actions/upload-artifact@v4
         if: matrix.runner == 'ubuntu-22.04'

@@ -17,8 +17,11 @@ try {
     await page.getByText("n/d", { exact: true }).first().waitFor();
     await page.getByRole("button", { name: "Sobre ROE", exact: true }).first().click();
     const detail = page.getByRole("dialog");
-    await detail.waitFor();
+    const close = detail.getByRole("button", { name: "Fechar", exact: true });
+    await close.waitFor();
     assert.match(await detail.innerText(), /ROE/);
+    await close.click();
+    await close.waitFor({ state: "hidden" });
   }
 } finally {
   await browser.close();

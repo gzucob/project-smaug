@@ -42,7 +42,20 @@ def check_go() -> bool:
 
 def staged_sources() -> bool:
     """Keep unstaged source or test changes out of the measurement."""
-    paths = ["src", "tests", "scripts", "alembic", "frontend", "website", "installer"]
+    paths = [
+        "src",
+        "tests",
+        "scripts",
+        "alembic",
+        "frontend",
+        "website",
+        "installer",
+        "pyproject.toml",
+        "uv.lock",
+        "alembic.ini",
+        ".importlinter",
+        ".githooks",
+    ]
     diff = subprocess.run(
         ["git", "diff", "--exit-code", "--quiet", "--", *paths],
         cwd=ROOT,

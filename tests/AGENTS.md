@@ -20,7 +20,7 @@ test functions don't need `@pytest.mark.asyncio`.
 
 Older test files (`test_ingest_use_case.py`,
 `test_portfolio.py`, `test_event_bus.py`, `test_completeness_report.py`,
-`test_repository_mapping.py`, `test_cli_format.py`, `test_smoke.py`) use
+`test_repository_mapping.py`, `test_cli_format.py`, `test_package_import.py`) use
 `test_should_X_when_Y`. Newer files (`test_analyze.py`, `test_calculator.py`,
 `test_ttm.py`, `test_b3_prices.py`, `test_cvm_source.py`,
 `test_mongo_fundamentals.py`) dropped the `should_`/`when_` scaffolding for a
@@ -31,12 +31,11 @@ This is real, unresolved drift, not a rule to enforce either way. When adding
 a test to an existing file, match that file's convention. When starting a new
 test file, the plain descriptive style is what recent work has converged on.
 
-## No coverage threshold
+## Local coverage threshold
 
-CI (`uv run pytest`) and `pyproject.toml` don't set a `--cov-fail-under`.
-Don't assume a percentage-based coverage gate exists — if coverage becomes a
-concern, raise it with the user rather than encoding a threshold here
-preemptively.
+The local pre-commit gate requires passing tests and at least 90% of executable
+lines in each Python source file. CI runs regression suites without the
+percentage gate. See `.github/AGENTS.md` for installation and scope.
 
 ## Battery Selection
 

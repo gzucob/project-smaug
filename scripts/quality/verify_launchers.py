@@ -17,6 +17,12 @@ def main() -> None:
     arch = subprocess.check_output(["go", "env", "GOARCH"], text=True).strip()
     windows = system == "windows"
     name = "install.ps1" if windows else "install.sh"
+    # Windows PowerShell needs its own module path when a PS 7 runner starts it.
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not windows or key.upper() != "PSMODULEPATH"
+    }
     with TemporaryDirectory(prefix="smaug launcher ") as directory:
         bundle = Path(directory)
         entrypoint = bundle / name
@@ -48,26 +54,34 @@ def main() -> None:
         target = bundle / "example install"
         invocation = [*command, entrypoint, "--dir", str(target), "--help"]
         result = subprocess.run(
-            invocation, check=True, capture_output=True, text=True, encoding="utf-8"
+            invocation,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=environment,
         )
+        assert result.returncode == 0, result.stderr
         forwarded = json.loads(result.stdout.splitlines()[-1])
-        assert forwarded == [
-            "--dir",
-            str(target),
-            "mcp",
-            "setup",
-            "--source",
-            str(bundle),
-            "--help",
-        ]
+        assert len(forwarded) == 7, forwarded
+        assert forwarded[0] == "--dir", forwarded
+        assert Path(forwarded[1]).resolve() == target.resolve(), forwarded
+        assert forwarded[2:5] == ["mcp", "setup", "--source"], forwarded
+        assert Path(forwarded[5]).resolve() == bundle.resolve(), forwarded
+        assert forwarded[6] == "--help", forwarded
         os.chmod(binary, 0o700)
         with binary.open("ab") as handle:
             handle.write(b"modified")
         refused = subprocess.run(
-            invocation, check=False, capture_output=True, text=True, encoding="utf-8"
+            invocation,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=environment,
         )
         assert refused.returncode != 0
-        assert "checksum" in refused.stderr.lower()
+        assert "checksum" in refused.stderr.lower(), refused.stderr
 
 
 if __name__ == "__main__":

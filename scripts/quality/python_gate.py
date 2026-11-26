@@ -22,9 +22,11 @@ def main() -> int:
         str(ROOT / "scripts/quality/compose.yaml"),
     ]
     checks = [
+        "apt-get update -qq && apt-get install -qq -y git jq >/dev/null",
         "uv sync --frozen --no-editable",
         "uv run --no-sync ruff check --no-cache .",
         "uv run --no-sync ruff format --check --no-cache .",
+        "uv run --no-sync lint-imports --no-cache",
         "uv run --no-sync mypy --cache-dir=/tmp/mypy src",
     ]
     pytest = "uv run --no-sync pytest -p no:cacheprovider"
