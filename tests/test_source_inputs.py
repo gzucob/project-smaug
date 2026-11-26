@@ -15,6 +15,7 @@ from pymongo import AsyncMongoClient
 from pymongo.errors import DuplicateKeyError
 
 from smaug.analysis.infrastructure.b3_prices import _reduce
+from smaug.analysis.infrastructure.mongo_incremental import MongoRefreshInputs
 from smaug.ingestion.application.source_inputs import (
     MirrorSourceInputs,
     SyncCotahistUseCase,
@@ -28,11 +29,13 @@ from smaug.ingestion.infrastructure.source_inputs import (
     LocalSourceInputReader,
     MongoSourceInputRepository,
 )
+from smaug.shared.source_inputs import MongoSourceInputs
 
 
 class MemoryInputs:
     def __init__(self) -> None:
         self.archives: dict[tuple[str, str], Mapping[str, int]] = {}
+        self.latest_archive: SourceInputArchive | None = None
         self.rows: dict[tuple[str, str, str, int], SourceInputRow] = {}
         self.interrupt_after: int | None = None
 
@@ -54,6 +57,7 @@ class MemoryInputs:
         self, archive: SourceInputArchive, member_counts: Mapping[str, int]
     ) -> None:
         self.archives[(archive.artifact_id, archive.parser_version)] = member_counts
+        self.latest_archive = archive
 
 
 def make_archive(path: Path, members: Mapping[str, str]) -> Path:
@@ -236,6 +240,56 @@ async def test_invalid_tape_never_gets_admitted(tmp_path: Path, text: str) -> No
     assert not repository.archives
 
 
+async def test_cotahist_recovers_utf8_name_and_preserves_the_original_bytes(
+    tmp_path: Path,
+) -> None:
+    path = tape_archive(tmp_path)
+    with zipfile.ZipFile(path) as source:
+        lines = source.read("COTAHIST_A2015.TXT").splitlines()
+    original = lines[1]
+    lines[1] = original[:27] + "FROTA OCEÂNI".encode() + original[39:]
+    with zipfile.ZipFile(path, "w") as source:
+        source.writestr("COTAHIST_A2015.TXT", b"\n".join(lines) + b"\n")
+    repository = MemoryInputs()
+
+    assert await MirrorSourceInputs(repository).execute(LocalSourceInputReader(path))
+    stored = list(repository.rows.values())[1].fields
+    assert len(lines[1]) == 246
+    assert stored["record"].encode("latin-1") == lines[1]
+    assert stored["record_encoding"] == "utf-8"
+    assert stored["NOMRES"] == "FROTA OCEÂNI"
+    assert stored["PREULT"].encode() == original[108:121]
+    assert stored["DISMES"].encode() == original[242:245]
+
+
+async def test_cotahist_records_an_unreadable_quote_and_continues(
+    tmp_path: Path,
+) -> None:
+    path = tape_archive(tmp_path)
+    with zipfile.ZipFile(path) as source:
+        lines = source.read("COTAHIST_A2015.TXT").decode("latin-1").splitlines()
+    lines[1] = lines[1][:27] + "é" + lines[1][27:]
+    lines[2] = lines[2][:108] + "X" + lines[2][109:]
+    make_archive(path, {"COTAHIST_A2015.TXT": "\n".join(lines) + "\n"})
+    repository = MemoryInputs()
+
+    assert await MirrorSourceInputs(repository).execute(LocalSourceInputReader(path))
+    rows = list(repository.rows.values())
+    assert [row.fields["record"] for row in rows] == lines
+    assert [rows[i].fields["parse_error"] for i in (1, 2)] == [
+        "invalid_layout",
+        "invalid_price_or_quote_factor",
+    ]
+    assert rows[3].fields["TIPREG"] == "01"
+    archive = repository.latest_archive
+    assert archive is not None
+    assert archive.rejected_rows == 2
+    assert archive.rejected_price_codes == tuple(
+        sorted({s[12:24].strip() for s in lines[1:3]})
+    )
+    assert not archive.unscoped_price_rejection
+
+
 @pytest.mark.parametrize("market", ["010", "070"])
 async def test_zero_quote_factor_is_preserved_only_outside_spot_market(
     tmp_path: Path, market: str
@@ -247,19 +301,18 @@ async def test_zero_quote_factor_is_preserved_only_outside_spot_market(
     make_archive(path, {"COTAHIST_A2015.TXT": "\n".join(lines) + "\n"})
     repository = MemoryInputs()
     reader = LocalSourceInputReader(path)
+    assert await MirrorSourceInputs(repository).execute(reader)
+    rows = list(repository.rows.values())
     if market == "010":
-        with pytest.raises(ValueError, match="zero COTAHIST quote factor"):
-            await MirrorSourceInputs(repository).execute(reader)
-        assert not repository.archives
+        assert rows[1].fields["parse_error"] == "zero_quote_factor"
+        assert rows[1].fields["TIPREG"] == "rejected"
     else:
-        assert await MirrorSourceInputs(repository).execute(reader)
-        rows = list(repository.rows.values())
         assert rows[1].fields["FATCOT"] == "0000000"
-        assert rows[1].fields["record"] == lines[1]
-        assert sum(reader.member_counts().values()) == len(lines)
+    assert rows[1].fields["record"] == lines[1]
+    assert sum(reader.member_counts().values()) == len(lines)
 
 
-@pytest.mark.parametrize("problem", ["missing_trailer", "record_count", "session_year"])
+@pytest.mark.parametrize("problem", ["missing_trailer", "record_count"])
 async def test_incomplete_or_inconsistent_tape_is_not_admitted(
     tmp_path: Path,
     problem: str,
@@ -269,10 +322,8 @@ async def test_incomplete_or_inconsistent_tape_is_not_admitted(
         lines = source.read("COTAHIST_A2015.TXT").decode("latin-1").splitlines()
     if problem == "missing_trailer":
         lines.pop()
-    elif problem == "record_count":
-        lines[-1] = lines[-1][:31] + "00000000001" + lines[-1][42:]
     else:
-        lines[1] = lines[1][:2] + "2016" + lines[1][6:]
+        lines[-1] = lines[-1][:31] + "00000000001" + lines[-1][42:]
     make_archive(path, {"COTAHIST_A2015.TXT": "\n".join(lines) + "\n"})
     repository = MemoryInputs()
     with pytest.raises(ValueError, match="incomplete|invalid"):
@@ -439,6 +490,40 @@ async def test_mongo_admission_bulk_resume_indexes_and_source_versions(
         assert await use_case.execute(LocalSourceInputReader(csv_path))
         assert await database.source_input_archives.count_documents({}) == 3
         assert await database.source_input_rows.count_documents({}) == count + 1006
+
+        # A rejected record stays in the tracked revision and contributes to
+        # physical coverage without reaching the price reducer.
+        changes = MongoRefreshInputs(database)
+        before = await changes.checkpoint()
+        with zipfile.ZipFile(path) as source:
+            lines = source.read("COTAHIST_A2015.TXT").decode("latin-1").splitlines()
+        code = lines[1][12:24].strip()
+        lines[1] = lines[1][:108] + "X" + lines[1][109:]
+        make_archive(path, {"COTAHIST_A2015.TXT": "\n".join(lines) + "\n"})
+        assert await use_case.execute(LocalSourceInputReader(path))
+        current = await changes.checkpoint()
+        scope = await changes.changes(before, current)
+        assert scope.compare_prices
+        assert scope.rejected_price_codes == frozenset({code})
+        assert not scope.unscoped_price_rejection
+        inputs = MongoSourceInputs(
+            database.source_input_archives, database.source_input_rows
+        )
+        revision = await inputs.revision("COTAHIST", 2015)
+        member = "COTAHIST_A2015.TXT"
+        mirrored = [row async for row in inputs.rows(revision, member)]
+        assert mirrored[1]["record"] == lines[1]
+        assert mirrored[1]["parse_error"] == "invalid_price_or_quote_factor"
+        prices = [row async for row in inputs.cotahist_rows(revision, member)]
+        assert prices
+        assert all(row["PREULT"].isdigit() for row in prices)
+
+        lines[1] = lines[1][:108] + "1" + lines[1][109:]
+        make_archive(path, {member: "\n".join(lines) + "\n"})
+        assert await use_case.execute(LocalSourceInputReader(path))
+        repaired = await changes.changes(current, await changes.checkpoint())
+        assert repaired.previously_rejected_codes == frozenset({code})
+        assert not repaired.rejected_price_codes
     finally:
         await client.drop_database(database.name)
         await client.close()

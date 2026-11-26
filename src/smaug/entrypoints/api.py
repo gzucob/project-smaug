@@ -23,7 +23,7 @@ from typing import Any, Literal
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pymongo import AsyncMongoClient
 
 from smaug.analysis.application.price_history import ReadPriceHistoryUseCase
@@ -58,6 +58,7 @@ from smaug.analysis.domain.indicators import (
     is_retired_sector_input,
     public_indicator_names,
 )
+from smaug.analysis.domain.outcomes import AnalysisStatus, NoAnalysisReason
 from smaug.analysis.domain.price_history import PriceHistory
 from smaug.analysis.domain.price_refresh import RefreshIssueReason
 from smaug.analysis.infrastructure.formulas import formula_references
@@ -99,10 +100,18 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _app.state.ui_revision = UiRevisionReader(
         _session_factory, _app.state.mongo_database
     )
+
+    async def start_updates_when_ready() -> None:
+        reader = ReadinessReader(_session_factory, _app.state.mongo_database)
+        while True:
+            status = await reader.read()
+            if status["ready"] and status["data"] == "prepared":
+                break
+            await asyncio.sleep(10)
+        await supervise_price_worker(_settings.price_refresh_interval_seconds)
+
     worker = (
-        asyncio.create_task(
-            supervise_price_worker(_settings.price_refresh_interval_seconds)
-        )
+        asyncio.create_task(start_updates_when_ready())
         if _settings.auto_price_refresh
         else None
     )
@@ -1141,6 +1150,7 @@ async def get_shareholding_position(
         database["raw_ingestions"],
         registrant_resolver=lambda _ticker: analysis.cd_cvm,
         validation_collection=database["ingestion_validations"],
+        published_at=analysis.computed_at,
     )
     snapshot = await reader.latest(symbol)
     if snapshot is None:
@@ -1280,6 +1290,13 @@ async def remove_from_portfolio(ticker: str) -> None:
 class PriceRefreshIssueResponse(BaseModel):
     ticker: str
     reason: RefreshIssueReason
+    analysis_status: AnalysisStatus | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )
+    no_analysis_reason: NoAnalysisReason | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )
+    detail: str | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class PriceRefreshResponse(BaseModel):
@@ -1306,7 +1323,13 @@ async def price_refresh_status() -> PriceRefreshResponse:
         updated_count=status.updated_count,
         unchanged_count=status.unchanged_count,
         issues=[
-            PriceRefreshIssueResponse(ticker=item.ticker, reason=item.reason)
+            PriceRefreshIssueResponse(
+                ticker=item.ticker,
+                reason=item.reason,
+                analysis_status=item.analysis_status,
+                no_analysis_reason=item.no_analysis_reason,
+                detail=item.detail,
+            )
             for item in status.issues
         ],
     )

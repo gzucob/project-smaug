@@ -42,6 +42,11 @@ def test_commands_without_a_filter_dispatch_to_the_complete_universe(
     monkeypatch.setattr(cli, "_run_analyze", fake_run("analyze"))
     monkeypatch.setattr(cli, "_run_doctor", fake_run("doctor"))
 
+    async def without_lock(operation):
+        return await operation()
+
+    monkeypatch.setattr(cli, "_with_refresh_lock", without_lock)
+
     with pytest.raises(typer.Exit):
         cli.ingest(
             ticker=None,

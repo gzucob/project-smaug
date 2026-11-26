@@ -30,7 +30,10 @@ from smaug.ingestion.infrastructure.source_inputs import (
     LocalSourceInputReader,
     MongoSourceInputRepository,
 )
-from smaug.ingestion.infrastructure.source_retention import InstallationSourceSession
+from smaug.ingestion.infrastructure.source_retention import (
+    InstallationSourceSession,
+    installation_source_lock,
+)
 from smaug.shared.config import Settings
 from smaug.shared.errors import SourceError
 from smaug.shared.local_artifacts import LocalSourceArtifactStore
@@ -282,6 +285,30 @@ async def test_file_lock_prevents_cleaning_another_active_consumer(
                     pytest.fail("another consumer acquired the source lock")
             assert source.exists()
         assert source.exists()
+    finally:
+        await client.drop_database(db.name)
+        await client.close()
+
+
+async def test_refresh_steps_can_borrow_lock_until_publication(tmp_path: Path) -> None:
+    client = AsyncMongoClient(os.environ["SMAUG_TEST_MONGO_URI"])
+    db = client["retention_refresh_lock_" + uuid4().hex]
+    settings = installed_settings(tmp_path)
+    base = Path(settings.source_artifact_dir).resolve()
+    try:
+        with installation_source_lock(base) as lock:
+            for operation in ("sync-prices", "sync-fundamentals"):
+                async with InstallationSourceSession(
+                    settings, db, scope=_SCOPE, operation=operation, workspace_lock=lock
+                ) as session:
+                    await session.complete()
+            with pytest.raises(SourceError, match="source_ingestion_already_running"):
+                async with InstallationSourceSession(
+                    settings, db, scope="b" * 64, operation="standalone-ingestion"
+                ):
+                    pytest.fail("another consumer acquired the source lock")
+        with installation_source_lock(base):
+            assert lock.closed
     finally:
         await client.drop_database(db.name)
         await client.close()

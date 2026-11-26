@@ -262,3 +262,17 @@ class PriceRefreshRow(Base):
     updated_count: Mapped[int | None]
     unchanged_count: Mapped[int | None]
     issues: Mapped[list[dict[str, str]] | None] = mapped_column(JSON)
+
+
+class RefreshCheckpointRow(Base):
+    """The MongoDB inputs represented by the last committed background update."""
+
+    __tablename__ = "refresh_checkpoint"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_refresh_checkpoint_singleton"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    raw_id: Mapped[str | None] = mapped_column(String(24))
+    archives: Mapped[dict[str, str]] = mapped_column(JSON)
+    retry_tickers: Mapped[list[str]] = mapped_column(JSON, server_default="[]")

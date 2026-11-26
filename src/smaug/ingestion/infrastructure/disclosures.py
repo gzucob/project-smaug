@@ -1,6 +1,6 @@
 """MongoDB inventory of expected disclosures and fully processed archive revisions."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, cast
 
 from pymongo.asynchronous.collection import AsyncCollection
@@ -81,13 +81,40 @@ class MongoDisclosureInventory:
     async def claim(self, archive: DisclosureArchive, now: datetime) -> bool:
         try:
             result = await self._inventory.update_one(
-                {"_id": archive.name, "next_check": {"$lte": now}},
-                {"$set": {"next_check": now + CHECK_INTERVAL}},
+                {"_id": archive.name, **self._due_filter(now)},
+                {
+                    "$set": {
+                        "next_check": now + CHECK_INTERVAL,
+                        "retry_after": now + timedelta(hours=1),
+                    }
+                },
                 upsert=True,
             )
         except DuplicateKeyError:
             return False
         return bool(result.modified_count or result.upserted_id)
+
+    @staticmethod
+    def _due_filter(now: datetime) -> dict[str, object]:
+        return {
+            "$or": [
+                {"next_check": {"$lte": now}},
+                {"materializing": True, "retry_after": {"$lte": now}},
+            ]
+        }
+
+    async def any_due(self, years: range, now: datetime) -> bool:
+        kinds: tuple[DisclosureKind, ...] = ("FCA", "FRE", "DFP", "ITR")
+        names = [DisclosureArchive(kind, year).name for year in years for kind in kinds]
+        claimed = await self._inventory.count_documents({"_id": {"$in": names}})
+        if claimed < len(names):
+            return True
+        return (
+            await self._inventory.find_one(
+                {"_id": {"$in": names}, **self._due_filter(now)}, {"_id": 1}
+            )
+            is not None
+        )
 
     async def revision(
         self, archive: DisclosureArchive, scope: str
@@ -97,6 +124,56 @@ class MongoDisclosureInventory:
         if revision is None:
             return None
         return ArchiveRevision(revision.get("etag"), revision.get("last_modified"))
+
+    async def begin_materialization(self, archive: DisclosureArchive) -> None:
+        await self._inventory.update_one(
+            {"_id": archive.name}, {"$set": {"materializing": True}}
+        )
+
+    async def record_issuer_errors(
+        self, archive: DisclosureArchive, checked: set[str], errors: dict[str, str]
+    ) -> bool:
+        for code, detail in errors.items():
+            await self._inventory.update_one(
+                {"_id": f"issuer-error:{archive.name}:{code}"},
+                {
+                    "$set": {
+                        "state": "issuer_error",
+                        "archive": archive.name,
+                        "code": code,
+                        "detail": detail,
+                    }
+                },
+                upsert=True,
+            )
+        resolved = checked.difference(errors)
+        if resolved:
+            await self._inventory.delete_many(
+                {
+                    "state": "issuer_error",
+                    "archive": archive.name,
+                    "code": {"$in": sorted(resolved)},
+                }
+            )
+        return (
+            await self._inventory.find_one(
+                {"state": "issuer_error", "archive": archive.name}, {"_id": 1}
+            )
+            is not None
+        )
+
+    async def issuer_errors(self) -> dict[str, str]:
+        cursor = self._inventory.find({"state": "issuer_error"}).sort("archive", 1)
+        return {
+            str(row["code"]): f"{row['archive']}: {row['detail']}"
+            async for row in cursor
+        }
+
+    async def has_unfinished_publication(self) -> bool:
+        return (
+            await self._inventory.find_one({"materializing": True}, {"_id": 1})
+            is not None
+        )
 
     async def complete(
         self, period: DisclosurePeriod, version: int, now: datetime
@@ -195,6 +272,7 @@ class MongoDisclosureInventory:
         await self._inventory.update_one(
             {"_id": archive.name},
             {
+                "$unset": {"materializing": ""},
                 "$set": {
                     "scope": scope,
                     "revision": (
@@ -202,7 +280,7 @@ class MongoDisclosureInventory:
                         if revision is not None
                         else None
                     ),
-                }
+                },
             },
         )
 

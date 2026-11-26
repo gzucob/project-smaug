@@ -6,12 +6,12 @@ from datetime import date, datetime, timedelta
 from typing import Literal, Protocol
 
 from smaug.ingestion.domain.ports import RawFetchResult
+from smaug.shared.source_inputs import SYNC_RUN_PREFIX as SYNC_RUN_PREFIX
 
 DisclosureKind = Literal["ITR", "DFP", "FRE", "FCA"]
 CHECK_INTERVAL = timedelta(days=7)
 MAX_PENDING_CHECKS = 8
 PUBLISHED_YEARS = 5
-SYNC_RUN_PREFIX = "financial-sync:"
 
 
 @dataclass(frozen=True)
@@ -51,6 +51,12 @@ class DisclosureEdition:
     versions: dict[DisclosurePeriod, tuple[int, ...]]
 
 
+@dataclass(frozen=True)
+class DisclosureBatch:
+    rows: dict[DisclosurePeriod, list[RawFetchResult]]
+    issuer_errors: dict[str, str]
+
+
 class DisclosureSource(Protocol):
     async def inspect(
         self, archive: DisclosureArchive, revision: ArchiveRevision | None
@@ -61,7 +67,7 @@ class DisclosureSource(Protocol):
         archive: DisclosureArchive,
         edition: DisclosureEdition,
         targets: dict[DisclosurePeriod, tuple[int, ...]],
-    ) -> dict[DisclosurePeriod, list[RawFetchResult]]: ...
+    ) -> DisclosureBatch: ...
 
 
 class IdentityArchiveSource(Protocol):
@@ -74,6 +80,12 @@ class DisclosureInventory(Protocol):
     async def coverage(self, codes: tuple[str, ...]) -> dict[DisclosurePeriod, int]: ...
 
     async def claim(self, archive: DisclosureArchive, now: datetime) -> bool: ...
+
+    async def begin_materialization(self, archive: DisclosureArchive) -> None: ...
+
+    async def record_issuer_errors(
+        self, archive: DisclosureArchive, checked: set[str], errors: dict[str, str]
+    ) -> bool: ...
 
     async def revision(
         self, archive: DisclosureArchive, scope: str

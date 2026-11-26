@@ -6,7 +6,8 @@ import asyncio
 import hashlib
 import json
 import shutil
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
@@ -24,6 +25,22 @@ from smaug.ingestion.infrastructure.source_inputs import (
 from smaug.shared.artifacts import SourceArtifact
 from smaug.shared.config import Settings
 from smaug.shared.errors import SourceError
+
+
+@contextmanager
+def installation_source_lock(base: Path) -> Iterator[BinaryIO]:
+    """Serialize source writers sharing an installation workspace."""
+    # Installations run in Linux containers. The kernel releases the lock even
+    # if the process is killed.
+    import fcntl
+
+    base.mkdir(parents=True, exist_ok=True)
+    with (base / ".source-retention.lock").open("a+b") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise SourceError("source_ingestion_already_running") from exc
+        yield handle
 
 
 class MongoArtifactObservations:
@@ -72,6 +89,7 @@ class InstallationSourceSession:
         scope: str,
         operation: str,
         resume_run_id: str | None = None,
+        workspace_lock: BinaryIO | None = None,
     ) -> None:
         if settings.runtime_context != "installation":
             raise ValueError("source cleanup requires installation deployment identity")
@@ -104,32 +122,18 @@ class InstallationSourceSession:
                 database["source_input_rows"].with_options(write_concern=durable),
             )
         )
-        self._lock: BinaryIO | None = None
+        self._workspace_lock = workspace_lock
+        self._lock_scope = ExitStack()
         self._complete = False
 
-    def _acquire_lock(self) -> None:
-        # Native installations run this Python process in a Linux Docker
-        # container on every host platform. Locks are released by the kernel
-        # after interruption, including SIGKILL; no expiring lease can race I/O.
-        import fcntl
-
-        self._base.mkdir(parents=True, exist_ok=True)
-        handle = (self._base / ".source-retention.lock").open("a+b")
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            handle.close()
-            raise SourceError("source_ingestion_already_running") from exc
-        self._lock = handle
-
-    def _unlock(self) -> None:
-        if self._lock is not None:
-            self._lock.close()
-            self._lock = None
-
     async def __aenter__(self) -> InstallationSourceSession:
-        self._acquire_lock()
         try:
+            if self._workspace_lock is None:
+                self._lock_scope.enter_context(installation_source_lock(self._base))
+            elif self._workspace_lock.closed or self._workspace_lock.name != str(
+                self._base / ".source-retention.lock"
+            ):
+                raise ValueError("source lock does not cover this workspace")
             if self._resume_run_id is not None:
                 owner = await self._sessions.find_one(
                     {"ingestion_run_ids": self._resume_run_id}
@@ -171,7 +175,7 @@ class InstallationSourceSession:
             )
             return self
         except BaseException:
-            self._unlock()
+            self._lock_scope.close()
             raise
 
     async def observe_artifact(
@@ -323,4 +327,4 @@ class InstallationSourceSession:
                         },
                     )
         finally:
-            self._unlock()
+            self._lock_scope.close()

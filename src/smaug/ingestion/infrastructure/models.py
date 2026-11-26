@@ -73,6 +73,9 @@ class SourceInputArchiveDocument(Document):
     etag: str | None = None
     last_modified: str | None = None
     price_basis: str | None = None
+    rejected_rows: int = 0
+    rejected_price_codes: list[str] = Field(default_factory=list)
+    unscoped_price_rejection: bool = False
 
     class Settings:
         name = "source_input_archives"

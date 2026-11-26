@@ -358,7 +358,12 @@ class AnalyzePortfolioUseCase:
         self._outcome_repository = outcome_repository
         self._id_factory = id_factory
 
-    async def execute(self, tickers: Iterable[str]) -> AnalysisRun:
+    async def execute(
+        self,
+        tickers: Iterable[str],
+        *,
+        unavailable: Mapping[str, tuple[NoAnalysisReason, str]] | None = None,
+    ) -> AnalysisRun:
         """Analyze each ticker, and never let one of them end the run.
 
         In an exchange-wide run, an unmapped account or a malformed payload for
@@ -372,10 +377,17 @@ class AnalyzePortfolioUseCase:
         remaining = iter(dict.fromkeys(tickers))
         pending: deque[asyncio.Task[TickerOutcome]] = deque()
 
+        async def prepare(ticker: str) -> TickerOutcome:
+            if unavailable and (issue := unavailable.get(ticker)):
+                return TickerOutcome(
+                    ticker, AnalysisStatus.SKIPPED, (), issue[1], issue[0]
+                )
+            return await self._analyze_guarded(ticker)
+
         def prepare_next() -> None:
             ticker = next(remaining, None)
             if ticker is not None:
-                pending.append(asyncio.create_task(self._analyze_guarded(ticker)))
+                pending.append(asyncio.create_task(prepare(ticker)))
 
         for _ in range(self._preparation_concurrency):
             prepare_next()
