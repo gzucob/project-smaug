@@ -27,8 +27,11 @@ git checkout -b <prefix>/<scope>
   to preserve ancestry. Never squash release PRs or delete either long-lived
   branch. Synchronize `develop` with the released `main` before starting the
   next development cycle; do not rewrite shared history.
-- PRs into `develop` run workflow validation and affected regressions. Protect
-  `develop` with the `Regressions` check.
+- PRs into `develop` run affected checks. Documentation-only PRs use the
+  `Regressions` check and verify generated guides when affected. CI selects
+  workflow validation for workflow changes and the integrated browser
+  regression for changes to the Next.js–FastAPI contract. Protect `develop`
+  with the `Regressions` check.
 - Protect `main` with the `Main promotion` check and require the PR branch to be
   up to date. Both promotion paths use a merge commit from `develop`.
 - A release PR runs all regressions and builds and verifies the final packages

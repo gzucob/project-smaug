@@ -13,10 +13,18 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      backend: ${{ steps.detect.outputs.backend }}
+      quality: ${{ steps.detect.outputs.quality }}
       frontend: ${{ steps.detect.outputs.frontend }}
-      installer: ${{ steps.detect.outputs.installer }}
       website: ${{ steps.detect.outputs.website }}
+      generated-docs: ${{ steps.detect.outputs.generated-docs }}
+      workflows: ${{ steps.detect.outputs.workflows }}
+      manager-source: ${{ steps.detect.outputs.manager-source }}
+      manager: ${{ steps.detect.outputs.manager }}
+      installer: ${{ steps.detect.outputs.installer }}
+      desktop-packages: ${{ steps.detect.outputs.desktop-packages }}
+      installer-runners: ${{ steps.detect.outputs.installer-runners }}
+      browser: ${{ steps.detect.outputs.browser }}
+      required: ${{ steps.detect.outputs.required }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,32 +34,12 @@ jobs:
         env:
           FULL: ${{ inputs.full }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          paths="$RUNNER_TEMP/changed-paths"
-          if [[ "$FULL" == true ]]; then
-            echo .github/ > "$paths"
-          else
-            [[ -n "$BASE_SHA" ]]
-            git diff --name-only --no-renames "$BASE_SHA" "$GITHUB_SHA" > "$paths"
-          fi
-          shared='^([^/]+$|\.github/|scripts/quality/)'
-          backend='^(src/|tests/|alembic/|scripts/|frontend/src/lib/(types|indicator-docs)\.ts$)'
-          frontend='^frontend/'
-          installer='^(installer/|scripts/installer/|scripts/distribution_snapshot\.py$)'
-          website='^website/'
-          for area in backend frontend installer website; do
-            affected=false
-            if grep -Eq "${shared}|${!area}" "$paths"; then affected=true; fi
-            echo "$area=$affected" >> "$GITHUB_OUTPUT"
-          done
-          if grep -Eq "${shared}|${backend}|${frontend}" "$paths"; then
-            # Backend/frontend and packaging share the installed application.
-            echo "installer=true" >> "$GITHUB_OUTPUT"
-          fi
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: python3 scripts/quality/ci_selection.py select
 
   workflows:
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,9 +49,20 @@ jobs:
           cache: false
       - run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes=
 
+  generated-docs:
+    needs: changes
+    if: needs.changes.outputs.generated-docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.13'
+      - run: uv run --frozen --no-dev python scripts/render_setup_guide.py --check
+
   quality:
     needs: changes
-    if: needs.changes.outputs.backend == 'true'
+    if: needs.changes.outputs.quality == 'true'
     # MongoDB rejects newer host kernels; track SERVER-136848 before moving
     # database jobs off the Ubuntu 22.04 runners' supported kernel.
     runs-on: ubuntu-22.04
@@ -129,7 +128,7 @@ jobs:
 
   manager-source:
     needs: changes
-    if: needs.changes.outputs.installer == 'true'
+    if: needs.changes.outputs.manager-source == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -147,7 +146,8 @@ jobs:
           if-no-files-found: error
 
   manager:
-    needs: manager-source
+    needs: [changes, manager-source]
+    if: needs.changes.outputs.manager == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -195,11 +195,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+        runner: ${{ fromJSON(needs.changes.outputs.installer-runners) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
-      SMAUG_TEST_INSTALLED_BROWSER: ${{ matrix.runner == 'ubuntu-22.04' && '1' || '0' }}
+      SMAUG_TEST_INSTALLED_BROWSER: ${{ needs.changes.outputs.browser == 'true' && matrix.runner == 'ubuntu-22.04' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -210,12 +210,15 @@ jobs:
           go-version: '1.27.2'
           cache: false
       - run: uv sync --frozen
+      - name: Test Python packaging and snapshot tooling
+        if: matrix.runner == 'ubuntu-22.04' && needs.quality.result == 'skipped'
+        run: uv run pytest tests/test_distribution_snapshot.py
       - uses: actions/setup-node@v4
-        if: matrix.runner == 'ubuntu-22.04'
+        if: env.SMAUG_TEST_INSTALLED_BROWSER == '1'
         with:
           node-version: '24'
       - name: Install the browser for the Next.js regression
-        if: matrix.runner == 'ubuntu-22.04'
+        if: env.SMAUG_TEST_INSTALLED_BROWSER == '1'
         working-directory: frontend
         run: |
           export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/smaug-browsers"
@@ -224,7 +227,7 @@ jobs:
           npx --no-install playwright install --with-deps --only-shell chromium
       - run: bash scripts/installer/ci-regression.sh
       - uses: actions/upload-artifact@v4
-        if: matrix.runner == 'ubuntu-22.04'
+        if: matrix.runner == 'ubuntu-22.04' && needs.changes.outputs.desktop-packages == 'true'
         with:
           name: native-installer-packages
           path: dist/installers/smaug-*installer*
@@ -232,7 +235,8 @@ jobs:
           if-no-files-found: error
 
   desktop-packages:
-    needs: [installer, manager-source]
+    needs: [changes, installer, manager-source]
+    if: needs.changes.outputs.desktop-packages == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -296,12 +300,13 @@ jobs:
 
   regressions:
     name: Regressions
-    needs: [changes, workflows, quality, frontend, manager-source, manager, installer, desktop-packages, website]
+    needs: [changes, workflows, generated-docs, quality, frontend, manager-source, manager, installer, desktop-packages, website]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     env:
-      RESULTS: ${{ toJSON(needs.*.result) }}
+      NEEDS: ${{ toJSON(needs) }}
+      REQUIRED: ${{ needs.changes.outputs.required }}
     steps:
+      - uses: actions/checkout@v4
       - name: Require successful affected jobs
-        run: |
-          jq -e 'all(.[]; . == "success" or . == "skipped")' <<< "$RESULTS"
+        run: python3 scripts/quality/ci_selection.py verify
