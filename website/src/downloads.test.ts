@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { detectPlatform, downloadURL, githubURL, installerName, parsePublishedRelease } from './downloads.ts';
+import { detectPlatform, dockerURL, downloadURL, githubURL, installerName, parsePublishedRelease } from './downloads.ts';
 
 test('desktop downloads match the published installer names for both editions', () => {
   for (const [platform, architecture, suffix] of [
@@ -20,6 +20,14 @@ test('platform suggestion does not treat phones as desktop installers', () => {
   for (const ua of ['Linux; Android 15', 'iPhone; CPU iPhone OS like Mac OS X', 'iPad; CPU OS like Mac OS X', 'unknown']) {
     assert.equal(detectPlatform(ua), '');
   }
+});
+
+test('Docker instructions match the current platform selection', () => {
+  const base = 'https://docs.docker.com/desktop/setup/install/';
+  assert.equal(dockerURL(''), base);
+  assert.equal(dockerURL('windows'), base + 'windows-install/');
+  assert.equal(dockerURL('macos'), base + 'mac-install/');
+  assert.equal(dockerURL('linux'), base + 'linux/');
 });
 
 test('downloads require the exact asset in the selected published release', () => {

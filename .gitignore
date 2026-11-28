@@ -22,6 +22,7 @@ venv/
 .ruff_cache/
 .coverage
 htmlcov/
+/scripts/quality/node_modules/
 
 # SO / editor
 .DS_Store

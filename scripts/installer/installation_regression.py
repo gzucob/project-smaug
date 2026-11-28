@@ -1,4 +1,4 @@
-"""Exercise disposable backend/full installations; never connect to checkout DBs.
+"""Verify packaged installation and lifecycle regressions with a local fixture.
 
 Requires prebuilt bundles and Docker. Removes only the Compose projects whose
 configuration was created inside this invocation's temporary directory.
@@ -47,6 +47,14 @@ def request(port_number: int, path: str, method: str = "GET") -> Any:
     with urllib.request.urlopen(req, timeout=30) as response:
         data = response.read()
         return json.loads(data) if data else None
+
+
+def check_frontend_browser(web: int, mode: str) -> None:
+    """Exercise the running Next frontend and its installed FastAPI backend."""
+    script = (
+        Path(__file__).resolve().parents[2] / "frontend/tests/installed-browser.mjs"
+    )
+    run("node", str(script), f"http://127.0.0.1:{web}", mode)
 
 
 def check_gui(command: list[str], install: Path) -> None:
@@ -220,8 +228,8 @@ def check_mcp(
     assert process.returncode == 0
 
 
-def smoke(bundle_dir: Path) -> None:
-    with tempfile.TemporaryDirectory(prefix="smaug installer smoke ") as directory:
+def verify_installation(bundle_dir: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="smaug installer regression ") as directory:
         root = Path(directory)
         os.environ["HOME"] = str(root / "user")
         os.environ["USERPROFILE"] = str(root / "user")
@@ -317,6 +325,17 @@ def smoke(bundle_dir: Path) -> None:
                 run(*ctl, "check")
                 assert request(api, "/ready")["data"] == "prepared"
                 assert request(api, "/analysis/PETR4")
+                coverage = run(
+                    *ctl,
+                    "cli",
+                    "doctor",
+                    "--ticker",
+                    "PETR4",
+                    "--verbose",
+                    capture=True,
+                )
+                assert "PETR4 [" in coverage
+                assert "no persisted analysis" not in coverage
                 # Validate real installation retention before backup sentinels
                 # are added outside the managed source workspace below.
                 subprocess.run(
@@ -364,9 +383,19 @@ asyncio.run(verify())
                     # A 200 home page alone can hide an unreachable backend.
                     assert request(web, "/api/data-revision")["revision"]
                 assert "roe" in run(*ctl, "cli", "formulas", capture=True)
-                run(*ctl, "cli", "doctor", "--help")
                 assert request(api, "/portfolio/PETR4", "POST")["ticker"] == "PETR4"
                 check_mcp(ctl, expected_status="ready", ticker="PETR4")
+                if edition == "full":
+                    if os.environ.get("SMAUG_TEST_INSTALLED_BROWSER") == "1":
+                        check_frontend_browser(web, "online")
+                        subprocess.run(
+                            [*compose, "stop", "api"],
+                            env=compose_env,
+                            check=True,
+                        )
+                        check_frontend_browser(web, "offline")
+                    print("PASS: full installation, doctor, API, frontend and MCP")
+                    continue
                 subprocess.run(
                     [*compose, "stop", "api", "frontend"], env=compose_env, check=True
                 )
@@ -645,7 +674,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundles", type=Path, required=True)
     args = parser.parse_args()
-    smoke(args.bundles.resolve())
+    verify_installation(args.bundles.resolve())
 
 
 if __name__ == "__main__":

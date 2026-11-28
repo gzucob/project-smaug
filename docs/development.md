@@ -135,7 +135,21 @@ O teste de retenção PostgreSQL requer `SMAUG_TEST_POSTGRES_URI` apontando para
 um PostgreSQL de teste e cria um schema isolado. A verificação dos índices de
 ingestão usa `SMAUG_TEST_MONGO_URI` e cria um banco MongoDB isolado.
 Para alterações no frontend,
-execute também `npm run typecheck` e `npm run build` dentro de `frontend`.
+execute também `npm test`, `npm run typecheck` e `npm run build` dentro de
+`frontend`.
+
+O gate de pre-commit usa Docker, Go, Node.js 24 com npm e uv. Após executar
+`npm ci` em `frontend`, `website` e `scripts/quality`, rode com as alterações
+em stage:
+
+```bash
+uv run --frozen python scripts/quality/pre_commit.py
+```
+
+Todos os testes precisam passar, e cada arquivo de código executável medido
+precisa atingir 90% de cobertura de linhas. O gate sobe e limpa bancos
+descartáveis. Com o gate verde, instale o hook versionado com
+`git config --local core.hooksPath .githooks`.
 
 ## Desenvolver os instaladores
 
@@ -147,13 +161,16 @@ cd installer
 go test ./...
 go vet ./...
 cd ..
-GITHUB_SHA=$(git rev-parse HEAD) bash scripts/installer/ci-smoke.sh
+GITHUB_SHA=$(git rev-parse HEAD) bash scripts/installer/ci-regression.sh
 ```
 
 O teste Docker cria bancos descartáveis, oferece arquivos sintéticos no formato
 CVM/B3 aos leitores reais e verifica ingestão, cálculo, API, frontend, MCP,
 upgrade, troca de versão, backup e restauração. Ele não depende de um dump,
 do banco do desenvolvedor ou da disponibilidade das fontes externas.
+
+Use smoke apenas para validação local e pontual durante o desenvolvimento,
+sem guardar relatórios ou outros artefatos da execução.
 
 O workflow de release publica as versões `backend` e `full` para amd64/arm64:
 

@@ -689,8 +689,8 @@ function IndicatorCell({
   onOpen: () => void;
 }) {
   const raw = indicators[spec.key];
-  const text = spec.format(raw);
   const missing = toNum(raw) === null;
+  const text = missing ? "n/d" : spec.format(raw);
 
   // Neutral ink, always. The sign is already in the glyph; colouring it too made
   // the growth cells read as alerts among thirty neutral ones — see the note in

@@ -1,13 +1,68 @@
 name: CI
 
 on:
-  push:
-    branches: [develop, main]
   pull_request:
-    branches: [develop, main]
+    branches: [develop]
+  workflow_call:
+    inputs:
+      full:
+        type: boolean
+        default: false
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      quality: ${{ steps.detect.outputs.quality }}
+      frontend: ${{ steps.detect.outputs.frontend }}
+      website: ${{ steps.detect.outputs.website }}
+      generated-docs: ${{ steps.detect.outputs.generated-docs }}
+      workflows: ${{ steps.detect.outputs.workflows }}
+      manager-source: ${{ steps.detect.outputs.manager-source }}
+      manager: ${{ steps.detect.outputs.manager }}
+      installer: ${{ steps.detect.outputs.installer }}
+      desktop-packages: ${{ steps.detect.outputs.desktop-packages }}
+      installer-runners: ${{ steps.detect.outputs.installer-runners }}
+      browser: ${{ steps.detect.outputs.browser }}
+      required: ${{ steps.detect.outputs.required }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect affected regressions
+        id: detect
+        env:
+          FULL: ${{ inputs.full }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: python3 scripts/quality/ci_selection.py select
+
+  workflows:
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes=
+
+  generated-docs:
+    needs: changes
+    if: needs.changes.outputs.generated-docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.13'
+      - run: uv run --frozen --no-dev python scripts/render_setup_guide.py --check
+
   quality:
+    needs: changes
+    if: needs.changes.outputs.quality == 'true'
     # MongoDB rejects newer host kernels; track SERVER-136848 before moving
     # database jobs off the Ubuntu 22.04 runners' supported kernel.
     runs-on: ubuntu-22.04
@@ -53,6 +108,8 @@ jobs:
         run: uv run pytest
 
   frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -65,10 +122,13 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - run: npm test
       - run: npm run typecheck
       - run: npm run build
 
   manager-source:
+    needs: changes
+    if: needs.changes.outputs.manager-source == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -80,12 +140,14 @@ jobs:
           path: |
             installer/
             scripts/installer/
+            scripts/quality/verify_launchers.py
             LICENSE
           retention-days: 1
           if-no-files-found: error
 
   manager:
-    needs: manager-source
+    needs: [changes, manager-source]
+    if: needs.changes.outputs.manager == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -105,6 +167,14 @@ jobs:
           cache: false
       - run: go test ./...
       - run: go vet ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test tests/app.test.cjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python ../scripts/quality/verify_launchers.py
       - name: Validate PowerShell launcher syntax
         if: runner.os == 'Windows'
         shell: pwsh
@@ -114,16 +184,22 @@ jobs:
           if ($errors.Count) { throw ($errors | Out-String) }
       - name: Validate Bash launcher syntax
         if: runner.os != 'Windows'
-        run: bash -n install.sh ../scripts/installer/ci-smoke.sh
+        run: bash -n install.sh ../scripts/installer/ci-regression.sh
 
   installer:
-    needs: [quality, frontend, manager]
+    needs: [changes, quality, frontend]
+    if: >-
+      ${{ !cancelled() && needs.changes.outputs.installer == 'true' &&
+      (needs.quality.result == 'success' || needs.quality.result == 'skipped') &&
+      (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+        runner: ${{ fromJSON(needs.changes.outputs.installer-runners) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    env:
+      SMAUG_TEST_INSTALLED_BROWSER: ${{ needs.changes.outputs.browser == 'true' && matrix.runner == 'ubuntu-22.04' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -134,9 +210,24 @@ jobs:
           go-version: '1.27.2'
           cache: false
       - run: uv sync --frozen
-      - run: bash scripts/installer/ci-smoke.sh
+      - name: Test Python packaging and snapshot tooling
+        if: matrix.runner == 'ubuntu-22.04' && needs.quality.result == 'skipped'
+        run: uv run pytest tests/test_distribution_snapshot.py
+      - uses: actions/setup-node@v4
+        if: env.SMAUG_TEST_INSTALLED_BROWSER == '1'
+        with:
+          node-version: '24'
+      - name: Install the browser for the Next.js regression
+        if: env.SMAUG_TEST_INSTALLED_BROWSER == '1'
+        working-directory: frontend
+        run: |
+          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/smaug-browsers"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
+          npm ci
+          npx --no-install playwright install --with-deps --only-shell chromium
+      - run: bash scripts/installer/ci-regression.sh
       - uses: actions/upload-artifact@v4
-        if: matrix.runner == 'ubuntu-22.04'
+        if: matrix.runner == 'ubuntu-22.04' && needs.changes.outputs.desktop-packages == 'true'
         with:
           name: native-installer-packages
           path: dist/installers/smaug-*installer*
@@ -144,7 +235,8 @@ jobs:
           if-no-files-found: error
 
   desktop-packages:
-    needs: [installer, manager-source]
+    needs: [changes, installer, manager-source]
+    if: needs.changes.outputs.desktop-packages == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -189,6 +281,8 @@ jobs:
           if-no-files-found: error
 
   website:
+    needs: changes
+    if: needs.changes.outputs.website == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -203,3 +297,16 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+
+  regressions:
+    name: Regressions
+    needs: [changes, workflows, generated-docs, quality, frontend, manager-source, manager, installer, desktop-packages, website]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    env:
+      NEEDS: ${{ toJSON(needs) }}
+      REQUIRED: ${{ needs.changes.outputs.required }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require successful affected jobs
+        run: python3 scripts/quality/ci_selection.py verify

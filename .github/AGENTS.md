@@ -27,9 +27,26 @@ git checkout -b <prefix>/<scope>
   to preserve ancestry. Never squash release PRs or delete either long-lived
   branch. Synchronize `develop` with the released `main` before starting the
   next development cycle; do not rewrite shared history.
-- CI runs on pushes and PRs to both branches. A successful push CI on `main`
-  automatically publishes the release; `develop` never publishes a stable
-  release. Website publication always checks out `main`.
+- PRs into `develop` run affected checks. Documentation-only PRs use the
+  `Regressions` check and verify generated guides when affected. CI selects
+  workflow validation for workflow changes and the integrated browser
+  regression for changes to the Next.js–FastAPI contract. Protect `develop`
+  with the `Regressions` check.
+- Protect `main` with the `Main promotion` check and require the PR branch to be
+  up to date. Both promotion paths use a merge commit from `develop`.
+- A release PR runs all regressions and builds and verifies the final packages
+  against the certified snapshot. The successful merge publishes those same
+  artifacts and deploys the download site.
+- For maintenance that should enter `main` without publication, add the
+  `no-release` label and exactly one `No-release reason: <reason>` line to the PR
+  body. Affected regressions and workflow validation still run. Wait for the
+  `Main promotion` check associated with that request before merging.
+- Configure `main-no-release` with `gzucob` as its only required reviewer.
+  Permit the owner to approve runs they initiated. Disable administrator
+  bypass for the environment and keep the approval bound to each run.
+- Before switching off the old workflow, verify that the new checks are
+  available and required. The first promotion uses the manual no-release path
+  and must leave the public release and Pages deployment in place.
 
 ## Quality Gate
 
@@ -46,6 +63,17 @@ Everything must pass. If a sandbox cannot write to the default uv cache, set a
 temporary command cache such as `UV_CACHE_DIR=/tmp/project-smaug-uv-cache`.
 
 For front-end changes, also follow the gate in `frontend/AGENTS.md`.
+
+The local pre-commit gate requires Docker, Go, Node.js 24 with npm, and uv.
+Install dependencies with `npm ci` in `frontend`, `website`, and
+`scripts/quality`. Run `uv run --frozen python scripts/quality/pre_commit.py`
+with the source and test changes staged. Install the repository hook with
+`git config --local core.hooksPath .githooks` once the gate is green.
+All required tests must pass. Each measured source file with executable lines
+must reach 90% before rounding, including files that the suites never load.
+The Python suite starts isolated MongoDB and PostgreSQL services and cleans
+them up after the run. Go measures files compiled on the host's platform.
+Launcher regressions exercise the active platform's shell.
 
 ## Commits, Push and Pull Requests
 
@@ -72,8 +100,8 @@ gh pr merge --squash --delete-branch
 ```
 
 - Release PRs use `gh pr merge --merge` without `--delete-branch`.
-- Each phase in an approved implementation plan is one logical commit and one
-  work PR to `develop`. A release PR groups completed phases for publication.
+- Each phase in an approved implementation plan is one logical commit.
+  Keep the stages in the same work PR when the approved plan calls for it.
 
 ## Issues
 

@@ -1,0 +1,8 @@
+{
+  "name": "smaug-quality",
+  "private": true,
+  "devDependencies": {
+    "c8": "10.1.3",
+    "istanbul-lib-instrument": "6.0.3"
+  }
+}

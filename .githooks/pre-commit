@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+exec uv run --frozen python scripts/quality/pre_commit.py
